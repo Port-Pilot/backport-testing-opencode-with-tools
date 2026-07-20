@@ -762,12 +762,21 @@ def commit_and_push_generated_diff(
             "requires an HTTPS GitHub remote."
         )
 
-    askpass_path = worktree / ".git-askpass-backport.bat"
-    write_text(
-        askpass_path,
-        "@echo off\n"
-        "echo %GITHUB_BACKPORT_PASSWORD%\n",
-    )
+    if os.name == "nt":
+        askpass_path = worktree / ".git-askpass-backport.bat"
+        write_text(
+            askpass_path,
+            "@echo off\n"
+            "echo %GITHUB_BACKPORT_PASSWORD%\n",
+        )
+    else:
+        askpass_path = worktree / ".git-askpass-backport.sh"
+        write_text(
+            askpass_path,
+            "#!/bin/sh\n"
+            "printf '%s\\n' \"$GITHUB_BACKPORT_PASSWORD\"\n",
+        )
+        askpass_path.chmod(0o700)
     push_env = {
         "GIT_ASKPASS": str(askpass_path),
         "GIT_TERMINAL_PROMPT": "0",

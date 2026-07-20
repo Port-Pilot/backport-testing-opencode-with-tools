@@ -55,6 +55,19 @@ python .\run_codex_backports.py `
   --start 1 `
   --limit 1
 
+Run and commit each generated backport to GitHub:
+python .\run_codex_backports.py `
+  --repo .\tensorflow `
+  --csv .\tenser-flow.csv `
+  --output .\tenser-flow-results.csv `
+  --model openai/gpt-5.5 `
+  --variant medium `
+  --commit `
+  --commit-remote origin `
+  --commit-branch-prefix opencode-backport `
+  --start 1 `
+  --limit 1
+
 Show all available options:
 python .\run_codex_backports.py --help
 

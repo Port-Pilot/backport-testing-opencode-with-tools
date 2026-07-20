@@ -10,7 +10,8 @@ For each CSV row, this script:
   4. Captures OpenCode's generated git diff.
   5. Compares that generated diff with the row's expected oldest-version diff by
      applying both to the same base version and comparing canonical git diffs.
-  6. Writes result columns back to a CSV.
+  6. Optionally commits and pushes each generated change to a per-row branch.
+  7. Writes result columns back to a CSV.
 
 The main TensorFlow checkout is not modified.
 """
@@ -46,6 +47,9 @@ REASONING_OUTPUT_TOKENS_COLUMN = "opencode_reasoning_output_tokens"
 TOTAL_TOKENS_COLUMN = "opencode_total_tokens"
 MODEL_COLUMN = "opencode_model_used"
 COST_COLUMN = "opencode_estimated_cost_usd"
+COMMIT_SHA_COLUMN = "opencode_commit_sha"
+COMMIT_BRANCH_COLUMN = "opencode_commit_branch"
+COMMIT_ERROR_COLUMN = "opencode_commit_error"
 
 
 def run(
@@ -653,6 +657,67 @@ def canonical_diff_after_applying(worktree: Path, patch_text: str, patch_path: P
     return True, current_diff(worktree), ""
 
 
+def apply_generated_diff(worktree: Path, diff_text: str, patch_path: Path) -> None:
+    git_clean_reset(worktree)
+    write_text(patch_path, diff_text)
+    result = run(
+        ["git", "-C", str(worktree), "apply", "--whitespace=nowarn", str(patch_path)]
+    )
+    if result.returncode != 0:
+        raise RuntimeError(
+            "Could not apply generated diff before committing: "
+            f"{(result.stderr or result.stdout).strip()}"
+        )
+
+
+def sanitize_branch_component(value: str) -> str:
+    value = re.sub(r"[^A-Za-z0-9._-]+", "-", value.strip())
+    value = re.sub(r"-+", "-", value).strip("-._")
+    return value or "backport"
+
+
+def commit_and_push_generated_diff(
+    *,
+    worktree: Path,
+    diff_text: str,
+    patch_path: Path,
+    remote: str,
+    branch: str,
+    message: str,
+) -> str:
+    if not diff_text.strip():
+        raise RuntimeError("No generated diff to commit.")
+
+    apply_generated_diff(worktree, diff_text, patch_path)
+    run(["git", "-C", str(worktree), "switch", "-C", branch], check=True)
+    run(["git", "-C", str(worktree), "add", "-A"], check=True)
+
+    staged = run(["git", "-C", str(worktree), "diff", "--cached", "--quiet"])
+    if staged.returncode == 0:
+        raise RuntimeError("Generated diff produced no staged changes.")
+    if staged.returncode not in (0, 1):
+        raise RuntimeError(
+            "Could not check staged changes before committing: "
+            f"{(staged.stderr or staged.stdout).strip()}"
+        )
+
+    run(["git", "-C", str(worktree), "commit", "-m", message], check=True)
+    commit_sha = run(["git", "-C", str(worktree), "rev-parse", "HEAD"], check=True).stdout.strip()
+    run(
+        [
+            "git",
+            "-C",
+            str(worktree),
+            "push",
+            "--force-with-lease",
+            remote,
+            f"HEAD:refs/heads/{branch}",
+        ],
+        check=True,
+    )
+    return commit_sha
+
+
 def normalize_diff_text(diff_text: str) -> str:
     normalized_lines: list[str] = []
     for raw_line in diff_text.replace("\r\n", "\n").replace("\r", "\n").split("\n"):
@@ -763,6 +828,27 @@ def main() -> int:
         action="store_true",
         help="Do not remove per-row temporary worktrees after processing.",
     )
+    parser.add_argument(
+        "--commit",
+        action="store_true",
+        help=(
+            "After each processed row with a generated diff, commit the generated "
+            "changes and push them to GitHub."
+        ),
+    )
+    parser.add_argument(
+        "--commit-remote",
+        default="origin",
+        help="Git remote to push commits to when --commit is used (default: origin).",
+    )
+    parser.add_argument(
+        "--commit-branch-prefix",
+        default="opencode-backport",
+        help=(
+            "Branch name prefix for pushed per-row commits when --commit is used "
+            "(default: opencode-backport)."
+        ),
+    )
     args = parser.parse_args()
 
     require_command("git")
@@ -811,6 +897,9 @@ def main() -> int:
         TOTAL_TOKENS_COLUMN,
         MODEL_COLUMN,
         COST_COLUMN,
+        COMMIT_SHA_COLUMN,
+        COMMIT_BRANCH_COLUMN,
+        COMMIT_ERROR_COLUMN,
     ]:
         if column not in fieldnames:
             fieldnames.append(column)
@@ -831,12 +920,21 @@ def main() -> int:
             MODEL_COLUMN,
             COST_COLUMN,
         ]
+        commit_columns = [
+            COMMIT_SHA_COLUMN,
+            COMMIT_BRANCH_COLUMN,
+        ]
         if (
             not args.rerun_completed
             and row.get(SUCCESS_COLUMN, "").strip()
             and row.get(CODE_CHANGE_COLUMN, "").strip()
             and all(row.get(column, "").strip() for column in token_columns)
             and all(row.get(column, "").strip() for column in metadata_columns)
+            and (
+                not args.commit
+                or all(row.get(column, "").strip() for column in commit_columns)
+                or row.get(COMMIT_ERROR_COLUMN, "").strip()
+            )
         ):
             print(f"[{row_number}/{len(rows)}] already populated; skipping")
             continue
@@ -904,6 +1002,35 @@ def main() -> int:
             row[TOTAL_TOKENS_COLUMN] = format_token_count(token_usage.get("total_tokens"))
             row[MODEL_COLUMN] = effective_model_name(args.model)
             row[COST_COLUMN] = format_cost(cost)
+            row[COMMIT_SHA_COLUMN] = ""
+            row[COMMIT_BRANCH_COLUMN] = ""
+            row[COMMIT_ERROR_COLUMN] = ""
+            if args.commit and generated_diff.strip():
+                branch = (
+                    f"{sanitize_branch_component(args.commit_branch_prefix)}-"
+                    f"row-{row_number:04d}-{base_commit[:12]}"
+                )
+                message = (
+                    f"Backport row {row_number}: "
+                    f"{title or row.get('oldest version', '').strip() or base_commit[:12]}"
+                )
+                try:
+                    commit_sha = commit_and_push_generated_diff(
+                        worktree=worktree,
+                        diff_text=generated_diff,
+                        patch_path=row_log_dir / "generated-to-commit.patch",
+                        remote=args.commit_remote,
+                        branch=branch,
+                        message=message,
+                    )
+                    row[COMMIT_SHA_COLUMN] = commit_sha
+                    row[COMMIT_BRANCH_COLUMN] = branch
+                    print(f"  committed: {commit_sha[:12]} pushed to {args.commit_remote}/{branch}")
+                except Exception as exc:
+                    row[COMMIT_ERROR_COLUMN] = str(exc)
+                    print(f"  commit failed: {exc}")
+            elif args.commit:
+                row[COMMIT_ERROR_COLUMN] = "No generated diff to commit."
             print(f"  result: {row[SUCCESS_COLUMN]}{f' ({error})' if error else ''}")
         except subprocess.TimeoutExpired:
             row[SUCCESS_COLUMN] = "0"
@@ -918,6 +1045,9 @@ def main() -> int:
             row[TOTAL_TOKENS_COLUMN] = ""
             row[MODEL_COLUMN] = effective_model_name(args.model)
             row[COST_COLUMN] = ""
+            row[COMMIT_SHA_COLUMN] = ""
+            row[COMMIT_BRANCH_COLUMN] = ""
+            row[COMMIT_ERROR_COLUMN] = ""
             print(f"  result: 0 ({row[ERROR_COLUMN]})")
         except Exception as exc:
             row[SUCCESS_COLUMN] = "0"
@@ -932,6 +1062,9 @@ def main() -> int:
             row[TOTAL_TOKENS_COLUMN] = ""
             row[MODEL_COLUMN] = effective_model_name(args.model)
             row[COST_COLUMN] = ""
+            row[COMMIT_SHA_COLUMN] = ""
+            row[COMMIT_BRANCH_COLUMN] = ""
+            row[COMMIT_ERROR_COLUMN] = ""
             print(f"  result: 0 ({exc})")
         finally:
             if worktree is not None and worktree.exists() and not args.keep_worktrees:

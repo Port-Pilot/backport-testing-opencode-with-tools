@@ -1,4 +1,4 @@
-Title,latest version,lastest version link,oldest version,oldest version link,Corrected Type,latest version changes,oldest version changes,opencode_backport_success,opencode_generated_code_change,opencode_final_message,opencode_error,opencode_oldest_patch_commit,opencode_base_commit,opencode_input_tokens,opencode_cache_read_tokens,opencode_cache_write_tokens,opencode_output_tokens,opencode_reasoning_output_tokens,opencode_total_tokens,opencode_model_used,opencode_estimated_cost_usd
+Title,latest version,lastest version link,oldest version,oldest version link,Corrected Type,latest version changes,oldest version changes,opencode_backport_success,opencode_generated_code_change,opencode_final_message,opencode_error,opencode_oldest_patch_commit,opencode_base_commit,opencode_input_tokens,opencode_cache_read_tokens,opencode_cache_write_tokens,opencode_output_tokens,opencode_reasoning_output_tokens,opencode_total_tokens,opencode_model_used,opencode_estimated_cost_usd,opencode_commit_sha,opencode_commit_branch,opencode_commit_error
 CVE-2020-15190: TensorFlow - Switch Operation Segmentation Fault,2.3.1,https://github.com/tensorflow/tensorflow/commit/da8558533d925694483d2c136a9220d6d49d843c,1.15.4,https://github.com/tensorflow/tensorflow/commit/49afc4727af1e4e0b40144ed88dc9fca4a351fdb,2,"diff --git a/tensorflow/core/common_runtime/eager/kernel_and_device.cc b/tensorflow/core/common_runtime/eager/kernel_and_device.cc
 index a022b6defbce1a..e0e87c36f03059 100644
 --- a/tensorflow/core/common_runtime/eager/kernel_and_device.cc
@@ -73,7 +73,7 @@ index 007c3f268f23a4..4b420e60b981de 100644
    @test_util.run_deprecated_v1
    def testQIntArgAndRet(self):
  
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2021-29513: TensorFlow - Null Pointer Dereference Vulnerability,2.5.0,https://github.com/tensorflow/tensorflow/commit/030af767d357d1b4088c4a25c72cb3906abac489,2.1.4,https://github.com/tensorflow/tensorflow/commit/58a9c0d259261d6f243e4a0301d40005afd458ef,2,"diff --git a/tensorflow/python/lib/core/ndarray_tensor.cc b/tensorflow/python/lib/core/ndarray_tensor.cc
 index 03fbea397485e8..6cf51ceebbdaaa 100644
 --- a/tensorflow/python/lib/core/ndarray_tensor.cc
@@ -126,7 +126,7 @@ index 8c8362972beef3..7bf71b47b0f3e9 100644
    if (PyDict_Next(descr->fields, &pos, &key, &value)) {
      // In Python 3, the keys of numpy custom struct types are unicode, unlike
      // Python 2, where the keys are bytes.
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2021-29514: TensorFlow Heap Buffer Overflow in RaggedBincount,2.5.0,https://github.com/tensorflow/tensorflow/commit/eebb96c2830d48597d055d247c0e9aebaea94cd5,2.3.3,https://github.com/tensorflow/tensorflow/commit/1d205a0cd3438f206bd503dbf91e39c0148c5de3,2,"diff --git a/tensorflow/core/kernels/bincount_op.cc b/tensorflow/core/kernels/bincount_op.cc
 index 35911ee5d5540a..258266ab29d33f 100644
 --- a/tensorflow/core/kernels/bincount_op.cc
@@ -167,7 +167,7 @@ index a84b25f2541013..c75f67bb56009a 100644
      Tensor* out_t;
      OP_REQUIRES_OK(
          ctx, ctx->allocate_output(0, TensorShape({num_rows, size}), &out_t));
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2021-29515: TensorFlow MatrixDiag* Operations Validation Vulnerability,2.5.0,https://github.com/tensorflow/tensorflow/commit/a7116dd3913c4a4afd2a3a938573aa7c785fdfc6,2.1.4,https://github.com/tensorflow/tensorflow/commit/34e3aa6a20b27b1a3656dc3838a276251285add6,2,"diff --git a/tensorflow/core/kernels/linalg/matrix_diag_op.cc b/tensorflow/core/kernels/linalg/matrix_diag_op.cc
 index 69cc8170793ae3..d4eb589836a859 100644
 --- a/tensorflow/core/kernels/linalg/matrix_diag_op.cc
@@ -228,7 +228,7 @@ index ae69e7752f102c..9eef404bf47dba 100644
      }
  
      // Size validations.
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2021-29516: TensorFlow - Null Pointer Dereference in RaggedTensorToVariant,2.5.0,https://github.com/tensorflow/tensorflow/commit/b055b9c474cd376259dde8779908f9eeaf097d93,2.1.4,https://github.com/tensorflow/tensorflow/commit/1adf585e2b9f36f3991abd64e731df2422f940e9,2,"diff --git a/tensorflow/core/kernels/ragged_tensor_to_variant_op.cc b/tensorflow/core/kernels/ragged_tensor_to_variant_op.cc
 index 549dc68dfbf87c..687289cd38077a 100644
 --- a/tensorflow/core/kernels/ragged_tensor_to_variant_op.cc
@@ -261,7 +261,7 @@ index 7a5ae1c6240b55..1457e5e2c73f7d 100644
      OP_REQUIRES_OK(context, UnbatchRaggedZerothDim<VALUE_TYPE, SPLIT_TYPE>(
                                  batched_ragged_input, &ragged_components));
      std::vector<Tensor> encoded_components(ragged_components.size());
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2021-29519: TensorFlow - Type Confusion in SparseCross API,2.5.0,https://github.com/tensorflow/tensorflow/commit/b1cc5e5a50e7cee09f2c6eb48eb40ee9c4125025,2.1.4,https://github.com/tensorflow/tensorflow/commit/89d9c336b7d0f5031a4e15488a6f1ede918c6df3,5,"diff --git a/tensorflow/core/kernels/sparse_cross_op.cc b/tensorflow/core/kernels/sparse_cross_op.cc
 index 583235b4a309b8..43b3bedc745032 100644
 --- a/tensorflow/core/kernels/sparse_cross_op.cc
@@ -488,7 +488,7 @@ index a16e34c7cb4424..7843e651c599c0 100644
        OP_REQUIRES(
            context, TensorShapeUtils::IsMatrix(dense_list_in[i].shape()),
            errors::InvalidArgument(
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2021-29520: TensorFlow - Missing Validation in Conv3DBackprop Operations2.5.0,,https://github.com/tensorflow/tensorflow/commit/8f37b52e1320d8d72a9529b2468277791a261197,2.1.4,https://github.com/tensorflow/tensorflow/commit/081f54161f9b10ef8591e4e092288e97473e457d,5,"diff --git a/tensorflow/core/kernels/conv_grad_ops_3d.cc b/tensorflow/core/kernels/conv_grad_ops_3d.cc
 index f736a12fb1ca39..8c72d01578d6d1 100644
 --- a/tensorflow/core/kernels/conv_grad_ops_3d.cc
@@ -615,7 +615,7 @@ index 08e832760924e6..cc6e3ffd90075c 100644
      ConvBackpropDimensions dims;
      OP_REQUIRES_OK(context,
                     ConvBackpropComputeDimensions(
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2021-29521: TensorFlow - Negative Dense Shape in SparseCountSparseOutput Leads to Segmentation Fault,2.5.0,https://github.com/tensorflow/tensorflow/commit/c57c0b9f3a4f8684f3489dd9a9ec627ad8b599f5,2.3.3,https://github.com/tensorflow/tensorflow/commit/370e714d7affe3463fba84c0b95d947f43b00380,2,"diff --git a/tensorflow/core/kernels/count_ops.cc b/tensorflow/core/kernels/count_ops.cc
 index d6ab68c2c70bd3..eeb0b853c7aad2 100644
 --- a/tensorflow/core/kernels/count_ops.cc
@@ -724,7 +724,7 @@ backport_result:
                          ""Number of values must match first dimension of indices."",
   notes: >
     Backported the SparseCount dense_shape negative-element validation; custom hunk validation failed internally, and the final local diff was inspected.
-```",,370e714d7affe3463fba84c0b95d947f43b00380,73aa99469d027c5870936a7ef31d056ba8a64867,"16,489","50,688",0,"1,546",250,"68,973",openai/gpt-5.5,0
+```",,370e714d7affe3463fba84c0b95d947f43b00380,73aa99469d027c5870936a7ef31d056ba8a64867,"16,489","50,688",0,"1,546",250,"68,973",openai/gpt-5.5,0,,,
 CVE-2021-29522: TensorFlow - Division by Zero Denial of Service,2.5.0,https://github.com/tensorflow/tensorflow/commit/311403edbc9816df80274bd1ea8b3c0c0f22c3fa,2.1.4,https://github.com/tensorflow/tensorflow/commit/518b73f51f838e730859fbd8782600b1bb47ada0,5,"diff --git a/tensorflow/core/kernels/conv_grad_ops_3d.cc b/tensorflow/core/kernels/conv_grad_ops_3d.cc
 index 8c72d01578d6d1..c0b57a7ae5606b 100644
 --- a/tensorflow/core/kernels/conv_grad_ops_3d.cc
@@ -1156,7 +1156,7 @@ backport_result:
              (target_working_set_size + work_unit_size - 1) / work_unit_size;
   notes: >
     Backported Conv3D gradient dimension checks and zero-work-unit guards to TensorFlow 2.1.4; verified with git diff --check.
-```",Generated code change differs from the expected oldest-version change.,518b73f51f838e730859fbd8782600b1bb47ada0,a5d613d23c2aa234d370d04b19ccabe3824c284d,"18,258","172,032",0,"3,506",169,"193,965",openai/gpt-5.5,0
+```",Generated code change differs from the expected oldest-version change.,518b73f51f838e730859fbd8782600b1bb47ada0,a5d613d23c2aa234d370d04b19ccabe3824c284d,"18,258","172,032",0,"3,506",169,"193,965",openai/gpt-5.5,0,,,
 CVE-2021-29524: TensorFlow - Division by 0 in Conv2DBackpropFilter,2.5.0,https://github.com/tensorflow/tensorflow/commit/fca9874a9b42a2134f907d2fb46ab774a831404a,2.1.4,https://github.com/tensorflow/tensorflow/commit/59b7577f91026945305c021adda68a467df2e921,5,"diff --git a/tensorflow/core/kernels/conv_grad_shape_utils.cc b/tensorflow/core/kernels/conv_grad_shape_utils.cc
 index 7543ce669923ac..805f5809a472e9 100644
 --- a/tensorflow/core/kernels/conv_grad_shape_utils.cc
@@ -1233,7 +1233,7 @@ backport_result:
              label, "": input depth must be evenly divisible by filter depth"");
   notes: >
     Added the 2.5.0 filter-depth guard before the modulo in ConvBackpropComputeDimensionsV2 to prevent division by zero; hunk validation could not run due to a local validate-tool error.
-```",,59b7577f91026945305c021adda68a467df2e921,a5d613d23c2aa234d370d04b19ccabe3824c284d,"11,502","62,976",0,"1,475",113,"76,066",openai/gpt-5.5,0
+```",,59b7577f91026945305c021adda68a467df2e921,a5d613d23c2aa234d370d04b19ccabe3824c284d,"11,502","62,976",0,"1,475",113,"76,066",openai/gpt-5.5,0,,,
 CVE-2021-29526: TensorFlow - Division by 0 in Conv2D,2.5.0,https://github.com/tensorflow/tensorflow/commit/b12aa1d44352de21d1a6faaf04172d8c2508b42b,2.1.4,https://github.com/tensorflow/tensorflow/commit/9ea660cb4d0ed82780912ca847c7207fbeaa5428,5,"diff --git a/tensorflow/core/kernels/conv_ops.cc b/tensorflow/core/kernels/conv_ops.cc
 index 363e3737a809b0..9bacebe7d265dc 100644
 --- a/tensorflow/core/kernels/conv_ops.cc
@@ -1334,7 +1334,7 @@ backport_result:
                        ""input depth must be evenly divisible by filter depth: "",
   notes: >
     Added the missing positive filter-depth check before modulo division in Conv2D dimension computation; grouped CPU launch guards from 2.5.0 have no equivalent grouped path in TensorFlow 2.1.4.
-```",Generated code change differs from the expected oldest-version change.,9ea660cb4d0ed82780912ca847c7207fbeaa5428,62685fd76defff311eaf09c73f0d8221bb8ff6f6,"18,897","110,592",0,"1,604",318,"131,411",openai/gpt-5.5,0
+```",Generated code change differs from the expected oldest-version change.,9ea660cb4d0ed82780912ca847c7207fbeaa5428,62685fd76defff311eaf09c73f0d8221bb8ff6f6,"18,897","110,592",0,"1,604",318,"131,411",openai/gpt-5.5,0,,,
 CVE-2021-29528: TensorFlow - Division by 0 in QuantizedMul,2.5.0,https://github.com/tensorflow/tensorflow/commit/a1b11d2fdd1e51bfe18bb1ede804f60abfa92da6,2.1.4,https://github.com/tensorflow/tensorflow/commit/781f6d685ada855359970c40650a0d497ea9668f,1,"diff --git a/tensorflow/core/kernels/quantized_mul_op.cc b/tensorflow/core/kernels/quantized_mul_op.cc
 index 4e191f162662bb..fb56f68bf14dbb 100644
 --- a/tensorflow/core/kernels/quantized_mul_op.cc
@@ -1413,7 +1413,7 @@ backport_result:
                tensor_offset, tensor_num_elements, z_data);
   notes: >
     Added the QuantizedMul empty-vector guard before VectorTensorMultiply to prevent division by zero.
-```",,781f6d685ada855359970c40650a0d497ea9668f,bf171d8341da2cfe1b2500b6b0bbbaa9bacc63db,"10,617","48,128",0,"1,121",14,"59,880",openai/gpt-5.5,0
+```",,781f6d685ada855359970c40650a0d497ea9668f,bf171d8341da2cfe1b2500b6b0bbbaa9bacc63db,"10,617","48,128",0,"1,121",14,"59,880",openai/gpt-5.5,0,,,
 CVE-2021-29530: TensorFlow - Null Pointer Dereference in SparseMatrixSparseCholesky,2.5.0,https://github.com/tensorflow/tensorflow/commit/e6a7c7cc18c3aaad1ae0872cb0a959f5c923d2bd,2.1.4,https://github.com/tensorflow/tensorflow/commit/1dcf51e75885d0048100414e5ef8016176c0b17a,1,"diff --git a/tensorflow/core/kernels/sparse/sparse_cholesky_op.cc b/tensorflow/core/kernels/sparse/sparse_cholesky_op.cc
 index 9a939276f0b6cb..47ab252317de5e 100644
 --- a/tensorflow/core/kernels/sparse/sparse_cholesky_op.cc
@@ -1833,7 +1833,7 @@ backport_result:
      };
   notes: >
     Backported the SparseMatrixSparseCholesky validation fix by returning Status from ValidateInputs and stopping Compute with OP_REQUIRES_OK; the newer op_requires.h include was omitted because it does not exist in TensorFlow 2.1.4 and op_kernel.h already provides the macro.
-```",Generated code change differs from the expected oldest-version change.,1dcf51e75885d0048100414e5ef8016176c0b17a,bf171d8341da2cfe1b2500b6b0bbbaa9bacc63db,"41,602","421,376",0,"8,423","1,186","472,587",openai/gpt-5.5,0
+```",Generated code change differs from the expected oldest-version change.,1dcf51e75885d0048100414e5ef8016176c0b17a,bf171d8341da2cfe1b2500b6b0bbbaa9bacc63db,"41,602","421,376",0,"8,423","1,186","472,587",openai/gpt-5.5,0,,,
 CVE-2021-29533: TensorFlow - Denial of Service via Empty Image in DrawBoundingBoxes,2.5.0,https://github.com/tensorflow/tensorflow/commit/b432a38fe0e1b4b904a6c222cbce794c39703e87,2.1.4,https://github.com/tensorflow/tensorflow/commit/76ee87cbb100c600cddf6a26f697a30a3b50538d,2,"diff --git a/tensorflow/core/kernels/image/draw_bounding_box_op.cc b/tensorflow/core/kernels/image/draw_bounding_box_op.cc
 index 30de99b7d560a2..73db76333f0862 100644
 --- a/tensorflow/core/kernels/image/draw_bounding_box_op.cc
@@ -2104,7 +2104,7 @@ backport_result:
              if (min_box_row >= 0) {
   notes: >
     Replaced fatal CHECK assertions in the target DrawBoundingBoxes kernel with InvalidArgument OP_REQUIRES checks, adapted to the older file path.
-```",,76ee87cbb100c600cddf6a26f697a30a3b50538d,bf171d8341da2cfe1b2500b6b0bbbaa9bacc63db,"16,230","77,312",0,"3,193",129,"96,864",openai/gpt-5.5,0
+```",,76ee87cbb100c600cddf6a26f697a30a3b50538d,bf171d8341da2cfe1b2500b6b0bbbaa9bacc63db,"16,230","77,312",0,"3,193",129,"96,864",openai/gpt-5.5,0,,,
 CVE-2021-29535: TensorFlow Heap Buffer Overflow in QuantizedMul,2.5.0,https://github.com/tensorflow/tensorflow/commit/efea03b38fb8d3b81762237dc85e579cc5fc6e87,2.1.4,https://github.com/tensorflow/tensorflow/commit/271f936010b418c8bc809df2f2eb352e6fd05bb6,1,"diff --git a/tensorflow/core/kernels/quantized_mul_op.cc b/tensorflow/core/kernels/quantized_mul_op.cc
 index fb56f68bf14dbb..22cff8939449a6 100644
 --- a/tensorflow/core/kernels/quantized_mul_op.cc
@@ -2241,7 +2241,7 @@ backport_result:
          if (!bcast.IsValid()) {
   notes: >
     Added scalar shape validation for QuantizedMul min/max range inputs before reading them.
-```",,271f936010b418c8bc809df2f2eb352e6fd05bb6,bf171d8341da2cfe1b2500b6b0bbbaa9bacc63db,"25,635","53,760",0,"2,095",143,"81,633",openai/gpt-5.5,0
+```",,271f936010b418c8bc809df2f2eb352e6fd05bb6,bf171d8341da2cfe1b2500b6b0bbbaa9bacc63db,"25,635","53,760",0,"2,095",143,"81,633",openai/gpt-5.5,0,,,
 CVE-2021-29537: Heap Buffer Overflow in TensorFlow,2.5.0,https://github.com/tensorflow/tensorflow/commit/f6c40f0c6cbf00d46c7717a26419f2062f2f8694,2.1.4,https://github.com/tensorflow/tensorflow/commit/877d5fc1b2306af6202473b2ad62932b9ea953b7,2,"diff --git a/tensorflow/core/kernels/quantized_resize_bilinear_op.cc b/tensorflow/core/kernels/quantized_resize_bilinear_op.cc
 index 2fd807f6df9614..a110944dda5844 100644
 --- a/tensorflow/core/kernels/quantized_resize_bilinear_op.cc
@@ -2340,7 +2340,7 @@ backport_result:
          st.ValidateAndCreateOutput(context, input);
   notes: >
     Added scalar shape validation for QuantizedResizeBilinear min and max tensors before flat element access.
-```",,877d5fc1b2306af6202473b2ad62932b9ea953b7,bf171d8341da2cfe1b2500b6b0bbbaa9bacc63db,"24,624","125,440",0,"1,905",135,"152,104",openai/gpt-5.5,0
+```",,877d5fc1b2306af6202473b2ad62932b9ea953b7,bf171d8341da2cfe1b2500b6b0bbbaa9bacc63db,"24,624","125,440",0,"1,905",135,"152,104",openai/gpt-5.5,0,,,
 CVE-2021-29538: TensorFlow - Division by Zero Denial of Service,2.5.0,https://github.com/tensorflow/tensorflow/commit/c570e2ecfc822941335ad48f6e10df4e21f11c96,2.1.4,https://github.com/tensorflow/tensorflow/commit/95c63a0513f092afa3abb67f12b3d7d596501248,2,"diff --git a/tensorflow/core/kernels/conv_grad_filter_ops.cc b/tensorflow/core/kernels/conv_grad_filter_ops.cc
 index fb48e3e285a27c..2645d850ab7cfb 100644
 --- a/tensorflow/core/kernels/conv_grad_filter_ops.cc
@@ -2481,7 +2481,7 @@ backport_result:
      
   notes: >
     Backported the Conv2D filter backprop size and zero work-unit validation checks to TensorFlow 2.1.4.
-```",,95c63a0513f092afa3abb67f12b3d7d596501248,bf171d8341da2cfe1b2500b6b0bbbaa9bacc63db,"14,904","95,232",0,"2,078",81,"112,295",openai/gpt-5.5,0
+```",,95c63a0513f092afa3abb67f12b3d7d596501248,bf171d8341da2cfe1b2500b6b0bbbaa9bacc63db,"14,904","95,232",0,"2,078",81,"112,295",openai/gpt-5.5,0,,,
 CVE-2021-29541: TensorFlow - Null Pointer Dereference in StringNGrams,2.5.0,https://github.com/tensorflow/tensorflow/commit/ba424dd8f16f7110eea526a8086f1a155f14f22b,2.1.4,https://github.com/tensorflow/tensorflow/commit/45f35284fbe3ef9621fa8eb96765cac2df575278,1,"diff --git a/tensorflow/core/kernels/string_ngrams_op.cc b/tensorflow/core/kernels/string_ngrams_op.cc
 index 8aed2b3831a2f4..7008a1d766af25 100644
 --- a/tensorflow/core/kernels/string_ngrams_op.cc
@@ -2724,7 +2724,13 @@ index b89de9ad16dab8..0d52283bd8fb9d 100644
  TEST_F(NgramKernelTest, ShapeFn) {
    ShapeInferenceTestOp op(""StringNGrams"");
    INFER_OK(op, ""?;?"", ""[?];[?]"");
-",,,,,,,,,,,,,,
+",0,,,"command failed (128): git -C /home/azureuser/backport-testing-opencode-with-tools/.opencode-backport-worktrees/row-0018-bf171d8341da status --porcelain --untracked-files=all
+stdout:
+
+
+stderr:
+fatal: cannot change to '/home/azureuser/backport-testing-opencode-with-tools/.opencode-backport-worktrees/row-0018-bf171d8341da': No such file or directory
+",45f35284fbe3ef9621fa8eb96765cac2df575278,bf171d8341da2cfe1b2500b6b0bbbaa9bacc63db,,,,,,,openai/gpt-5.5,,,,
 CVE-2021-29542: TensorFlow - Heap Buffer Overflow in tf.raw_ops.StringNGrams,2.5.0,https://github.com/tensorflow/tensorflow/commit/ba424dd8f16f7110eea526a8086f1a155f14f22b,2.1.4,https://github.com/tensorflow/tensorflow/commit/45f35284fbe3ef9621fa8eb96765cac2df575278,1,"diff --git a/tensorflow/core/kernels/string_ngrams_op.cc b/tensorflow/core/kernels/string_ngrams_op.cc
 index 8aed2b3831a2f4..7008a1d766af25 100644
 --- a/tensorflow/core/kernels/string_ngrams_op.cc
@@ -2967,7 +2973,14 @@ index b89de9ad16dab8..0d52283bd8fb9d 100644
  TEST_F(NgramKernelTest, ShapeFn) {
    ShapeInferenceTestOp op(""StringNGrams"");
    INFER_OK(op, ""?;?"", ""[?];[?]"");
-",,,,,,,,,,,,,,
+",0,,,"command failed (128): git -C /home/azureuser/backport-testing-opencode-with-tools/tensorflow worktree remove --force /home/azureuser/backport-testing-opencode-with-tools/.opencode-backport-worktrees/row-0019-bf171d8341da
+stdout:
+
+
+stderr:
+fatal: cannot remove a locked working tree, lock reason: initializing
+use 'remove -f -f' to override or unlock first
+",45f35284fbe3ef9621fa8eb96765cac2df575278,bf171d8341da2cfe1b2500b6b0bbbaa9bacc63db,,,,,,,openai/gpt-5.5,,,,
 "CVE-2021-29543: Denial of Service in TensorFlow
 ",2.5.0,https://github.com/tensorflow/tensorflow/commit/ea3b43e98c32c97b35d52b4c66f9107452ca8fb2,2.1.4,https://github.com/tensorflow/tensorflow/commit/b7c33ff91b756a8fb8b9c383f1b990d7b4432743,2,"diff --git a/tensorflow/core/kernels/ctc_decoder_ops.cc b/tensorflow/core/kernels/ctc_decoder_ops.cc
 index d62aef2d03b988..22681f97437f0c 100644
@@ -2995,7 +3008,7 @@ index 517612eecb6057..1075b17694ddcf 100644
            log_prob_t(b, 0) +=
                -RowMax<T>(input_list_t[t], b, &max_class_indices);
            if (max_class_indices != blank_index &&
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2021-29547: TensorFlow - Out-of-Bounds Access in QuantizedBatchNormWithGlobalNormalization,2.5.0,https://github.com/tensorflow/tensorflow/commit/d6ed5bcfe1dcab9e85a4d39931bd18d99018e75b,2.1.4,https://github.com/tensorflow/tensorflow/commit/57f9718251e7b39981308febf91a1650461445b3,1,"diff --git a/tensorflow/core/kernels/quantized_batch_norm_op.cc b/tensorflow/core/kernels/quantized_batch_norm_op.cc
 index b03da7ad17fab4..6dfe07f97a4007 100644
 --- a/tensorflow/core/kernels/quantized_batch_norm_op.cc
@@ -3194,7 +3207,7 @@ index b03da7ad17fab4..6dfe07f97a4007 100644
  
      Tensor* output = nullptr;
      OP_REQUIRES_OK(context,
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2021-29548: TensorFlow - Division by Zero Denial of Service,2.5.0,https://github.com/tensorflow/tensorflow/commit/d6ed5bcfe1dcab9e85a4d39931bd18d99018e75b,2.1.4,https://github.com/tensorflow/tensorflow/commit/57f9718251e7b39981308febf91a1650461445b3,1,"diff --git a/tensorflow/core/kernels/quantized_batch_norm_op.cc b/tensorflow/core/kernels/quantized_batch_norm_op.cc
 index b03da7ad17fab4..6dfe07f97a4007 100644
 --- a/tensorflow/core/kernels/quantized_batch_norm_op.cc
@@ -3393,7 +3406,7 @@ index b03da7ad17fab4..6dfe07f97a4007 100644
  
      Tensor* output = nullptr;
      OP_REQUIRES_OK(context,
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2021-29550: TensorFlow - Division by Zero Denial of Service,2.5.0.,https://github.com/tensorflow/tensorflow/commit/548b5eaf23685d86f722233d8fbc21d0a4aecb96,2.1.4,https://github.com/tensorflow/tensorflow/commit/0e8c73892e0160a668a823d6f42c95eba88797bd,1,"diff --git a/tensorflow/core/kernels/fractional_avg_pool_op.cc b/tensorflow/core/kernels/fractional_avg_pool_op.cc
 index dfc2382624e3fa..b8a5083e5340f1 100644
 --- a/tensorflow/core/kernels/fractional_avg_pool_op.cc
@@ -3424,7 +3437,7 @@ index dfc2382624e3fa..b8a5083e5340f1 100644
      }
      // Output size.
      for (int i = 0; i < tensor_in_and_out_dims; ++i) {
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2021-29569: TensorFlow - Out-of-Bounds Read in tf.raw_ops.MaxPoolGradWithArgmax,2.5.0,https://github.com/tensorflow/tensorflow/commit/ef0c008ee84bad91ec6725ddc42091e19a30cf0e,2.1.4,https://github.com/tensorflow/tensorflow/commit/2b028d63551b82839d9ebf6f74a1bff957bc14b0,1,"diff --git a/tensorflow/core/kernels/requantization_range_op.cc b/tensorflow/core/kernels/requantization_range_op.cc
 index cc6e891a6b352b..f6e217499d1983 100644
 --- a/tensorflow/core/kernels/requantization_range_op.cc
@@ -3455,7 +3468,7 @@ index cc6e891a6b352b..f6e217499d1983 100644
      const float input_min_float = ctx->input(1).flat<float>()(0);
      const float input_max_float = ctx->input(2).flat<float>()(0);
      Tensor* output_min = nullptr;
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2021-29615: TensorFlow - Stack Overflow Vulnerability,2.5.0,https://github.com/tensorflow/tensorflow/commit/e07e1c3d26492c06f078c7e5bf2d138043e199c1,2.1.4,https://github.com/tensorflow/tensorflow/commit/74f34ad0731f9c6a2defe198c9904a00d5d93903,1,"diff --git a/tensorflow/core/framework/attr_value_util.cc b/tensorflow/core/framework/attr_value_util.cc
 index 712e205c587c84..76fe36e7f1e2a6 100644
 --- a/tensorflow/core/framework/attr_value_util.cc
@@ -3622,7 +3635,7 @@ index f911b5b7b6f6d5..1a332d1517ddc0 100644
    return ProtoParseFromString(to_parse, out);
  }
  
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2021-29616: TensorFlow - Null Pointer Dereference in TrySimplify,2.5.0,https://github.com/tensorflow/tensorflow/commit/e6340f0665d53716ef3197ada88936c2a5f7a2d3,2.1.4,https://github.com/tensorflow/tensorflow/commit/8d911e80fafb03ac37713c0f68cb0290273ecbc4,2,"diff --git a/tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc b/tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc
 index 484983a7a549cc..774fdf3484788b 100644
 --- a/tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc
@@ -3715,7 +3728,7 @@ index 0734c32948b159..1ad38d6a16fb31 100644
    const NodeDef* input = node_map_->GetNode(NodeName(node.input(0)));
    CHECK(input != nullptr) << ""node = "" << node.name()
                            << "" input = "" << node.input(0);
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2021-29617: TensorFlow - Denial of Service via tf.strings.substr,2.5.0,https://github.com/tensorflow/tensorflow/commit/890f7164b70354c57d40eda52dcdd7658677c09f,2.1.4,https://github.com/tensorflow/tensorflow/commit/730909e302e9545b8df1de4d34abb76fd2c62918,1,"diff --git a/tensorflow/core/kernels/substr_op.cc b/tensorflow/core/kernels/substr_op.cc
 index e382381e122324..ab83efda2a2e17 100644
 --- a/tensorflow/core/kernels/substr_op.cc
@@ -3789,7 +3802,7 @@ index 9302152e82bfa9..eae4e10f378567 100644
  
  if __name__ == ""__main__"":
    test.main()
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2021-37689: TensorFlow - Null Pointer Dereference Denial of Service        ,2.3.4,https://github.com/tensorflow/tensorflow/commit/d6b57f461b39fd1aa8c1b870f1b974aac3554955,2.3.4,https://github.com/tensorflow/tensorflow/commit/e05490e73face64921faecbfcd09a22bd707fa59,2,"diff --git a/tensorflow/compiler/mlir/lite/transforms/optimize.cc b/tensorflow/compiler/mlir/lite/transforms/optimize.cc
 index d457612bf70eed..6a8803d2461594 100644
 --- a/tensorflow/compiler/mlir/lite/transforms/optimize.cc
@@ -3818,7 +3831,7 @@ index 30ae4b81f4f324..0be9d2d109ff82 100644
    if (sq_op.getType().cast<ShapedType>().getRank() - 1 ==
            *axis.getValues<int>().begin() ||
        *axis.getValues<int>().begin() == -1) {
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2021-37692: TensorFlow - Segfault in String Deallocation,"2.6.0
 ",https://github.com/tensorflow/tensorflow/commit/8721ba96e5760c229217b594f6d2ba332beedf22,2.5.1,https://github.com/tensorflow/tensorflow/commit/158dcdce4768232e1cc628a42d4fd74563781a24,1,"diff --git a/tensorflow/go/tensor.go b/tensorflow/go/tensor.go
 index cfb389d472dfab..0983e0411f0b2d 100644
@@ -4022,7 +4035,7 @@ index cfb389d472dfab..6c58aeb81ff484 100644
  }
  
  func bug(format string, args ...interface{}) error {
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2021-41197: TensorFlow - Integer Overflow Vulnerability,"2.7.0
 tensorflow/python/ops/image_ops_test.py
 6078",https://github.com/tensorflow/tensorflow/commit/7c1692bd417eb4f9b33ead749a41166d6080af85,"2.4.4
@@ -4164,7 +4177,7 @@ index 7f361a489aec3f..ef3a4153d5ce6b 100644
    @parameterized.named_parameters(
        (""_jpeg"", ""JPEG"", ""jpeg_merge_test1.jpg""),
        (""_png"", ""PNG"", ""lena_rgba.png""),
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2021-41201: TensorFlow Uninitialized Variable Access,2.7.0,https://github.com/tensorflow/tensorflow/commit/f09caa532b6e1ac8d2aa61b7832c78c5b79300c6,2.4.4,https://github.com/tensorflow/tensorflow/commit/011e541cdfa2d038e06b12378e91b94a02ef7a62,2,"diff --git a/tensorflow/core/kernels/linalg/einsum_op_impl.h b/tensorflow/core/kernels/linalg/einsum_op_impl.h
 index 5c41e38954d626..6f64334555131c 100644
 --- a/tensorflow/core/kernels/linalg/einsum_op_impl.h
@@ -4205,7 +4218,7 @@ index b9b2d1f0eae459..2f45c238b67f78 100644
      for (const int label : *output_labels) {
        if (label != kEllipsisLabel)
          output_label_counts->at(label) += 1;
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2023-33976:  TensorFlow Segfault in array_ops.upper_bound,2.13,https://github.com/tensorflow/tensorflow/commit/915884fdf5df34aaedd00fc6ace33a2cfdefa586,2.12.1,https://github.com/tensorflow/tensorflow/commit/b35994ad3a00f1c364334d9b14bb54e693f22d27,1,"diff --git a/tensorflow/core/kernels/searchsorted_op.cc b/tensorflow/core/kernels/searchsorted_op.cc
 index 94d18708a6aa10..8fc3d0da91cd0d 100644
 --- a/tensorflow/core/kernels/searchsorted_op.cc
@@ -4522,7 +4535,7 @@ index 0c82f5ac0987df..4cf619d47395b6 100644
  
  if __name__ == ""__main__"":
    test.main()
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2022-41911: TensorFlow - Conversion from char to bool Crash Vulnerability,2.8.4,https://github.com/tensorflow/tensorflow/commit/1be743703279782a357adbf9b77dcb994fe8b508,2.8.4,https://github.com/tensorflow/tensorflow/commit/e435225b4334a8e39226c9067425f2aab7f9fc31,2,"diff --git a/tensorflow/core/framework/tensor.cc b/tensorflow/core/framework/tensor.cc
 index 14c0d4a0e6ef41..74f1a1bd03e8af 100644
 --- a/tensorflow/core/framework/tensor.cc
@@ -4639,7 +4652,7 @@ index c7a08ee0808043..7400651425bbb4 100644
  }  // namespace
  
  string Tensor::SummarizeValue(int64_t max_entries, bool print_v2) const {
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2022-41909: TensorFlow - Segfault in CompositeTensorVariantToComponents,2.8.4,https://github.com/tensorflow/tensorflow/commit/660ce5a89eb6766834bdc303d2ab3902aef99d3d,2.8.4,https://github.com/tensorflow/tensorflow/commit/9a0dc56f8125aeed018a62d78d2f991546490d51,1,"diff --git a/tensorflow/core/kernels/composite_tensor_ops.cc b/tensorflow/core/kernels/composite_tensor_ops.cc
 index f41b02991bba43..bc4f96e6bb2fe6 100644
 --- a/tensorflow/core/kernels/composite_tensor_ops.cc
@@ -4762,7 +4775,7 @@ index e5e9d1ef9bf6d9..7a10cae3ebc10a 100644
    def testRoundTripThroughTensorProto(self):
      value = ragged_factory_ops.constant([[1, 2], [3], [4, 5, 6]])
      encoded = composite_tensor_ops.composite_tensor_to_variants(value)
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2022-41891: TensorFlow Denial of Service Vulnerability,2.8.4,https://github.com/tensorflow/tensorflow/commit/fc33f3dc4c14051a83eec6535b608abe1d355fde,2.8.4,https://github.com/tensorflow/tensorflow/commit/7889a8e0da8e6ced697d1a240fb2458070d3047f,2,"diff --git a/tensorflow/core/kernels/list_kernels.h b/tensorflow/core/kernels/list_kernels.h
 index 9a0782b830ce4e..19fb3d48bc7b91 100644
 --- a/tensorflow/core/kernels/list_kernels.h
@@ -4839,7 +4852,7 @@ index b966b31300ce76..c95c27eadc0fbd 100644
    def testEmptyTensorListInvalidShape(self):
      with self.assertRaisesRegex((ValueError, errors.InvalidArgumentError),
                                  r""Shape must be at most rank 1 but is rank 2""):
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2022-41885: TensorFlow FusedResizeAndPadConv2D Large Tensor Shape Overflow,2.8.4,https://github.com/tensorflow/tensorflow/commit/d66e1d568275e6a2947de97dca7a102a211e01ce,2.7.4,https://github.com/tensorflow/tensorflow/commit/e959caac72f4d01ff97c113228dbf36606a4d03a,1,"diff --git a/tensorflow/core/kernels/conv_ops_fused_image_transform.cc b/tensorflow/core/kernels/conv_ops_fused_image_transform.cc
 index ac76cef5bb8c89..dd2db39fbd127a 100644
 --- a/tensorflow/core/kernels/conv_ops_fused_image_transform.cc
@@ -4996,7 +5009,7 @@ index 2392944fc41700..265d1462793492 100644
  
  if __name__ == ""__main__"":
    for index, (input_size_, filter_size_, output_size_, stride_,
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2022-35983: TensorFlow - Denial of Service Vulnerability,2.7.2,https://github.com/tensorflow/tensorflow/commit/5dd7b86b84a864b834c6fa3d7f9f51c87efa99d4,2.7.2,https://github.com/tensorflow/tensorflow/commit/5dd7b86b84a864b834c6fa3d7f9f51c87efa99d4,1,"diff --git a/tensorflow/core/util/tensor_slice_writer.cc b/tensorflow/core/util/tensor_slice_writer.cc
 index ca907916fd3f1d..75197a52c6d556 100644
 --- a/tensorflow/core/util/tensor_slice_writer.cc
@@ -5215,7 +5228,7 @@ index c9740730a66a26..5120be5a8b5e35 100644
  }  // namespace checkpoint
  
  }  // namespace tensorflow
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2022-23595: TensorFlow XLA Compilation Cache Null Pointer Dereference,2.5.3,https://github.com/tensorflow/tensorflow/commit/e21af685e1828f7ca65038307df5cc06de4479e8,2.5.2,https://github.com/tensorflow/tensorflow/commit/d22277271c747d6de421387c7b38425db7cfbb74,5,"diff --git a/tensorflow/compiler/jit/xla_platform_info.cc b/tensorflow/compiler/jit/xla_platform_info.cc
 index 8b20c9169c3e90..96d6e27d36a7ee 100644
 --- a/tensorflow/compiler/jit/xla_platform_info.cc
@@ -5259,7 +5272,7 @@ index cfd4de0f32f9e6..c45cbff6fe271e 100644
    auto client = xla::ClientLibrary::GetOrCreateLocalClient(client_options);
    if (!client.ok()) {
      return client.status();
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2022-23591: TensorFlow GraphDef Format Self-Recursive Function Vulnerability,2.5.3,https://github.com/tensorflow/tensorflow/commit/448a16182065bd08a202d9057dd8ca541e67996c,2.5.2,https://github.com/tensorflow/tensorflow/commit/35bcaf2c539e1cb83e179e152ab7bddccb02db36,2,"diff --git a/tensorflow/cc/saved_model/loader.cc b/tensorflow/cc/saved_model/loader.cc
 index b06f2281d6a595..1022793fda08ef 100644
 --- a/tensorflow/cc/saved_model/loader.cc
@@ -5346,7 +5359,7 @@ index dcd652d9fdf3d6..dcab34cc965e0f 100644
      }
    }
  
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2022-23587: TensorFlow Integer Overflow Vulnerability,2.5.3,https://github.com/tensorflow/tensorflow/commit/0aaaae6eca5a7175a193696383f582f53adab23f,2.5.2,https://github.com/tensorflow/tensorflow/commit/c947c939aa110337860f9678bf73eb2610ef2072,2,"diff --git a/tensorflow/core/grappler/costs/op_level_cost_estimator.cc b/tensorflow/core/grappler/costs/op_level_cost_estimator.cc
 index 640a530bf08ea1..6e516e2a686120 100644
 --- a/tensorflow/core/grappler/costs/op_level_cost_estimator.cc
@@ -5455,7 +5468,7 @@ index 32cca991f49093..f3a6f248da785d 100644
      // Ops for innermost loop across depth.
      ops += cast_to_float_cost * output_elements;
    }
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2022-23586: Denial of Service Vulnerability in TensorFlow,2.5.3,https://github.com/tensorflow/tensorflow/commit/3d89911481ba6ebe8c88c1c0b595412121e6c645,2.5.2,https://github.com/tensorflow/tensorflow/commit/8ee26e04b497f22ea7c7d9ccc515822207ecb68c,2,"diff --git a/tensorflow/core/framework/function.cc b/tensorflow/core/framework/function.cc
 index 41b8d446149694..492d9d54fe60eb 100644
 --- a/tensorflow/core/framework/function.cc
@@ -5486,7 +5499,7 @@ index b84cfa31157233..c702d0fb529c20 100644
      int arg_index = result_.nodes.size();
      TF_RETURN_IF_ERROR(
          AddItem(arg_def.name(), {true, arg_index, 0, is_type_list, dtypes}));
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2022-23585: TensorFlow Memory Leak in PNG Image Decoding,2.5.3,https://github.com/tensorflow/tensorflow/commit/ab51e5b813573dc9f51efa335aebcf2994125ee9,2.5.2,https://github.com/tensorflow/tensorflow/commit/8083044e4fff2c4d51d153a81958fb86d0d91715,1,"diff --git a/tensorflow/core/kernels/image/decode_image_op.cc b/tensorflow/core/kernels/image/decode_image_op.cc
 index eef98dd2d83400..ee0ae957203b37 100644
 --- a/tensorflow/core/kernels/image/decode_image_op.cc
@@ -5547,7 +5560,7 @@ index 61b126fb81e3cb..893d6b2a3c2e2e 100644
      // Verify that width and height are not too large:
      // - verify width and height don't overflow int.
      // - width can later be multiplied by channels_ and sizeof(uint16), so
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2022-23584: TensorFlow - Use After Free Vulnerability in PNG Image Decoding,2.5.3,https://github.com/tensorflow/tensorflow/commit/e746adbfcfee15e9cfdb391ff746c765b99bdf9b,2.5.2,https://github.com/tensorflow/tensorflow/commit/333851d98583dede73be52692d37a22af74f1d8d,1,"diff --git a/tensorflow/core/kernels/image/decode_image_op.cc b/tensorflow/core/kernels/image/decode_image_op.cc
 index 4573b4db0f46ca..a0345b7e0b79b0 100644
 --- a/tensorflow/core/kernels/image/decode_image_op.cc
@@ -5572,7 +5585,7 @@ index 61b126fb81e3cb..4398378d13429c 100644
        OP_REQUIRES(context, false,
                    errors::InvalidArgument(""PNG size too large for int: "",
                                            decode.width, "" by "", decode.height));
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2022-23583: TensorFlow - Denial of Service Vulnerability,2.5.3,https://github.com/tensorflow/tensorflow/commit/a7c02f1a9bbc35473969618a09ee5f9f5d3e52d9,2.5.2,https://github.com/tensorflow/tensorflow/commit/ae47a00c64be123549f60840c5ce5b7faa008040,1,"diff --git a/tensorflow/core/kernels/cwise_ops_common.h b/tensorflow/core/kernels/cwise_ops_common.h
 index ed4125f45579f3..fa48717ab1c285 100644
 --- a/tensorflow/core/kernels/cwise_ops_common.h
@@ -5617,7 +5630,7 @@ index 4f2c83322ba00f..27fcbf2f33973c 100644
      const Device& eigen_device = ctx->eigen_device<Device>();
      bool error = false;
      bool* const error_ptr = Functor::has_errors ? &error : nullptr;
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2022-23580: TensorFlow - Large Vector Allocation Vulnerability,2.5.3,https://github.com/tensorflow/tensorflow/commit/1361fb7e29449629e1df94d44e0427ebec8c83c7,2.5.2,https://github.com/tensorflow/tensorflow/commit/f651ee38eabf538c9add10d88176ba278553c6dc,1,"diff --git a/tensorflow/core/framework/shape_inference.cc b/tensorflow/core/framework/shape_inference.cc
 index 077837721ae4fa..3316759aed5a7d 100644
 --- a/tensorflow/core/framework/shape_inference.cc
@@ -5684,7 +5697,7 @@ index 721c20b7491aa0..21c6f5feae4775 100644
      std::vector<DimensionHandle> dims;
      dims.reserve(num_dims);
      for (int i = 0; i < num_dims; i++) dims.push_back(UnknownDim());
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2022-23579: Denial of Service Vulnerability in TensorFlow,2.5.3,https://github.com/tensorflow/tensorflow/commit/92dba16749fae36c246bec3f9ba474d9ddeb7662,2.5.2,https://github.com/tensorflow/tensorflow/commit/d937317d0afcdff1aeae945d75d8d6f3bb851c75,1,"diff --git a/tensorflow/core/grappler/optimizers/dependency_optimizer.cc b/tensorflow/core/grappler/optimizers/dependency_optimizer.cc
 index aadea833a4fc48..bfd98a58a77718 100644
 --- a/tensorflow/core/grappler/optimizers/dependency_optimizer.cc
@@ -5719,7 +5732,7 @@ index 1be7f2692e0f76..0f1bbb729edd23 100644
    // Don't remove Identity nodes corresponding to Variable reads or following
    // Recv.
    if (IsVariable(*input) || IsRecv(*input)) {
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2022-23578: TensorFlow Memory Leak in ImmutableExecutorState::Initialize,2.5.3,https://github.com/tensorflow/tensorflow/commit/c79ccba517dbb1a0ccb9b01ee3bd2a63748b60dd,2.5.2,https://github.com/tensorflow/tensorflow/commit/9087d93aa5d14cd48a062ab91af022b406cfeb67,1,"diff --git a/tensorflow/core/common_runtime/immutable_executor_state.cc b/tensorflow/core/common_runtime/immutable_executor_state.cc
 index 1f728334e2b7ee..25822540f024ae 100644
 --- a/tensorflow/core/common_runtime/immutable_executor_state.cc
@@ -5744,7 +5757,7 @@ index 3cde56bc85ab81..6af8c5f74c1eca 100644
        item->kernel = nullptr;
        s = AttachDef(s, *n);
        return s;
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 "CVE-2022-23577: TensorFlow - Null Pointer Dereference in GetInitOp
 ",2.5.3,https://github.com/tensorflow/tensorflow/commit/4f38b1ac8e42727e18a2f0bde06d3bee8e77b250,2.5.2,https://github.com/tensorflow/tensorflow/commit/f8f445a84a7cda4cccfab689be09c9f82b41943c,1,"diff --git a/tensorflow/cc/saved_model/loader_util.cc b/tensorflow/cc/saved_model/loader_util.cc
 index 100cae2291333f..411dc41fd44837 100644
@@ -5790,7 +5803,7 @@ index 100cae2291333f..411dc41fd44837 100644
      return Status::OK();
    }
  
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2022-23573: TensorFlow - Uninitialized Data Copying in AssignOp,2.5.3,https://github.com/tensorflow/tensorflow/commit/ef1d027be116f25e25bb94a60da491c2cf55bd0b,2.5.2,https://github.com/tensorflow/tensorflow/commit/5e61ce1bbc8b2c316bb121fcb032ab51c744e99a,1,"diff --git a/tensorflow/core/kernels/assign_op.h b/tensorflow/core/kernels/assign_op.h
 index ca822a58cdacc4..1e84436b27e0d8 100644
 --- a/tensorflow/core/kernels/assign_op.h
@@ -5825,7 +5838,7 @@ index 74f926bdc88bf7..8aa56e2e29ed0b 100644
      // We can't always know how this value will be used downstream, so make
      // conservative assumptions in specifying constraints on the memory
      // allocation attributes, unless the Grappler graph analysis determined that
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2022-23571: TensorFlow - Denial of Service Vulnerability,2.5.3,https://github.com/tensorflow/tensorflow/commit/5b491cd5e41ad63735161cec9c2a568172c8b6a3,2.5.2,https://github.com/tensorflow/tensorflow/commit/5b00aca9dfa4985fe74982b4101bbe822a52fbc5,2,"diff --git a/tensorflow/core/framework/tensor.cc b/tensorflow/core/framework/tensor.cc
 index 8ae9fd0051652c..c7a08ee0808043 100644
 --- a/tensorflow/core/framework/tensor.cc
@@ -5866,7 +5879,7 @@ index 167ba5e6587be2..9fd1946fee045f 100644
    }
    shape_ = shape;
    set_dtype(proto.dtype());
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 "CVE-2022-23570: TensorFlow Null-Dereference Vulnerability
 ",2.6.3,https://github.com/tensorflow/tensorflow/commit/8a513cec4bec15961fbfdedcaa5376522980455c,2.5.2,https://github.com/tensorflow/tensorflow/commit/106ae0ea68d768dce3f1258c0b80a901d07f41d7,1,"diff --git a/tensorflow/core/framework/full_type_util.cc b/tensorflow/core/framework/full_type_util.cc
 index 5d2b33c3099341..e0d8ca0721c850 100644
@@ -5918,7 +5931,7 @@ index bf2f4fb93a02fe..735255a1b41a4f 100644
          if (attr->value_case() == AttrValue::kList) {
            const auto& attr_list = attr->list();
            arg->set_type_id(TFT_PRODUCT);
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 "CVE-2022-23565: Denial of Service Vulnerability in TensorFlow
 ",2.5.3,https://github.com/tensorflow/tensorflow/commit/c2b31ff2d3151acb230edc3f5b1832d2c713a9e0,2.5.2,https://github.com/tensorflow/tensorflow/commit/b7b1a154aeeffd605c89c502a1a86e0caf4dee6f,2,"diff --git a/tensorflow/core/framework/op_def_util.cc b/tensorflow/core/framework/op_def_util.cc
 index dcbe5f38ce88ea..6127913d9ba1f0 100644
@@ -5956,7 +5969,7 @@ index 486f92b3b20fdb..8500f247bf0712 100644
      a1_set[def.name()] = &def;
    }
    for (const OpDef::AttrDef& def : a2) {
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 "CVE-2022-23564: TensorFlow Resource Handle Tensor Decoding Denial of Service
 ",2.5.3,https://github.com/tensorflow/tensorflow/commit/14fea662350e7c26eb5fe1be2ac31704e5682ee6,2.5.2,https://github.com/tensorflow/tensorflow/commit/18c1769002022f5ad34c1208e92fc26d32c15d67,2,"diff --git a/tensorflow/core/framework/BUILD b/tensorflow/core/framework/BUILD
 index 838f3f52a4bfb7..3dd93fd9028665 100644
@@ -6299,7 +6312,7 @@ index 167ba5e6587be2..c047d80b0160b7 100644
  template <>
  TensorBuffer* FromProtoField<Variant>(Allocator* a, const TensorProto& in,
                                        int64 n) {
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2022-23562: TensorFlow - Integer Overflow in Range Implementation,2.5.3,https://github.com/tensorflow/tensorflow/commit/f0147751fd5d2ff23251149ebad9af9f03010732,2.5.2,https://github.com/tensorflow/tensorflow/commit/0539b693d2c6d393f1360b833b1caa27805045d0,3,"diff --git a/tensorflow/core/kernels/sequence_ops.cc b/tensorflow/core/kernels/sequence_ops.cc
 index 7e6f688edf4f70..4ea36e9837ae0c 100644
 --- a/tensorflow/core/kernels/sequence_ops.cc
@@ -6424,7 +6437,7 @@ index 14df684bebb3f6..d13721146b5ca9 100644
          v = math_ops.range(start=-1e+38, limit=1)
          self.evaluate(v)
  
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 "CVE-2022-23561: TensorFlow TFLite Model Arbitrary Write Vulnerability
 ",2.5.3,https://github.com/tensorflow/tensorflow/commit/6c0b2b70eeee588591680f5b7d5d38175fd7cdf6,2.5.2,https://github.com/tensorflow/tensorflow/commit/b4bd44c0450648338b3348901125f6194319fae0,2,"diff --git a/tensorflow/lite/kernels/fully_connected.cc b/tensorflow/lite/kernels/fully_connected.cc
 index 8d59a2cbd5a692..8b9f74f623ec68 100644
@@ -6594,7 +6607,7 @@ index e9d5d3dc6a5507..a97415e3f908dc 100644
              CpuBackendContext::GetFromContext(context));
        } else {
          TF_LITE_KERNEL_LOG(context,
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 "CVE-2022-23558: Integer Overflow in TensorFlow
 ",2.5.3,https://github.com/tensorflow/tensorflow/commit/a1e1511dde36b3f8aa27a6ec630838e7ea40e091,2.5.2,https://github.com/tensorflow/tensorflow/commit/78988db304f9a1fef8cad02d564a4f05a05ac74c,5,"diff --git a/tensorflow/lite/c/common.c b/tensorflow/lite/c/common.c
 index ef4d3ffdec555d..d149d22c567c53 100644
@@ -6670,7 +6683,7 @@ index 56e0f8d54f1ddf..9697310e2cd225 100644
  
  #ifndef TF_LITE_STATIC_MEMORY
  // Create a array of a given `size` (uninitialized entries).
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 "CVE-2022-21740: TensorFlow - Heap Overflow in SparseCountSparseOutput
 ",2.5.3,https://github.com/tensorflow/tensorflow/commit/2b7100d6cdff36aa21010a82269bc05a6d1cc74a,2.5.2,https://github.com/tensorflow/tensorflow/commit/c4d4e344a28d063d4c9877b8ef6a56de3d19e791,5,"diff --git a/tensorflow/core/kernels/count_ops.cc b/tensorflow/core/kernels/count_ops.cc
 index 5330c36361e5e6..1f99e0783e26f6 100644
@@ -6793,7 +6806,7 @@ index 40aa1fe458c1ee..a71b9ffa7b07cf 100644
      bool is_1d = shape.NumElements() == 1;
      auto shape_vector = shape.flat<int64>();
      int num_batches = is_1d ? 1 : shape_vector(0);
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 "CVE-2022-21738: TensorFlow - Integer Overflow leading to Memory Allocation Crash
 ",2.5.3,https://github.com/tensorflow/tensorflow/commit/6f4d3e8139ec724dbbcb40505891c81dd1052c4a,2.5.2,https://github.com/tensorflow/tensorflow/commit/613bef16c399a62bc88d5fa9b213eabb263aef4a,2,"diff --git a/tensorflow/core/kernels/count_ops.cc b/tensorflow/core/kernels/count_ops.cc
 index cc101b66f81403..3f9df8f0d69d69 100644
@@ -6863,7 +6876,7 @@ index b0742eb19c4f4e..28c9cae9660ce8 100644
  
      for (int b = 0; b < shape_vector.size(); b++) {
        OP_REQUIRES(context, shape_vector(b) >= 0,
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 "CVE-2022-21737: TensorFlow - Denial of Service Vulnerability
 ",2.5.3,https://github.com/tensorflow/tensorflow/commit/7019ce4f68925fd01cdafde26f8d8c938f47e6f9,2.5.2,https://github.com/tensorflow/tensorflow/commit/7c11b9fbd9f475aece85dd8506ef81dfe2f2e712,2,"diff --git a/tensorflow/core/kernels/bincount_op.cc b/tensorflow/core/kernels/bincount_op.cc
 index 0f661dd9f201a6..aad11a45a09b6c 100644
@@ -7127,7 +7140,7 @@ index 4ca81333ab35fb..f08944c865dad6 100644
  
  if __name__ == ""__main__"":
    googletest.main()
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 "CVE-2022-21736: TensorFlow - SparseTensorSliceDataset Null Pointer Dereference
 ",2.5.3,https://github.com/tensorflow/tensorflow/commit/965b97e4a9650495cda5a8c210ef6684b4b9eceb,2.5.2,https://github.com/tensorflow/tensorflow/commit/f1dae2039bbc57dac89e28e64d100a06e912befe,2,"diff --git a/tensorflow/core/kernels/data/sparse_tensor_slice_dataset_op.cc b/tensorflow/core/kernels/data/sparse_tensor_slice_dataset_op.cc
 index c8f3db30c37f4d..c6901de5c34267 100644
@@ -7295,7 +7308,7 @@ index ea81b7df1bca8b..f6ba69cdf5b909 100644
    @combinations.generate(combinations.combine(tf_api_version=2, mode=[""eager""]))
    def testFromSparseTensorSlicesError(self):
      with self.assertRaises(AttributeError):
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 "CVE-2022-21734: TensorFlow MapStage Key Tensor Vulnerability
 ",2.5.3,https://github.com/tensorflow/tensorflow/commit/f57315566d7094f322b784947093406c2aea0d7d,2.5.2,https://github.com/tensorflow/tensorflow/commit/d0953c835645d70521ee8d3d19602553516494c0,2,"diff --git a/tensorflow/core/kernels/map_stage_op.cc b/tensorflow/core/kernels/map_stage_op.cc
 index aee53ae78d3af8..463e2a8ced5c2d 100644
@@ -8122,7 +8135,7 @@ index 516fc37517ca57..8600ad1f8d726b 100644
  
    @test_util.run_deprecated_v1
    def testPartialIndexInsert(self):
--    with ops.Graph().as_default() as",,,,,,,,,,,,,,
+-    with ops.Graph().as_default() as",,,,,,,,,,,,,,,,,
 "CVE-2022-21733: TensorFlow - Denial of Service Vulnerability
 ",2.5.3,https://github.com/tensorflow/tensorflow/commit/f68fdab93fb7f4ddb4eb438c8fe052753c9413e8,2.5.2,https://github.com/tensorflow/tensorflow/commit/0cc666d294ebc3e0b65c4ffe1dc4a9e8bd4f2edf,1,"diff --git a/tensorflow/core/kernels/string_ngrams_op.cc b/tensorflow/core/kernels/string_ngrams_op.cc
 index 6acf846f95812f..07904fa04019ff 100644
@@ -8266,7 +8279,7 @@ index 6706ef194b221a..d2000076dad5a3 100644
    def testGetSessionHandle(self):
      if context.executing_eagerly():
        with self.assertRaisesRegex(
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 "CVE-2022-21732: Denial of Service Vulnerability in TensorFlow
 ",2.5.3,https://github.com/tensorflow/tensorflow/commit/e3749a6d5d1e8d11806d4a2e9cc3123d1a90b75e,2.5.2,https://github.com/tensorflow/tensorflow/commit/2350236983b10608231422d7d6bd636cdd85348d,1,"diff --git a/tensorflow/core/kernels/data/experimental/threadpool_dataset_op.cc b/tensorflow/core/kernels/data/experimental/threadpool_dataset_op.cc
 index c58e5f68e6c6c6..fefaf8249b76bc 100644
@@ -8384,7 +8397,7 @@ index 464c049743a76b..1a7da98987fba9 100644
    *output = new Dataset(ctx, input, num_threads);
  }
  
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2022-21730: TensorFlow - FractionalAvgPoolGrad Heap Read Out-of-Bounds,2.5.3,https://github.com/tensorflow/tensorflow/commit/002408c3696b173863228223d535f9de72a101a9,2.5.2,https://github.com/tensorflow/tensorflow/commit/5bc6d47d2df9a9726db757c963fcd71936439378,2,"diff --git a/tensorflow/core/kernels/fractional_avg_pool_op.cc b/tensorflow/core/kernels/fractional_avg_pool_op.cc
 index afc72287edadc1..b3e65aeaee22f8 100644
 --- a/tensorflow/core/kernels/fractional_avg_pool_op.cc
@@ -8533,7 +8546,7 @@ index 0d5928aefacf5a..54be2f4844f12c 100644
  
  class FractionalAvgPoolGradTest(test.TestCase):
    """"""Tests for FractionalAvgPoolGrad.
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 "CVE-2022-21729: TensorFlow - Division by Zero Vulnerability
 ",2.5.3,https://github.com/tensorflow/tensorflow/commit/58b34c6c8250983948b5a781b426f6aa01fd47af,2.5.2,https://github.com/tensorflow/tensorflow/commit/b0bdff03f4f983b8b646e8c9639c469e6e0a5074,1,"diff --git a/tensorflow/core/kernels/unravel_index_op.cc b/tensorflow/core/kernels/unravel_index_op.cc
 index cff04387d60247..b8524e87598ceb 100644
@@ -8715,7 +8728,7 @@ index 4ed08c532908c4..97ff2f539b1c92 100644
  
  class GuaranteeConstOpTest(test_util.TensorFlowTestCase):
  
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 "CVE-2022-21728: TensorFlow - Heap Out-of-Bounds Read in ReverseSequence Shape Inference
 ",2.5.3,https://github.com/tensorflow/tensorflow/commit/37c01fb5e25c3d80213060460196406c43d31995,2.5.2,https://github.com/tensorflow/tensorflow/commit/8e7a27c769de3df3341c4c4be5db409fd3cf81a5,2,"diff --git a/tensorflow/core/ops/array_ops.cc b/tensorflow/core/ops/array_ops.cc
 index bcdc6643c89adb..1a88b16b865dd4 100644
@@ -8769,7 +8782,7 @@ index 90bc2cecd0b869..0155a17048957f 100644
        DimensionHandle batch_dim_dim = c->Dim(input, batch_dim);
        TF_RETURN_IF_ERROR(
            c->Merge(batch_dim_dim, c->Dim(seq_lens_shape, 0), &batch_dim_dim));
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 "CVE-2022-21727: Integer Overflow Vulnerability in TensorFlow
 ",2.5.3,https://github.com/tensorflow/tensorflow/commit/b64638ec5ccaa77b7c1eb90958e3d85ce381f91b,2.5.2,https://github.com/tensorflow/tensorflow/commit/ab44982f55d13d03d003b1bcbc7c77d3b27a8df1,2,"diff --git a/tensorflow/core/ops/array_ops.cc b/tensorflow/core/ops/array_ops.cc
 index 1a88b16b865dd4..8c76caf4f0fed4 100644
@@ -8901,7 +8914,7 @@ index e8dd2500078a1d..4ed08c532908c4 100644
  
  @test_util.run_all_in_graph_and_eager_modes
  class SortedSearchTest(test_util.TensorFlowTestCase):
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 "CVE-2022-21726: TensorFlow - Heap Out-of-Bounds Access in Dequantize
 ",2.5.3,https://github.com/tensorflow/tensorflow/commit/23968a8bf65b009120c43b5ebcceaf52dbc9e943,2.5.2,https://github.com/tensorflow/tensorflow/commit/0e152251b3ce5e98745569d78f604f282a75d19c,1,"diff --git a/tensorflow/core/kernels/dequantize_op.cc b/tensorflow/core/kernels/dequantize_op.cc
 index 31a7a7498cf0c8..0a466f1cf118e2 100644
@@ -8935,7 +8948,7 @@ index 7a90e0c340b093..ddb70167b58852 100644
      int num_slices = 1;
      if (axis_ > -1) {
        num_slices = input.dim_size(axis_);
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2022-21725: TensorFlow - Division by 0 in Convolution Operations,2.5.3,https://github.com/tensorflow/tensorflow/commit/3218043d6d3a019756607643cf65574fbfef5d7a,2.5.2,https://github.com/tensorflow/tensorflow/commit/ea92968f5770cf84521eb87192d37b072ceff27f,2,"diff --git a/tensorflow/core/grappler/costs/BUILD b/tensorflow/core/grappler/costs/BUILD
 index e306aa1eaccb2b..34bd9c7fc2120c 100644
 --- a/tensorflow/core/grappler/costs/BUILD
@@ -9364,7 +9377,7 @@ index 23373d3dc1b629..eda84ec3276001 100644
  TEST_F(OpLevelCostEstimatorTest, PredictMaxPool) {
    auto predict_max_pool = [this](const int n, const int in, const int c,
                                   const int k, const int s,
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 "CVE-2021-41228: TensorFlow saved_model_cli Code Injection Vulnerability
 ",2.4.4,https://github.com/tensorflow/tensorflow/commit/8b202f08d52e8206af2bdb2112a62fafbc546ec7,2.4.4,https://github.com/tensorflow/tensorflow/commit/fb8d07394fa78888238fcc7c5d860173a299f01d,2,"diff --git a/RELEASE.md b/RELEASE.md
 index 23820977eca765..aba46a1fad9fc2 100644
@@ -9597,7 +9610,7 @@ index 2580cbd73ca0a9..df43ba0bbb65a0 100644
  
    def testInputParserNPY(self):
      x0 = np.array([[1], [2]])
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 "CVE-2021-41227: TensorFlow - Arbitrary Memory Read Vulnerability 1
 ",2.4.4,https://github.com/tensorflow/tensorflow/commit/1cb6bb6c2a6019417c9adaf9e6843ba75ee2580b,2.4.4,https://github.com/tensorflow/tensorflow/commit/14a4c4feb513e2c8f1b2648ccd3ee7d2ca96de66,1,"diff --git a/tensorflow/core/kernels/immutable_constant_op.cc b/tensorflow/core/kernels/immutable_constant_op.cc
 index 19aa865c1fbe4d..df0d76ce633e9b 100644
@@ -9757,7 +9770,7 @@ index d52a8b55a35d79..40ce8918a39ade 100644
 +
  }  // namespace
  }  // namespace tensorflow
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 "CVE-2021-41227: TensorFlow - Arbitrary Memory Read Vulnerability 2
 ",2.4.4,https://github.com/tensorflow/tensorflow/commit/3712a2d3455e6ccb924daa5724a3652a86f6b585,2.4.4,https://github.com/tensorflow/tensorflow/commit/995d2015c6e4e62fe9d8fb8085a245a40c54dbda,1,"diff --git a/tensorflow/core/platform/ctstring_internal.h b/tensorflow/core/platform/ctstring_internal.h
 index be8f7f24a060c8..07fa6636b6171a 100644
@@ -9875,7 +9888,7 @@ index 4d82bcd87c327b..8624cc4ee73b49 100644
 +    TF_TString_Dealloc(&s71);
 +  }
 +}
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2021-41226: TensorFlow - Heap Out-of-Bounds Access in SparseBinCount,2.4.4,https://github.com/tensorflow/tensorflow/commit/f410212e373eb2aec4c9e60bf3702eba99a38aba,2.4.4,https://github.com/tensorflow/tensorflow/commit/553aaa7d49ba9b8d8b3c77b407c4a43724b91f59,1,"diff --git a/tensorflow/core/kernels/bincount_op.cc b/tensorflow/core/kernels/bincount_op.cc
 index 6d668211da0968..0f661dd9f201a6 100644
 --- a/tensorflow/core/kernels/bincount_op.cc
@@ -9918,7 +9931,7 @@ index 258266ab29d33f..6299ca3e3b1d90 100644
          if (bin < size) {
            if (binary_output_) {
              out(batch, bin) = T(1);
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 "CVE-2021-41225: TensorFlow - Use of Uninitialized Variable
 ",2.4.4,https://github.com/tensorflow/tensorflow/commit/68867bf01239d9e1048f98cbad185bf4761bedd3,2.4.4,https://github.com/tensorflow/tensorflow/commit/09e872e27692ab54327de640ef1e80be9d5ed13b,1,"diff --git a/tensorflow/core/grappler/optimizers/auto_parallel.cc b/tensorflow/core/grappler/optimizers/auto_parallel.cc
 index 097a57ce364b61..0865892796b898 100644
@@ -10016,7 +10029,7 @@ index 1c3186f1ee6e68..3af03a09613883 100644
  }  // namespace
  }  // namespace grappler
  }  // namespace tensorflow
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2021-41224: TensorFlow - Heap Out-of-Bounds Access in SparseFillEmptyRows,2.4.4,https://github.com/tensorflow/tensorflow/commit/67bfd9feeecfb3c61d80f0e46d89c170fbee682b,2.4.4,https://github.com/tensorflow/tensorflow/commit/3d59a664553508f8a5a4648dc3f711ecacd61f25,5,"diff --git a/tensorflow/core/kernels/sparse_fill_empty_rows_op.cc b/tensorflow/core/kernels/sparse_fill_empty_rows_op.cc
 index e0c7e18090b66d..59eb6076ed528b 100644
 --- a/tensorflow/core/kernels/sparse_fill_empty_rows_op.cc
@@ -10077,7 +10090,7 @@ index 5b8bff38f3f6b9..243612afe4d331 100644
      OP_REQUIRES(context, TensorShapeUtils::IsScalar(default_value_t.shape()),
                  errors::InvalidArgument(""default_value must be a scalar, saw: "",
                                          default_value_t.shape().DebugString()));
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2021-41222: TensorFlow - Segfault in SplitV Implementation,2.4.4,https://github.com/tensorflow/tensorflow/commit/25d622ffc432acc736b14ca3904177579e733cc6,2.4.4,https://github.com/tensorflow/tensorflow/commit/a93fbaaa22ac82da35791b77f1e22a1bed03291c,2,"diff --git a/tensorflow/core/kernels/split_v_op.cc b/tensorflow/core/kernels/split_v_op.cc
 index 24efc6eff0d670..d7711dad3be10e 100644
 --- a/tensorflow/core/kernels/split_v_op.cc
@@ -10212,7 +10225,7 @@ index 16f92dbd875b15..1658eab4bd63a5 100644
  
  if __name__ == ""__main__"":
    test.main()
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 "CVE-2021-41221: TensorFlow Heap Buffer Overflow
 ",2.4.4,https://github.com/tensorflow/tensorflow/commit/af5fcebb37c8b5d71c237f4e59c6477015c78ce6,2.4.4,https://github.com/tensorflow/tensorflow/commit/3b0945c5841c5d1c0f175e6744c9c902b3cd58f3,1,"diff --git a/tensorflow/core/ops/cudnn_rnn_ops.cc b/tensorflow/core/ops/cudnn_rnn_ops.cc
 index 1dd7659e137fe3..ff6d2852a66271 100644
@@ -10502,7 +10515,7 @@ index 8e8c8193a14a48..91043efa425a0b 100644
  }
  
  }  // end namespace tensorflow
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 "CVE-2021-41219: TensorFlow - Undefined Behavior in Sparse Matrix Multiplication
 ",2.4.4,https://github.com/tensorflow/tensorflow/commit/e6cf28c72ba2eb949ca950d834dd6d66bb01cfae,2.4.4,https://github.com/tensorflow/tensorflow/commit/bb1913db49e304d5750c155314538bd954259b83,1,"diff --git a/tensorflow/core/kernels/sparse_matmul_op.cc b/tensorflow/core/kernels/sparse_matmul_op.cc
 index a02afafa33e3ad..6bf9dfa3d8bb75 100644
@@ -10566,7 +10579,7 @@ index a02afafa33e3ad..6bf9dfa3d8bb75 100644
      if (k == 0) {
        // If the inner dimension k in the matrix multiplication is zero, we fill
        // the output with zeros.
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 "CVE-2021-41218: TensorFlow - Division by 0 in shape inference code for AllToAll
 ",2.4.4,https://github.com/tensorflow/tensorflow/commit/a8ad3e5e79c75f36edb81e0ba3f3c0c5442aeddc,2.4.4,https://github.com/tensorflow/tensorflow/commit/f797399ee821876546109ee5ca66b95b05ee77eb,5,"diff --git a/tensorflow/core/ops/tpu_cross_replica_ops.cc b/tensorflow/core/ops/tpu_cross_replica_ops.cc
 index 045b2dffaf6153..74be53c921a98d 100644
@@ -10797,7 +10810,7 @@ index 8d10d9404d8bde..0858741a4ba491 100644
  def do_einsum():
    a = array_ops.placeholder(dtype=dtypes.float32, name=""a"", shape=[2, 3, 4])
    b = array_ops.placeholder(dtype=dtypes.float32, name=""b"", shape=[2, 4, 5])
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 "CVE-2021-41217: TensorFlow Control Flow Graph Building Null Pointer Exception
 ",2.4.4,https://github.com/tensorflow/tensorflow/commit/05cbebd3c6bb8f517a158b0155debb8df79017ff,2.4.4,https://github.com/tensorflow/tensorflow/commit/ccb9d11983f9ab21aff337733c8b4d958fb648ca,2,"diff --git a/tensorflow/core/common_runtime/immutable_executor_state.cc b/tensorflow/core/common_runtime/immutable_executor_state.cc
 index 3f90d027cf4363..1f728334e2b7ee 100644
@@ -10829,7 +10842,7 @@ index 03d12a0e98abd5..3cde56bc85ab81 100644
        frame_name = cf_info->frame_names[parent->id()];
        parent = parent_nodes[parent->id()];
      } else {
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 "CVE-2021-41214: TensorFlow - Shape Inference Code Null Pointer Dereference
 ",2.4.4,https://github.com/tensorflow/tensorflow/commit/fa6b7782fbb14aa08d767bc799c531f5e1fb3bb8,2.4.4,https://github.com/tensorflow/tensorflow/commit/cd855489617272bba0586b326b25d77a21c8a1d2,5,"diff --git a/tensorflow/core/ops/ragged_array_ops.cc b/tensorflow/core/ops/ragged_array_ops.cc
 index 4e9b820eec2a8c..b86f3968153da9 100644
@@ -11015,7 +11028,7 @@ index 07e5964ba83497..0c2d4df13cf503 100644
  
    def _ragged_to_sparse(self, t):
      if ragged_tensor.is_ragged(t):
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 "CVE-2021-41210: TensorFlow - Out-of-Bounds Read in SparseCountSparseOutput Shape Inference Functions
 ",2.4.4,https://github.com/tensorflow/tensorflow/commit/701cfaca222a82afbeeb17496bd718baa65a67d2,2.4.4,https://github.com/tensorflow/tensorflow/commit/2ab1d39f2577c3c7d370fff984c47264936f5463,1,"diff --git a/tensorflow/core/ops/count_ops.cc b/tensorflow/core/ops/count_ops.cc
 index 4f9631310df924..aa6c0437337af2 100644
@@ -11103,7 +11116,7 @@ index 5bc9bc1ab777cf..1ef5e10e6608f3 100644
  @test_util.run_all_in_graph_and_eager_modes
  @test_util.disable_tfrt
  class RawOpsTest(test.TestCase, parameterized.TestCase):
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 "CVE-2021-41209: TensorFlow - Division by 0 in Convolution Operators
 ",2.4.4,https://github.com/tensorflow/tensorflow/commit/f2c3931113eaafe9ef558faaddd48e00a6606235,2.4.4,https://github.com/tensorflow/tensorflow/commit/d11f21bbdfa54f3576ae860fc927bf23c675ebc0,1,"diff --git a/tensorflow/core/kernels/inplace_ops.cc b/tensorflow/core/kernels/inplace_ops.cc
 index 6cf2337eeacbd7..b53ebf942232be 100644
@@ -11231,7 +11244,7 @@ index 8237ce228af02a..a9a18b0e672505 100644
    def testSimpleParallelGPU(self):
      np.random.seed(7)
      with self.session(use_gpu=True):
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 "CVE-2021-41203: TensorFlow - Checkpoints Loading Infrastructure Validation Bypass 1
 ",2.4.4,https://github.com/tensorflow/tensorflow/commit/368af875869a204b4ac552b9ddda59f6a46a56ec,2.4.4,https://github.com/tensorflow/tensorflow/commit/372a6dbef32d8d2038afe1d42623b8ed91f8d3d6,1,"diff --git a/tensorflow/core/util/saved_tensor_slice_util.h b/tensorflow/core/util/saved_tensor_slice_util.h
 index d0b08b3c294e06..b992061a15df93 100644
@@ -11507,7 +11520,7 @@ index e32af89ea51b9a..eb853886071541 100644
  void CachedTensorSliceReaderTesterHelper(
      const TensorSliceWriter::CreateBuilderFunction& create_function,
      const TensorSliceReader::OpenTableFunction& open_function) {
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 "CVE-2021-41203: TensorFlow - Checkpoints Loading Infrastructure Validation Bypass 2
 ",2.4.4,https://github.com/tensorflow/tensorflow/commit/abcced051cb1bd8fb05046ac3b6023a7ebcc4578,2.4.4,https://github.com/tensorflow/tensorflow/commit/dabeecf8b31e7bb2b69a0db722cd5ddfb2c458d1,2,"diff --git a/tensorflow/core/framework/BUILD b/tensorflow/core/framework/BUILD
 index 88550b3205ff58..11fe921173ae40 100644
@@ -11993,7 +12006,7 @@ index fe617e8e30d67e..6b120a4d357d39 100644
  void CachedTensorSliceReaderTesterHelper(
      const TensorSliceWriter::CreateBuilderFunction& create_function,
      const TensorSliceReader::OpenTableFunction& open_function) {
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 "CVE-2021-41203: TensorFlow - Checkpoints Loading Infrastructure Validation Bypass 3
 ",2.4.4,https://github.com/tensorflow/tensorflow/commit/b619c6f865715ca3b15ef1842b5b95edbaa710ad,2.4.4,https://github.com/tensorflow/tensorflow/commit/54ef718c45a9107556a1f2bcd882c739cf9a89b0,1,"diff --git a/tensorflow/core/util/tensor_slice_reader.cc b/tensorflow/core/util/tensor_slice_reader.cc
 index 00911b13f34914..da5ac17ee0eaef 100644
@@ -12113,7 +12126,7 @@ index 6b120a4d357d39..55ab961183c0fa 100644
  void CachedTensorSliceReaderTesterHelper(
      const TensorSliceWriter::CreateBuilderFunction& create_function,
      const TensorSliceReader::OpenTableFunction& open_function) {
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 "CVE-2021-41203: TensorFlow - Checkpoints Loading Infrastructure Validation Bypass 4
 ",2.4.4,https://github.com/tensorflow/tensorflow/commit/e8dc63704c88007ee4713076605c90188d66f3d2,2.4.4,https://github.com/tensorflow/tensorflow/commit/c5ce903b8092bab7fdf703c88d9cf90231bd22d0,1,"diff --git a/tensorflow/core/framework/tensor_slice.cc b/tensorflow/core/framework/tensor_slice.cc
 index bde1c09e7fce5c..0b3914359062eb 100644
@@ -12471,7 +12484,7 @@ index 55ab961183c0fa..e32af89ea51b9a 100644
  void CachedTensorSliceReaderTesterHelper(
      const TensorSliceWriter::CreateBuilderFunction& create_function,
      const TensorSliceReader::OpenTableFunction& open_function) {
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 "CVE-2021-41202: TensorFlow - Integer Overflow in tf.range Kernel
 ",2.4.4,https://github.com/tensorflow/tensorflow/commit/6d94002a09711d297dbba90390d5482b76113899,2.4.4,https://github.com/tensorflow/tensorflow/commit/4238eb14862f05dcad79a4a37a392a1a068de308,5,"diff --git a/tensorflow/core/kernels/sequence_ops.cc b/tensorflow/core/kernels/sequence_ops.cc
 index 69a5c3f10c65d2..ad1b1471c3006b 100644
@@ -12582,7 +12595,7 @@ index bf2cfeeadd071a..39783bca32150a 100644
  
  # TODO(vrv): move to sequence_ops_test?
  class LinSpaceTest(test.TestCase):
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 "CVE-2021-41201: TensorFlow Uninitialized Variable Access
 ",2.4.4,https://github.com/tensorflow/tensorflow/commit/f09caa532b6e1ac8d2aa61b7832c78c5b79300c6,2.4.4,https://github.com/tensorflow/tensorflow/commit/011e541cdfa2d038e06b12378e91b94a02ef7a62,2,"diff --git a/tensorflow/core/kernels/linalg/einsum_op_impl.h b/tensorflow/core/kernels/linalg/einsum_op_impl.h
 index 5c41e38954d626..6f64334555131c 100644
@@ -12624,7 +12637,7 @@ index b9b2d1f0eae459..2f45c238b67f78 100644
      for (const int label : *output_labels) {
        if (label != kEllipsisLabel)
          output_label_counts->at(label) += 1;
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2021-41200: TensorFlow - Non-scalar Arguments Crash,2.4.4,https://github.com/tensorflow/tensorflow/commit/874bda09e6702cd50bac90b453b50bcc65b2769e,2.4.4,https://github.com/tensorflow/tensorflow/commit/981ea48b86c59c7da416e9e2c8a9381c33452328,5,"diff --git a/tensorflow/core/kernels/summary_kernels.cc b/tensorflow/core/kernels/summary_kernels.cc
 index 26aa2aa70f402c..e121c4e751ac96 100644
 --- a/tensorflow/core/kernels/summary_kernels.cc
@@ -12735,7 +12748,7 @@ index 19138b1372dea6..9fcac4952f6a25 100644
  
  class FileWriterCacheTest(test.TestCase):
    """"""FileWriterCache tests.""""""
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 "CVE-2021-41199: TensorFlow - Crash due to CHECK-failure caused by overflow in tf.image.resize
 ",2.4.4,https://github.com/tensorflow/tensorflow/commit/e5272d4204ff5b46136a1ef1204fc00597e21837,2.4.4,https://github.com/tensorflow/tensorflow/commit/44b73fbecd066977d598def0dd7ad41b43bcfa41,5,"diff --git a/tensorflow/core/util/image_resizer_state.h b/tensorflow/core/util/image_resizer_state.h
 index 31764bdd87976d..48e51705b47435 100644
@@ -12826,7 +12839,7 @@ index 320facf5afa2d1..7f361a489aec3f 100644
  
  class ResizeImagesTest(test_util.TensorFlowTestCase,
                         parameterized.TestCase):
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 "CVE-2021-41198: TensorFlow - Crash due to CHECK-failure caused by overflow in tf.tile
 ",2.4.4,https://github.com/tensorflow/tensorflow/commit/9294094df6fea79271778eb7e7ae1bad8b5ef98f,2.4.4,https://github.com/tensorflow/tensorflow/commit/c98c7233d9b61cc0f814e07825c2a35513e3cbe2,1,"diff --git a/tensorflow/core/kernels/tile_ops.cc b/tensorflow/core/kernels/tile_ops.cc
 index 90cd36ad4dee27..f86bd4139b996a 100644
@@ -12900,7 +12913,7 @@ index 5a165c9454230c..38d69be486fe67 100644
  
  if __name__ == ""__main__"":
    test.main()
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 "CVE-2021-41197: TensorFlow - Integer Overflow Vulnerability 1
 ",2.4.4,https://github.com/tensorflow/tensorflow/commit/7c1692bd417eb4f9b33ead749a41166d6080af85,2.4.4,https://github.com/tensorflow/tensorflow/commit/a769c83f087f999d9760864cb6bd1031ca41e670,2,"diff --git a/tensorflow/core/kernels/image/crop_and_resize_op.cc b/tensorflow/core/kernels/image/crop_and_resize_op.cc
 index b6c49335ebff7b..0fd905acabda3e 100644
@@ -13040,7 +13053,7 @@ index 7f361a489aec3f..ef3a4153d5ce6b 100644
    @parameterized.named_parameters(
        (""_jpeg"", ""JPEG"", ""jpeg_merge_test1.jpg""),
        (""_png"", ""PNG"", ""lena_rgba.png""),
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 "CVE-2021-41197: TensorFlow - Integer Overflow Vulnerability 2
 ",2.4.4,https://github.com/tensorflow/tensorflow/commit/a871989d7b6c18cdebf2fb4f0e5c5b62fbc19edf,2.4.4,https://github.com/tensorflow/tensorflow/commit/62ffb2b5c8c7fa8bbdf5bcb00731f4141f9908b7,5,"diff --git a/tensorflow/core/kernels/image/attention_ops.cc b/tensorflow/core/kernels/image/attention_ops.cc
 index 9a0513931ce258..60f6d9070dd55d 100644
@@ -13142,7 +13155,7 @@ index 804a0b20cc9dd4..fd83f4f6510c63 100644
  
  if __name__ == '__main__':
    test.main()
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 "CVE-2021-41197: TensorFlow - Integer Overflow Vulnerability 3
 ",2.4.4,https://github.com/tensorflow/tensorflow/commit/d81b1351da3e8c884ff836b64458d94e4a157c15,2.4.4,https://github.com/tensorflow/tensorflow/commit/948e2c54c8e366af1943d2ed23f8f9e23b8e5b25,5,"diff --git a/tensorflow/core/kernels/pad_op.cc b/tensorflow/core/kernels/pad_op.cc
 index 20fd061ae0aff8..a0a6a2f2f3c8a6 100644
@@ -13227,7 +13240,7 @@ index 7f361a489aec3f..e39cd8c2acfc32 100644
  
  class SelectDistortedCropBoxTest(test_util.TensorFlowTestCase):
  
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 "CVE-2021-41195: TensorFlow - Denial of Service Vulnerability
 ",2.4.4,https://github.com/tensorflow/tensorflow/commit/e9c81c1e1a9cd8dd31f4e83676cab61b60658429,2.4.4,https://github.com/tensorflow/tensorflow/commit/d8bc8f15f5bd889d003e45b5bb07117a2a6fe5ff,2,"diff --git a/tensorflow/core/kernels/segment_reduction_ops_impl.h b/tensorflow/core/kernels/segment_reduction_ops_impl.h
 index e257321fdc65ff..a44ede6dbe5319 100644
@@ -13333,7 +13346,7 @@ index 6a9350bd3dafb2..5da824e0d406b7 100644
  
  class UnsortedSegmentTest(SegmentReductionHelper):
  
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 "CVE-2021-37688: TensorFlow Null Pointer Dereference Denial of Service
 ",2.3.4,https://github.com/tensorflow/tensorflow/commit/15691e456c7dc9bd6be203b09765b063bf4a380c,2.3.4,https://github.com/tensorflow/tensorflow/commit/14f52ca726de725b7e6b15f1783ae9ea3b197227,2,"diff --git a/tensorflow/lite/kernels/internal/optimized/optimized_ops.h b/tensorflow/lite/kernels/internal/optimized/optimized_ops.h
 index 241405a6bbae19..296b3923a257a9 100644
@@ -13361,7 +13374,7 @@ index 528eea3d698678..964bd840d612b0 100644
      // Special case of y4 == 1, in which the innermost loop is a single
      // element and can be combined with the next (y3) as an inner broadcast.
      //
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 "CVE-2021-37685: TensorFlow - Out-of-bounds Read Vulnerability
 ",2.3.4,https://github.com/tensorflow/tensorflow/commit/d94ffe08a65400f898241c0374e9edc6fa8ed257,2.3.4,https://github.com/tensorflow/tensorflow/commit/7ee8e39cde1395f94fc0010e43ece6f282df3a35,2,"diff --git a/tensorflow/lite/kernels/expand_dims.cc b/tensorflow/lite/kernels/expand_dims.cc
 index 231ba6df8ba735..c8d0270551c192 100644
@@ -13387,7 +13400,7 @@ index 721ab3d510a526..6db2830ea12e78 100644
  
    TfLiteIntArray* output_dims = TfLiteIntArrayCreate(input_dims.size + 1);
    for (int i = 0; i < output_dims->size; ++i) {
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 "CVE-2021-37679: TensorFlow - Uninitialized Memory Leak in tf.map_fn
 ",2.3.4,https://github.com/tensorflow/tensorflow/commit/4e2565483d0ffcadc719bd44893fb7f609bb5f12,2.3.4,https://github.com/tensorflow/tensorflow/commit/88e31ad134083c01b00f329b867d2973c0871625,2,"diff --git a/tensorflow/core/kernels/ragged_tensor_from_variant_op.cc b/tensorflow/core/kernels/ragged_tensor_from_variant_op.cc
 index d9993bb6d3907a..c481d90638e4e2 100644
@@ -13533,7 +13546,7 @@ index 9e74de4bc358dc..4808a10f86e8c1 100644
  
  if __name__ == '__main__':
    googletest.main()
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2021-37677: TensorFlow - Denial of Service Vulnerability,2.3.4,https://github.com/tensorflow/tensorflow/commit/da857cfa0fde8f79ad0afdbc94e88b5d4bbec764,2.3.4,https://github.com/tensorflow/tensorflow/commit/ad9bb3e9d78d2f659963d0ccaaef52f91a210706,2,"diff --git a/tensorflow/core/ops/array_ops.cc b/tensorflow/core/ops/array_ops.cc
 index 626afd58603705..3bd6f8a1038721 100644
 --- a/tensorflow/core/ops/array_ops.cc
@@ -13564,7 +13577,7 @@ index 11bfb9a3346d04..ad11e0b7d64639 100644
        const int minmax_rank = (axis == -1) ? 0 : 1;
        TF_RETURN_IF_ERROR(shape_inference::UnchangedShape(c));
        ShapeHandle minmax;
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 "CVE-2021-37670: TensorFlow - Out-of-Bounds Read Vulnerability
 ",2.3.4,https://github.com/tensorflow/tensorflow/commit/42459e4273c2e47a3232cc16c4f4fff3b3a35c38,2.3.4,https://github.com/tensorflow/tensorflow/commit/368f287936c1ffe815de945fcde81b7077d11e9e,1,"diff --git a/tensorflow/core/kernels/searchsorted_op.cc b/tensorflow/core/kernels/searchsorted_op.cc
 index 01e221dc471c4d..5f075a6a540e9f 100644
@@ -13618,7 +13631,7 @@ index 01e221dc471c4d..5f075a6a540e9f 100644
      // must have same batch dim_size for both
      OP_REQUIRES(ctx, sorted_inputs_t.dim_size(0) == values_t.dim_size(0),
                  Status(error::INVALID_ARGUMENT,
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 "CVE-2021-37667: TensorFlow - Null Pointer Dereference in tf.raw_ops.UnicodeEncode
 ",2.3.4,https://github.com/tensorflow/tensorflow/commit/2e0ee46f1a47675152d3d865797a18358881d7a6,2.3.4,https://github.com/tensorflow/tensorflow/commit/1ed1a632a2a525cd5bf05ea1793ef320079f16b5,1,"diff --git a/tensorflow/core/kernels/unicode_ops.cc b/tensorflow/core/kernels/unicode_ops.cc
 index 301cdf932ba608..d4153e04e4f94f 100644
@@ -13650,7 +13663,7 @@ index e6c8f4dfc42284..ab09dbe1d54293 100644
      // Operation will treat first argument in input_splits as if it were zero
      // regardless of its actual value since splits should begin with zero and
      // end with the length of the input values vector.
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 "CVE-2021-37664: TensorFlow - Out-of-Bounds Read Vulnerability
 ",2.3.4,https://github.com/tensorflow/tensorflow/commit/e84c975313e8e8e38bb2ea118196369c45c51378,2.3.4,https://github.com/tensorflow/tensorflow/commit/3366e13671d43a248d9bdbea151407587f1b3f05,2,"diff --git a/tensorflow/core/kernels/boosted_trees/stats_ops.cc b/tensorflow/core/kernels/boosted_trees/stats_ops.cc
 index 014c2ec22c9cf6..2636909855a386 100644
@@ -13688,7 +13701,7 @@ index 851e5b78e847b7..41fce815e70be3 100644
        std::pair<FeatureMapIterator, bool> const& f_insert_result = f_map.insert(
            FeatureMapIterator::value_type(feature_dim, BucketMap()));
        auto& b_map = f_insert_result.first->second;
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 "CVE-2021-37655: TensorFlow - Out-of-Bounds Read Vulnerability
 ",2.3.4,https://github.com/tensorflow/tensorflow/commit/01cff3f986259d661103412a20745928c727326f,2.3.4,https://github.com/tensorflow/tensorflow/commit/ceaa513cd6b10ac4e50d32cc2c96877563683817,2,"diff --git a/tensorflow/core/kernels/resource_variable_ops.cc b/tensorflow/core/kernels/resource_variable_ops.cc
 index 8b9610724e5826..b81a7a517ea6d2 100644
@@ -13734,7 +13747,7 @@ index 56cf9b1bf0370e..f75cc50a8df752 100644
          auto updates_flat = updates.shaped<T, 2>({N, num_updates / N});
  
          functor::ScatterFunctor<Device, T, Index, op> functor;
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 "CVE-2021-37653: TensorFlow - Floating Point Exception in ResourceGather
 ",2.3.4,https://github.com/tensorflow/tensorflow/commit/ac117ee8a8ea57b73d34665cdf00ef3303bc0b11,2.3.4,https://github.com/tensorflow/tensorflow/commit/42828224443dac005f03aa593087f80990869417,2,"diff --git a/tensorflow/core/kernels/resource_variable_ops.cc b/tensorflow/core/kernels/resource_variable_ops.cc
 index 32a0a43364deae..8b9610724e5826 100644
@@ -13802,7 +13815,7 @@ index e056d9cb0f9d4a..5621e7bf7435c1 100644
  
      auto indices_flat = indices->flat<Index>();
      int64 const index_inner_size = indices->NumElements() / batch_size;
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 "CVE-2021-37651: TensorFlow - Heap Buffer Overflow in tf.raw_ops.FractionalAvgPoolGrad
 ",2.3.4,https://github.com/tensorflow/tensorflow/commit/0f931751fb20f565c4e94aa6df58d54a003cdb30,2.3.4,https://github.com/tensorflow/tensorflow/commit/c91ba1ce78af68d1918cb1709b973d2ebcff1b50,1,"diff --git a/tensorflow/core/kernels/fractional_avg_pool_op.cc b/tensorflow/core/kernels/fractional_avg_pool_op.cc
 index 3c80e87bcf76dc..63f8d67d93cc47 100644
@@ -13850,7 +13863,7 @@ index 0452638a066795..7c396126427473 100644
  
      constexpr int tensor_in_and_out_dims = 4;
      // Transform orig_input_tensor_shape into TensorShape
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 "CVE-2021-37646: TensorFlow Integer Overflow in StringNGrams
 ",2.3.4,https://github.com/tensorflow/tensorflow/commit/c283e542a3f422420cfdb332414543b62fc4e4a5,2.3.4,https://github.com/tensorflow/tensorflow/commit/295d88b8872fe48adeae26db1b4f16ed6f8f6a06,1,"diff --git a/tensorflow/core/kernels/string_ngrams_op.cc b/tensorflow/core/kernels/string_ngrams_op.cc
 index 7008a1d766af25..97af9abc4454ac 100644
@@ -13886,7 +13899,7 @@ index 7008a1d766af25..97af9abc4454ac 100644
      const tensorflow::Tensor* data;
      OP_REQUIRES_OK(context, context->input(""data"", &data));
      const auto& input_data = data->flat<tstring>().data();
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 "CVE-2021-37641: TensorFlow - Out-of-Bounds Read in tf.raw_ops.RaggedGather
 ",2.3.4,https://github.com/tensorflow/tensorflow/commit/a2b743f6017d7b97af1fe49087ae15f0ac634373,2.3.4,https://github.com/tensorflow/tensorflow/commit/79151cda53f4372bbfc2381bd6948820d8bafa9b,1,"diff --git a/tensorflow/core/kernels/ragged_gather_op.cc b/tensorflow/core/kernels/ragged_gather_op.cc
 index 3bf82cba050e3b..d6d51c770bbb7a 100644
@@ -13942,7 +13955,7 @@ index 88c0d1ebd6959b..5939b4120beeca 100644
      SPLITS_TYPE num_params = params_nested_splits_in[0].dim_size(0) - 1;
      OP_REQUIRES_OK(context, ValidateIndices(indices_in, num_params));
  
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 "CVE-2021-37638: TensorFlow - Invalid Argument Null Pointer Dereference
 ",2.3.4,https://github.com/tensorflow/tensorflow/commit/301ae88b331d37a2a16159b65b255f4f9eb39314,2.3.4,https://github.com/tensorflow/tensorflow/commit/716a669358b643e0bba3589ca9af6b718bdba3b2,1,"diff --git a/tensorflow/core/kernels/ragged_tensor_to_tensor_op.cc b/tensorflow/core/kernels/ragged_tensor_to_tensor_op.cc
 index b79a07e67ba913..1749a6e24784d6 100644
@@ -13972,7 +13985,7 @@ index 8905647fa6b64f..bffa35875e553d 100644
      const RowPartitionType first_partition_type = row_partition_types_[0];
      switch (first_partition_type) {
        case RowPartitionType::FIRST_DIM_SIZE:
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2021-29614: TensorFlow - Incorrect Results and Python Interpreter Crash in tf.io.decode_raw,2.1.4,https://github.com/tensorflow/tensorflow/commit/698e01511f62a3c185754db78ebce0eee1f0184d,2.1.4,https://github.com/tensorflow/tensorflow/commit/12cb728414cff2057212695086b4049701def23c,1,"diff --git a/tensorflow/core/kernels/decode_padded_raw_op.cc b/tensorflow/core/kernels/decode_padded_raw_op.cc
 index 12e8ec6aff0d41..d3e830c06f209c 100644
 --- a/tensorflow/core/kernels/decode_padded_raw_op.cc
@@ -14132,7 +14145,7 @@ index 12e8ec6aff0d41..d3e830c06f209c 100644
        }
      }
    }
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 "CVE-2021-29613: TensorFlow Incomplete Validation in tf.raw_ops.CTCLoss 1
 ",2.1.4,https://github.com/tensorflow/tensorflow/commit/14607c0707040d775e06b6817325640cb4b5864c,2.1.4,https://github.com/tensorflow/tensorflow/commit/b4abc8bc80ad14751382516450ec681a99d156db,2,"diff --git a/tensorflow/core/kernels/ctc_loss_op.cc b/tensorflow/core/kernels/ctc_loss_op.cc
 index b0e298a0f329f0..ca505e1db93145 100644
@@ -14162,7 +14175,7 @@ index 995d28a158cfa0..9debca01409c0f 100644
      const int64 batch_size = inputs_shape.dim_size(1);
      const int64 num_classes_raw = inputs_shape.dim_size(2);
      OP_REQUIRES(
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 "CVE-2021-29613: TensorFlow Incomplete Validation in tf.raw_ops.CTCLoss 2
 ",2.1.4,https://github.com/tensorflow/tensorflow/commit/4504a081af71514bb1828048363e6540f797005b,2.1.4,https://github.com/tensorflow/tensorflow/commit/67f1f7bbce498bdef38d7d3ec26da301e6310e53,2,"diff --git a/tensorflow/core/kernels/ctc_loss_op.cc b/tensorflow/core/kernels/ctc_loss_op.cc
 index 6358e82fdda853..b0e298a0f329f0 100644
@@ -14194,7 +14207,7 @@ index 995d28a158cfa0..d31f58d5c1312c 100644
      OP_REQUIRES(ctx, TensorShapeUtils::IsVector(labels_values->shape()),
                  errors::InvalidArgument(""labels_values is not a vector""));
  
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 "CVE-2021-29611: TensorFlow Incomplete Validation in SparseReshape
 ",2.1.4,https://github.com/tensorflow/tensorflow/commit/1d04d7d93f4ed3854abf75d6b712d72c3f70d6b6,2.1.4,https://github.com/tensorflow/tensorflow/commit/9a1b7410d66eaf5eac61d9b5633b5f7ce2f37abf,2,"diff --git a/tensorflow/core/kernels/sparse_reshape_op.cc b/tensorflow/core/kernels/sparse_reshape_op.cc
 index 13e9010dcbb243..d8120788db9bfe 100644
@@ -14256,7 +14269,7 @@ index 059519a913b7e7..23c595da354daa 100644
      Reshape(context, context->input(0), context->input(1), context->input(2),
              0 /* output indices index */, 1 /* output shape index */);
    }
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 "CVE-2021-29609: TensorFlow Incomplete Validation in SparseAdd 1
 ",2.1.4,https://github.com/tensorflow/tensorflow/commit/41727ff06111117bdf86b37db198217fd7a143cc,2.1.4,https://github.com/tensorflow/tensorflow/commit/6aac000beef03b02efb43939c1a9984946b8de0e,2,"diff --git a/tensorflow/core/kernels/sparse_add_op.cc b/tensorflow/core/kernels/sparse_add_op.cc
 index 346206365af8d5..2bd05fa41adc26 100644
@@ -14342,7 +14355,7 @@ index 87a17b08820be0..e2cec69b14c46b 100644
  
      // The input and output sparse tensors are assumed to be ordered along
      // increasing dimension number.
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 "CVE-2021-29609: TensorFlow Incomplete Validation in SparseAdd 2
 ",2.1.4,https://github.com/tensorflow/tensorflow/commit/6fd02f44810754ae7481838b6a67c5df7f909ca3,2.1.4,https://github.com/tensorflow/tensorflow/commit/fe0e8b46ceece26345d462c5ffca3ae18c69522c,1,"diff --git a/tensorflow/core/kernels/sparse_add_op.cc b/tensorflow/core/kernels/sparse_add_op.cc
 index 0cf40a709a39a7..346206365af8d5 100644
@@ -14390,7 +14403,7 @@ index d16317af671dd6..87a17b08820be0 100644
      // The input and output sparse tensors are assumed to be ordered along
      // increasing dimension number.
      int64 i = 0, j = 0;
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 "CVE-2021-29608: TensorFlow - Lack of Validation in tf.raw_ops.RaggedTensorToTensor 1
 ",2.1.4,https://github.com/tensorflow/tensorflow/commit/b761c9b652af2107cfbc33efd19be0ce41daa33e,2.1.4,https://github.com/tensorflow/tensorflow/commit/bd8f3b8d71543d8d7c84d77c075e1afa07b6c6d9,1,"diff --git a/tensorflow/core/kernels/ragged_tensor_to_tensor_op.cc b/tensorflow/core/kernels/ragged_tensor_to_tensor_op.cc
 index 433d910f6090cd..434c853b63daa4 100644
@@ -14514,7 +14527,7 @@ index ca9e1836c82127..6f5c07e25c3da0 100644
          return tensorflow::Status::OK();
        default:
          return errors::InvalidArgument(
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 "CVE-2021-29608: TensorFlow - Lack of Validation in tf.raw_ops.RaggedTensorToTensor 2
 ",2.1.4,https://github.com/tensorflow/tensorflow/commit/c4d7afb6a5986b04505aca4466ae1951686c80f6,2.1.4,https://github.com/tensorflow/tensorflow/commit/3b002b9c7f5b1559707c0ab3d7baac4c6455a134,1,"diff --git a/tensorflow/core/kernels/ragged_tensor_to_tensor_op.cc b/tensorflow/core/kernels/ragged_tensor_to_tensor_op.cc
 index 376d55945d2ce8..b79a07e67ba913 100644
@@ -14748,7 +14761,7 @@ index cf3efcd49b4886..b961468f274d0f 100644
        default:
          return errors::InvalidArgument(
              ""Unsupported partition type:"",
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 "CVE-2021-29608: TensorFlow - Lack of Validation in tf.raw_ops.RaggedTensorToTensor 3
 ",2.1.4,https://github.com/tensorflow/tensorflow/commit/f94ef358bb3e91d517446454edff6535bcfe8e4a,2.1.4,https://github.com/tensorflow/tensorflow/commit/263e5965656518b139ad93804571a331ebaa42ed,1,"diff --git a/tensorflow/core/kernels/ragged_tensor_to_tensor_op.cc b/tensorflow/core/kernels/ragged_tensor_to_tensor_op.cc
 index 28898c65ca7976..433d910f6090cd 100644
@@ -14782,7 +14795,7 @@ index ca9e1836c82127..4a29cab52b1e87 100644
      OP_REQUIRES_OK(context, GetFirstDimensionSize(context, &first_dimension));
      vector<INDEX_TYPE> output_size;
      OP_REQUIRES_OK(context,
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 "CVE-2021-29607: TensorFlow Incomplete Validation in SparseAdd 1
 ",2.1.4,https://github.com/tensorflow/tensorflow/commit/ba6822bd7b7324ba201a28b2f278c29a98edbef2,2.1.4,https://github.com/tensorflow/tensorflow/commit/3f9fac192d67207dcb8badfd1c34d6fd1350bbc5,1,"diff --git a/tensorflow/core/kernels/sparse_sparse_binary_op_shared.cc b/tensorflow/core/kernels/sparse_sparse_binary_op_shared.cc
 index 43dc9ae70cd627..9fe42e05d879ee 100644
@@ -14816,7 +14829,7 @@ index 09cb2a6a71c7c0..8f1d0e30a7648a 100644
      const int num_dims = a_indices_t->dim_size(1);
      const auto a_indices_mat = a_indices_t->matrix<int64>();
      const auto b_indices_mat = b_indices_t->matrix<int64>();
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 "CVE-2021-29607: TensorFlow Incomplete Validation in SparseAdd 2
 ",2.1.4,https://github.com/tensorflow/tensorflow/commit/f6fde895ef9c77d848061c0517f19d0ec2682f3a,2.1.4,https://github.com/tensorflow/tensorflow/commit/91eb42dc6dcd04c806a680c1db754e6a54048c2e,1,"diff --git a/tensorflow/core/kernels/sparse_sparse_binary_op_shared.cc b/tensorflow/core/kernels/sparse_sparse_binary_op_shared.cc
 index 9fe42e05d879ee..eb993a5965043b 100644
@@ -14898,7 +14911,7 @@ index 8f1d0e30a7648a..3ad87bb2e419d4 100644
      const auto a_indices_mat = a_indices_t->matrix<int64>();
      const auto b_indices_mat = b_indices_t->matrix<int64>();
      std::vector<T> a_augmented_values, b_augmented_values;
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 "CVE-2021-29606: TensorFlow Out-of-Bounds Read Vulnerability
 ",2.1.4,https://github.com/tensorflow/tensorflow/commit/ae2daeb45abfe2c6dda539cf8d0d6f653d3ef412,2.1.4,https://github.com/tensorflow/tensorflow/commit/ef68faa9189a0b94ea601dcbc0cb46b4c37c73b8,2,"diff --git a/tensorflow/lite/kernels/split_v.cc b/tensorflow/lite/kernels/split_v.cc
 index 054e00572f5a60..ed8a4851c1e97e 100644
@@ -14926,7 +14939,7 @@ index b888e8adfa6b12..a5fdf89ac199d8 100644
    const int input_size = SizeOfDimension(input, axis_value);
  
    if (minus_one_index != -1) {
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 "CVE-2021-29604: Vulnerability in TensorFlow
 ",2.1.4,https://github.com/tensorflow/tensorflow/commit/5117e0851348065ed59c991562c0ec80d9193db2,2.1.4,https://github.com/tensorflow/tensorflow/commit/a223f98ff4309c549c194669d5a5a228f462bcf9,2,"diff --git a/tensorflow/lite/kernels/hashtable_lookup.cc b/tensorflow/lite/kernels/hashtable_lookup.cc
 index 2563d8ade5f74e..0de24b11333c97 100644
@@ -14952,7 +14965,7 @@ index da1116cf858667..19fde91e0a3ac9 100644
    const int row_bytes = value->bytes / num_rows;
    void* pointer = nullptr;
    DynamicBuffer buf;
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 "CVE-2021-29603: TensorFlow - Out-of-Bounds Write Vulnerability
 ",2.1.4,https://github.com/tensorflow/tensorflow/commit/c59c37e7b2d563967da813fa50fe20b21f4da683,2.1.4,https://github.com/tensorflow/tensorflow/commit/a61b528458f52801f20b0a9a5fe78297b95e1c3c,2,"diff --git a/tensorflow/lite/kernels/arg_min_max.cc b/tensorflow/lite/kernels/arg_min_max.cc
 index a0ba8cb9f8bbe7..291fd61681f2a8 100644
@@ -14982,7 +14995,7 @@ index 593e604aff64c9..de80be5509d776 100644
    // Copy the input dimensions to output except the axis dimension.
    TfLiteIntArray* output_dims = TfLiteIntArrayCreate(NumDimensions(input) - 1);
    int j = 0;
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 "CVE-2021-29602: TensorFlow DepthwiseConv Operator Division by Zero Vulnerability
 ",2.1.4,https://github.com/tensorflow/tensorflow/commit/cbda3c6b2dbbd3fbdc482ff8c0170a78ec2e97d0,2.1.4,https://github.com/tensorflow/tensorflow/commit/34c68a212b738dd7a938c759313f878d410f2eb5,5,"diff --git a/tensorflow/lite/kernels/depthwise_conv.cc b/tensorflow/lite/kernels/depthwise_conv.cc
 index 42920e11fc4333..fdbcae3607f06c 100644
@@ -15023,7 +15036,7 @@ index 38a3f34709e5bc..659acdd9e020ac 100644
    *depth_multiplier = num_filter_channels / num_input_channels;
    return kTfLiteOk;
  }
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 "CVE-2021-29601: TensorFlow Integer Overflow in TFLite Concatenation
 ",2.1.4,https://github.com/tensorflow/tensorflow/commit/4253f96a58486ffe84b61c0415bb234a4632ee73,2.1.4,https://github.com/tensorflow/tensorflow/commit/9475fc132227f42e53a49442d80257e8e17ba2f0,1,"diff --git a/tensorflow/lite/kernels/concatenation.cc b/tensorflow/lite/kernels/concatenation.cc
 index 61596a4ff06615..75bcd9403c0ae8 100644
@@ -15073,7 +15086,7 @@ index 870a10abfc4035..6ee31b248fe6ac 100644
          sum_axis += t->dims->data[axis];
        } else {
          TF_LITE_ENSURE_EQ(context, t->dims->data[d], t0->dims->data[d]);
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 "CVE-2021-29600: TensorFlow OneHot TFLite Operator Division by Zero Vulnerability
 ",2.1.4,https://github.com/tensorflow/tensorflow/commit/3ebedd7e345453d68e279cfc3e4072648e5e12e5,2.1.4,https://github.com/tensorflow/tensorflow/commit/7d8787e1297f204b5d892c1fcc7874d668ff0917,2,"diff --git a/tensorflow/lite/kernels/one_hot.cc b/tensorflow/lite/kernels/one_hot.cc
 index f7b4e8e7e19d57..75bfb48d6b19c8 100644
@@ -15107,7 +15120,7 @@ index 2ac12fe9308f38..fd4f67da0943be 100644
    const int suffix_dim_size = NumElements(op_context.indices) / prefix_dim_size;
    const int depth = *op_context.depth->data.i32;
  
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 "CVE-2021-29599: TensorFlow - Division by Zero Vulnerability
 ",2.1.4,https://github.com/tensorflow/tensorflow/commit/b22786e7e9b7bdb6a56936ff29cc7e9968d7bc1d,2.1.4,https://github.com/tensorflow/tensorflow/commit/d7b2df1b18efe42d697093b9ea5525cbbd905d51,2,"diff --git a/tensorflow/lite/kernels/split.cc b/tensorflow/lite/kernels/split.cc
 index be7425cc0b5e2c..cf778b0b951242 100644
@@ -15133,7 +15146,7 @@ index ec3dd54ebf723a..f258d5b35327af 100644
    TF_LITE_ENSURE_MSG(context, input_size % num_splits == 0,
                       ""Not an even split"");
    const int slice_size = input_size / num_splits;
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 "CVE-2021-29598: TensorFlow SVDF Operator Division by Zero Vulnerability
 ",2.1.4,https://github.com/tensorflow/tensorflow/commit/6841e522a3e7d48706a02e8819836e809f738682,2.1.4,https://github.com/tensorflow/tensorflow/commit/fc45a66f1b1b11d4a21354b6d06faf2f39413b10,2,"diff --git a/tensorflow/lite/kernels/svdf.cc b/tensorflow/lite/kernels/svdf.cc
 index 8f5c9a86bff5c6..73024fd1e587a2 100644
@@ -15159,7 +15172,7 @@ index ae6d85d6e6cddb..16714a37426526 100644
    TF_LITE_ENSURE_EQ(context, num_filters % rank, 0);
    const int num_units = num_filters / rank;
    const int memory_size = weights_time->dims->data[1];
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 "CVE-2021-29595: TensorFlow - Division by Zero in DepthToSpace TFLite Operator
 ",2.1.4,https://github.com/tensorflow/tensorflow/commit/106d8f4fb89335a2c52d7c895b7a7485465ca8d9,2.1.4,https://github.com/tensorflow/tensorflow/commit/706d6df0ce4917ead132531abdd53130610a7d2e,2,"diff --git a/tensorflow/lite/kernels/depth_to_space.cc b/tensorflow/lite/kernels/depth_to_space.cc
 index d61049f85a9adb..9b552541c74b7b 100644
@@ -15229,7 +15242,7 @@ index 8d59a1ad82f418..8a73676fa1c6ad 100644
  #endif
  
  TEST(DepthToSpaceOpModel, Float32) {
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 "CVE-2021-29594: TensorFlow - Division by Zero Vulnerability
 ",2.1.4,https://github.com/tensorflow/tensorflow/commit/ff489d95a9006be080ad14feb378f2b4dac35552,2.1.4,https://github.com/tensorflow/tensorflow/commit/37c13da53a00217ceab094c9eec0362c4234657e,2,"diff --git a/tensorflow/lite/kernels/conv.cc b/tensorflow/lite/kernels/conv.cc
 index 0b594d1b153dc2..6bc1adce8a04b4 100644
@@ -15315,7 +15328,7 @@ index 49090075626cff..191711bd40e6d7 100644
  
    float* input_ptr = GetTensorData<float>(input);
    int8_t* quantized_input_ptr_batch = GetTensorData<int8_t>(
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 "CVE-2021-29592: TensorFlow Reshape Operator Null Buffer Vulnerability
 ",2.1.4,https://github.com/tensorflow/tensorflow/commit/f8378920345f4f4604202d4ab15ef64b2aceaa16,2.1.4,https://github.com/tensorflow/tensorflow/commit/dad0ed803834b0e3daae0f8246deafaec9576da5,2,"diff --git a/tensorflow/lite/core/subgraph.cc b/tensorflow/lite/core/subgraph.cc
 index 7f9dd2ce3363d5..0273018b3bf03d 100644
@@ -15367,7 +15380,7 @@ index 483aa98a96de4d..4f4394243aef92 100644
            continue;
          } else {
            // In all other cases, we need to return an error as otherwise we will
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 "CVE-2021-29591: TensorFlow - Infinite Loop and Stack Overflow Vulnerability 1
 ",2.1.4,https://github.com/tensorflow/tensorflow/commit/9c1dc920d8ffb4893d6c9d27d1f039607b326743,2.1.4,https://github.com/tensorflow/tensorflow/commit/ac7465dee7c614791c4d9022ed9aec636badb68a,2,"diff --git a/tensorflow/lite/kernels/while.cc b/tensorflow/lite/kernels/while.cc
 index e05959fe2a6825..74ab81c2a95993 100644
@@ -15395,7 +15408,7 @@ index 8951647bf43bd7..b5902706d7cc3f 100644
  
    Subgraph* cond_subgraph = (*subgraphs)[op_data->cond_subgraph_index].get();
    Subgraph* body_subgraph = (*subgraphs)[op_data->body_subgraph_index].get();
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 "CVE-2021-29591: TensorFlow - Infinite Loop and Stack Overflow Vulnerability 2
 ",2.1.4,https://github.com/tensorflow/tensorflow/commit/c6173f5fe66cdbab74f4f869311fe6aae2ba35f4,2.1.4,https://github.com/tensorflow/tensorflow/commit/1003fb44af0a12f335a364f73de8b81ad5d9a324,2,"diff --git a/tensorflow/lite/BUILD b/tensorflow/lite/BUILD
 index e6974846796a9e..00fb51f9a08c77 100644
@@ -15701,7 +15714,7 @@ diff --git a/tensorflow/lite/testdata/unsupported_recursion.bin b/tensorflow/lit
 new file mode 100644
 index 00000000000000..525c5383ab4ef6
 Binary files /dev/null and b/tensorflow/lite/testdata/unsupported_recursion.bin differ
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 "CVE-2021-29590: TensorFlow - Out-of-Bounds Read Vulnerability
 ",2.1.4,https://github.com/tensorflow/tensorflow/commit/953f28dca13c92839ba389c055587cfe6c723578,2.1.4,https://github.com/tensorflow/tensorflow/commit/2d53bd19504531374b560fbfc4eceb7815dc1b05,5,"diff --git a/tensorflow/lite/kernels/maximum_minimum.cc b/tensorflow/lite/kernels/maximum_minimum.cc
 index 777e51442f120e..176e020a5a8e55 100644
@@ -15843,7 +15856,7 @@ index 76e51d18741be5..6feac70f684b03 100644
    }
    return kTfLiteOk;
  }
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 "CVE-2021-29589: TensorFlow - Division by Zero Error in GatherNd TFLite Operator
 ",2.1.4,https://github.com/tensorflow/tensorflow/commit/8e45822aa0b9f5df4b4c64f221e64dc930a70a9d,2.1.4,https://github.com/tensorflow/tensorflow/commit/b7beecbfdc49ccf34ba2f1539b53fc003c428fa9,2,"diff --git a/tensorflow/lite/kernels/gather_nd.cc b/tensorflow/lite/kernels/gather_nd.cc
 index 11251f2446f19f..3ded771382569e 100644
@@ -15873,7 +15886,7 @@ index 20e98652ee57ec..b8698b3ea2021b 100644
    switch (indices->type) {
      case kTfLiteInt32:
        return EvalGatherNd<int32_t>(context, params, indices, output);
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 "CVE-2021-29588: TensorFlow - Division by Zero Vulnerability
 ",2.1.4,https://github.com/tensorflow/tensorflow/commit/801c1c6be5324219689c98e1bd3e0ca365ee834d,2.1.4,https://github.com/tensorflow/tensorflow/commit/5a473c58eceecb9fcf1f9cb5bb411ca3a20aa071,2,"diff --git a/tensorflow/lite/kernels/transpose_conv.cc b/tensorflow/lite/kernels/transpose_conv.cc
 index 497edac5762dce..cf9d53fb3b6ee7 100644
@@ -15905,7 +15918,7 @@ index c4447b2a468e52..98348bb343a64b 100644
    // Resize any deferred dynamic tensors
    if (IsDynamicTensor(output)) {
      TF_LITE_ENSURE_OK(context, ResizeTensor(context, output_shape, output));
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 "CVE-2021-29587: TensorFlow - SpaceToDepth TFLite Operator Division by Zero Vulnerability
 ",2.1.4,https://github.com/tensorflow/tensorflow/commit/0d45ea1ca641b21b73bcf9c00e0179cda284e7e7,2.1.4,https://github.com/tensorflow/tensorflow/commit/32009c8b283ecdfe50c2ff4329447ffbf3bc1aa8,2,"diff --git a/tensorflow/lite/kernels/space_to_depth.cc b/tensorflow/lite/kernels/space_to_depth.cc
 index 4db7440b57e60b..35a0fe1c26e207 100644
@@ -15931,7 +15944,7 @@ index 573ffe66e50a6c..56cc1deb7b8a3e 100644
    const int input_height = input->dims->data[1];
    const int input_width = input->dims->data[2];
    int output_height = input_height / block_size;
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 "CVE-2021-29586: TensorFlow - Optimized pooling implementations in TFLite allow division by zero
 ",2.1.4,https://github.com/tensorflow/tensorflow/commit/5f7975d09eac0f10ed8a17dbb6f5964977725adc,2.1.4,https://github.com/tensorflow/tensorflow/commit/5500bcc40f6d267eca67ea1c8099eca3bf458c2c,2,"diff --git a/tensorflow/lite/kernels/pooling.cc b/tensorflow/lite/kernels/pooling.cc
 index 1ae3d207b135ef..474bd3825f4ff2 100644
@@ -16009,7 +16022,7 @@ index 1b371361a4d875..ec3ba072e7c9c3 100644
 +
  }  // namespace
  }  // namespace tflite
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 "CVE-2021-29585: TensorFlow - TFLite Computation Size of Output After Padding Vulnerability
 ",2.1.4,https://github.com/tensorflow/tensorflow/commit/49847ae69a4e1a97ae7f2db5e217c77721e37948,2.1.4,https://github.com/tensorflow/tensorflow/commit/f76310aaa71e690ae359af3b4d7f59efa56aa7b9,1,"diff --git a/tensorflow/lite/kernels/padding.h b/tensorflow/lite/kernels/padding.h
 index 85950eaf34bb92..d9cca3ea135152 100644
@@ -16043,7 +16056,7 @@ index 1116b1da852cf6..6b4ab7fa58d1aa 100644
    switch (padding) {
      case kTfLitePaddingSame:
        return (image_size + stride - 1) / stride;
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 "CVE-2021-29584: TensorFlow Integer Overflow Denial of Service
 ",2.1.4,https://github.com/tensorflow/tensorflow/commit/4c0ee937c0f61c4fc5f5d32d9bb4c67428012a60,2.1.4,https://github.com/tensorflow/tensorflow/commit/27279cd23c52585b0cdf28e26887074dc64d0823,1,"diff --git a/tensorflow/core/kernels/sparse_split_op.cc b/tensorflow/core/kernels/sparse_split_op.cc
 index 5c0457aa956c85..3b88a8ca2bf6ee 100644
@@ -16097,7 +16110,7 @@ index 3d02be47cbbef5..ca3e77f76af7f7 100644
  
      std::vector<sparse::SparseTensor> outputs;
      OP_REQUIRES_OK(context,
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 "CVE-2021-29583: TensorFlow FusedBatchNorm Heap Buffer Overflow
 ",2.1.4,https://github.com/tensorflow/tensorflow/commit/6972f9dfe325636b3db4e0bc517ee22a159365c0,2.1.4,https://github.com/tensorflow/tensorflow/commit/e2f3fe7df3ba4e59b63060341fb6eb4ea404935c,2,"diff --git a/tensorflow/core/kernels/fused_batch_norm_op.cc b/tensorflow/core/kernels/fused_batch_norm_op.cc
 index e564b19857c383..7b0932d953261c 100644
@@ -16192,7 +16205,7 @@ index a4843ed527712e..1af8e1784f0bac 100644
            errors::InvalidArgument(""FusedBatchNorm with activation requires ""
                                    ""channel dimension to be a multiple of 4.""));
      }
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 "CVE-2021-29581: TensorFlow - Denial of Service via Segmentation Faults
 ",2.1.4,https://github.com/tensorflow/tensorflow/commit/b1b323042264740c398140da32e93fb9c2c9f33e,2.1.4,https://github.com/tensorflow/tensorflow/commit/4ae20817579a464e13a5a28f485c1437d1e5ea50,1,"diff --git a/tensorflow/core/kernels/ctc_decoder_ops.cc b/tensorflow/core/kernels/ctc_decoder_ops.cc
 index 22681f97437f0c..9efdac60e369c2 100644
@@ -16222,7 +16235,7 @@ index 1075b17694ddcf..60b10107537408 100644
  
      const int64 max_time = inputs_shape.dim_size(0);
      const int64 batch_size = inputs_shape.dim_size(1);
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 "CVE-2021-29580: TensorFlow - FractionalMaxPoolGrad Function Denial of Service Vulnerability
 ",2.1.4,https://github.com/tensorflow/tensorflow/commit/32fdcbff9d06d010d908fcc4bd4b36eb3ce15925,2.1.4,https://github.com/tensorflow/tensorflow/commit/dc9088ccf3ff8fb4edfcda68e2359ec2b6a81323,1,"diff --git a/tensorflow/core/kernels/fractional_max_pool_op.cc b/tensorflow/core/kernels/fractional_max_pool_op.cc
 index 619a3507ce415f..1a2a783d135c54 100644
@@ -16274,7 +16287,7 @@ index 619a3507ce415f..1a2a783d135c54 100644
      std::vector<int64> input_size(tensor_in_and_out_dims);
      std::vector<int64> output_size(tensor_in_and_out_dims);
      for (int i = 0; i < tensor_in_and_out_dims; ++i) {
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 "CVE-2021-29579: TensorFlow - Heap Buffer Overflow in tf.raw_ops.MaxPoolGrad
 ",2.1.4,https://github.com/tensorflow/tensorflow/commit/a74768f8e4efbda4def9f16ee7e13cf3922ac5f7,2.1.4,https://github.com/tensorflow/tensorflow/commit/c29463adea245860e33fcfaccf600e176e8bf247,2,"diff --git a/tensorflow/core/kernels/maxpooling_op.cc b/tensorflow/core/kernels/maxpooling_op.cc
 index ceb6694ed665d8..01f303eb26980f 100644
@@ -16306,7 +16319,7 @@ index 5652addd00a957..5b1f084d886516 100644
        }
      }
    };
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 "CVE-2021-29578: TensorFlow - Heap Buffer Overflow in tf.raw_ops.FractionalAvgPoolGrad
 ",2.1.4,https://github.com/tensorflow/tensorflow/commit/12c727cee857fa19be717f336943d95fca4ffe4f,2.1.4,https://github.com/tensorflow/tensorflow/commit/87c455ec4649f0bca8ebbb00ae377d7565aa30be,1,"diff --git a/tensorflow/core/kernels/fractional_avg_pool_op.cc b/tensorflow/core/kernels/fractional_avg_pool_op.cc
 index b8a5083e5340f1..0452638a066795 100644
@@ -16356,7 +16369,7 @@ index b8a5083e5340f1..0452638a066795 100644
      auto row_seq_tensor_flat = row_seq_tensor.flat<int64>();
      auto col_seq_tensor_flat = col_seq_tensor.flat<int64>();
      auto orig_input_tensor_shape_flat = orig_input_tensor_shape.flat<int64>();
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 "CVE-2021-29577: TensorFlow - Heap Buffer Overflow in tf.raw_ops.AvgPool3DGrad
 ",2.1.4,https://github.com/tensorflow/tensorflow/commit/6fc9141f42f6a72180ecd24021c3e6b36165fe0d,2.1.4,https://github.com/tensorflow/tensorflow/commit/f6852e7ee8753180ee8d0812c646990079693ad0,1,"diff --git a/tensorflow/core/kernels/pooling_ops_3d.cc b/tensorflow/core/kernels/pooling_ops_3d.cc
 index 9da2d62b0a21d3..56a55bc2ec87bf 100644
@@ -16406,7 +16419,7 @@ index 7345ccf69eeba9..e85f9bc9829c0f 100644
      output->flat<T>().setZero();
      std::array<int64, 3> input_size = {{tensor_in_shape.dim_size(3),
                                          tensor_in_shape.dim_size(2),
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 "CVE-2021-29576: TensorFlow - Heap Buffer Overflow in tf.raw_ops.MaxPool3DGradGrad
 ",2.1.4,https://github.com/tensorflow/tensorflow/commit/63c6a29d0f2d692b247f7bf81f8732d6442fad09,2.1.4,https://github.com/tensorflow/tensorflow/commit/d2eaffe94684081a59c820cc5b2ec037020758ec,5,"diff --git a/tensorflow/core/kernels/pooling_ops_3d.cc b/tensorflow/core/kernels/pooling_ops_3d.cc
 index 7d133b66a1ebdf..9da2d62b0a21d3 100644
@@ -16479,7 +16492,7 @@ index 7345ccf69eeba9..f292032d883b4f 100644
      LaunchMaxPooling3dGradGradOp<Device, T>::launch(
          context, params, tensor_in, tensor_out, out_grad_backprop, output);
    }
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 "CVE-2021-29575: TensorFlow - Denial of Service Vulnerability
 ",2.1.4,https://github.com/tensorflow/tensorflow/commit/ecf768cbe50cedc0a45ce1ee223146a3d3d26d23,2.1.4,https://github.com/tensorflow/tensorflow/commit/a59bcd733a29ee09ceb06423fc0232db5384df75,2,"diff --git a/tensorflow/core/kernels/reverse_sequence_op.cc b/tensorflow/core/kernels/reverse_sequence_op.cc
 index b5b62bc76ca524..1282deb26e8cd6 100644
@@ -16511,7 +16524,7 @@ index 0e112133915d5a..490456fddd76b9 100644
    }
  
    void Compute(OpKernelContext* context) override {
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 "CVE-2021-29573: TensorFlow - Division by 0 in MaxPoolGradWithArgmax
 ",2.1.4,https://github.com/tensorflow/tensorflow/commit/376c352a37ce5a68b721406dc7e77ac4b6cf483d,2.1.4,https://github.com/tensorflow/tensorflow/commit/92edd8f06b119be046094797d3212f78c85e2f5d,2,"diff --git a/tensorflow/core/kernels/maxpooling_op.cc b/tensorflow/core/kernels/maxpooling_op.cc
 index 003d2e94b99cd5..ceb6694ed665d8 100644
@@ -16539,7 +16552,7 @@ index 5652addd00a957..9ac7ac6132c4e1 100644
      LaunchMaxPoolingGradWithArgmax<Device, T>::launch(
          context, params, grad_in, argmax, grad_out, include_batch_in_index_);
    }
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 "CVE-2021-29572: TensorFlow - Null Pointer Dereference in SdcaOptimizer
 ",2.1.4,https://github.com/tensorflow/tensorflow/commit/f7cc8755ac6683131fdfa7a8a121f9d7a9dec6fb,2.1.4,https://github.com/tensorflow/tensorflow/commit/a8eb24879a39e7ba7e66fdcd48ee6c44efdde766,1,"diff --git a/tensorflow/core/kernels/sdca_internal.cc b/tensorflow/core/kernels/sdca_internal.cc
 index cbc754af0e9bb1..11a3be8bf46a76 100644
@@ -16699,7 +16712,7 @@ index cbc754af0e9bb1..11a3be8bf46a76 100644
  
        // Parse features for each example. Features for a particular example
        // are at the offsets (start_id, end_id]
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2020-15193: TensorFlow Uninitialized Memory Corruption,2.4.0-rc0,https://github.com/tensorflow/tensorflow/commit/22e07fb204386768e5bcbea563641ea11f96ceb8,2.2.1,https://github.com/tensorflow/tensorflow/commit/2553e843a1a0947d7984767162257447be325c86,2,"diff --git a/tensorflow/c/eager/dlpack.cc b/tensorflow/c/eager/dlpack.cc
 index 30d2009dc6afcb..df8e9ace9977ba 100644
 --- a/tensorflow/c/eager/dlpack.cc
@@ -16938,7 +16951,7 @@ index e3682e9613e163..98d36c72d3cf31 100644
      void* dlm_ptr = tensorflow::TFE_HandleToDLPack(thandle, status.get());
      tensorflow::MaybeRaiseRegisteredFromTFStatus(status.get());
  
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2020-15196: TensorFlow SparseCountSparseOutput and RaggedCountSparseOutput Shape Validation Vulnerability,2.4.0-rc0,https://github.com/tensorflow/tensorflow/commit/3cbb917b4714766030b28eba9fb41bb97ce9ee02,2.3.1,https://github.com/tensorflow/tensorflow/commit/b3075637e9583740e903e56ed8eee227f7abbbf0,1,"diff --git a/tensorflow/core/kernels/count_ops.cc b/tensorflow/core/kernels/count_ops.cc
 index 7c85b050039380..087deef0812f00 100644
 --- a/tensorflow/core/kernels/count_ops.cc
@@ -17349,7 +17362,7 @@ index 74fd17cae2bce5..e9906e32f95703 100644
 +
  if __name__ == ""__main__"":
    test.main()
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2020-26266: TensorFlow - Uninitialized Values in Saved Model Execution,2.5.0-rc0,https://github.com/tensorflow/tensorflow/commit/ace0c15a22f7f054abcc1f53eabbcb0a1239a9e2,1.15.5,https://github.com/tensorflow/tensorflow/commit/3e721b268013c6146098ff31ba8d219f99a2c0ae,1,"diff --git a/third_party/eigen3/unsupported/Eigen/CXX11/src/FixedPoint/FixedPointTypes.h b/third_party/eigen3/unsupported/Eigen/CXX11/src/FixedPoint/FixedPointTypes.h
 index ff359cedced961..fd35360da28208 100644
 --- a/third_party/eigen3/unsupported/Eigen/CXX11/src/FixedPoint/FixedPointTypes.h
@@ -17448,7 +17461,7 @@ index ff359cedced961..fd35360da28208 100644
    QInt32(const int8_t v) : value(v) {}
    QInt32(const int32_t v) : value(v) {}
    QInt32(const uint32_t v) : value(static_cast<int32_t>(v)) {}
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2020-26267: TensorFlow - Unvalidated DataFormatVecPermute API,2.5.0-rc0,https://github.com/tensorflow/tensorflow/commit/ebc70b7a592420d3d2f359e4b1694c236b82c7ae,1.15.5,https://github.com/tensorflow/tensorflow/commit/c7748eb5130526bd0b66fce410af7c74d24f6385,5,"diff --git a/tensorflow/core/kernels/data_format_ops.cc b/tensorflow/core/kernels/data_format_ops.cc
 index b52d4d6c888271..00724b630ee9db 100644
 --- a/tensorflow/core/kernels/data_format_ops.cc
@@ -17951,7 +17964,7 @@ index 4763ae085dbc0a..b581acdd356e64 100644
  
  @test_util.run_all_in_graph_and_eager_modes
  class AvgPoolTest(test_lib.TestCase):
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2020-26268: TensorFlow - Memory Write Crash Vulnerability,2.5.0-rc0,https://github.com/tensorflow/tensorflow/commit/c1e1fc899ad5f8c725dcbb6470069890b5060bc7,1.15.5,https://github.com/tensorflow/tensorflow/commit/53fb98858ffc8efa937197d05535f7ccb774749d,1,"diff --git a/tensorflow/core/kernels/immutable_constant_op.cc b/tensorflow/core/kernels/immutable_constant_op.cc
 index 0dd08c694eb6c5..1cfbdb82778913 100644
 --- a/tensorflow/core/kernels/immutable_constant_op.cc
@@ -17986,7 +17999,7 @@ index 0dd08c694eb6c5..1cfbdb82778913 100644
   private:
    std::unique_ptr<ReadOnlyMemoryRegion> memory_region_;
    // If there is an error during allocation we keep it in this status.
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2020-26269: TensorFlow - Out-of-Bounds Access Vulnerability,2.5.0-rc0,https://github.com/tensorflow/tensorflow/commit/8b5b9dc96666a3a5d27fad7179ff215e3b74b67c,2.4.0,https://github.com/tensorflow/tensorflow/commit/18d54d15864eaa8b163183786d05c6bd8b47ba28,5,"diff --git a/tensorflow/core/platform/file_system_helper.cc b/tensorflow/core/platform/file_system_helper.cc
 index 7bd34cd01568fb..f8ce2a9226ef14 100644
 --- a/tensorflow/core/platform/file_system_helper.cc
@@ -18607,7 +18620,7 @@ index 4f8bf2e1a52971..f8ce2a9226ef14 100644
  }
  
  }  // namespace internal
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2020-26270: TensorFlow LSTM/GRU Model Zero-Length Input Denial of Service Vulnerability,2.5.0-rc0,https://github.com/tensorflow/tensorflow/commit/14755416e364f17fb1870882fa778c7fec7f16e3,1.15.5,https://github.com/tensorflow/tensorflow/commit/719ef26d3215ed850eef43ac5b488d32f80ea604,2,"diff --git a/tensorflow/stream_executor/cuda/cuda_dnn.cc b/tensorflow/stream_executor/cuda/cuda_dnn.cc
 index c03eb0a57e99cf..e4e9914adf0feb 100644
 --- a/tensorflow/stream_executor/cuda/cuda_dnn.cc
@@ -18660,7 +18673,7 @@ index d15fdd06556e74..076831671ea08a 100755
      int dims[] = {batch_size, data_size, 1};
      int strides[] = {dims[1] * dims[2], dims[2], 1};
      TensorDescriptor tensor_desc = CreateTensorDescriptor();
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2020-26271: TensorFlow - Accessing Uninitialized Memory While Loading Saved Model,2.2.0-rc0,https://github.com/tensorflow/tensorflow/commit/0cc38aaa4064fd9e79101994ce9872c6d91f816b,1.15.2,https://github.com/tensorflow/tensorflow/commit/a6954b6ccc1e3e3ca8ceb31079cdccf7a90b14d5,5,"diff --git a/tensorflow/core/common_runtime/graph_constructor.cc b/tensorflow/core/common_runtime/graph_constructor.cc
 index 92b07682d76cd8..639739e9cac8c2 100644
 --- a/tensorflow/core/common_runtime/graph_constructor.cc
@@ -18713,7 +18726,7 @@ index b462ab3438cc30..69000441599a2b 100644
    DataType src_out = src->output_type(output_index);
    DataType dst_in = dst->input_type(input_index);
    if (!TypesCompatible(dst_in, src_out)) {
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2020-5215: TensorFlow - Segmentation Fault in Eager Mode,2.2.0-rc0,https://github.com/tensorflow/tensorflow/commit/5ac1b9e24ff6afc465756edf845d2e9660bd34bf,2.2.0-rc0,https://github.com/tensorflow/tensorflow/commit/ff1d5d84bf8d5de9444e3987a01ae2b4c791840d,5,"diff --git a/tensorflow/python/BUILD b/tensorflow/python/BUILD
 index 80cfb7f08600ba..35d76eb5b5d957 100644
 --- a/tensorflow/python/BUILD
@@ -19079,7 +19092,7 @@ index 640260cb5554ca..8f66a8a7364654 100644
  
      case DT_INT64:
        if (ConvertInt64(obj, shape, ret) == nullptr) return Status::OK();
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2021-29523: TensorFlow - Denial of Service via CHECK-fail in AddManySparseToTensorsMap,2.6.0-rc0,https://github.com/tensorflow/tensorflow/commit/69c68ecbb24dff3fa0e46da0d16c821a2dd22d7c,2.5.0,https://github.com/tensorflow/tensorflow/commit/f600f6691773e8ba2d32d38005c1df706e02b7c0,1,"diff --git a/tensorflow/core/kernels/sparse_tensors_map_ops.cc b/tensorflow/core/kernels/sparse_tensors_map_ops.cc
 index c2c0e43ca2ba8d..5ea5fca544d3e9 100644
 --- a/tensorflow/core/kernels/sparse_tensors_map_ops.cc
@@ -19210,7 +19223,7 @@ index c2c0e43ca2ba8d..5ea5fca544d3e9 100644
                                  input_shape->NumElements() - 1, &output_shape));
  
      // Get groups by minibatch dimension
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2021-29525: TensorFlow - Division by 0 in Conv2DBackpropInput,2.6.0-rc0,https://github.com/tensorflow/tensorflow/commit/2be2cdf3a123e231b16f766aa0e27d56b4606535,2.5.0,https://github.com/tensorflow/tensorflow/commit/b2b7c490881124f32397c54497078a4ddbf1aa35,1,"diff --git a/tensorflow/core/kernels/conv_grad_input_ops.h b/tensorflow/core/kernels/conv_grad_input_ops.h
 index b5059c479e5d93..3d3a44390b5f73 100644
 --- a/tensorflow/core/kernels/conv_grad_input_ops.h
@@ -19243,7 +19256,7 @@ index b5059c479e5d93..3d3a44390b5f73 100644
      const size_t shard_size =
          use_parallel_contraction
              ? 1
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2021-29529: TensorFlow Heap Buffer Overflow in tf.raw_ops.QuantizedResizeBilinear,2.6.0-rc0,https://github.com/tensorflow/tensorflow/commit/f851613f8f0fb0c838d160ced13c134f778e3ce7,2.5.0,https://github.com/tensorflow/tensorflow/commit/5ebc8be747bfa00674d56785af490f247123c502,1,"diff --git a/tensorflow/core/kernels/quantized_resize_bilinear_op.cc b/tensorflow/core/kernels/quantized_resize_bilinear_op.cc
 index 07453c7e73284b..2fd807f6df9614 100644
 --- a/tensorflow/core/kernels/quantized_resize_bilinear_op.cc
@@ -19270,7 +19283,7 @@ index da0a35a6554b25..52c751d02de795 100644
      interpolation->lerp[i] = in - in_f;
      interpolation->ilerp[i] =
          static_cast<T_SCALE>((in - in_f) * (1 << resolution));
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2021-29531: Denial of Service Vulnerability in TensorFlow,2.6.0-rc0,https://github.com/tensorflow/tensorflow/commit/26eb323554ffccd173e8a79a8c05c15b685ae4d1,2.1.4,https://github.com/tensorflow/tensorflow/commit/5818bd926ce20fd7794704115abe0ef0f64c9337,2,"diff --git a/tensorflow/core/kernels/image/encode_png_op.cc b/tensorflow/core/kernels/image/encode_png_op.cc
 index 8dbe1d377df5c6..09bcdbe5e3db0b 100644
 --- a/tensorflow/core/kernels/image/encode_png_op.cc
@@ -19297,7 +19310,7 @@ index 8dbe1d377df5c6..09bcdbe5e3db0b 100644
      OP_REQUIRES(
          context,
          FastBoundsCheck(image.NumElements(), std::numeric_limits<int32>::max()),
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2021-29532: TensorFlow - Out-of-Bounds Read Vulnerability,2.6.0-rc0,https://github.com/tensorflow/tensorflow/commit/44b7f486c0143f68b56c34e2d01e146ee445134a,2.5.0,https://github.com/tensorflow/tensorflow/commit/83b0ccdabdb47aef1a091a79149f37627a23efe6,1,"diff --git a/tensorflow/core/kernels/ragged_cross_op.cc b/tensorflow/core/kernels/ragged_cross_op.cc
 index ea65c0ee2b5b21..5dfe93f4166592 100644
 --- a/tensorflow/core/kernels/ragged_cross_op.cc
@@ -19414,7 +19427,7 @@ index ea65c0ee2b5b21..5dfe93f4166592 100644
          TF_RETURN_IF_ERROR(
              BuildDenseFeatureReader(dense_list[next_dense++], features));
        } else {
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2021-29534: Denial of Service Vulnerability in TensorFlow,2.6.0-rc0,https://github.com/tensorflow/tensorflow/commit/69c68ecbb24dff3fa0e46da0d16c821a2dd22d7c,2.1.4,https://github.com/tensorflow/tensorflow/commit/f600f6691773e8ba2d32d38005c1df706e02b7c0,1,"diff --git a/tensorflow/core/kernels/sparse_tensors_map_ops.cc b/tensorflow/core/kernels/sparse_tensors_map_ops.cc
 index c2c0e43ca2ba8d..5ea5fca544d3e9 100644
 --- a/tensorflow/core/kernels/sparse_tensors_map_ops.cc
@@ -19545,7 +19558,7 @@ index c2c0e43ca2ba8d..5ea5fca544d3e9 100644
                                  input_shape->NumElements() - 1, &output_shape));
  
      // Get groups by minibatch dimension
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2021-29536: Heap Buffer Overflow in TensorFlow,2.6.0-rc0,https://github.com/tensorflow/tensorflow/commit/a324ac84e573fba362a5e53d4e74d5de6729933e,2.1.4,https://github.com/tensorflow/tensorflow/commit/4cf07bffd1ddc7e1dcad75ee84509bfb886da258,1,"diff --git a/tensorflow/core/kernels/quantized_reshape_op.cc b/tensorflow/core/kernels/quantized_reshape_op.cc
 index bd76c94edeea7a..682f4aaa1f79e7 100644
 --- a/tensorflow/core/kernels/quantized_reshape_op.cc
@@ -19634,7 +19647,7 @@ index bd76c94edeea7a..682f4aaa1f79e7 100644
      Tensor* output_min = nullptr;
      OP_REQUIRES_OK(ctx, ctx->allocate_output(1, TensorShape({}), &output_min));
      output_min->flat<float>()(0) = input_min_float;
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2021-29549: TensorFlow - Division by Zero Denial of Service,2.6.0-rc0,https://github.com/tensorflow/tensorflow/commit/744009c9e5cc5d0447f0dc39d055f917e1fd9e16,2.1.4,https://github.com/tensorflow/tensorflow/commit/cac81f4123b88df0b4c3c6dfbce948c87e98c8ec,1,"diff --git a/tensorflow/core/kernels/quantized_add_op.cc b/tensorflow/core/kernels/quantized_add_op.cc
 index 55c69de7d3ea6c..b186f00f15c061 100644
 --- a/tensorflow/core/kernels/quantized_add_op.cc
@@ -19661,7 +19674,7 @@ index 55c69de7d3ea6c..b186f00f15c061 100644
        VectorTensorAddition<T, Toutput>(
            vector_data, vector_min, vector_max, vector_num_elements, tensor_data,
            tensor_min, tensor_max, tensor_num_elements, min_z_value, max_z_value,
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2021-29551: TensorFlow MatrixTriangularSolve Kernel Execution Termination Failure,2.6.0-rc0,https://github.com/tensorflow/tensorflow/commit/480641e3599775a8895254ffbc0fc45621334f68,2.5.0,https://github.com/tensorflow/tensorflow/commit/56397503159c92e078e1a17e8c434315b1d217fa,1,"diff --git a/tensorflow/core/kernels/linalg/matrix_triangular_solve_op_impl.h b/tensorflow/core/kernels/linalg/matrix_triangular_solve_op_impl.h
 index 99249f792b6ed8..ce5392e62b9fa6 100644
 --- a/tensorflow/core/kernels/linalg/matrix_triangular_solve_op_impl.h
@@ -19744,7 +19757,7 @@ index 99249f792b6ed8..ce5392e62b9fa6 100644
    }
  };
  
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2021-29552: TensorFlow - Denial of Service Vulnerability,2.6.0-rc0,https://github.com/tensorflow/tensorflow/commit/704866eabe03a9aeda044ec91a8d0c83fc1ebdbe,2.1.4,https://github.com/tensorflow/tensorflow/commit/20039b921ced6005d415be9d30edd7be27ee91b3,1,"diff --git a/tensorflow/core/kernels/unsorted_segment_join_op.cc b/tensorflow/core/kernels/unsorted_segment_join_op.cc
 index 7464e165e46c8b..9acfe7fb1e4952 100644
 --- a/tensorflow/core/kernels/unsorted_segment_join_op.cc
@@ -19771,7 +19784,7 @@ index f0b9388f7cff32..77771cf0fe077a 100644
      auto num_segments = num_segments_tensor.scalar<NUM_SEGMENTS_TYPE>()();
  
      OP_REQUIRES(context, segment_dims != 0,
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2021-29553: TensorFlow - Out-of-Bounds Read Vulnerability,2.6.0-rc0,https://github.com/tensorflow/tensorflow/commit/99085e8ff02c3763a0ec2263e44daec416f6a387,2.1.4,https://github.com/tensorflow/tensorflow/commit/44a32b1f98d0350a7bfaeb20517453ad672738d3,2,"diff --git a/tensorflow/core/kernels/quantize_and_dequantize_op.cc b/tensorflow/core/kernels/quantize_and_dequantize_op.cc
 index c2a7a90d8713d8..f01a70114591bf 100644
 --- a/tensorflow/core/kernels/quantize_and_dequantize_op.cc
@@ -19818,7 +19831,7 @@ index 8f71d09c0832e7..a66ba66a98a84f 100644
      const int depth = (axis_ == -1) ? 1 : input.dim_size(axis_);
      Tensor* output = nullptr;
      OP_REQUIRES_OK(ctx, ctx->allocate_output(0, input.shape(), &output));
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2021-29554: TensorFlow - Denial of Service via FPE Runtime Error in tf.raw_ops.DenseCountSparseOutput,2.6.0-rc0,https://github.com/tensorflow/tensorflow/commit/da5ff2daf618591f64b2b62d9d9803951b945e9f,2.3.3,https://github.com/tensorflow/tensorflow/commit/b86345ef5092d56a0d7f255aefa80ae260ed4bd6,1,"diff --git a/tensorflow/core/kernels/count_ops.cc b/tensorflow/core/kernels/count_ops.cc
 index eeb0b853c7aad2..40aa1fe458c1ee 100644
 --- a/tensorflow/core/kernels/count_ops.cc
@@ -19847,7 +19860,7 @@ index eeb0b853c7aad2..40aa1fe458c1ee 100644
        num_batch_elements *= data.shape().dim_size(i);
      }
      int num_value_elements = data.shape().num_elements() / num_batch_elements;
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2021-29555: TensorFlow FusedBatchNorm Denial of Service,2.6.0-rc0,https://github.com/tensorflow/tensorflow/commit/1a2a87229d1d61e23a39373777c056161eb4084d,2.5.0,https://github.com/tensorflow/tensorflow/commit/9b3608d2e8aaba75c27f732c70868d6a3ab904c5,1,"diff --git a/tensorflow/core/kernels/fused_batch_norm_op.cc b/tensorflow/core/kernels/fused_batch_norm_op.cc
 index 9b917348e2afa5..e564b19857c383 100644
 --- a/tensorflow/core/kernels/fused_batch_norm_op.cc
@@ -19876,7 +19889,7 @@ index 9b917348e2afa5..e564b19857c383 100644
      const int size = x.size();
      const int rest_size = size / depth;
      Eigen::DSizes<Eigen::Index, 2> rest_by_depth(rest_size, depth);
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2021-29556: Denial of Service Vulnerability in TensorFlow,2.6.0-rc0,https://github.com/tensorflow/tensorflow/commit/4071d8e2f6c45c1955a811fee757ca2adbe462c1,2.1.4,https://github.com/tensorflow/tensorflow/commit/eb45503d821cb8a9c8fb9c6b16ac298031bd2fa3,2,"diff --git a/tensorflow/core/kernels/reverse_op.cc b/tensorflow/core/kernels/reverse_op.cc
 index 5555a141b6c7bd..560fac71336679 100644
 --- a/tensorflow/core/kernels/reverse_op.cc
@@ -19911,7 +19924,7 @@ index 98bf8bf8e914c1..4a46bffc3e9c00 100644
      const Tensor& dims = context->input(1);
  
      if (TensorShapeUtils::IsScalar(input.shape())) {
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2021-29557: Denial of Service Vulnerability in TensorFlow,2.6.0-rc0,https://github.com/tensorflow/tensorflow/commit/7f283ff806b2031f407db64c4d3edcda8fb9f9f5,2.1.4,https://github.com/tensorflow/tensorflow/commit/6d79ef2bcb23ccf1fe9270e90624295e3d4baf9e,1,"diff --git a/tensorflow/core/kernels/sparse_matmul_op.cc b/tensorflow/core/kernels/sparse_matmul_op.cc
 index f5747854093c95..a02afafa33e3ad 100644
 --- a/tensorflow/core/kernels/sparse_matmul_op.cc
@@ -19942,7 +19955,7 @@ index a2ee69cecd7fe7..aa9692bd5420be 100644
        right_tr.reset(
            new Tensor(right->dtype(),
                       TensorShape({right->dim_size(1), right->dim_size(0)})));
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2021-29558: TensorFlow Heap Buffer Overflow in tf.raw_ops.SparseSplit,2.6.0-rc0,https://github.com/tensorflow/tensorflow/commit/8ba6fa29cd8bf9cef9b718dc31c78c73081f5b31,2.1.4,https://github.com/tensorflow/tensorflow/commit/52872dc27b5c0b4c570486af2d81f4911fe0e047,2,"diff --git a/tensorflow/core/util/sparse/sparse_tensor.h b/tensorflow/core/util/sparse/sparse_tensor.h
 index 062226d7699bc8..341290dbbc6982 100644
 --- a/tensorflow/core/util/sparse/sparse_tensor.h
@@ -19973,7 +19986,7 @@ index d33bd03db29515..4cbfa83b21d4a5 100644
      num_values[slice_index]++;
    }
  
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2021-29559: TensorFlow - Out-of-Bounds Heap Access in tf.raw_ops.UnicodeEncode,2.6.0-rc0,https://github.com/tensorflow/tensorflow/commit/51300ba1cc2f487aefec6e6631fef03b0e08b298,2.1.4,https://github.com/tensorflow/tensorflow/commit/c27493e6044ac20c3df47e6f84afb4c1645ce84f,1,"diff --git a/tensorflow/core/kernels/unicode_ops.cc b/tensorflow/core/kernels/unicode_ops.cc
 index d3a7ad7b2866f7..e6c8f4dfc42284 100644
 --- a/tensorflow/core/kernels/unicode_ops.cc
@@ -20048,7 +20061,7 @@ index 14ae49c837fef9..0e7a24ddd9be79 100644
        for (; idx < input_splits_flat(i); ++idx) {
          int32 code_point = input_tensor_flat(idx);
          // Check for invalid code point
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2021-29560: Heap Buffer Overflow in TensorFlow,2.6.0-rc0,https://github.com/tensorflow/tensorflow/commit/a84358aa12f0b1518e606095ab9cfddbf597c121,2.1.4,https://github.com/tensorflow/tensorflow/commit/09481ef55f8dc43e77a139041a02f078b53e2548,1,"diff --git a/tensorflow/core/kernels/ragged_tensor_to_tensor_op.cc b/tensorflow/core/kernels/ragged_tensor_to_tensor_op.cc
 index 434c853b63daa4..376d55945d2ce8 100644
 --- a/tensorflow/core/kernels/ragged_tensor_to_tensor_op.cc
@@ -20083,7 +20096,7 @@ index 963c7eaf325659..cf3efcd49b4886 100644
          CalculateOutputIndexRowSplit(
              context, row_partition_tensor, parent_output_index,
              output_index_multiplier, output_size, result);
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2021-29561: TensorFlow Denial of Service Vulnerability,2.6.0-rc0,https://github.com/tensorflow/tensorflow/commit/77dd114513d7796e1e2b8aece214a380af26fbf4,2.1.4,https://github.com/tensorflow/tensorflow/commit/8849f473e567aae07c38f89e69c51823258d5c98,1,"diff --git a/tensorflow/core/kernels/load_and_remap_matrix_op.cc b/tensorflow/core/kernels/load_and_remap_matrix_op.cc
 index cb0245a9b61261..5ec28c70358132 100644
 --- a/tensorflow/core/kernels/load_and_remap_matrix_op.cc
@@ -20116,7 +20129,7 @@ index cb0245a9b61261..5ec28c70358132 100644
      const string& ckpt_path = ckpt_path_t->scalar<tstring>()();
      const Tensor* old_tensor_name_t;
      OP_REQUIRES_OK(context,
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2021-29562: TensorFlow Denial of Service Vulnerability,2.6.0-rc0,https://github.com/tensorflow/tensorflow/commit/1c56f53be0b722ca657cbc7df461ed676c8642a2,2.1.4,https://github.com/tensorflow/tensorflow/commit/723587ceeb11e65bf62c767336830021574c05bd,1,"diff --git a/tensorflow/core/kernels/fft_ops.cc b/tensorflow/core/kernels/fft_ops.cc
 index c3235c1547ff0b..29ca0d2f546a08 100644
 --- a/tensorflow/core/kernels/fft_ops.cc
@@ -20161,7 +20174,7 @@ index 058435948394c5..f396cc0a577ae1 100644
  
      Tensor temp;
      OP_REQUIRES_OK(ctx, ctx->allocate_temp(DataTypeToEnum<ComplexT>::v(),
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2021-29563: TensorFlow Denial of Service Vulnerability,2.6.0-rc0,https://github.com/tensorflow/tensorflow/commit/31bd5026304677faa8a0b77602c6154171b9aec1,2.1.4,https://github.com/tensorflow/tensorflow/commit/292ae19bf5e4a860d9d152b5f68781f241f5d3d0,2,"diff --git a/tensorflow/core/kernels/fft_ops.cc b/tensorflow/core/kernels/fft_ops.cc
 index 29ca0d2f546a08..fc29f49d223be3 100644
 --- a/tensorflow/core/kernels/fft_ops.cc
@@ -20190,7 +20203,7 @@ index 058435948394c5..462e3f28bbadfb 100644
  
      auto output = out->flat_inner_dims<ComplexT, FFTRank + 1>();
      const Eigen::DSizes<Eigen::DenseIndex, FFTRank + 1> zero_start_indices;
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2021-29564: TensorFlow Null Pointer Dereference in tf.raw_ops.EditDistance,2.6.0-rc0,https://github.com/tensorflow/tensorflow/commit/f4c364a5d6880557f6f5b6eb5cee2c407f0186b3,2.1.4,https://github.com/tensorflow/tensorflow/commit/5fbc82ecec988def44332702d747a4e6520494ca,1,"diff --git a/tensorflow/core/kernels/edit_distance_op.cc b/tensorflow/core/kernels/edit_distance_op.cc
 index 4aecdc9e414d36..386a1af08409f6 100644
 --- a/tensorflow/core/kernels/edit_distance_op.cc
@@ -20405,7 +20418,7 @@ index 4aecdc9e414d36..386a1af08409f6 100644
        output_t(loc) = (normalize_) ? 1.0 : truth_seq.size();
        ++truth_iter;
      }
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2021-29567: TensorFlow - Denial of Service Vulnerability,2.6.0-rc0,https://github.com/tensorflow/tensorflow/commit/7ae2af34087fb4b5c8915279efd03da3b81028bc,2.1.4,https://github.com/tensorflow/tensorflow/commit/6675965ab64ae542a59db7f8735ca0e7ba056e17,1,"diff --git a/tensorflow/core/kernels/sparse_dense_binary_op_shared.cc b/tensorflow/core/kernels/sparse_dense_binary_op_shared.cc
 index 3a5e66a0e73ea6..dac4a3d3e6bfcd 100644
 --- a/tensorflow/core/kernels/sparse_dense_binary_op_shared.cc
@@ -20438,7 +20451,7 @@ index 3a5e66a0e73ea6..dac4a3d3e6bfcd 100644
  
      const auto indices_mat = indices_t->matrix<int64>();
      const auto shape_vec = shape_t->vec<int64>();
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2021-29568: TensorFlow - Null Pointer Dereference in tf.raw_ops.ParameterizedTruncatedNormal,2.6.0-rc0,https://github.com/tensorflow/tensorflow/commit/5e52ef5a461570cfb68f3bdbbebfe972cb4e0fd8,2.1.4,https://github.com/tensorflow/tensorflow/commit/e458c49d3f9251dd0da911984598d063afb8a803,2,"diff --git a/tensorflow/core/kernels/parameterized_truncated_normal_op.cc b/tensorflow/core/kernels/parameterized_truncated_normal_op.cc
 index a63457551ac29b..116df3541d7cf6 100644
 --- a/tensorflow/core/kernels/parameterized_truncated_normal_op.cc
@@ -20467,7 +20480,7 @@ index b0b720b4e030fa..62d996ed00ab30 100644
      int32 num_batches = shape_tensor.flat<int32>()(0);
  
      int32 samples_per_batch = 1;
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2021-29570: TensorFlow - Out-of-Bounds Read in MaxPoolGradWithArgmax,2.6.0-rc0,https://github.com/tensorflow/tensorflow/commit/dcd7867de0fea4b72a2b34bd41eb74548dc23886,2.1.4,https://github.com/tensorflow/tensorflow/commit/bd4e7124305cf508b54f169d2244f2980e666920,2,"diff --git a/tensorflow/core/kernels/maxpooling_op.cc b/tensorflow/core/kernels/maxpooling_op.cc
 index b60d54533be689..003d2e94b99cd5 100644
 --- a/tensorflow/core/kernels/maxpooling_op.cc
@@ -20496,7 +20509,7 @@ index 5652addd00a957..f1193f0ef4887c 100644
            int64 grad_out_index = argmax_flat(index);
            if (!include_batch_in_index) {
              const int64 cur_batch = index / input_size_per_batch;
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2021-29571: TensorFlow - Out-of-Bounds Read Vulnerability,2.6.0-rc0,https://github.com/tensorflow/tensorflow/commit/79865b542f9ffdc9caeb255631f7c56f1d4b6517,2.1.4,https://github.com/tensorflow/tensorflow/commit/ecf19b3593688c7f64576830c1a7b5f3ff1b0110,1,"diff --git a/tensorflow/core/kernels/image/draw_bounding_box_op.cc b/tensorflow/core/kernels/image/draw_bounding_box_op.cc
 index 73db76333f0862..926ea368a58ba8 100644
 --- a/tensorflow/core/kernels/image/draw_bounding_box_op.cc
@@ -20531,7 +20544,7 @@ index 73db76333f0862..926ea368a58ba8 100644
      const int64 batch_size = images.dim_size(0);
      const int64 height = images.dim_size(1);
      const int64 width = images.dim_size(2);
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2021-29574: TensorFlow - Null Pointer Dereference in MaxPool3DGradGrad,2.6.0-rc0,https://github.com/tensorflow/tensorflow/commit/a3d9f9be9ac2296615644061b40cefcee341dcc4,2.1.4,https://github.com/tensorflow/tensorflow/commit/5c0f8d9abe5a0a7a70de03eb359e8ffe8adeb8cb,2,"diff --git a/tensorflow/core/kernels/pooling_ops_3d.cc b/tensorflow/core/kernels/pooling_ops_3d.cc
 index 1114e6931ecf94..7d133b66a1ebdf 100644
 --- a/tensorflow/core/kernels/pooling_ops_3d.cc
@@ -20580,7 +20593,7 @@ index 7345ccf69eeba9..40c69a4f2a8501 100644
      LaunchMaxPooling3dGradGradOp<Device, T>::launch(
          context, params, tensor_in, tensor_out, out_grad_backprop, output);
    }
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2021-29582: TensorFlow - Heap-Based Read Out-of-Bounds in Dequantize,2.6.0-rc0,https://github.com/tensorflow/tensorflow/commit/5899741d0421391ca878da47907b1452f06aaf1b,2.1.4,https://github.com/tensorflow/tensorflow/commit/55993172172f6eb42a89590c4ba9626e1599410e,2,"diff --git a/tensorflow/core/kernels/dequantize_op.cc b/tensorflow/core/kernels/dequantize_op.cc
 index 5393a677db242a..7a90e0c340b093 100644
 --- a/tensorflow/core/kernels/dequantize_op.cc
@@ -20627,7 +20640,7 @@ index 481909e8420e76..b9d786ac7c30e1 100644
  
      Tensor* output = nullptr;
      OP_REQUIRES_OK(ctx, ctx->allocate_output(0, input.shape(), &output));
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2021-29596: TensorFlow - Division by Zero Vulnerability,2.6.0-rc0,https://github.com/tensorflow/tensorflow/commit/f61c57bd425878be108ec787f4d96390579fb83e,2.1.4,https://github.com/tensorflow/tensorflow/commit/e2b12ce21914057a243685bb5024d9eaf3f8a1b8,2,"diff --git a/tensorflow/lite/kernels/embedding_lookup.cc b/tensorflow/lite/kernels/embedding_lookup.cc
 index d865f69eb9bd3c..092868d5a6a745 100644
 --- a/tensorflow/lite/kernels/embedding_lookup.cc
@@ -20658,7 +20671,7 @@ index c97cffe14e18eb..ca76e1068cd338 100644
    const int row_bytes = value->bytes / row_size;
  
    char* output_raw = GetTensorData<char>(output);
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2021-29610: TensorFlow - Invalid Axis Argument Validation Vulnerability,2.6.0-rc0,https://github.com/tensorflow/tensorflow/commit/c5b0d5f8ac19888e46ca14b0e27562e7fbbee9a9,2.1.4,https://github.com/tensorflow/tensorflow/commit/57fbb97d0bebae1225940f941452fcfc86cc62d5,5,"diff --git a/tensorflow/core/kernels/quantize_and_dequantize_op.cc b/tensorflow/core/kernels/quantize_and_dequantize_op.cc
 index f01a70114591bf..540d900f9f8696 100644
 --- a/tensorflow/core/kernels/quantize_and_dequantize_op.cc
@@ -20691,7 +20704,7 @@ index 8f71d09c0832e7..784bc3302e2482 100644
      const int depth = (axis_ == -1) ? 1 : input.dim_size(axis_);
      Tensor input_min_tensor;
      Tensor input_max_tensor;
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2021-37635: TensorFlow - Out-of-bounds Access in Sparse Reduction Operations,2.7.0-rc0,https://github.com/tensorflow/tensorflow/commit/87158f43f05f2720a374f3e6d22a7aaa3a33f750,2.3.4,https://github.com/tensorflow/tensorflow/commit/8880ea8e6da9264aa7d6d32ee6ffe29f0fc4283d,1,"diff --git a/tensorflow/core/kernels/sparse_reduce_op.cc b/tensorflow/core/kernels/sparse_reduce_op.cc
 index 668ea5ae54084c..430be0a271742e 100644
 --- a/tensorflow/core/kernels/sparse_reduce_op.cc
@@ -20742,7 +20755,7 @@ index b65f31e5eb174e..eb56b7390b0f9a 100644
        out_flat(idx) = reduced_val();
        VLOG(2) << ""coords: "" << absl::StrJoin(g.group(), "","")
                << ""; idx: "" << idx << ""; group "" << Op::Name() << "": ""
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2021-37636: TensorFlow - Division by 0 Error in SparseDenseCwiseDiv,2.7.0-rc0,https://github.com/tensorflow/tensorflow/commit/d9204be9f49520cdaaeb2541d1dc5187b23f31d9,2.3.4,https://github.com/tensorflow/tensorflow/commit/b97e43b07260cc054cd2c3dce68bc1f44df6e875,1,"diff --git a/tensorflow/core/kernels/sparse_dense_binary_op_shared.cc b/tensorflow/core/kernels/sparse_dense_binary_op_shared.cc
 index dac4a3d3e6bfcd..dda05dbc3b8cb2 100644
 --- a/tensorflow/core/kernels/sparse_dense_binary_op_shared.cc
@@ -20801,7 +20814,7 @@ index dac4a3d3e6bfcd..dda05dbc3b8cb2 100644
      }                                                                          \
      break;                                                                     \
    }
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2021-37637: TensorFlow - Null Pointer Dereference in CompressElement,2.6.0-rc0,https://github.com/tensorflow/tensorflow/commit/5dc7f6981fdaf74c8c5be41f393df705841fb7c5,2.3.4,https://github.com/tensorflow/tensorflow/commit/b34966976aee96bb1721692d05fb4f6b7dc5b590,1,"diff --git a/tensorflow/core/data/compression_utils.cc b/tensorflow/core/data/compression_utils.cc
 index bbff3a96667d13..40238a05a2614b 100644
 --- a/tensorflow/core/data/compression_utils.cc
@@ -20896,7 +20909,7 @@ index d132bdca8dabfc..f550b150ce945d 100644
      } else {
        // Allocate an empty Tensor. We will fill it out later after
        // uncompressing into the tensor_proto_str.
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2021-37639: TensorFlow - Null Pointer Dereference and Heap OOB Read Vulnerability,2.7.0-rc0,https://github.com/tensorflow/tensorflow/commit/9e82dce6e6bd1f36a57e08fa85af213e2b2f2622,2.3.4,https://github.com/tensorflow/tensorflow/commit/575ad42ad406994f2c1df60d79795a96d7091305,1,"diff --git a/tensorflow/core/kernels/save_restore_tensor.cc b/tensorflow/core/kernels/save_restore_tensor.cc
 index 953c1dfb6290b4..dcbed428a5a5ac 100644
 --- a/tensorflow/core/kernels/save_restore_tensor.cc
@@ -20945,7 +20958,7 @@ index 1a5b6b92bd6a0a..6b91ccf26c9320 100644
    const string& tensor_name = tensor_name_t.flat<tstring>()(restore_index);
  
    // If we cannot find a cached reader we will allocate our own.
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2021-37640: TensorFlow - Division by 0 Exception in tf.raw_ops.SparseReshape,2.7.0-rc0,https://github.com/tensorflow/tensorflow/commit/4923de56ec94fff7770df259ab7f2288a74feb41,2.5.1,https://github.com/tensorflow/tensorflow/commit/ce3a94c60e0a2057b49b329696841fb198f3ab3b,1,"diff --git a/tensorflow/core/kernels/reshape_util.cc b/tensorflow/core/kernels/reshape_util.cc
 index 6d6c6b3fcf193b..5db8944cebf06b 100644
 --- a/tensorflow/core/kernels/reshape_util.cc
@@ -20980,7 +20993,7 @@ index d54c081ec90175..32061c836b0f70 100644
      OP_REQUIRES_OK(context, functor::ReshapeSparseTensorFunctor<Device>()(
                                  context, input_shape, output_shape,
                                  input_indices_in.matrix<int64>(),
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2021-37642: TensorFlow - Division by 0 Error in ResourceScatterDiv,2.7.0-rc0,https://github.com/tensorflow/tensorflow/commit/4aacb30888638da75023e6601149415b39763d76,2.3.4,https://github.com/tensorflow/tensorflow/commit/7abc3c9e7d7e8f073f145cd5e1ff2fda1aebe27b,2,"diff --git a/tensorflow/core/kernels/resource_variable_ops.cc b/tensorflow/core/kernels/resource_variable_ops.cc
 index b81a7a517ea6d2..1a74774785f946 100644
 --- a/tensorflow/core/kernels/resource_variable_ops.cc
@@ -21102,7 +21115,7 @@ index b9c883c7e2ff30..e056d9cb0f9d4a 100644
      if (N > 0) {
        auto indices_flat = indices.flat<Index>();
        auto params_flat = params->flat_outer_dims<T>();
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2021-37643: TensorFlow - Null Pointer Dereference in MatrixDiagPartOp,2.7.0-rc0,https://github.com/tensorflow/tensorflow/commit/482da92095c4d48f8784b1f00dda4f81c28d2988,2.3.4,https://github.com/tensorflow/tensorflow/commit/9f56c6ae0c3c9d8cb3be02d9dd6273897b3efa73,2,"diff --git a/tensorflow/core/kernels/linalg/matrix_diag_op.cc b/tensorflow/core/kernels/linalg/matrix_diag_op.cc
 index b61dbe96a5d6a5..1506df17121387 100644
 --- a/tensorflow/core/kernels/linalg/matrix_diag_op.cc
@@ -21135,7 +21148,7 @@ index 016356dfa5336f..16a9e1817badd8 100644
      }
      const TensorShape& input_shape = input.shape();
  
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2021-37644: TensorFlow - Negative Element in num_elements Argument of tf.raw_ops.TensorListReserve,2.7.0-rc0,https://github.com/tensorflow/tensorflow/commit/8a6e874437670045e6c7dc6154c7412b4a2135e2,2.4.3,https://github.com/tensorflow/tensorflow/commit/31febcdb7eca32eb2c27bf790d6190a2b8a81835,1,"diff --git a/tensorflow/core/kernels/list_kernels.cc b/tensorflow/core/kernels/list_kernels.cc
 index 9a2f373f5ce0cf..488e02337f707b 100644
 --- a/tensorflow/core/kernels/list_kernels.cc
@@ -21166,7 +21179,7 @@ index 9a2f373f5ce0cf..488e02337f707b 100644
      TensorList output;
      output.element_shape = element_shape;
      output.element_dtype = element_dtype_;
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2021-37645: TensorFlow Integer Overflow Vulnerability,2.7.0-rc0,https://github.com/tensorflow/tensorflow/commit/96f364a1ca3009f98980021c4b32be5fdcca33a1,2.4.3,https://github.com/tensorflow/tensorflow/commit/83d63cd587ce75a2243240b760f68d64978a104c,1,"diff --git a/tensorflow/core/kernels/quantize_and_dequantize_op.cc b/tensorflow/core/kernels/quantize_and_dequantize_op.cc
 index 540d900f9f8696..d63a49a04be621 100644
 --- a/tensorflow/core/kernels/quantize_and_dequantize_op.cc
@@ -21203,7 +21216,7 @@ index 540d900f9f8696..d63a49a04be621 100644
  
      OP_REQUIRES(
          ctx, input.IsSameSize(gradient),
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2021-37647: TensorFlow - Null Pointer Dereference in SparseTensorSliceDataset,2.7.0-rc0,https://github.com/tensorflow/tensorflow/commit/02cc160e29d20631de3859c6653184e3f876b9d7,2.6.0,https://github.com/tensorflow/tensorflow/commit/c362a1da82e4861e30a1fd8cf002b1199bde76ba,1,"diff --git a/tensorflow/core/kernels/data/sparse_tensor_slice_dataset_op.cc b/tensorflow/core/kernels/data/sparse_tensor_slice_dataset_op.cc
 index 00b71d41a7ca1e..58bb4b0b6d8065 100644
 --- a/tensorflow/core/kernels/data/sparse_tensor_slice_dataset_op.cc
@@ -21310,7 +21323,7 @@ index 25ecbf20680b3f..8f93530010caec 100644
    @combinations.generate(combinations.combine(tf_api_version=2, mode=[""eager""]))
    def testFromSparseTensorSlicesError(self):
      with self.assertRaises(AttributeError):
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2021-37649: TensorFlow - Null Pointer Dereference in tf.raw_ops.UncompressElement,2.7.0-rc0,https://github.com/tensorflow/tensorflow/commit/7bdf50bb4f5c54a4997c379092888546c97c3ebd,2.3.4,https://github.com/tensorflow/tensorflow/commit/39ee9a577bb4bc697500bfc678b0c42b3e6a2ec4,1,"diff --git a/tensorflow/core/kernels/data/experimental/compression_ops.cc b/tensorflow/core/kernels/data/experimental/compression_ops.cc
 index efa7018acb6293..8cc214671bd742 100644
 --- a/tensorflow/core/kernels/data/experimental/compression_ops.cc
@@ -21343,7 +21356,7 @@ index efa7018acb6293..8cc214671bd742 100644
  
    std::vector<Tensor> components;
    OP_REQUIRES_OK(ctx, UncompressElement(*compressed, &components));
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2021-37650: TensorFlow - Heap Buffer Overflow and Segmentation Fault,2.7.0-rc0,https://github.com/tensorflow/tensorflow/commit/e0b6e58c328059829c3eb968136f17aa72b6c876,2.3.4,https://github.com/tensorflow/tensorflow/commit/647e265b65d192b60ac35935dfebadf9caafa222,4,"diff --git a/tensorflow/core/kernels/data/experimental/to_tf_record_op.cc b/tensorflow/core/kernels/data/experimental/to_tf_record_op.cc
 index 0ba04d0bd94bd1..4f759bede55b61 100644
 --- a/tensorflow/core/kernels/data/experimental/to_tf_record_op.cc
@@ -21412,7 +21425,7 @@ index bfa894cd473b40..56401bb91f5753 100644
      bool end_of_sequence;
      do {
        TF_RETURN_IF_ERROR(
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2021-37652: TensorFlow - Use After Free Error in BoostedTreesCreateEnsemble,2.7.0-rc0,https://github.com/tensorflow/tensorflow/commit/5ecec9c6fbdbc6be03295685190a45e7eee726ab,2.6.0-rc2,https://github.com/tensorflow/tensorflow/commit/3cb9d32e59e63b8a349612be8420bc6c4598d8b1,1,"diff --git a/tensorflow/core/kernels/boosted_trees/resource_ops.cc b/tensorflow/core/kernels/boosted_trees/resource_ops.cc
 index d50885fa3f5113..f2c60b9b4511de 100644
 --- a/tensorflow/core/kernels/boosted_trees/resource_ops.cc
@@ -21437,7 +21450,7 @@ index ac1fb5652da5f9..8036f2b20f36bb 100644
        OP_REQUIRES(
            context, false,
            errors::InvalidArgument(""Unable to parse tree ensemble proto.""));
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2021-37654: TensorFlow - Out-of-Bounds Read Vulnerability,2.7.0-rc0,https://github.com/tensorflow/tensorflow/commit/bc9c546ce7015c57c2f15c168b3d9201de679a1d,2.3.4,https://github.com/tensorflow/tensorflow/commit/f3a61584f09cda7c4788e13dd918467c95312115,2,"diff --git a/tensorflow/core/kernels/resource_variable_ops.cc b/tensorflow/core/kernels/resource_variable_ops.cc
 index 71aead55690d65..32a0a43364deae 100644
 --- a/tensorflow/core/kernels/resource_variable_ops.cc
@@ -21470,7 +21483,7 @@ index e056d9cb0f9d4a..e4c2dd79195419 100644
  
      // Check that we have enough index space
      const int64 N = indices.NumElements();
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2021-37656: TensorFlow - Reference Binding to Null Pointer in tf.raw_ops.RaggedTensorToSparse,2.7.0-rc0,https://github.com/tensorflow/tensorflow/commit/1071f554dbd09f7e101324d366eec5f4fe5a3ece,2.3.4,https://github.com/tensorflow/tensorflow/commit/b58bfcc5139907a254b55c856f602ad57de50361,2,"diff --git a/tensorflow/core/kernels/ragged_tensor_to_sparse_kernel.cc b/tensorflow/core/kernels/ragged_tensor_to_sparse_kernel.cc
 index a47ff372cf087a..639280a26b40d4 100644
 --- a/tensorflow/core/kernels/ragged_tensor_to_sparse_kernel.cc
@@ -21545,7 +21558,7 @@ index 39b530f4a15ead..336a38fa58fc8b 100644
        if (i > 0) {
          SPLITS_TYPE last_split =
              rt_nested_splits[i - 1](rt_nested_splits[i - 1].size() - 1);
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2021-37658: TensorFlow - Null Pointer Dereference in MatrixSetDiagV* Operations,2.7.0-rc0,https://github.com/tensorflow/tensorflow/commit/ff8894044dfae5568ecbf2ed514c1a37dc394f1b,2.3.4,https://github.com/tensorflow/tensorflow/commit/fbe12b2f9a9280ed55e9c3c9760b85cf45449283,2,"diff --git a/tensorflow/core/kernels/linalg/matrix_set_diag_op.cc b/tensorflow/core/kernels/linalg/matrix_set_diag_op.cc
 index 07b6e69de67dc4..4e89433718b463 100644
 --- a/tensorflow/core/kernels/linalg/matrix_set_diag_op.cc
@@ -21574,7 +21587,7 @@ index bf98fd0d47d65b..e1c47d814050e1 100644
        lower_diag_index = diag_index.flat<int32>()(0);
        upper_diag_index = lower_diag_index;
        if (TensorShapeUtils::IsVector(diag_index.shape())) {
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2021-37660: TensorFlow Division by Zero Vulnerability,2.7.0-rc0,https://github.com/tensorflow/tensorflow/commit/e86605c0a336c088b638da02135ea6f9f6753618,2.3.4,https://github.com/tensorflow/tensorflow/commit/f135f0397755b5ee75e0816921283a1d257359a5,2,"diff --git a/tensorflow/core/kernels/inplace_ops.cc b/tensorflow/core/kernels/inplace_ops.cc
 index 2c0b201af3dd81..81027c7e17ee1a 100644
 --- a/tensorflow/core/kernels/inplace_ops.cc
@@ -21601,7 +21614,7 @@ index b5191b9989f328..008e9732b55768 100644
        OP_REQUIRES_OK(ctx, DoCompute(ctx, i, v, &y));
      }
      ctx->set_output(0, y);
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2021-37661: TensorFlow Denial of Service Vulnerability,2.7.0-rc0,https://github.com/tensorflow/tensorflow/commit/8a84f7a2b5a2b27ecf88d25bad9ac777cd2f7992,2.3.4,https://github.com/tensorflow/tensorflow/commit/b65eb1055d2ed056e730711146d3cb3a9c90c9d7,1,"diff --git a/tensorflow/core/kernels/boosted_trees/quantile_ops.cc b/tensorflow/core/kernels/boosted_trees/quantile_ops.cc
 index c245b25aab0fbf..13a0056060e92a 100644
 --- a/tensorflow/core/kernels/boosted_trees/quantile_ops.cc
@@ -21630,7 +21643,7 @@ index 0065bdd66aa708..916db1f436148b 100644
  
      auto result =
          new QuantileStreamResource(epsilon, max_elements_, num_streams);
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2021-37662: TensorFlow BoostedTreesCalculateBestGainsPerFeature and BoostedTreesCalculateBestFeatureSplitV2 Vulnerability,2.7.0-rc0,https://github.com/tensorflow/tensorflow/commit/429f009d2b2c09028647dd4bb7b3f6f414bbaad7,2.3.4,https://github.com/tensorflow/tensorflow/commit/a4117ba799fb7c509465dacd27ea8467fbc92be6,1,"diff --git a/tensorflow/core/kernels/boosted_trees/stats_ops.cc b/tensorflow/core/kernels/boosted_trees/stats_ops.cc
 index 2636909855a386..60c1d191f5232c 100644
 --- a/tensorflow/core/kernels/boosted_trees/stats_ops.cc
@@ -21797,7 +21810,7 @@ index 529a6283cb708b..dc8c4110b47259 100644
  
      // TODO(tanzheny) parallelize the computation.
      // Iterate each node and find the best gain per node.
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2021-37662: TensorFlow BoostedTreesCalculateBestGainsPerFeature and BoostedTreesCalculateBestFeatureSplitV2 Vulnerability,2.7.0-rc0,https://github.com/tensorflow/tensorflow/commit/9c87c32c710d0b5b53dc6fd3bfde4046e1f7a5ad,2.3.4,https://github.com/tensorflow/tensorflow/commit/3abfbf613ab0571657d14b704f5497429abd7cdc,4,"diff --git a/tensorflow/core/kernels/boosted_trees/stats_ops.cc b/tensorflow/core/kernels/boosted_trees/stats_ops.cc
 index f3449daef78385..014c2ec22c9cf6 100644
 --- a/tensorflow/core/kernels/boosted_trees/stats_ops.cc
@@ -21879,7 +21892,7 @@ index 851e5b78e847b7..4b4b78356e2bd1 100644
  
      // Get stats_summaries_list.
      OpInputList stats_summaries_list;
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2021-37663: TensorFlow - Incomplete Validation in QuantizeV2,2.7.0-rc0,https://github.com/tensorflow/tensorflow/commit/6da6620efad397c85493b8f8667b821403516708,2.3.4,https://github.com/tensorflow/tensorflow/commit/e4cb9e7a7de8a55b4e3867d7d7e73f71612bbb24,1,"diff --git a/tensorflow/core/kernels/quantize_op.cc b/tensorflow/core/kernels/quantize_op.cc
 index f64a2188fa9547..be73d4f8291f7b 100644
 --- a/tensorflow/core/kernels/quantize_op.cc
@@ -21990,7 +22003,7 @@ index a523c4b9cd0249..098991e4f436d8 100644
      }
  
      const TensorShape& minmax_shape = ctx->input(1).shape();
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2021-37665: TensorFlow - Incomplete Validation in MKL Implementation of Requantization,2.7.0-rc0,https://github.com/tensorflow/tensorflow/commit/203214568f5bc237603dbab6e1fd389f1572f5c9,2.3.4,https://github.com/tensorflow/tensorflow/commit/55ed6adce39e5423f377a6744ae470684acd9eb0,2,"diff --git a/tensorflow/core/kernels/mkl/mkl_requantize_per_channel_op.cc b/tensorflow/core/kernels/mkl/mkl_requantize_per_channel_op.cc
 index c0f9845cd4b084..6ffbd09b44f543 100644
 --- a/tensorflow/core/kernels/mkl/mkl_requantize_per_channel_op.cc
@@ -22121,7 +22134,7 @@ index 0a0464f648b95b..4cac0e0ecdc76e 100644
  
        const float factor = (out_type_ == DT_QINT8) ? 127.0f : 255.0f;
        const float requested_min_max =
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2021-37665: TensorFlow - Incomplete Validation in MKL Implementation of Requantization,2.7.0-rc0,https://github.com/tensorflow/tensorflow/commit/9e62869465573cb2d9b5053f1fa02a81fce21d69,2.3.4,https://github.com/tensorflow/tensorflow/commit/5dbd4ef661059a28f717822448dfef63b2d75f45,2,"diff --git a/tensorflow/core/kernels/mkl/mkl_requantization_range_per_channel_op.cc b/tensorflow/core/kernels/mkl/mkl_requantization_range_per_channel_op.cc
 index 24dabb07ca067a..a38df2450d1942 100644
 --- a/tensorflow/core/kernels/mkl/mkl_requantization_range_per_channel_op.cc
@@ -22172,7 +22185,7 @@ index 0cd4843c0d8659..bb1045c7f513d5 100644
  
      const float* input_min_data = input_min.flat<float>().data();
      const float* input_max_data = input_max.flat<float>().data();
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2021-37666: TensorFlow - Reference Binding to Null Pointer in tf.raw_ops.RaggedTensorToVariant,2.7.0-rc0,https://github.com/tensorflow/tensorflow/commit/be7a4de6adfbd303ce08be4332554dff70362612,2.3.4,https://github.com/tensorflow/tensorflow/commit/c3ef7bc42723d3349ba599c694457918bea7c848,2,"diff --git a/tensorflow/core/kernels/ragged_tensor_to_variant_op.cc b/tensorflow/core/kernels/ragged_tensor_to_variant_op.cc
 index 687289cd38077a..ab86863e3a987f 100644
 --- a/tensorflow/core/kernels/ragged_tensor_to_variant_op.cc
@@ -22207,7 +22220,7 @@ index 49c4a2411b8c3c..a3ecc80ce41f9a 100644
      // Unbatch the Ragged Tensor and encode the components.
      std::vector<RaggedTensor> ragged_components;
      auto batched_splits_top_vec =
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2021-37669: Denial of Service Vulnerability in TensorFlow,2.7.0-rc0,https://github.com/tensorflow/tensorflow/commit/b5cdbf12ffcaaffecf98f22a6be5a64bb96e4f58,2.3.4,https://github.com/tensorflow/tensorflow/commit/8bac83f84bcb6413d84c5e40757dbf6375ab4a97,2,"diff --git a/tensorflow/core/kernels/image/non_max_suppression_op.cc b/tensorflow/core/kernels/image/non_max_suppression_op.cc
 index 5cb721ed7105fa..69b05cc9d84f83 100644
 --- a/tensorflow/core/kernels/image/non_max_suppression_op.cc
@@ -22234,7 +22247,7 @@ index 20ae3a2e0d07f6..913209dfd326ec 100644
      // max_total_size: scalar
      const Tensor& max_total_size = context->input(3);
      OP_REQUIRES(
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2021-37671: TensorFlow - Null Pointer Dereference in Map Operations,2.7.0-rc0,https://github.com/tensorflow/tensorflow/commit/532f5c5a547126c634fefd43bbad1dc6417678ac,2.3.4,https://github.com/tensorflow/tensorflow/commit/c32bc472471cdd8f4d85c91cf840db7e13359728,1,"diff --git a/tensorflow/core/kernels/map_stage_op.cc b/tensorflow/core/kernels/map_stage_op.cc
 index 9411792762baab..1a2f5a8fa2247d 100644
 --- a/tensorflow/core/kernels/map_stage_op.cc
@@ -22335,7 +22348,7 @@ index 6c01e42ff8c9fd..2d396437d7186b 100644
      }
  
      return Status::OK();
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2021-37672: TensorFlow - Out-of-Bounds Read Vulnerability,2.7.0-rc0,https://github.com/tensorflow/tensorflow/commit/a4e138660270e7599793fa438cd7b2fc2ce215a6,2.3.4,https://github.com/tensorflow/tensorflow/commit/2099cab57e8d065d26f66fe359b5c9e9d218a816,1,"diff --git a/tensorflow/core/kernels/sdca_internal.cc b/tensorflow/core/kernels/sdca_internal.cc
 index 6c4a63b270c25b..164f9382724cac 100644
 --- a/tensorflow/core/kernels/sdca_internal.cc
@@ -22368,7 +22381,7 @@ index 11a3be8bf46a76..ed7149bf8365d8 100644
  
    OpInputList dense_features_inputs;
    TF_RETURN_IF_ERROR(
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2021-37673: TensorFlow Denial of Service Vulnerability,2.7.0-rc0,https://github.com/tensorflow/tensorflow/commit/d7de67733925de196ec8863a33445b73f9562d1d,2.3.4,https://github.com/tensorflow/tensorflow/commit/cc96b0010c576e76c08248c2fe9f498f8a478f0a,1,"diff --git a/tensorflow/core/kernels/map_stage_op.cc b/tensorflow/core/kernels/map_stage_op.cc
 index b575c2d3862e0c..9411792762baab 100644
 --- a/tensorflow/core/kernels/map_stage_op.cc
@@ -22395,7 +22408,7 @@ index 6c01e42ff8c9fd..85e9be3a2d0491 100644
  
      // Create copy for insertion into Staging Area
      Tensor key(*key_tensor);
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2021-37674: TensorFlow Denial of Service Vulnerability,2.7.0-rc0,https://github.com/tensorflow/tensorflow/commit/136b51f10903e044308cf77117c0ed9871350475,2.3.4,https://github.com/tensorflow/tensorflow/commit/0290e0ffe98601df15b9e0a33105ff8d73ebe0f0,2,"diff --git a/tensorflow/core/kernels/maxpooling_op.cc b/tensorflow/core/kernels/maxpooling_op.cc
 index 8119b7fddf604c..749b9c1d995eb3 100644
 --- a/tensorflow/core/kernels/maxpooling_op.cc
@@ -22468,7 +22481,7 @@ index 4bd710546fec26..59fbe883642a1a 100644
      // Our current version of depthwise max pooling does not support
      // any padding, and expects the depth_window to equal the
      // depth_stride (no overlapping).
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2021-37675: TensorFlow Division by 0 Vulnerability,2.7.0-rc0,https://github.com/tensorflow/tensorflow/commit/8a793b5d7f59e37ac7f3cd0954a750a2fe76bad4,2.3.4,https://github.com/tensorflow/tensorflow/commit/f639a0e28816580460c5254b6d25004fcd3ebd86,2,"diff --git a/tensorflow/core/framework/common_shape_fns.cc b/tensorflow/core/framework/common_shape_fns.cc
 index e578e2016b8742..4806d70a1d337d 100644
 --- a/tensorflow/core/framework/common_shape_fns.cc
@@ -22569,7 +22582,7 @@ index b9efddf4cdbc99..a81f7400389843 100644
      for (int i = 0; i < axes_vec.size(); i++) {
        axes.insert((axes_vec(i) + ndims) % ndims);
      }
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2021-37676: TensorFlow - Reference Binding to Null Pointer in tf.raw_ops.SparseFillEmptyRows,2.7.0-rc0,https://github.com/tensorflow/tensorflow/commit/578e634b4f1c1c684d4b4294f9e5281b2133b3ed,2.3.4,https://github.com/tensorflow/tensorflow/commit/5d1f5615f1d613f7257f4293decb2a674affb32f,1,"diff --git a/tensorflow/core/ops/sparse_ops.cc b/tensorflow/core/ops/sparse_ops.cc
 index 906cef1f5ecafe..b1e40e66af8929 100644
 --- a/tensorflow/core/ops/sparse_ops.cc
@@ -22612,7 +22625,7 @@ index 906cef1f5ecafe..b1e40e66af8929 100644
        ShapeHandle output_indices =
            c->Matrix(InferenceContext::kUnknownDim, c->NumElements(input_shape));
        ShapeHandle output_values = c->Vector(InferenceContext::kUnknownDim);
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2021-37680: TensorFlow - Division by Zero Vulnerability,2.7.0-rc0,https://github.com/tensorflow/tensorflow/commit/718721986aa137691ee23f03638867151f74935f,2.3.4,https://github.com/tensorflow/tensorflow/commit/1bfd716a2fcdfd7516671c0e5fb45c164ec0b230,2,"diff --git a/tensorflow/lite/kernels/fully_connected.cc b/tensorflow/lite/kernels/fully_connected.cc
 index 4ebaa7877fa38c..d0010e302618dd 100644
 --- a/tensorflow/lite/kernels/fully_connected.cc
@@ -22637,7 +22650,7 @@ index 9cbbcae9c51291..7fbbf9983ac675 100644
    const int batch_size = input_size / filter->dims->data[1];
    const int num_units = filter->dims->data[0];
  
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2021-37681: TensorFlow SVDF Null Pointer Error,2.7.0-rc0,https://github.com/tensorflow/tensorflow/commit/5b048e87e4e55990dae6b547add4dae59f4e1c76,2.3.4,https://github.com/tensorflow/tensorflow/commit/781d109778fc31bfc00352175ce4e2779fe6cde4,2,"diff --git a/tensorflow/lite/kernels/kernel_util.cc b/tensorflow/lite/kernels/kernel_util.cc
 index c64a49d316b217..6a53757bbdff67 100644
 --- a/tensorflow/lite/kernels/kernel_util.cc
@@ -22674,7 +22687,7 @@ index 267f07951f9e76..ef546072d5a538 100644
    TfLiteTensor* output = GetOutput(context, node, kOutputTensor);
  
    switch (weights_feature->type) {
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2021-37682: TensorFlow - Uninitialized Values in TFLite Operations,2.7.0-rc0,https://github.com/tensorflow/tensorflow/commit/537bc7c723439b9194a358f64d871dd326c18887,2.3.4,https://github.com/tensorflow/tensorflow/commit/22386ec2ab59e62226037e4e2f81ed49b1c3b86a,2,"diff --git a/tensorflow/lite/kernels/svdf.cc b/tensorflow/lite/kernels/svdf.cc
 index 6c02508e26b1da..41a71c54a8c922 100644
 --- a/tensorflow/lite/kernels/svdf.cc
@@ -22727,7 +22740,7 @@ index 267f07951f9e76..ec19fb9256ccb8 100644
      auto* output_params = reinterpret_cast<TfLiteAffineQuantization*>(
          output->quantization.params);
      const double effective_scale_1 = input_params->scale->data[0] *
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2021-37683: TensorFlow - Division by 0 Error,2.7.0-rc0,https://github.com/tensorflow/tensorflow/commit/1e206baedf8bef0334cca3eb92bab134ef525a28,2.3.4,https://github.com/tensorflow/tensorflow/commit/d5c59fbfbb7707014386bf585d99b0c7477e4a4b,2,"diff --git a/tensorflow/lite/kernels/div.cc b/tensorflow/lite/kernels/div.cc
 index f744b4ba1b7f63..51623a969d1b11 100644
 --- a/tensorflow/lite/kernels/div.cc
@@ -22802,7 +22815,7 @@ index c9eb1db531a647..aafe00f0d0cbe9 100644
  
    return kTfLiteOk;
  }
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2021-37690: TensorFlow - Shape Information Segfault Vulnerability,2.7.0-rc0,https://github.com/tensorflow/tensorflow/commit/ee119d4a498979525046fba1c3dd3f13a039fbb1,2.3.4,https://github.com/tensorflow/tensorflow/commit/528ebc948a58ac6353305f8345a50ab35717dbdb,2,"diff --git a/tensorflow/core/common_runtime/shape_refiner.cc b/tensorflow/core/common_runtime/shape_refiner.cc
 index 375f809b31b369..2e29ef48189a59 100644
 --- a/tensorflow/core/common_runtime/shape_refiner.cc
@@ -22869,7 +22882,7 @@ index a968aaf09b6ad3..6a7d1eadfb66b6 100644
      }
    }
  
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2021-37691: TensorFlow - Division by Zero Error in LSH Projection,2.7.0-rc0,https://github.com/tensorflow/tensorflow/commit/0575b640091680cfb70f4dd93e70658de43b94f9,2.3.4,https://github.com/tensorflow/tensorflow/commit/f20119917f86b9c582fc19efc3b9c80700b09a75,2,"diff --git a/tensorflow/lite/kernels/lsh_projection.cc b/tensorflow/lite/kernels/lsh_projection.cc
 index 81f97ecf9a9ce7..92a5ee556f724c 100644
 --- a/tensorflow/lite/kernels/lsh_projection.cc
@@ -22912,7 +22925,7 @@ index b809748c59ca82..34cbf6e5c3aa78 100644
  
    if (NumInputs(node) == 3) {
      const TfLiteTensor* weight = GetInput(context, node, 2);
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2021-41196 | tensorflow | tensorflow Patch 2.4.4,2.8.0-rc0,https://github.com/tensorflow/tensorflow/commit/12b1ff82b3f26ff8de17e58703231d5a02ef1b8b,2.4.4,https://github.com/tensorflow/tensorflow/commit/533701cdb550f916590a19cb5ccbd6884af451f0,1,"diff --git a/tensorflow/core/kernels/pooling_ops_3d.cc b/tensorflow/core/kernels/pooling_ops_3d.cc
 index af00b6368c7ee6..d4dc87c7e3f86f 100644
 --- a/tensorflow/core/kernels/pooling_ops_3d.cc
@@ -23009,7 +23022,7 @@ index 051f7e1168a72b..83d26e27d9849f 100644
  
  if __name__ == ""__main__"":
    test.main()
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2021-41204: TensorFlow - Resource Tensor Deep Copy Segfault,2.7.0-rc0,https://github.com/tensorflow/tensorflow/commit/7731e8dfbe4a56773be5dc94d631611211156659,2.4.4,https://github.com/tensorflow/tensorflow/commit/e270462c7c6ef29076c32ea3f44b14d10ecad4a1,1,"diff --git a/tensorflow/core/common_runtime/constant_folding.cc b/tensorflow/core/common_runtime/constant_folding.cc
 index 8367e5ff6aff34..ca75dc9f19160a 100644
 --- a/tensorflow/core/common_runtime/constant_folding.cc
@@ -23054,7 +23067,7 @@ index 384ec836cdf9b4..64ed1c398ada30 100644
    }
    if (MaybeReplaceShapeOp(n, shape_map, shape_replacement_map)) {
      return true;
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2021-41205: TensorFlow - Out-of-Bounds Read in QuantizeAndDequantizeV* Operations,2.8.0-rc0,https://github.com/tensorflow/tensorflow/commit/7cf73a2274732c9d82af51c2bc2cf90d13cd7e6d,2.4.4,https://github.com/tensorflow/tensorflow/commit/ef63f08e0c60a12f8a1e56ff75ec991f74a910bb,2,"diff --git a/tensorflow/core/ops/array_ops.cc b/tensorflow/core/ops/array_ops.cc
 index 775a4cc469664a..64bd4f38478542 100644
 --- a/tensorflow/core/ops/array_ops.cc
@@ -23185,7 +23198,7 @@ index 412c926d3863a6..2fe45474bfaa44 100644
  }
  
  TEST(ArrayOpsTest, SpaceToBatch_ShapeFn) {
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2022-29209: TensorFlow - Incorrect Logic in Assertion Macros,2.10.0-rc0,https://github.com/tensorflow/tensorflow/commit/b917181c29b50cb83399ba41f4d938dc369109a1,2.6.4,https://github.com/tensorflow/tensorflow/commit/a096245efdc3a4fc0cfad67b96a6cb94931320ac,1,"diff --git a/tensorflow/core/platform/default/logging.h b/tensorflow/core/platform/default/logging.h
 index 86e7da1d9669b2..dfee3a62c47028 100644
 --- a/tensorflow/core/platform/default/logging.h
@@ -23450,7 +23463,7 @@ index 27331b2bcd1bbf..58056829be8efd 100644
  #undef TF_DEFINE_CHECK_OP_IMPL
  
  // In optimized mode, use CheckOpString to hint to compiler that
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2022-29211: TensorFlow - Crash due to NaN elements in tf.histogram_fixed_width,2.10.0-rc0,https://github.com/tensorflow/tensorflow/commit/e57fd691c7b0fd00ea3bfe43444f30c1969748b5,2.6.4,https://github.com/tensorflow/tensorflow/commit/f37c07e574321caf40775462f1eda3f67fbd7a1a,1,"diff --git a/tensorflow/core/kernels/histogram_op.cc b/tensorflow/core/kernels/histogram_op.cc
 index 8e1b53de6ee409..8ba9bccc9fbecd 100644
 --- a/tensorflow/core/kernels/histogram_op.cc
@@ -23521,7 +23534,7 @@ index 7b66c879fbf18a..6fcfe752e88718 100644
          errors::InvalidArgument(""nbins should be a positive number, but got '"",
                                  nbins, ""'""));
  
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2022-29212: TensorFlow TFLite Model Converter Crash,2.9.0-rc0,https://github.com/tensorflow/tensorflow/commit/a989426ee1346693cc015792f11d715f6944f2b8,2.6.4,https://github.com/tensorflow/tensorflow/commit/bd66d4fa0b95084c36c367a7ff1f4ba75982f0b6,1,"diff --git a/tensorflow/lite/kernels/comparisons.cc b/tensorflow/lite/kernels/comparisons.cc
 index d0a1876c5c654f..c3824c1db01706 100644
 --- a/tensorflow/lite/kernels/comparisons.cc
@@ -23662,7 +23675,7 @@ index f8cf6dee74c4bf..074d0f1f61513a 100644
  TEST(ComparisonsTest, QuantizedUInt8GreaterEqualWithBroadcast) {
    const float kMin = -1.f;
    const float kMax = 128.f;
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2022-29213: TensorFlow - Lack of Input Validation in tf.compat.v1.signal.rfft2d and tf.compat.v1.signal.rfft3d,2.9.0-rc0,https://github.com/tensorflow/tensorflow/commit/0a8a781e597b18ead006d19b7d23d0a369e9ad73,2.6.4,https://github.com/tensorflow/tensorflow/commit/076d456644811ef29720c991fc258f354375cf6b,1,"diff --git a/tensorflow/core/kernels/fft_ops.cc b/tensorflow/core/kernels/fft_ops.cc
 index 14d0ebd983142f..3186863884b1ce 100644
 --- a/tensorflow/core/kernels/fft_ops.cc
@@ -23733,7 +23746,7 @@ index 13002e5ee295a7..ad980d579f0e85 100644
  
  @test_util.run_all_in_graph_and_eager_modes
  class FFTShiftTest(test.TestCase, parameterized.TestCase):
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2022-35939: TensorFlow ScatterNd Function Index Out-of-Bounds Write Vulnerability,2.10.0-rc0,https://github.com/tensorflow/tensorflow/commit/b4d4b4cb019bd7240a52daa4ba61e3cc814f0384,2.6.4,https://github.com/tensorflow/tensorflow/commit/b4d4b4cb019bd7240a52daa4ba61e3cc814f0384,1,"diff --git a/tensorflow/lite/kernels/internal/reference/reference_ops.h b/tensorflow/lite/kernels/internal/reference/reference_ops.h
 index 52d3814a054676..0a7b202f28a7b0 100644
 --- a/tensorflow/lite/kernels/internal/reference/reference_ops.h
@@ -24028,7 +24041,7 @@ index ed62c67f736d9b..b0951efcbb2e79 100644
 +
  }  // namespace
  }  // namespace tflite
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2022-35940: TensorFlow - Integer Overflow in RaggedRangOp Function,2.10.0-rc0,https://github.com/tensorflow/tensorflow/commit/37cefa91bee4eace55715eeef43720b958a01192,2.6.4,https://github.com/tensorflow/tensorflow/commit/37cefa91bee4eace55715eeef43720b958a01192,1,"diff --git a/tensorflow/core/kernels/ragged_range_op.cc b/tensorflow/core/kernels/ragged_range_op.cc
 index 066e5d638bbc43..469ef06b4b3bb6 100644
 --- a/tensorflow/core/kernels/ragged_range_op.cc
@@ -24259,7 +24272,7 @@ index 8465fb25997b8b..aaf48bf9783785 100644
    def testShape(self):
      self.assertAllEqual(
          ragged_math_ops.range(0, 0, 1).shape.as_list(), [1, None])
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2022-35941: TensorFlow AvgPoolOp Negative ksize Argument Vulnerability,2.10.0-rc0,https://github.com/tensorflow/tensorflow/commit/3a6ac52664c6c095aa2b114e742b0aa17fdce78f,2.6.4,https://github.com/tensorflow/tensorflow/commit/3a6ac52664c6c095aa2b114e742b0aa17fdce78f,1,"diff --git a/tensorflow/core/kernels/avgpooling_op.cc b/tensorflow/core/kernels/avgpooling_op.cc
 index 0429d50cdec23a..7e302a7e52e65d 100644
 --- a/tensorflow/core/kernels/avgpooling_op.cc
@@ -24376,7 +24389,7 @@ index aca29d05a3686d..391f8ec025f3ca 100644
  
  def GetMaxPoolFwdTest(input_size, filter_size, strides, padding):
  
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2022-35960: TensorFlow - TensorListReserve num_elements Vulnerability,2.11.0-rc0,https://github.com/tensorflow/tensorflow/commit/b5f6fbfba76576202b72119897561e3bd4f179c7,2.10.0-rc3,https://github.com/tensorflow/tensorflow/commit/60ed7ceb65dfc16d0b4b50ff59510e57a1552fa3,1,"diff --git a/tensorflow/core/kernels/list_kernels.cc b/tensorflow/core/kernels/list_kernels.cc
 index 9648a43c919ea1..72443a594c8605 100644
 --- a/tensorflow/core/kernels/list_kernels.cc
@@ -24475,7 +24488,7 @@ index 801372dce266c4..b4e21c1b1f7e8d 100644
    def testPopUninitializedTensorUseListElementShape(self):
      l = list_ops.tensor_list_reserve(
          element_dtype=dtypes.float32, element_shape=[2, 3], num_elements=3)
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2022-21739: TensorFlow - QuantizedMaxPool Reference Binding to Null Pointer,2.8.0-rc0,https://github.com/tensorflow/tensorflow/commit/53b0dd6dc5957652f35964af16b892ec9af4a559,2.5.3,https://github.com/tensorflow/tensorflow/commit/998d3c7ffbe0704c7f147c353fa0ec357d37e1bd,1,"diff --git a/tensorflow/core/kernels/quantized_pooling_ops.cc b/tensorflow/core/kernels/quantized_pooling_ops.cc
 index 17df3c223676aa..b512369b3c4dd9 100644
 --- a/tensorflow/core/kernels/quantized_pooling_ops.cc
@@ -24540,7 +24553,7 @@ index 663ceb0641e202..8f042e88f7aad2 100644
      const float min_input = context->input(1).flat<float>()(0);
      const float max_input = context->input(2).flat<float>()(0);
      MaxPoolingOp<Device, T>::Compute(context);
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2022-21741: TensorFlow - Division by Zero in Depthwise Convolutions,2.8.0-rc0,https://github.com/tensorflow/tensorflow/commit/e5b0eec199c2d03de54fd6a7fd9275692218e2bc,2.5.3,https://github.com/tensorflow/tensorflow/commit/b5f9a684e232f99f01f6ce91f5fbaa85410d65b9,1,"diff --git a/tensorflow/lite/kernels/depthwise_conv.cc b/tensorflow/lite/kernels/depthwise_conv.cc
 index 060b0827dafa74..e1a54adcc7fd05 100644
 --- a/tensorflow/lite/kernels/depthwise_conv.cc
@@ -24567,7 +24580,7 @@ index e2e344169a6be2..f277477bc2e3d0 100644
  
    const TfLiteType data_type = input->type;
  
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2022-23560: TensorFlow - Limited Reads and Writes Outside of Arrays,2.8.0-rc0,https://github.com/tensorflow/tensorflow/commit/6364463d6f5b6254cac3d6aedf999b6a96225038,2.5.3,https://github.com/tensorflow/tensorflow/commit/9b0261161e13f898b55f6dc68eae756bd0c7b901,5,"diff --git a/tensorflow/lite/kernels/internal/utils/sparsity_format_converter.cc b/tensorflow/lite/kernels/internal/utils/sparsity_format_converter.cc
 index 22aa5d019e7395..0595d49365c387 100644
 --- a/tensorflow/lite/kernels/internal/utils/sparsity_format_converter.cc
@@ -24648,7 +24661,7 @@ index c5a7778371eb7e..3fabaffd735c47 100644
      }
    }
  }
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2022-23566: TensorFlow Heap OOB Write in Grappler,2.8.0-rc0,https://github.com/tensorflow/tensorflow/commit/97282c6d0d34476b6ba033f961590b783fa184cd,2.5.3,https://github.com/tensorflow/tensorflow/commit/566f7d16abd0ad6210e85417bfb0c0f8194e23d6,2,"diff --git a/tensorflow/core/grappler/costs/graph_properties.cc b/tensorflow/core/grappler/costs/graph_properties.cc
 index 51a2cd080c5445..3cc12173ba10c5 100644
 --- a/tensorflow/core/grappler/costs/graph_properties.cc
@@ -24685,7 +24698,7 @@ index 644efe3326ab9f..441a7524bb4eda 100644
      }
      ctx->set_output(output_port, shape);
      return Status::OK();
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2022-23567: TensorFlow - Integer Overflow Vulnerability,2.8.0-rc0,https://github.com/tensorflow/tensorflow/commit/1b54cadd19391b60b6fcccd8d076426f7221d5e8,2.5.3,https://github.com/tensorflow/tensorflow/commit/e4cc80bcd0877acdc34d3d943b2c029e99f70dcb,1,"diff --git a/tensorflow/core/kernels/sparse_dense_binary_op_shared.cc b/tensorflow/core/kernels/sparse_dense_binary_op_shared.cc
 index b8a391b560f3c1..db27abfda7e537 100644
 --- a/tensorflow/core/kernels/sparse_dense_binary_op_shared.cc
@@ -24744,7 +24757,7 @@ index dda05dbc3b8cb2..c7b1afdcca36bf 100644
  
      const auto indices_mat = indices_t->matrix<int64>();
      const auto shape_vec = shape_t->vec<int64>();
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2022-23568: TensorFlow - Integer Overflow in AddManySparseToTensorsMap,2.8.0-rc0,https://github.com/tensorflow/tensorflow/commit/a68f68061e263a88321c104a6c911fe5598050a8,2.5.3,https://github.com/tensorflow/tensorflow/commit/6ec70ead55f650ffce3fd2a8983d45578569787f,2,"diff --git a/tensorflow/core/kernels/sparse_tensors_map_ops.cc b/tensorflow/core/kernels/sparse_tensors_map_ops.cc
 index 5fa690743b05c1..b486a2b4dc3c92 100644
 --- a/tensorflow/core/kernels/sparse_tensors_map_ops.cc
@@ -24804,7 +24817,7 @@ index 1899dc0849f154..8b13cf5d5ce48f 100644
      gtl::InlinedVector<int64, 8> std_order(rank);
      std::iota(std_order.begin(), std_order.end(), 0);
      SparseTensor input_st;
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2022-23568: TensorFlow - Integer Overflow in AddManySparseToTensorsMap,2.8.0-rc0,https://github.com/tensorflow/tensorflow/commit/b51b82fe65ebace4475e3c54eb089c18a4403f1c,2.5.3,https://github.com/tensorflow/tensorflow/commit/7aa19516e1fecf75ba55bd0c1b9ac9871ea449de,2,"diff --git a/tensorflow/core/kernels/sparse_tensors_map_ops.cc b/tensorflow/core/kernels/sparse_tensors_map_ops.cc
 index 04efed5fd90c75..5fa690743b05c1 100644
 --- a/tensorflow/core/kernels/sparse_tensors_map_ops.cc
@@ -24877,7 +24890,7 @@ index 5ea5fca544d3e9..1899dc0849f154 100644
  
      int rank = input_shape->NumElements();
  
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2022-23572: TensorFlow - Failure to Specialize Type during Shape Inference,2.8.0-rc0,https://github.com/tensorflow/tensorflow/commit/cb164786dc891ea11d3a900e90367c339305dc7b,2.6.3,https://github.com/tensorflow/tensorflow/commit/a540614ce97b72ea02b02052ff6d8ca19bc048d5,1,"diff --git a/tensorflow/core/framework/shape_inference.cc b/tensorflow/core/framework/shape_inference.cc
 index 04185dfba2e90c..077837721ae4fa 100644
 --- a/tensorflow/core/framework/shape_inference.cc
@@ -24910,7 +24923,7 @@ index 28706c8cedbdf3..55a98305233f8d 100644
    ret_types_ = ret.ValueOrDie();
  
    input_tensors_ = input_tensors;
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2022-23575: TensorFlow - Integer Overflow in OpLevelCostEstimator::CalculateTensorSize,2.8.0-rc0,https://github.com/tensorflow/tensorflow/commit/fcd18ce3101f245b083b30655c27b239dc72221e,2.5.3,https://github.com/tensorflow/tensorflow/commit/bbd232f690215ed3b42ce125b611e6daf727a61c,2,"diff --git a/tensorflow/core/grappler/costs/op_level_cost_estimator.cc b/tensorflow/core/grappler/costs/op_level_cost_estimator.cc
 index 5e328542ab1452..2bb62edf64532c 100644
 --- a/tensorflow/core/grappler/costs/op_level_cost_estimator.cc
@@ -24949,7 +24962,7 @@ index 32cca991f49093..6a5537aff63468 100644
  }
  
  int64 OpLevelCostEstimator::CalculateInputSize(const OpInfo& op_info,
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2022-23576: TensorFlow - Integer Overflow in OpLevelCostEstimator::CalculateOutputSize,2.8.0-rc0,https://github.com/tensorflow/tensorflow/commit/b9bd6cfd1c50e6807846af9a86f9b83cafc9c8ae,2.5.3,https://github.com/tensorflow/tensorflow/commit/dee46f8838f84dee3f276610b92602fd60213cc1,2,"diff --git a/tensorflow/core/grappler/costs/BUILD b/tensorflow/core/grappler/costs/BUILD
 index 66e0c6cd7c5f15..b267a0f2787f34 100644
 --- a/tensorflow/core/grappler/costs/BUILD
@@ -25030,7 +25043,7 @@ index 32cca991f49093..b05ce783881e05 100644
      }
      total_output_size += output_size;
      VLOG(1) << ""Output Size: "" << output_size
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2022-23581: TensorFlow - Denial of Service Vulnerability,2.8.0-rc0,https://github.com/tensorflow/tensorflow/commit/1fb27733f943295d874417630edd3b38b34ce082,2.5.3,https://github.com/tensorflow/tensorflow/commit/62b37fa82700d9bb0fcf13b512e77959e8fd03eb,2,"diff --git a/tensorflow/core/grappler/optimizers/constant_folding.cc b/tensorflow/core/grappler/optimizers/constant_folding.cc
 index 9087ddb5994129..a2050899f60726 100644
 --- a/tensorflow/core/grappler/optimizers/constant_folding.cc
@@ -25091,7 +25104,7 @@ index df4cc54757134a..29de1b634cd52b 100644
  
    const std::vector<OpInfo::TensorProperties>& props =
        properties.GetInputProperties(node.name());
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2022-23582: Denial of Service Vulnerability in TensorFlow,2.8.0-rc0,https://github.com/tensorflow/tensorflow/commit/c2426bba00a01de6913738df8fa78e0215fcce02,2.5.3,https://github.com/tensorflow/tensorflow/commit/69d7a7c1a2fbb07af656665cf23d7bfb4cab858b,3,"diff --git a/tensorflow/core/framework/attr_value_util.cc b/tensorflow/core/framework/attr_value_util.cc
 index 20f34cc46c8294..019063e22d3c62 100644
 --- a/tensorflow/core/framework/attr_value_util.cc
@@ -25118,7 +25131,7 @@ index 76fe36e7f1e2a6..39e3ed888cec5f 100644
    return num_elems < 0 ? -1 : num_elems * DataTypeSize(t.dtype());
  }
  
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2022-23588: TensorFlow - Denial of Service Vulnerability,2.8.0-rc0,https://github.com/tensorflow/tensorflow/commit/6b5adc0877de832b2a7c189532dbbbc64622eeb6,2.5.3,https://github.com/tensorflow/tensorflow/commit/444c9f6d919210395bc95f10901125e95f3a701d,2,"diff --git a/tensorflow/core/grappler/optimizers/constant_folding.cc b/tensorflow/core/grappler/optimizers/constant_folding.cc
 index d5fadb311a75cc..281806be20259f 100644
 --- a/tensorflow/core/grappler/optimizers/constant_folding.cc
@@ -25151,7 +25164,7 @@ index 357b0340860225..db88130b4afbc5 100644
      Tensor* value = new Tensor(raw_val.dtype(), raw_val.tensor_shape());
      CHECK(value->FromProto(raw_val))
          << ""Unable to make Tensor from proto for "" << node.name()
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2022-23589: TensorFlow Grappler Component Null Pointer Dereference,2.8.0-rc0,https://github.com/tensorflow/tensorflow/commit/045deec1cbdebb27d817008ad5df94d96a08b1bf,2.5.3,https://github.com/tensorflow/tensorflow/commit/4bbe1128897b6c587a5e8b7af2f832f586b1f8f9,1,"diff --git a/tensorflow/core/grappler/mutable_graph_view.cc b/tensorflow/core/grappler/mutable_graph_view.cc
 index e1eeb42e9c4f44..d70dc2e01c1484 100644
 --- a/tensorflow/core/grappler/mutable_graph_view.cc
@@ -25180,7 +25193,7 @@ index 5119acd6141270..4503c90cf466a9 100644
      return IsSwitch(*input_node);
    }
    return false;
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2022-23590: TensorFlow GraphDef Malicious Alteration,2.8.0-rc0,https://github.com/tensorflow/tensorflow/commit/955059813cc325dc1db5e2daa6221271406d4439,2.7.1,https://github.com/tensorflow/tensorflow/commit/ae7976631d87dfad52f8971369d14067447d1c02,5,"diff --git a/tensorflow/core/graph/graph.cc b/tensorflow/core/graph/graph.cc
 index 397a45c97737ab..2e3703b66030f4 100644
 --- a/tensorflow/core/graph/graph.cc
@@ -25225,7 +25238,7 @@ index ea5c789072c6fb..f6e444d00c9aa5 100644
    Node* node = AllocateNode(
        std::make_shared<NodeProperties>(&op_reg_data->op_def,
                                         std::move(node_def), inputs, outputs),
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2022-23593: Denial of Service Vulnerability in TensorFlow,2.8.0-rc0,https://github.com/tensorflow/tensorflow/commit/35f0fabb4c178253a964d7aabdbb15c6a398b69a,2.7.1,https://github.com/tensorflow/tensorflow/commit/35f0fabb4c178253a964d7aabdbb15c6a398b69a,1,"diff --git a/tensorflow/compiler/mlir/tfrt/jit/transforms/tf_cpurt_symbolic_shape_optimization.cc b/tensorflow/compiler/mlir/tfrt/jit/transforms/tf_cpurt_symbolic_shape_optimization.cc
 index 628141a6cd4615..0a8fc42e80a7cd 100644
 --- a/tensorflow/compiler/mlir/tfrt/jit/transforms/tf_cpurt_symbolic_shape_optimization.cc
@@ -25292,7 +25305,7 @@ index 00000000000000..33b785ee6fb19d
 +  return %7 : tensor<f32>
 +}
 \ No newline at end of file
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2022-29191: TensorFlow - Denial of Service Vulnerability,2.10.0-rc0,https://github.com/tensorflow/tensorflow/commit/48305e8ffe5246d67570b64096a96f8e315a7281,2.6.4,https://github.com/tensorflow/tensorflow/commit/af608bb0aedf1425cfe6277f09a8f5f244e5b9bc,1,"diff --git a/tensorflow/core/kernels/session_ops.cc b/tensorflow/core/kernels/session_ops.cc
 index 11f991e1ba34fe..bb47288b1575ad 100644
 --- a/tensorflow/core/kernels/session_ops.cc
@@ -25319,7 +25332,7 @@ index 109acc55722ccb..70bbd9559e00b7 100644
      const string& name = handle.scalar<tstring>()();
      Tensor val;
      auto session_state = ctx->session_state();
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2022-29192: TensorFlow - Denial of Service Vulnerability,2.10.0-rc0,https://github.com/tensorflow/tensorflow/commit/098e7762d909bac47ce1dbabe6dfd06294cb9d58,2.6.4,https://github.com/tensorflow/tensorflow/commit/9c8dbe0a29cbc7812c77399f6ec0dc452a4fd18b,1,"diff --git a/tensorflow/core/kernels/quantize_and_dequantize_op.cc b/tensorflow/core/kernels/quantize_and_dequantize_op.cc
 index d63a49a04be621..da9257fb9c9af1 100644
 --- a/tensorflow/core/kernels/quantize_and_dequantize_op.cc
@@ -25386,7 +25399,7 @@ index d63a49a04be621..da9257fb9c9af1 100644
        functor::QuantizeAndDequantizeOneScaleGradientFunctor<Device, T> f;
        f(ctx->eigen_device<Device>(), gradient.template flat<T>(),
          input.template flat<T>(), input_min_tensor.scalar<T>(),
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2022-29193: TensorFlow Denial of Service Vulnerability,2.10.0-rc0,https://github.com/tensorflow/tensorflow/commit/290bb05c80c327ed74fae1d089f1001b1e2a4ef7,2.6.4,https://github.com/tensorflow/tensorflow/commit/69925da81e6133800880f334aa8c3bb26ab8bfe6,1,"diff --git a/tensorflow/core/kernels/summary_tensor_op.cc b/tensorflow/core/kernels/summary_tensor_op.cc
 index e367045b02ab48..730ef6f38e5d62 100644
 --- a/tensorflow/core/kernels/summary_tensor_op.cc
@@ -25417,7 +25430,7 @@ index e367045b02ab48..730ef6f38e5d62 100644
  
      Summary s;
      Summary::Value* v = s.add_value();
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2022-29194: TensorFlow - Denial of Service Vulnerability,2.10.0-rc0,https://github.com/tensorflow/tensorflow/commit/cff267650c6a1b266e4b4500f69fbc49cdd773c5,2.6.4,https://github.com/tensorflow/tensorflow/commit/9ed60fb1fb20e1b84db5766ba794d42bcce4ccfe,2,"diff --git a/tensorflow/core/kernels/session_ops.cc b/tensorflow/core/kernels/session_ops.cc
 index bb47288b1575ad..2feb79a24e329e 100644
 --- a/tensorflow/core/kernels/session_ops.cc
@@ -25444,7 +25457,7 @@ index 109acc55722ccb..4854d719709290 100644
      const string& name = handle.scalar<tstring>()();
      auto session_state = ctx->session_state();
      OP_REQUIRES(ctx, session_state != nullptr,
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2022-29195: TensorFlow Denial of Service Vulnerability,2.10.0-rc0,https://github.com/tensorflow/tensorflow/commit/cebe3c45d76357d201c65bdbbf0dbe6e8a63bbdb,2.6.4,https://github.com/tensorflow/tensorflow/commit/c12187aedadf9346134be70f5eb99c1afc8934ab,2,"diff --git a/tensorflow/core/kernels/stage_op.cc b/tensorflow/core/kernels/stage_op.cc
 index 55c9db22ddf527..f7bb42f9c52b7d 100644
 --- a/tensorflow/core/kernels/stage_op.cc
@@ -25542,7 +25555,7 @@ index 8ea4c5daa2ee27..dd3a46f36168d5 100644
    @test_util.run_deprecated_v1
    def testSizeAndClear(self):
      with ops.Graph().as_default() as G:
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2022-29196: TensorFlow - Denial of Service Vulnerability,2.10.0-rc0,https://github.com/tensorflow/tensorflow/commit/174c5096f303d5be7ed2ca2662b08371bff4ab88,2.6.4,https://github.com/tensorflow/tensorflow/commit/bca5be65b3c27b1e9dcf0f6dc63f778225377f33,2,"diff --git a/tensorflow/core/kernels/conv_grad_ops_3d.cc b/tensorflow/core/kernels/conv_grad_ops_3d.cc
 index 9364ee92f5c401..09d3365564d8ad 100644
 --- a/tensorflow/core/kernels/conv_grad_ops_3d.cc
@@ -25689,7 +25702,7 @@ index 7e913febed3dc8..6194bad8fc7a7c 100644
  
  if __name__ == ""__main__"":
    test.main()
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2022-29197: TensorFlow - UnsortedSegmentJoin Denial of Service,2.10.0-rc0,https://github.com/tensorflow/tensorflow/commit/13d38a07ce9143e044aa737cfd7bb759d0e9b400,2.6.4,https://github.com/tensorflow/tensorflow/commit/0a7bd116bf29dccde91d0dea6d209fe6d592bd32,1,"diff --git a/tensorflow/core/kernels/unsorted_segment_join_op.cc b/tensorflow/core/kernels/unsorted_segment_join_op.cc
 index c8445ca4c4c596..9529c6e8b74ea9 100644
 --- a/tensorflow/core/kernels/unsorted_segment_join_op.cc
@@ -25718,7 +25731,7 @@ index 9acfe7fb1e4952..449db530513d5f 100644
      auto num_segments = num_segments_tensor.scalar<NUM_SEGMENTS_TYPE>()();
  
      OP_REQUIRES(context, segment_dims != 0,
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2022-29199: TensorFlow - Denial of Service Vulnerability,2.10.0-rc0,https://github.com/tensorflow/tensorflow/commit/3150642acbbe254e3c3c5d2232143fa591855ac9,2.6.4,https://github.com/tensorflow/tensorflow/commit/6b413bd525fe57870064e6aa0a28f7f7d9015c0c,5,"diff --git a/tensorflow/core/kernels/load_and_remap_matrix_op.cc b/tensorflow/core/kernels/load_and_remap_matrix_op.cc
 index 3fa753251c0f4f..4276e16059a9c6 100644
 --- a/tensorflow/core/kernels/load_and_remap_matrix_op.cc
@@ -25827,7 +25840,7 @@ index 305480c6b4b920..8b50b9b2efae44 100644
    @test_util.run_deprecated_v1
    def test_load_and_remap_invalid_remapping(self):
      """"""Tests that errors are raised when an ID maps to multiple new IDs.
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2022-29200: TensorFlow - Denial of Service Vulnerability,2.10.0-rc0,https://github.com/tensorflow/tensorflow/commit/803404044ae7a1efac48ba82d74111fce1ddb09a,2.6.4,https://github.com/tensorflow/tensorflow/commit/64d4c4bfc2209f87c183ca79a5e05c073c32c382,1,"diff --git a/tensorflow/core/kernels/rnn/lstm_ops.cc b/tensorflow/core/kernels/rnn/lstm_ops.cc
 index 711fc8f08275d8..ab4b9c695a5699 100644
 --- a/tensorflow/core/kernels/rnn/lstm_ops.cc
@@ -26066,7 +26079,7 @@ index c096357d2fbb1d..cbee99acaaaf68 100644
  
  class BidirectionalRNNTest(test.TestCase):
  
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2022-29202: TensorFlow Denial of Service Vulnerability,2.10.0-rc0,https://github.com/tensorflow/tensorflow/commit/bd4d5583ff9c8df26d47a23e508208844297310e,2.6.4,https://github.com/tensorflow/tensorflow/commit/e26467672f4252d0a22c8d20dd40dfd04d458b7f,2,"diff --git a/tensorflow/python/ops/ragged/ragged_factory_ops.py b/tensorflow/python/ops/ragged/ragged_factory_ops.py
 index a1906c469beb46..457b3a04618a81 100644
 --- a/tensorflow/python/ops/ragged/ragged_factory_ops.py
@@ -26095,7 +26108,7 @@ index 0296a185041a50..50f6a4771b126a 100644
  
    # If both inner_shape and ragged_rank were specified, then check that
    # they are compatible with pylist.
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2022-29205 | tensorflow | tensorflow Patch 2.6.4,2.10.0-rc0,https://github.com/tensorflow/tensorflow/commit/237822b59fc504dda2c564787f5d3ad9c4aa62d9,2.6.4,https://github.com/tensorflow/tensorflow/commit/809deaa3d59eab73224b18f68af999bee4979e85,2,"diff --git a/tensorflow/core/kernels/strided_slice_op.cc b/tensorflow/core/kernels/strided_slice_op.cc
 index 30f083dae1a41d..3ec2d6bbcc3c17 100644
 --- a/tensorflow/core/kernels/strided_slice_op.cc
@@ -26182,7 +26195,7 @@ index f60aab1f756fc8..054b87fb73f991 100644
                                          &dims[i])) {
            return false;
          }
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2022-29206: TensorFlow - Null Pointer Dereference in SparseTensorDenseAdd,2.10.0-rc0,https://github.com/tensorflow/tensorflow/commit/11ced8467eccad9c7cb94867708be8fa5c66c730,2.6.4,https://github.com/tensorflow/tensorflow/commit/105970d29d5c6ea360e6e6eee17805f9a112778d,1,"diff --git a/tensorflow/core/kernels/sparse_tensor_dense_add_op.cc b/tensorflow/core/kernels/sparse_tensor_dense_add_op.cc
 index 48803e4b939800..6d6b05bf70f30a 100644
 --- a/tensorflow/core/kernels/sparse_tensor_dense_add_op.cc
@@ -26451,7 +26464,7 @@ index 2a2899e3c9bf2c..24e5d200e79161 100644
      values = variables.Variable([1], trainable=False, dtype=dtypes.float32)
      shape = constant_op.constant([1], dtype=dtypes.int64)
  
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2022-29207: TensorFlow - Resource Handle Invalid Reference,2.10.0-rc0,https://github.com/tensorflow/tensorflow/commit/a5b89cd68c02329d793356bda85d079e9e69b4e7,2.6.4,https://github.com/tensorflow/tensorflow/commit/33964e99580c8efceb4f83a0bba7fa253074a1cb,2,"diff --git a/tensorflow/core/common_runtime/eager/execute.cc b/tensorflow/core/common_runtime/eager/execute.cc
 index dd64174a4ddeff..904996c7e64652 100644
 --- a/tensorflow/core/common_runtime/eager/execute.cc
@@ -26480,7 +26493,7 @@ index 9b664694b28964..d0fb69e3485377 100644
      const ResourceHandle& handle = tensor->flat<ResourceHandle>()(0);
      device_name = handle.device();
  
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2022-29208: TensorFlow - Incomplete Validation in tf.raw_ops.EditDistance,2.10.0-rc0,https://github.com/tensorflow/tensorflow/commit/30721cf564cb029d34535446d6a5a6357bebc8e7,2.6.4,https://github.com/tensorflow/tensorflow/commit/1fff21b2156b472f84c82a4530c3f8edbcc26faf,3,"diff --git a/tensorflow/core/kernels/edit_distance_op.cc b/tensorflow/core/kernels/edit_distance_op.cc
 index 3ff290e92b6103..3ed0f012b83ceb 100644
 --- a/tensorflow/core/kernels/edit_distance_op.cc
@@ -26667,4 +26680,4 @@ index 4a06ab770aaa07..706c80ec9df949 100644
  
  if __name__ == ""__main__"":
    test.main()
-",,,,,,,,,,,,,,
+",,,,,,,,,,,,,,,,,

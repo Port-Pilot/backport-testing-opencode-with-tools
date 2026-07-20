@@ -63,6 +63,7 @@ python .\run_codex_backports.py `
   --model openai/gpt-5.5 `
   --variant medium `
   --commit `
+  --env-file .\.env `
   --commit-remote origin `
   --commit-branch-prefix opencode-backport `
   --start 1 `

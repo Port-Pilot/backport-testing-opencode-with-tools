@@ -59,7 +59,11 @@ def run(
     input_text: str | None = None,
     timeout: int | None = None,
     check: bool = False,
+    env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
+    process_env = os.environ.copy()
+    if env:
+        process_env.update(env)
     result = subprocess.run(
         args,
         cwd=str(cwd) if cwd else None,
@@ -70,6 +74,7 @@ def run(
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         timeout=timeout,
+        env=process_env,
     )
     if check and result.returncode != 0:
         cmd = " ".join(args)
@@ -249,6 +254,48 @@ def prepare_worktree_path(repo: Path, worktree: Path, work_root: Path) -> None:
 def write_text(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8", newline="\n")
+
+
+def parse_env_value(value: str) -> str:
+    value = value.strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
+        value = value[1:-1]
+    return value
+
+
+def load_dotenv(path: Path) -> dict[str, str]:
+    if not path.exists():
+        return {}
+
+    values: dict[str, str] = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        if key:
+            values[key] = parse_env_value(value)
+    return values
+
+
+def github_credentials_from_env(dotenv_path: Path) -> tuple[str, str]:
+    values = load_dotenv(dotenv_path)
+    username = (
+        values.get("Username")
+        or values.get("GITHUB_USERNAME")
+        or os.environ.get("GITHUB_USERNAME")
+    )
+    password = (
+        values.get("Password")
+        or values.get("GITHUB_TOKEN")
+        or os.environ.get("GITHUB_TOKEN")
+    )
+    if not username or not password:
+        raise RuntimeError(
+            f"Missing GitHub credentials. Expected Username and Password in {dotenv_path}."
+        )
+    return username, password
 
 
 def read_rows(csv_path: Path) -> tuple[list[str], list[dict[str, str]]]:
@@ -684,6 +731,8 @@ def commit_and_push_generated_diff(
     remote: str,
     branch: str,
     message: str,
+    github_username: str,
+    github_password: str,
 ) -> str:
     if not diff_text.strip():
         raise RuntimeError("No generated diff to commit.")
@@ -703,18 +752,50 @@ def commit_and_push_generated_diff(
 
     run(["git", "-C", str(worktree), "commit", "-m", message], check=True)
     commit_sha = run(["git", "-C", str(worktree), "rev-parse", "HEAD"], check=True).stdout.strip()
-    run(
-        [
-            "git",
-            "-C",
-            str(worktree),
-            "push",
-            "--force-with-lease",
-            remote,
-            f"HEAD:refs/heads/{branch}",
-        ],
+    remote_url = run(
+        ["git", "-C", str(worktree), "remote", "get-url", remote],
         check=True,
+    ).stdout.strip()
+    if not remote_url.startswith(("https://", "http://")):
+        raise RuntimeError(
+            f"Remote {remote} uses {remote_url!r}. Username/token auth from .env "
+            "requires an HTTPS GitHub remote."
+        )
+
+    askpass_path = worktree / ".git-askpass-backport.bat"
+    write_text(
+        askpass_path,
+        "@echo off\n"
+        "echo %GITHUB_BACKPORT_PASSWORD%\n",
     )
+    push_env = {
+        "GIT_ASKPASS": str(askpass_path),
+        "GIT_TERMINAL_PROMPT": "0",
+        "GITHUB_BACKPORT_PASSWORD": github_password,
+    }
+    try:
+        run(
+            [
+                "git",
+                "-C",
+                str(worktree),
+                "-c",
+                "credential.helper=",
+                "-c",
+                f"credential.username={github_username}",
+                "push",
+                "--force-with-lease",
+                remote,
+                f"HEAD:refs/heads/{branch}",
+            ],
+            check=True,
+            env=push_env,
+        )
+    finally:
+        try:
+            askpass_path.unlink()
+        except FileNotFoundError:
+            pass
     return commit_sha
 
 
@@ -849,6 +930,12 @@ def main() -> int:
             "(default: opencode-backport)."
         ),
     )
+    parser.add_argument(
+        "--env-file",
+        default=Path(".env"),
+        type=Path,
+        help="Path to .env containing Username and Password for GitHub pushes.",
+    )
     args = parser.parse_args()
 
     require_command("git")
@@ -866,8 +953,13 @@ def main() -> int:
     repo = args.repo.resolve()
     work_root = args.work_root.resolve()
     log_dir = args.log_dir.resolve()
+    env_file = args.env_file.resolve()
     log_dir.mkdir(parents=True, exist_ok=True)
     work_root.mkdir(parents=True, exist_ok=True)
+    github_username = ""
+    github_password = ""
+    if args.commit:
+        github_username, github_password = github_credentials_from_env(env_file)
 
     fieldnames, rows = read_input_rows(csv_path, output_path)
     required_columns = [
@@ -1022,6 +1114,8 @@ def main() -> int:
                         remote=args.commit_remote,
                         branch=branch,
                         message=message,
+                        github_username=github_username,
+                        github_password=github_password,
                     )
                     row[COMMIT_SHA_COLUMN] = commit_sha
                     row[COMMIT_BRANCH_COLUMN] = branch

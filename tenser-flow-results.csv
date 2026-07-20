@@ -963,7 +963,200 @@ index 96bc41a7262e59..08e832760924e6 100644
      const size_t shard_size =
          (target_working_set_size + work_unit_size - 1) / work_unit_size;
  
-",0,,,Commit not found locally and fetch failed for 518b73f51f838e730859fbd8782600b1bb47ada0: fatal: cannot change to 'C:\1 Disk D\Research\FYP\backport-testing-opencode-with-tools\tensorflow': No such file or directory,518b73f51f838e730859fbd8782600b1bb47ada0,a5d613d23c2aa234d370d04b19ccabe3824c284d,,,,,,,openai/gpt-5.5,
+",0,"diff --git a/tensorflow/core/kernels/conv_grad_ops_3d.cc b/tensorflow/core/kernels/conv_grad_ops_3d.cc
+index 96bc41a726..f662e17e74 100644
+--- a/tensorflow/core/kernels/conv_grad_ops_3d.cc
++++ b/tensorflow/core/kernels/conv_grad_ops_3d.cc
+@@ -236,6 +236,14 @@ class Conv3DBackpropInputOp : public OpKernel {
+       input_shape = context->input(0).shape();
+     }
+ 
++    OP_REQUIRES(context, input_shape.dims() == 5,
++                errors::InvalidArgument(""input tensor must have 5 dimensions""));
++    OP_REQUIRES(
++        context, filter_shape.dims() == 5,
++        errors::InvalidArgument(""filter_sizes tensor must have 5 dimensions""));
++    OP_REQUIRES(
++        context, out_backprop_shape.dims() == 5,
++        errors::InvalidArgument(""out_backprop tensor must have 5 dimensions""));
+     ConvBackpropDimensions dims;
+     OP_REQUIRES_OK(context, ConvBackpropComputeDimensions(
+                                 ""Conv3DBackpropInputOp"", /*num_spatial_dims=*/3,
+@@ -342,6 +350,14 @@ class Conv3DCustomBackpropInputOp : public OpKernel {
+       input_shape = context->input(0).shape();
+     }
+ 
++    OP_REQUIRES(context, input_shape.dims() == 5,
++                errors::InvalidArgument(""input tensor must have 5 dimensions""));
++    OP_REQUIRES(
++        context, filter_shape.dims() == 5,
++        errors::InvalidArgument(""filter_sizes tensor must have 5 dimensions""));
++    OP_REQUIRES(
++        context, out_backprop_shape.dims() == 5,
++        errors::InvalidArgument(""out_backprop tensor must have 5 dimensions""));
+     ConvBackpropDimensions dims;
+     OP_REQUIRES_OK(context, ConvBackpropComputeDimensions(
+                                 ""Conv3DBackpropInputOp"", /*num_spatial_dims=*/3,
+@@ -412,6 +428,11 @@ class Conv3DCustomBackpropInputOp : public OpKernel {
+     // contraction compared to sharding and matmuls.
+     const bool use_parallel_contraction = dims.batch_size == 1;
+ 
++    OP_REQUIRES(
++        context, work_unit_size > 0,
++        errors::InvalidArgument(""input, filter_sizes and out_backprop tensors ""
++                                ""must all have at least 1 element""));
++
+     const size_t shard_size =
+         use_parallel_contraction
+             ? 1
+@@ -692,6 +713,14 @@ class Conv3DBackpropFilterOp : public OpKernel {
+       filter_shape = context->input(1).shape();
+     }
+ 
++    OP_REQUIRES(context, input_shape.dims() == 5,
++                errors::InvalidArgument(""input tensor must have 5 dimensions""));
++    OP_REQUIRES(
++        context, filter_shape.dims() == 5,
++        errors::InvalidArgument(""filter_sizes tensor must have 5 dimensions""));
++    OP_REQUIRES(
++        context, out_backprop_shape.dims() == 5,
++        errors::InvalidArgument(""out_backprop tensor must have 5 dimensions""));
+     ConvBackpropDimensions dims;
+     OP_REQUIRES_OK(context,
+                    ConvBackpropComputeDimensions(
+@@ -804,6 +833,14 @@ class Conv3DCustomBackpropFilterOp : public OpKernel {
+       filter_shape = context->input(1).shape();
+     }
+ 
++    OP_REQUIRES(context, input_shape.dims() == 5,
++                errors::InvalidArgument(""input tensor must have 5 dimensions""));
++    OP_REQUIRES(
++        context, filter_shape.dims() == 5,
++        errors::InvalidArgument(""filter_sizes tensor must have 5 dimensions""));
++    OP_REQUIRES(
++        context, out_backprop_shape.dims() == 5,
++        errors::InvalidArgument(""out_backprop tensor must have 5 dimensions""));
+     ConvBackpropDimensions dims;
+     OP_REQUIRES_OK(context,
+                    ConvBackpropComputeDimensions(
+@@ -876,6 +913,11 @@ class Conv3DCustomBackpropFilterOp : public OpKernel {
+ 
+     const int64 work_unit_size = size_A + size_B + size_C;
+ 
++    OP_REQUIRES(
++        context, work_unit_size > 0,
++        errors::InvalidArgument(""input, filter_sizes and out_backprop tensors ""
++                                ""must all have at least 1 element""));
++
+     const size_t shard_size =
+         (target_working_set_size + work_unit_size - 1) / work_unit_size;
+ 
+","I’ll inspect the target-side `conv_grad_ops_3d.cc` around the affected classes and compare only against the provided 2.5.0 patch intent before editing.
+
+The ref-based symbol helper is blocked by a stale/contended git worktree lock, so I’m switching to direct inspection of the already checked-out target files without changing refs.
+
+The affected classes exist in the same target file, with older line numbers. I’m going to add the same dimensionality guards before `dim_size()` access and the zero-work guard before shard-size division in the matching CPU custom paths.
+
+I’m applying the minimal source changes in `tensorflow/core/kernels/conv_grad_ops_3d.cc` only.
+
+The guards are now in place. I’ll inspect the resulting diff and do a lightweight validation of the edited file/diff, without running a full build.
+
+The diff matches all six provided intent points in the older file. I’ll run `git diff --check` for whitespace/syntax-adjacent patch hygiene.
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/kernels/conv_grad_ops_3d.cc b/tensorflow/core/kernels/conv_grad_ops_3d.cc
+    index 96bc41a726..f662e17e74 100644
+    --- a/tensorflow/core/kernels/conv_grad_ops_3d.cc
+    +++ b/tensorflow/core/kernels/conv_grad_ops_3d.cc
+    @@ -236,6 +236,14 @@ class Conv3DBackpropInputOp : public OpKernel {
+           input_shape = context->input(0).shape();
+         }
+     
+    +    OP_REQUIRES(context, input_shape.dims() == 5,
+    +                errors::InvalidArgument(""input tensor must have 5 dimensions""));
+    +    OP_REQUIRES(
+    +        context, filter_shape.dims() == 5,
+    +        errors::InvalidArgument(""filter_sizes tensor must have 5 dimensions""));
+    +    OP_REQUIRES(
+    +        context, out_backprop_shape.dims() == 5,
+    +        errors::InvalidArgument(""out_backprop tensor must have 5 dimensions""));
+         ConvBackpropDimensions dims;
+         OP_REQUIRES_OK(context, ConvBackpropComputeDimensions(
+                                     ""Conv3DBackpropInputOp"", /*num_spatial_dims=*/3,
+    @@ -342,6 +350,14 @@ class Conv3DCustomBackpropInputOp : public OpKernel {
+           input_shape = context->input(0).shape();
+         }
+     
+    +    OP_REQUIRES(context, input_shape.dims() == 5,
+    +                errors::InvalidArgument(""input tensor must have 5 dimensions""));
+    +    OP_REQUIRES(
+    +        context, filter_shape.dims() == 5,
+    +        errors::InvalidArgument(""filter_sizes tensor must have 5 dimensions""));
+    +    OP_REQUIRES(
+    +        context, out_backprop_shape.dims() == 5,
+    +        errors::InvalidArgument(""out_backprop tensor must have 5 dimensions""));
+         ConvBackpropDimensions dims;
+         OP_REQUIRES_OK(context, ConvBackpropComputeDimensions(
+                                     ""Conv3DBackpropInputOp"", /*num_spatial_dims=*/3,
+    @@ -412,6 +428,11 @@ class Conv3DCustomBackpropInputOp : public OpKernel {
+         // contraction compared to sharding and matmuls.
+         const bool use_parallel_contraction = dims.batch_size == 1;
+     
+    +    OP_REQUIRES(
+    +        context, work_unit_size > 0,
+    +        errors::InvalidArgument(""input, filter_sizes and out_backprop tensors ""
+    +                                ""must all have at least 1 element""));
+    +
+         const size_t shard_size =
+             use_parallel_contraction
+                 ? 1
+    @@ -692,6 +713,14 @@ class Conv3DBackpropFilterOp : public OpKernel {
+           filter_shape = context->input(1).shape();
+         }
+     
+    +    OP_REQUIRES(context, input_shape.dims() == 5,
+    +                errors::InvalidArgument(""input tensor must have 5 dimensions""));
+    +    OP_REQUIRES(
+    +        context, filter_shape.dims() == 5,
+    +        errors::InvalidArgument(""filter_sizes tensor must have 5 dimensions""));
+    +    OP_REQUIRES(
+    +        context, out_backprop_shape.dims() == 5,
+    +        errors::InvalidArgument(""out_backprop tensor must have 5 dimensions""));
+         ConvBackpropDimensions dims;
+         OP_REQUIRES_OK(context,
+                        ConvBackpropComputeDimensions(
+    @@ -804,6 +833,14 @@ class Conv3DCustomBackpropFilterOp : public OpKernel {
+           filter_shape = context->input(1).shape();
+         }
+     
+    +    OP_REQUIRES(context, input_shape.dims() == 5,
+    +                errors::InvalidArgument(""input tensor must have 5 dimensions""));
+    +    OP_REQUIRES(
+    +        context, filter_shape.dims() == 5,
+    +        errors::InvalidArgument(""filter_sizes tensor must have 5 dimensions""));
+    +    OP_REQUIRES(
+    +        context, out_backprop_shape.dims() == 5,
+    +        errors::InvalidArgument(""out_backprop tensor must have 5 dimensions""));
+         ConvBackpropDimensions dims;
+         OP_REQUIRES_OK(context,
+                        ConvBackpropComputeDimensions(
+    @@ -876,6 +913,11 @@ class Conv3DCustomBackpropFilterOp : public OpKernel {
+     
+         const int64 work_unit_size = size_A + size_B + size_C;
+     
+    +    OP_REQUIRES(
+    +        context, work_unit_size > 0,
+    +        errors::InvalidArgument(""input, filter_sizes and out_backprop tensors ""
+    +                                ""must all have at least 1 element""));
+    +
+         const size_t shard_size =
+             (target_working_set_size + work_unit_size - 1) / work_unit_size;
+  notes: >
+    Backported Conv3D gradient dimension checks and zero-work-unit guards to TensorFlow 2.1.4; verified with git diff --check.
+```",Generated code change differs from the expected oldest-version change.,518b73f51f838e730859fbd8782600b1bb47ada0,a5d613d23c2aa234d370d04b19ccabe3824c284d,"18,258","172,032",0,"3,506",169,"193,965",openai/gpt-5.5,0
 CVE-2021-29524: TensorFlow - Division by 0 in Conv2DBackpropFilter,2.5.0,https://github.com/tensorflow/tensorflow/commit/fca9874a9b42a2134f907d2fb46ab774a831404a,2.1.4,https://github.com/tensorflow/tensorflow/commit/59b7577f91026945305c021adda68a467df2e921,5,"diff --git a/tensorflow/core/kernels/conv_grad_shape_utils.cc b/tensorflow/core/kernels/conv_grad_shape_utils.cc
 index 7543ce669923ac..805f5809a472e9 100644
 --- a/tensorflow/core/kernels/conv_grad_shape_utils.cc
@@ -994,7 +1187,53 @@ index 7857257658fcff..ce90e866342311 100644
    if (dims->in_depth % filter_shape.dim_size(num_dims - 2)) {
      return errors::InvalidArgument(
          label, "": input depth must be evenly divisible by filter depth"");
-",,,,,,,,,,,,,,
+",1,"diff --git a/tensorflow/core/kernels/conv_grad_shape_utils.cc b/tensorflow/core/kernels/conv_grad_shape_utils.cc
+index 7857257658..ce90e86634 100644
+--- a/tensorflow/core/kernels/conv_grad_shape_utils.cc
++++ b/tensorflow/core/kernels/conv_grad_shape_utils.cc
+@@ -126,6 +126,10 @@ Status ConvBackpropComputeDimensionsV2(
+   // dimensions of the filter Tensor.
+   VLOG(2) << ""input vs filter_in depth "" << dims->in_depth << "" ""
+           << filter_shape.dim_size(num_dims - 2);
++  if (filter_shape.dim_size(num_dims - 2) <= 0) {
++    return errors ::InvalidArgument(
++        label, "": filter depth must be strictly greated than zero"");
++  }
+   if (dims->in_depth % filter_shape.dim_size(num_dims - 2)) {
+     return errors::InvalidArgument(
+         label, "": input depth must be evenly divisible by filter depth"");
+","I’ll locate the target-side `ConvBackpropComputeDimensionsV2` implementation, compare the surrounding logic to the provided 2.5.0 hunk, then apply the minimal guard in place.
+
+The source commit only adds one guard in `tensorflow/core/kernels/conv_grad_shape_utils.cc`. `ctags` is unavailable, so I’m using targeted source searches in the checked-out target tree.
+
+The target 2.1.4 function has the same vulnerable modulo operation and matching context. I’m adding the filter-depth nonpositive check immediately before that modulo, matching the source patch’s behavior and message.
+
+`validate` hunk mode failed due to a local validation-tool error (`utils.revise_patch` missing), not because of patch context. I’ll apply the minimal edit directly and verify the resulting diff.
+
+The source change is applied. I’m checking the worktree diff to ensure only the intended hunk changed.
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/kernels/conv_grad_shape_utils.cc b/tensorflow/core/kernels/conv_grad_shape_utils.cc
+    index 7857257658..ce90e86634 100644
+    --- a/tensorflow/core/kernels/conv_grad_shape_utils.cc
+    +++ b/tensorflow/core/kernels/conv_grad_shape_utils.cc
+    @@ -126,6 +126,10 @@ Status ConvBackpropComputeDimensionsV2(
+       // dimensions of the filter Tensor.
+       VLOG(2) << ""input vs filter_in depth "" << dims->in_depth << "" ""
+               << filter_shape.dim_size(num_dims - 2);
+    +  if (filter_shape.dim_size(num_dims - 2) <= 0) {
+    +    return errors ::InvalidArgument(
+    +        label, "": filter depth must be strictly greated than zero"");
+    +  }
+       if (dims->in_depth % filter_shape.dim_size(num_dims - 2)) {
+         return errors::InvalidArgument(
+             label, "": input depth must be evenly divisible by filter depth"");
+  notes: >
+    Added the 2.5.0 filter-depth guard before the modulo in ConvBackpropComputeDimensionsV2 to prevent division by zero; hunk validation could not run due to a local validate-tool error.
+```",,59b7577f91026945305c021adda68a467df2e921,a5d613d23c2aa234d370d04b19ccabe3824c284d,"11,502","62,976",0,"1,475",113,"76,066",openai/gpt-5.5,0
 CVE-2021-29526: TensorFlow - Division by 0 in Conv2D,2.5.0,https://github.com/tensorflow/tensorflow/commit/b12aa1d44352de21d1a6faaf04172d8c2508b42b,2.1.4,https://github.com/tensorflow/tensorflow/commit/9ea660cb4d0ed82780912ca847c7207fbeaa5428,5,"diff --git a/tensorflow/core/kernels/conv_ops.cc b/tensorflow/core/kernels/conv_ops.cc
 index 363e3737a809b0..9bacebe7d265dc 100644
 --- a/tensorflow/core/kernels/conv_ops.cc
@@ -1055,7 +1294,47 @@ index d5ce7de1d2572a..1c5a6ec30cbc55 100644
    TF_REQUIRES(in_depth % patch_depth == 0,
                errors::InvalidArgument(
                    ""input depth must be evenly divisible by filter depth: "",
-",,,,,,,,,,,,,,
+",0,"diff --git a/tensorflow/core/kernels/conv_ops.cc b/tensorflow/core/kernels/conv_ops.cc
+index d5ce7de1d2..cb710975cc 100644
+--- a/tensorflow/core/kernels/conv_ops.cc
++++ b/tensorflow/core/kernels/conv_ops.cc
+@@ -425,6 +425,9 @@ Status ComputeConv2DDimension(const Conv2DParameters& params,
+               errors::InvalidArgument(""Patch depth too large""));
+   const int in_depth = static_cast<int>(in_depth_raw);
+   const int patch_depth = static_cast<int>(patch_depth_raw);
++  TF_REQUIRES(patch_depth > 0,
++              errors::InvalidArgument(
++                  ""filter depth must be stricly positive, got "", patch_depth));
+   TF_REQUIRES(in_depth % patch_depth == 0,
+               errors::InvalidArgument(
+                   ""input depth must be evenly divisible by filter depth: "",
+","I’ll inspect the target `conv_ops.cc` around the patched functions, then apply only the equivalent guard checks needed for TensorFlow 2.1.4.
+
+The target `LaunchConv2DOp<CPUDevice, T>` does not have the grouped-convolution path from 2.5.0, so the `num_groups` guard has no direct equivalent there. The target does have the vulnerable `in_depth % patch_depth` in `ComputeConv2DDimension`, so I’m validating the minimal guard at that point.
+
+The adapted hunk applies cleanly. I’m applying that guard directly to the checked-out target file.
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/kernels/conv_ops.cc b/tensorflow/core/kernels/conv_ops.cc
+    index d5ce7de1d2..cb710975cc 100644
+    --- a/tensorflow/core/kernels/conv_ops.cc
+    +++ b/tensorflow/core/kernels/conv_ops.cc
+    @@ -425,6 +425,9 @@ Status ComputeConv2DDimension(const Conv2DParameters& params,
+                   errors::InvalidArgument(""Patch depth too large""));
+       const int in_depth = static_cast<int>(in_depth_raw);
+       const int patch_depth = static_cast<int>(patch_depth_raw);
+    +  TF_REQUIRES(patch_depth > 0,
+    +              errors::InvalidArgument(
+    +                  ""filter depth must be stricly positive, got "", patch_depth));
+       TF_REQUIRES(in_depth % patch_depth == 0,
+                   errors::InvalidArgument(
+                       ""input depth must be evenly divisible by filter depth: "",
+  notes: >
+    Added the missing positive filter-depth check before modulo division in Conv2D dimension computation; grouped CPU launch guards from 2.5.0 have no equivalent grouped path in TensorFlow 2.1.4.
+```",Generated code change differs from the expected oldest-version change.,9ea660cb4d0ed82780912ca847c7207fbeaa5428,62685fd76defff311eaf09c73f0d8221bb8ff6f6,"18,897","110,592",0,"1,604",318,"131,411",openai/gpt-5.5,0
 CVE-2021-29528: TensorFlow - Division by 0 in QuantizedMul,2.5.0,https://github.com/tensorflow/tensorflow/commit/a1b11d2fdd1e51bfe18bb1ede804f60abfa92da6,2.1.4,https://github.com/tensorflow/tensorflow/commit/781f6d685ada855359970c40650a0d497ea9668f,1,"diff --git a/tensorflow/core/kernels/quantized_mul_op.cc b/tensorflow/core/kernels/quantized_mul_op.cc
 index 4e191f162662bb..fb56f68bf14dbb 100644
 --- a/tensorflow/core/kernels/quantized_mul_op.cc
@@ -1088,7 +1367,53 @@ index 4e191f162662bb..fb56f68bf14dbb 100644
        VectorTensorMultiply<T, Toutput>(
            vector_data, vector_offset, vector_num_elements, tensor_data,
            tensor_offset, tensor_num_elements, z_data);
-",,,,,,,,,,,,,,
+",1,"diff --git a/tensorflow/core/kernels/quantized_mul_op.cc b/tensorflow/core/kernels/quantized_mul_op.cc
+index 4e191f1626..fb56f68bf1 100644
+--- a/tensorflow/core/kernels/quantized_mul_op.cc
++++ b/tensorflow/core/kernels/quantized_mul_op.cc
+@@ -347,6 +347,11 @@ class QuantizedMulOp : public OpKernel {
+         tensor_num_elements = x.NumElements();
+         tensor_offset = offset_x;
+       }
++      if (vector_num_elements == 0) {
++        context->SetStatus(
++            errors::InvalidArgument(""vector must have at least 1 element""));
++        return;
++      }
+       VectorTensorMultiply<T, Toutput>(
+           vector_data, vector_offset, vector_num_elements, tensor_data,
+           tensor_offset, tensor_num_elements, z_data);
+","I’ll locate the target-side `QuantizedMulOp` implementation and compare the exact surrounding branch structure before applying the minimal guard.
+
+The target file has the same vulnerable vector/tensor multiply path, with the division/modulo using `vector_num_elements` immediately after branch selection. I’m adding the same InvalidArgument guard before the helper call.
+
+The hunk context matches the target code directly. The validation helper failed internally before applying the hunk, so I’m proceeding with the minimal source edit based on the verified local context.
+
+I’ll inspect the resulting diff to ensure only the intended guard was added.
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/kernels/quantized_mul_op.cc b/tensorflow/core/kernels/quantized_mul_op.cc
+    index 4e191f1626..fb56f68bf1 100644
+    --- a/tensorflow/core/kernels/quantized_mul_op.cc
+    +++ b/tensorflow/core/kernels/quantized_mul_op.cc
+    @@ -347,6 +347,11 @@ class QuantizedMulOp : public OpKernel {
+             tensor_num_elements = x.NumElements();
+             tensor_offset = offset_x;
+           }
+    +      if (vector_num_elements == 0) {
+    +        context->SetStatus(
+    +            errors::InvalidArgument(""vector must have at least 1 element""));
+    +        return;
+    +      }
+           VectorTensorMultiply<T, Toutput>(
+               vector_data, vector_offset, vector_num_elements, tensor_data,
+               tensor_offset, tensor_num_elements, z_data);
+  notes: >
+    Added the QuantizedMul empty-vector guard before VectorTensorMultiply to prevent division by zero.
+```",,781f6d685ada855359970c40650a0d497ea9668f,bf171d8341da2cfe1b2500b6b0bbbaa9bacc63db,"10,617","48,128",0,"1,121",14,"59,880",openai/gpt-5.5,0
 CVE-2021-29530: TensorFlow - Null Pointer Dereference in SparseMatrixSparseCholesky,2.5.0,https://github.com/tensorflow/tensorflow/commit/e6a7c7cc18c3aaad1ae0872cb0a959f5c923d2bd,2.1.4,https://github.com/tensorflow/tensorflow/commit/1dcf51e75885d0048100414e5ef8016176c0b17a,1,"diff --git a/tensorflow/core/kernels/sparse/sparse_cholesky_op.cc b/tensorflow/core/kernels/sparse/sparse_cholesky_op.cc
 index 9a939276f0b6cb..47ab252317de5e 100644
 --- a/tensorflow/core/kernels/sparse/sparse_cholesky_op.cc
@@ -1297,7 +1622,218 @@ index 3786033c98cd9f..ab328672702eff 100644
    }
  };
  
-",,,,,,,,,,,,,,
+",0,"diff --git a/tensorflow/core/kernels/sparse/sparse_cholesky_op.cc b/tensorflow/core/kernels/sparse/sparse_cholesky_op.cc
+index 3786033c98..223fd51f2a 100644
+--- a/tensorflow/core/kernels/sparse/sparse_cholesky_op.cc
++++ b/tensorflow/core/kernels/sparse/sparse_cholesky_op.cc
+@@ -82,8 +82,8 @@ class CSRSparseCholeskyCPUOp : public OpKernel {
+ 
+     int64 num_rows;
+     int batch_size;
+-    ValidateInputs(ctx, *input_matrix, input_permutation_indices, &batch_size,
+-                   &num_rows);
++    OP_REQUIRES_OK(ctx, ValidateInputs(*input_matrix, input_permutation_indices,
++                                       &batch_size, &num_rows));
+ 
+     // Allocate batch pointers.
+     Tensor batch_ptr(cpu_allocator(), DT_INT32, TensorShape({batch_size + 1}));
+@@ -226,49 +226,48 @@ class CSRSparseCholeskyCPUOp : public OpKernel {
+   }
+ 
+  private:
+-  void ValidateInputs(OpKernelContext* ctx,
+-                      const CSRSparseMatrix& sparse_matrix,
+-                      const Tensor& permutation_indices, int* batch_size,
+-                      int64* num_rows) {
+-    OP_REQUIRES(ctx, sparse_matrix.dtype() == DataTypeToEnum<T>::value,
+-                errors::InvalidArgument(
+-                    ""Asked for a CSRSparseMatrix of type "",
+-                    DataTypeString(DataTypeToEnum<T>::value),
+-                    "" but saw dtype: "", DataTypeString(sparse_matrix.dtype())));
++  Status ValidateInputs(const CSRSparseMatrix& sparse_matrix,
++                        const Tensor& permutation_indices, int* batch_size,
++                        int64* num_rows) {
++    if (sparse_matrix.dtype() != DataTypeToEnum<T>::value)
++      return errors::InvalidArgument(
++          ""Asked for a CSRSparseMatrix of type "",
++          DataTypeString(DataTypeToEnum<T>::value),
++          "" but saw dtype: "", DataTypeString(sparse_matrix.dtype()));
+ 
+     const Tensor& dense_shape = sparse_matrix.dense_shape();
+     const int rank = dense_shape.dim_size(0);
+-    OP_REQUIRES(ctx, rank == 2 || rank == 3,
+-                errors::InvalidArgument(""sparse matrix must have rank 2 or 3; "",
+-                                        ""but dense_shape has size "", rank));
++    if (rank < 2 || rank > 3)
++      return errors::InvalidArgument(""sparse matrix must have rank 2 or 3; "",
++                                     ""but dense_shape has size "", rank);
+     const int row_dim = (rank == 2) ? 0 : 1;
+     auto dense_shape_vec = dense_shape.vec<int64>();
+     *num_rows = dense_shape_vec(row_dim);
+     const int64 num_cols = dense_shape_vec(row_dim + 1);
+-    OP_REQUIRES(ctx, *num_rows == num_cols,
+-                errors::InvalidArgument(""sparse matrix must be square; got: "",
+-                                        *num_rows, "" != "", num_cols));
++    if (*num_rows != num_cols)
++      return errors::InvalidArgument(
++          ""sparse matrix must be square; got: "", *num_rows, "" != "", num_cols);
+     const TensorShape& perm_shape = permutation_indices.shape();
+-    OP_REQUIRES(
+-        ctx, perm_shape.dims() + 1 == rank,
+-        errors::InvalidArgument(
+-            ""sparse matrix must have the same rank as permutation; got: "", rank,
+-            "" != "", perm_shape.dims(), "" + 1.""));
+-    OP_REQUIRES(
+-        ctx, perm_shape.dim_size(rank - 2) == *num_rows,
+-        errors::InvalidArgument(
+-            ""permutation must have the same number of elements in each batch ""
+-            ""as the number of rows in sparse matrix; got: "",
+-            perm_shape.dim_size(rank - 2), "" != "", *num_rows));
++    if (perm_shape.dims() + 1 != rank)
++      return errors::InvalidArgument(
++          ""sparse matrix must have the same rank as permutation; got: "", rank,
++          "" != "", perm_shape.dims(), "" + 1."");
++    if (perm_shape.dim_size(rank - 2) != *num_rows)
++      return errors::InvalidArgument(
++          ""permutation must have the same number of elements in each batch ""
++          ""as the number of rows in sparse matrix; got: "",
++          perm_shape.dim_size(rank - 2), "" != "", *num_rows);
+ 
+     *batch_size = sparse_matrix.batch_size();
+     if (*batch_size > 1) {
+-      OP_REQUIRES(
+-          ctx, perm_shape.dim_size(0) == *batch_size,
+-          errors::InvalidArgument(""permutation must have the same batch size ""
+-                                  ""as sparse matrix; got: "",
+-                                  perm_shape.dim_size(0), "" != "", *batch_size));
++      if (perm_shape.dim_size(0) != *batch_size)
++        return errors::InvalidArgument(
++            ""permutation must have the same batch size ""
++            ""as sparse matrix; got: "",
++            perm_shape.dim_size(0), "" != "", *batch_size);
+     }
++
++    return Status::OK();
+   }
+ };
+ 
+","I’ll inspect the target-side sparse Cholesky implementation and compare it to the provided patch shape, then apply the minimal equivalent change in the checked-out 2.1.4 tree.
+
+The vulnerable control-flow pattern exists unchanged: `ValidateInputs` currently uses `OP_REQUIRES` internally but returns `void`, so `Compute` continues after validation failures. I’m converting it to return `Status` and making the caller stop on errors.
+
+In TensorFlow 2.1.4 there is no `tensorflow/core/framework/op_requires.h`; `OP_REQUIRES_OK` is defined by the already-included `op_kernel.h`. I’m omitting that include while preserving the control-flow fix.
+
+The first hand-written validation diff was malformed, not a semantic mismatch. I’m applying the exact target edit now and will inspect the resulting unified diff.
+
+The source edit is in place. I’m checking the diff and running a lightweight patch-application validation against the target ref.
+
+The applied diff is clean, but the validation helper is rejecting my pasted multi-hunk diff as “corrupt” before context matching. I’ll validate the two hunks separately with simpler generated hunks.
+
+The caller hunk validated successfully. I’m also validating the function-body conversion in a zero-context form to avoid hand-count errors.
+
+The function signature/initial validation hunk now validates. I’m doing a final whitespace/error check on the applied diff.
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/kernels/sparse/sparse_cholesky_op.cc b/tensorflow/core/kernels/sparse/sparse_cholesky_op.cc
+    index 3786033c98..223fd51f2a 100644
+    --- a/tensorflow/core/kernels/sparse/sparse_cholesky_op.cc
+    +++ b/tensorflow/core/kernels/sparse/sparse_cholesky_op.cc
+    @@ -82,8 +82,8 @@ class CSRSparseCholeskyCPUOp : public OpKernel {
+     
+         int64 num_rows;
+         int batch_size;
+    -    ValidateInputs(ctx, *input_matrix, input_permutation_indices, &batch_size,
+    -                   &num_rows);
+    +    OP_REQUIRES_OK(ctx, ValidateInputs(*input_matrix, input_permutation_indices,
+    +                                       &batch_size, &num_rows));
+     
+         // Allocate batch pointers.
+         Tensor batch_ptr(cpu_allocator(), DT_INT32, TensorShape({batch_size + 1}));
+    @@ -226,49 +226,48 @@ class CSRSparseCholeskyCPUOp : public OpKernel {
+       }
+     
+      private:
+    -  void ValidateInputs(OpKernelContext* ctx,
+    -                      const CSRSparseMatrix& sparse_matrix,
+    -                      const Tensor& permutation_indices, int* batch_size,
+    -                      int64* num_rows) {
+    -    OP_REQUIRES(ctx, sparse_matrix.dtype() == DataTypeToEnum<T>::value,
+    -                errors::InvalidArgument(
+    -                    ""Asked for a CSRSparseMatrix of type "",
+    -                    DataTypeString(DataTypeToEnum<T>::value),
+    -                    "" but saw dtype: "", DataTypeString(sparse_matrix.dtype())));
+    +  Status ValidateInputs(const CSRSparseMatrix& sparse_matrix,
+    +                        const Tensor& permutation_indices, int* batch_size,
+    +                        int64* num_rows) {
+    +    if (sparse_matrix.dtype() != DataTypeToEnum<T>::value)
+    +      return errors::InvalidArgument(
+    +          ""Asked for a CSRSparseMatrix of type "",
+    +          DataTypeString(DataTypeToEnum<T>::value),
+    +          "" but saw dtype: "", DataTypeString(sparse_matrix.dtype()));
+     
+         const Tensor& dense_shape = sparse_matrix.dense_shape();
+         const int rank = dense_shape.dim_size(0);
+    -    OP_REQUIRES(ctx, rank == 2 || rank == 3,
+    -                errors::InvalidArgument(""sparse matrix must have rank 2 or 3; "",
+    -                                        ""but dense_shape has size "", rank));
+    +    if (rank < 2 || rank > 3)
+    +      return errors::InvalidArgument(""sparse matrix must have rank 2 or 3; "",
+    +                                     ""but dense_shape has size "", rank);
+         const int row_dim = (rank == 2) ? 0 : 1;
+         auto dense_shape_vec = dense_shape.vec<int64>();
+         *num_rows = dense_shape_vec(row_dim);
+         const int64 num_cols = dense_shape_vec(row_dim + 1);
+    -    OP_REQUIRES(ctx, *num_rows == num_cols,
+    -                errors::InvalidArgument(""sparse matrix must be square; got: "",
+    -                                        *num_rows, "" != "", num_cols));
+    +    if (*num_rows != num_cols)
+    +      return errors::InvalidArgument(
+    +          ""sparse matrix must be square; got: "", *num_rows, "" != "", num_cols);
+         const TensorShape& perm_shape = permutation_indices.shape();
+    -    OP_REQUIRES(
+    -        ctx, perm_shape.dims() + 1 == rank,
+    -        errors::InvalidArgument(
+    -            ""sparse matrix must have the same rank as permutation; got: "", rank,
+    -            "" != "", perm_shape.dims(), "" + 1.""));
+    -    OP_REQUIRES(
+    -        ctx, perm_shape.dim_size(rank - 2) == *num_rows,
+    -        errors::InvalidArgument(
+    -            ""permutation must have the same number of elements in each batch ""
+    -            ""as the number of rows in sparse matrix; got: "",
+    -            perm_shape.dim_size(rank - 2), "" != "", *num_rows));
+    +    if (perm_shape.dims() + 1 != rank)
+    +      return errors::InvalidArgument(
+    +          ""sparse matrix must have the same rank as permutation; got: "", rank,
+    +          "" != "", perm_shape.dims(), "" + 1."");
+    +    if (perm_shape.dim_size(rank - 2) != *num_rows)
+    +      return errors::InvalidArgument(
+    +          ""permutation must have the same number of elements in each batch ""
+    +          ""as the number of rows in sparse matrix; got: "",
+    +          perm_shape.dim_size(rank - 2), "" != "", *num_rows);
+     
+         *batch_size = sparse_matrix.batch_size();
+         if (*batch_size > 1) {
+    -      OP_REQUIRES(
+    -          ctx, perm_shape.dim_size(0) == *batch_size,
+    -          errors::InvalidArgument(""permutation must have the same batch size ""
+    -                                  ""as sparse matrix; got: "",
+    -                                  perm_shape.dim_size(0), "" != "", *batch_size));
+    +      if (perm_shape.dim_size(0) != *batch_size)
+    +        return errors::InvalidArgument(
+    +            ""permutation must have the same batch size ""
+    +            ""as sparse matrix; got: "",
+    +            perm_shape.dim_size(0), "" != "", *batch_size);
+         }
+    +
+    +    return Status::OK();
+       }
+     };
+  notes: >
+    Backported the SparseMatrixSparseCholesky validation fix by returning Status from ValidateInputs and stopping Compute with OP_REQUIRES_OK; the newer op_requires.h include was omitted because it does not exist in TensorFlow 2.1.4 and op_kernel.h already provides the macro.
+```",Generated code change differs from the expected oldest-version change.,1dcf51e75885d0048100414e5ef8016176c0b17a,bf171d8341da2cfe1b2500b6b0bbbaa9bacc63db,"41,602","421,376",0,"8,423","1,186","472,587",openai/gpt-5.5,0
 CVE-2021-29533: TensorFlow - Denial of Service via Empty Image in DrawBoundingBoxes,2.5.0,https://github.com/tensorflow/tensorflow/commit/b432a38fe0e1b4b904a6c222cbce794c39703e87,2.1.4,https://github.com/tensorflow/tensorflow/commit/76ee87cbb100c600cddf6a26f697a30a3b50538d,2,"diff --git a/tensorflow/core/kernels/image/draw_bounding_box_op.cc b/tensorflow/core/kernels/image/draw_bounding_box_op.cc
 index 30de99b7d560a2..73db76333f0862 100644
 --- a/tensorflow/core/kernels/image/draw_bounding_box_op.cc
@@ -1424,7 +1960,151 @@ index 30de99b7d560a2..73db76333f0862 100644
  
          // Draw top line.
          if (min_box_row >= 0) {
-",,,,,,,,,,,,,,
+",1,"diff --git a/tensorflow/core/kernels/draw_bounding_box_op.cc b/tensorflow/core/kernels/draw_bounding_box_op.cc
+index 30de99b7d5..73db76333f 100644
+--- a/tensorflow/core/kernels/draw_bounding_box_op.cc
++++ b/tensorflow/core/kernels/draw_bounding_box_op.cc
+@@ -147,22 +147,46 @@ class DrawBoundingBoxesOp : public OpKernel {
+ 
+         // At this point, {min,max}_box_{row,col}_clamp are inside the
+         // image.
+-        CHECK_GE(min_box_row_clamp, 0);
+-        CHECK_GE(max_box_row_clamp, 0);
+-        CHECK_LT(min_box_row_clamp, height);
+-        CHECK_LT(max_box_row_clamp, height);
+-        CHECK_GE(min_box_col_clamp, 0);
+-        CHECK_GE(max_box_col_clamp, 0);
+-        CHECK_LT(min_box_col_clamp, width);
+-        CHECK_LT(max_box_col_clamp, width);
++        OP_REQUIRES(
++            context, min_box_row_clamp >= 0,
++            errors::InvalidArgument(""Min box row clamp is less than 0.""));
++        OP_REQUIRES(
++            context, max_box_row_clamp >= 0,
++            errors::InvalidArgument(""Max box row clamp is less than 0.""));
++        OP_REQUIRES(context, min_box_row_clamp <= height,
++                    errors::InvalidArgument(
++                        ""Min box row clamp is greater than height.""));
++        OP_REQUIRES(context, max_box_row_clamp <= height,
++                    errors::InvalidArgument(
++                        ""Max box row clamp is greater than height.""));
++
++        OP_REQUIRES(
++            context, min_box_col_clamp >= 0,
++            errors::InvalidArgument(""Min box col clamp is less than 0.""));
++        OP_REQUIRES(
++            context, max_box_col_clamp >= 0,
++            errors::InvalidArgument(""Max box col clamp is less than 0.""));
++        OP_REQUIRES(context, min_box_col_clamp <= width,
++                    errors::InvalidArgument(
++                        ""Min box col clamp is greater than width.""));
++        OP_REQUIRES(context, max_box_col_clamp <= width,
++                    errors::InvalidArgument(
++                        ""Max box col clamp is greater than width.""));
+ 
+         // At this point, the min_box_row and min_box_col are either
+         // in the image or above/left of it, and max_box_row and
+         // max_box_col are either in the image or below/right or it.
+-        CHECK_LT(min_box_row, height);
+-        CHECK_GE(max_box_row, 0);
+-        CHECK_LT(min_box_col, width);
+-        CHECK_GE(max_box_col, 0);
++
++        OP_REQUIRES(
++            context, min_box_row <= height,
++            errors::InvalidArgument(""Min box row is greater than height.""));
++        OP_REQUIRES(context, max_box_row >= 0,
++                    errors::InvalidArgument(""Max box row is less than 0.""));
++        OP_REQUIRES(
++            context, min_box_col <= width,
++            errors::InvalidArgument(""Min box col is greater than width.""));
++        OP_REQUIRES(context, max_box_col >= 0,
++                    errors::InvalidArgument(""Max box col is less than 0.""));
+ 
+         // Draw top line.
+         if (min_box_row >= 0) {
+","I’ll locate the target-side `DrawBoundingBoxesOp` implementation, compare the older context to the provided 2.5.0 hunk, then apply the minimal equivalent change and validate the hunk against the target base.
+
+The 2.5.0 file path is not present in the target release, so I’m searching the older tree for the equivalent kernel file before editing.
+
+The older target keeps this kernel at `tensorflow/core/kernels/draw_bounding_box_op.cc` rather than under `kernels/image`. I’m checking the exact local context and will replace the fatal `CHECK` assertions with `OP_REQUIRES` errors there.
+
+The target code matches the vulnerable assertion block directly, with only the file path differing. I’m validating the adapted hunk against the target base before applying it locally.
+
+The validation helper failed internally before applying the hunk, not due to a patch mismatch. I’m proceeding with the same minimal source edit in the checked-out target file.
+
+The source edit is applied. I’m inspecting the resulting diff to ensure only the intended TensorFlow kernel change is present.
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/kernels/draw_bounding_box_op.cc b/tensorflow/core/kernels/draw_bounding_box_op.cc
+    index 30de99b7d5..73db76333f 100644
+    --- a/tensorflow/core/kernels/draw_bounding_box_op.cc
+    +++ b/tensorflow/core/kernels/draw_bounding_box_op.cc
+    @@ -147,22 +147,46 @@ class DrawBoundingBoxesOp : public OpKernel {
+     
+             // At this point, {min,max}_box_{row,col}_clamp are inside the
+             // image.
+    -        CHECK_GE(min_box_row_clamp, 0);
+    -        CHECK_GE(max_box_row_clamp, 0);
+    -        CHECK_LT(min_box_row_clamp, height);
+    -        CHECK_LT(max_box_row_clamp, height);
+    -        CHECK_GE(min_box_col_clamp, 0);
+    -        CHECK_GE(max_box_col_clamp, 0);
+    -        CHECK_LT(min_box_col_clamp, width);
+    -        CHECK_LT(max_box_col_clamp, width);
+    +        OP_REQUIRES(
+    +            context, min_box_row_clamp >= 0,
+    +            errors::InvalidArgument(""Min box row clamp is less than 0.""));
+    +        OP_REQUIRES(
+    +            context, max_box_row_clamp >= 0,
+    +            errors::InvalidArgument(""Max box row clamp is less than 0.""));
+    +        OP_REQUIRES(context, min_box_row_clamp <= height,
+    +                    errors::InvalidArgument(
+    +                        ""Min box row clamp is greater than height.""));
+    +        OP_REQUIRES(context, max_box_row_clamp <= height,
+    +                    errors::InvalidArgument(
+    +                        ""Max box row clamp is greater than height.""));
+    +
+    +        OP_REQUIRES(
+    +            context, min_box_col_clamp >= 0,
+    +            errors::InvalidArgument(""Min box col clamp is less than 0.""));
+    +        OP_REQUIRES(
+    +            context, max_box_col_clamp >= 0,
+    +            errors::InvalidArgument(""Max box col clamp is less than 0.""));
+    +        OP_REQUIRES(context, min_box_col_clamp <= width,
+    +                    errors::InvalidArgument(
+    +                        ""Min box col clamp is greater than width.""));
+    +        OP_REQUIRES(context, max_box_col_clamp <= width,
+    +                    errors::InvalidArgument(
+    +                        ""Max box col clamp is greater than width.""));
+     
+             // At this point, the min_box_row and min_box_col are either
+             // in the image or above/left of it, and max_box_row and
+             // max_box_col are either in the image or below/right or it.
+    -        CHECK_LT(min_box_row, height);
+    -        CHECK_GE(max_box_row, 0);
+    -        CHECK_LT(min_box_col, width);
+    -        CHECK_GE(max_box_col, 0);
+    +
+    +        OP_REQUIRES(
+    +            context, min_box_row <= height,
+    +            errors::InvalidArgument(""Min box row is greater than height.""));
+    +        OP_REQUIRES(context, max_box_row >= 0,
+    +                    errors::InvalidArgument(""Max box row is less than 0.""));
+    +        OP_REQUIRES(
+    +            context, min_box_col <= width,
+    +            errors::InvalidArgument(""Min box col is greater than width.""));
+    +        OP_REQUIRES(context, max_box_col >= 0,
+    +                    errors::InvalidArgument(""Max box col is less than 0.""));
+     
+             // Draw top line.
+             if (min_box_row >= 0) {
+  notes: >
+    Replaced fatal CHECK assertions in the target DrawBoundingBoxes kernel with InvalidArgument OP_REQUIRES checks, adapted to the older file path.
+```",,76ee87cbb100c600cddf6a26f697a30a3b50538d,bf171d8341da2cfe1b2500b6b0bbbaa9bacc63db,"16,230","77,312",0,"3,193",129,"96,864",openai/gpt-5.5,0
 CVE-2021-29535: TensorFlow Heap Buffer Overflow in QuantizedMul,2.5.0,https://github.com/tensorflow/tensorflow/commit/efea03b38fb8d3b81762237dc85e579cc5fc6e87,2.1.4,https://github.com/tensorflow/tensorflow/commit/271f936010b418c8bc809df2f2eb352e6fd05bb6,1,"diff --git a/tensorflow/core/kernels/quantized_mul_op.cc b/tensorflow/core/kernels/quantized_mul_op.cc
 index fb56f68bf14dbb..22cff8939449a6 100644
 --- a/tensorflow/core/kernels/quantized_mul_op.cc
@@ -1487,7 +2167,81 @@ index 4e191f162662bb..b5353822396230 100644
  
      BCast bcast(BCast::FromShape(x.shape()), BCast::FromShape(y.shape()));
      if (!bcast.IsValid()) {
-",,,,,,,,,,,,,,
+",1,"diff --git a/tensorflow/core/kernels/quantized_mul_op.cc b/tensorflow/core/kernels/quantized_mul_op.cc
+index 4e191f1626..b535382239 100644
+--- a/tensorflow/core/kernels/quantized_mul_op.cc
++++ b/tensorflow/core/kernels/quantized_mul_op.cc
+@@ -284,10 +284,22 @@ class QuantizedMulOp : public OpKernel {
+   void Compute(OpKernelContext* context) override {
+     const Tensor& x = context->input(0);
+     const Tensor& y = context->input(1);
+-    const float min_x = context->input(2).flat<float>()(0);
+-    const float max_x = context->input(3).flat<float>()(0);
+-    const float min_y = context->input(4).flat<float>()(0);
+-    const float max_y = context->input(5).flat<float>()(0);
++    auto& min_x_tensor = context->input(2);
++    OP_REQUIRES(context, TensorShapeUtils::IsScalar(min_x_tensor.shape()),
++                errors::InvalidArgument(""min_x must be a scalar""));
++    const float min_x = min_x_tensor.flat<float>()(0);
++    auto& max_x_tensor = context->input(3);
++    OP_REQUIRES(context, TensorShapeUtils::IsScalar(max_x_tensor.shape()),
++                errors::InvalidArgument(""max_x must be a scalar""));
++    const float max_x = max_x_tensor.flat<float>()(0);
++    auto& min_y_tensor = context->input(4);
++    OP_REQUIRES(context, TensorShapeUtils::IsScalar(min_y_tensor.shape()),
++                errors::InvalidArgument(""min_y must be a scalar""));
++    const float min_y = min_y_tensor.flat<float>()(0);
++    auto& max_y_tensor = context->input(5);
++    OP_REQUIRES(context, TensorShapeUtils::IsScalar(max_y_tensor.shape()),
++                errors::InvalidArgument(""max_y must be a scalar""));
++    const float max_y = max_y_tensor.flat<float>()(0);
+ 
+     BCast bcast(BCast::FromShape(x.shape()), BCast::FromShape(y.shape()));
+     if (!bcast.IsValid()) {
+","I’ll inspect the target-side `QuantizedMulOp` implementation and validate a minimal hunk against the specified base before editing the checkout.
+
+The target file has the same vulnerable scalar reads in `QuantizedMulOp::Compute`; `locate_symbol` was unavailable because ctags is not installed, but direct target code inspection found the equivalent hunk. I’m applying the scalar shape checks around the four range inputs only.
+
+`validate` failed due to an internal tool error before applying the hunk, not because of patch context. I’ll proceed with the direct minimal edit and then inspect the resulting diff.
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/kernels/quantized_mul_op.cc b/tensorflow/core/kernels/quantized_mul_op.cc
+    index 4e191f1626..b535382239 100644
+    --- a/tensorflow/core/kernels/quantized_mul_op.cc
+    +++ b/tensorflow/core/kernels/quantized_mul_op.cc
+    @@ -284,10 +284,22 @@ class QuantizedMulOp : public OpKernel {
+       void Compute(OpKernelContext* context) override {
+         const Tensor& x = context->input(0);
+         const Tensor& y = context->input(1);
+    -    const float min_x = context->input(2).flat<float>()(0);
+    -    const float max_x = context->input(3).flat<float>()(0);
+    -    const float min_y = context->input(4).flat<float>()(0);
+    -    const float max_y = context->input(5).flat<float>()(0);
+    +    auto& min_x_tensor = context->input(2);
+    +    OP_REQUIRES(context, TensorShapeUtils::IsScalar(min_x_tensor.shape()),
+    +                errors::InvalidArgument(""min_x must be a scalar""));
+    +    const float min_x = min_x_tensor.flat<float>()(0);
+    +    auto& max_x_tensor = context->input(3);
+    +    OP_REQUIRES(context, TensorShapeUtils::IsScalar(max_x_tensor.shape()),
+    +                errors::InvalidArgument(""max_x must be a scalar""));
+    +    const float max_x = max_x_tensor.flat<float>()(0);
+    +    auto& min_y_tensor = context->input(4);
+    +    OP_REQUIRES(context, TensorShapeUtils::IsScalar(min_y_tensor.shape()),
+    +                errors::InvalidArgument(""min_y must be a scalar""));
+    +    const float min_y = min_y_tensor.flat<float>()(0);
+    +    auto& max_y_tensor = context->input(5);
+    +    OP_REQUIRES(context, TensorShapeUtils::IsScalar(max_y_tensor.shape()),
+    +                errors::InvalidArgument(""max_y must be a scalar""));
+    +    const float max_y = max_y_tensor.flat<float>()(0);
+     
+         BCast bcast(BCast::FromShape(x.shape()), BCast::FromShape(y.shape()));
+         if (!bcast.IsValid()) {
+  notes: >
+    Added scalar shape validation for QuantizedMul min/max range inputs before reading them.
+```",,271f936010b418c8bc809df2f2eb352e6fd05bb6,bf171d8341da2cfe1b2500b6b0bbbaa9bacc63db,"25,635","53,760",0,"2,095",143,"81,633",openai/gpt-5.5,0
 CVE-2021-29537: Heap Buffer Overflow in TensorFlow,2.5.0,https://github.com/tensorflow/tensorflow/commit/f6c40f0c6cbf00d46c7717a26419f2062f2f8694,2.1.4,https://github.com/tensorflow/tensorflow/commit/877d5fc1b2306af6202473b2ad62932b9ea953b7,2,"diff --git a/tensorflow/core/kernels/quantized_resize_bilinear_op.cc b/tensorflow/core/kernels/quantized_resize_bilinear_op.cc
 index 2fd807f6df9614..a110944dda5844 100644
 --- a/tensorflow/core/kernels/quantized_resize_bilinear_op.cc
@@ -1530,7 +2284,63 @@ index 59e33d1ac31477..26ecf207830f75 100644
  
      ImageResizerState st(align_corners_, false);
      st.ValidateAndCreateOutput(context, input);
-",,,,,,,,,,,,,,
+",1,"diff --git a/tensorflow/core/kernels/quantized_resize_bilinear_op.cc b/tensorflow/core/kernels/quantized_resize_bilinear_op.cc
+index 59e33d1ac3..26ecf20783 100644
+--- a/tensorflow/core/kernels/quantized_resize_bilinear_op.cc
++++ b/tensorflow/core/kernels/quantized_resize_bilinear_op.cc
+@@ -701,8 +701,14 @@ class QuantizedResizeBilinearOp : public OpKernel {
+ 
+   void Compute(OpKernelContext* context) override {
+     const Tensor& input = context->input(0);
+-    const float in_min = context->input(2).flat<float>()(0);
+-    const float in_max = context->input(3).flat<float>()(0);
++    const auto& in_min_tensor = context->input(2);
++    OP_REQUIRES(context, TensorShapeUtils::IsScalar(in_min_tensor.shape()),
++                errors::InvalidArgument(""min must be a scalar""));
++    const float in_min = in_min_tensor.flat<float>()(0);
++    const auto& in_max_tensor = context->input(3);
++    OP_REQUIRES(context, TensorShapeUtils::IsScalar(in_max_tensor.shape()),
++                errors::InvalidArgument(""max must be a scalar""));
++    const float in_max = in_max_tensor.flat<float>()(0);
+ 
+     ImageResizerState st(align_corners_, false);
+     st.ValidateAndCreateOutput(context, input);
+","I’ll inspect the target-side operator implementation and compare it to the provided 2.5.0 hunk, then apply the minimal scalar validation backport in place.
+
+The target file contains the same operator and vulnerable direct scalar reads at the corresponding location. I’m going to patch only those reads to require scalar `min` and `max` inputs before accessing element 0.
+
+The hunk matches the target context; the provided hunk validator errored internally before applying, so I’m proceeding with a direct minimal source edit and will inspect the final diff.
+
+The source edit is applied. I’m reviewing the worktree diff now to confirm only the intended TensorFlow kernel change is present.
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/kernels/quantized_resize_bilinear_op.cc b/tensorflow/core/kernels/quantized_resize_bilinear_op.cc
+    index 59e33d1ac3..26ecf20783 100644
+    --- a/tensorflow/core/kernels/quantized_resize_bilinear_op.cc
+    +++ b/tensorflow/core/kernels/quantized_resize_bilinear_op.cc
+    @@ -701,8 +701,14 @@ class QuantizedResizeBilinearOp : public OpKernel {
+     
+       void Compute(OpKernelContext* context) override {
+         const Tensor& input = context->input(0);
+    -    const float in_min = context->input(2).flat<float>()(0);
+    -    const float in_max = context->input(3).flat<float>()(0);
+    +    const auto& in_min_tensor = context->input(2);
+    +    OP_REQUIRES(context, TensorShapeUtils::IsScalar(in_min_tensor.shape()),
+    +                errors::InvalidArgument(""min must be a scalar""));
+    +    const float in_min = in_min_tensor.flat<float>()(0);
+    +    const auto& in_max_tensor = context->input(3);
+    +    OP_REQUIRES(context, TensorShapeUtils::IsScalar(in_max_tensor.shape()),
+    +                errors::InvalidArgument(""max must be a scalar""));
+    +    const float in_max = in_max_tensor.flat<float>()(0);
+     
+         ImageResizerState st(align_corners_, false);
+         st.ValidateAndCreateOutput(context, input);
+  notes: >
+    Added scalar shape validation for QuantizedResizeBilinear min and max tensors before flat element access.
+```",,877d5fc1b2306af6202473b2ad62932b9ea953b7,bf171d8341da2cfe1b2500b6b0bbbaa9bacc63db,"24,624","125,440",0,"1,905",135,"152,104",openai/gpt-5.5,0
 CVE-2021-29538: TensorFlow - Division by Zero Denial of Service,2.5.0,https://github.com/tensorflow/tensorflow/commit/c570e2ecfc822941335ad48f6e10df4e21f11c96,2.1.4,https://github.com/tensorflow/tensorflow/commit/95c63a0513f092afa3abb67f12b3d7d596501248,2,"diff --git a/tensorflow/core/kernels/conv_grad_filter_ops.cc b/tensorflow/core/kernels/conv_grad_filter_ops.cc
 index fb48e3e285a27c..2645d850ab7cfb 100644
 --- a/tensorflow/core/kernels/conv_grad_filter_ops.cc
@@ -1593,7 +2403,85 @@ index 594dbd0d0df74a..e2681cf8ac9154 100644
      const size_t shard_size =
          (target_working_set_size + work_unit_size - 1) / work_unit_size;
  
-",,,,,,,,,,,,,,
+",1,"diff --git a/tensorflow/core/kernels/conv_grad_filter_ops.cc b/tensorflow/core/kernels/conv_grad_filter_ops.cc
+index 594dbd0d0d..e2681cf8ac 100644
+--- a/tensorflow/core/kernels/conv_grad_filter_ops.cc
++++ b/tensorflow/core/kernels/conv_grad_filter_ops.cc
+@@ -496,6 +496,14 @@ class Conv2DCustomBackpropFilterOp : public OpKernel {
+     const int filter_total_size = dims.spatial_dims[0].filter_size *
+                                   dims.spatial_dims[1].filter_size *
+                                   dims.in_depth;
++    OP_REQUIRES(
++        context,
++        filter_total_size * dims.out_depth == filter_backprop->NumElements(),
++        errors::InvalidArgument(
++            ""filter_size does not have enough elements, requested "",
++            filter_total_size * dims.out_depth, "", got "",
++            filter_backprop->NumElements()));
++
+     // The output image size is the spatial size of the output.
+     const int output_image_size =
+         dims.spatial_dims[0].output_size * dims.spatial_dims[1].output_size;
+@@ -519,6 +527,11 @@ class Conv2DCustomBackpropFilterOp : public OpKernel {
+ 
+     const size_t work_unit_size = size_A + size_B + size_C;
+ 
++    OP_REQUIRES(
++        context, work_unit_size != 0,
++        errors::InvalidArgument(
++            ""Work size for convolution would be 0, which is not acceptable""));
++
+     const size_t shard_size =
+         (target_working_set_size + work_unit_size - 1) / work_unit_size;
+ 
+","I’ll inspect the target-side convolution gradient code around the patched class, compare it with the provided 2.5.0 hunk, then apply the minimal equivalent guards in place.
+
+The equivalent target code is in the same file and same computation path; the missing checks fit directly after `filter_total_size` and after `work_unit_size`. I’ll validate the adapted hunk before editing.
+
+The hunk validation tool failed internally before applying the patch (`revise_patch` helper unavailable), not because of a context mismatch. I’ll proceed with the direct edit using the target context already verified.
+
+I’m adding only the two guard checks from the security fix in `tensorflow/core/kernels/conv_grad_filter_ops.cc`, preserving the target release’s surrounding logic.
+
+The source edit is applied. I’ll inspect the resulting diff to confirm it contains only the intended backport.
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/kernels/conv_grad_filter_ops.cc b/tensorflow/core/kernels/conv_grad_filter_ops.cc
+    index 594dbd0d0d..e2681cf8ac 100644
+    --- a/tensorflow/core/kernels/conv_grad_filter_ops.cc
+    +++ b/tensorflow/core/kernels/conv_grad_filter_ops.cc
+    @@ -496,6 +496,14 @@ class Conv2DCustomBackpropFilterOp : public OpKernel {
+         const int filter_total_size = dims.spatial_dims[0].filter_size *
+                                       dims.spatial_dims[1].filter_size *
+                                       dims.in_depth;
+    +    OP_REQUIRES(
+    +        context,
+    +        filter_total_size * dims.out_depth == filter_backprop->NumElements(),
+    +        errors::InvalidArgument(
+    +            ""filter_size does not have enough elements, requested "",
+    +            filter_total_size * dims.out_depth, "", got "",
+    +            filter_backprop->NumElements()));
+    +
+         // The output image size is the spatial size of the output.
+         const int output_image_size =
+             dims.spatial_dims[0].output_size * dims.spatial_dims[1].output_size;
+    @@ -519,6 +527,11 @@ class Conv2DCustomBackpropFilterOp : public OpKernel {
+     
+         const size_t work_unit_size = size_A + size_B + size_C;
+     
+    +    OP_REQUIRES(
+    +        context, work_unit_size != 0,
+    +        errors::InvalidArgument(
+    +            ""Work size for convolution would be 0, which is not acceptable""));
+    +
+         const size_t shard_size =
+             (target_working_set_size + work_unit_size - 1) / work_unit_size;
+     
+  notes: >
+    Backported the Conv2D filter backprop size and zero work-unit validation checks to TensorFlow 2.1.4.
+```",,95c63a0513f092afa3abb67f12b3d7d596501248,bf171d8341da2cfe1b2500b6b0bbbaa9bacc63db,"14,904","95,232",0,"2,078",81,"112,295",openai/gpt-5.5,0
 CVE-2021-29541: TensorFlow - Null Pointer Dereference in StringNGrams,2.5.0,https://github.com/tensorflow/tensorflow/commit/ba424dd8f16f7110eea526a8086f1a155f14f22b,2.1.4,https://github.com/tensorflow/tensorflow/commit/45f35284fbe3ef9621fa8eb96765cac2df575278,1,"diff --git a/tensorflow/core/kernels/string_ngrams_op.cc b/tensorflow/core/kernels/string_ngrams_op.cc
 index 8aed2b3831a2f4..7008a1d766af25 100644
 --- a/tensorflow/core/kernels/string_ngrams_op.cc

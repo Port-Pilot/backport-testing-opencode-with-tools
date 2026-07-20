@@ -11,9 +11,9 @@ Usage:
 """
 
 import argparse
-import glob
 import io
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -46,26 +46,70 @@ def levenshtein_distance(left: str, right: str) -> int:
     return previous[-1]
 
 
-def find_ctags() -> str | None:
-    ctags = shutil.which("ctags")
-    if ctags:
-        return ctags
-
-    local_app_data = os.environ.get("LOCALAPPDATA")
-    if local_app_data:
-        winget_pattern = os.path.join(
-            local_app_data,
-            "Microsoft",
-            "WinGet",
-            "Packages",
-            "UniversalCtags.Ctags_*",
-            "ctags.exe",
+def run_git_grep(repo_dir: Path, ref: str, symbol: str) -> str | None:
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(repo_dir), "grep", "-n", "-I", "--no-color", "-w", symbol, ref],
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=30,
         )
-        matches = sorted(glob.glob(winget_pattern), reverse=True)
-        if matches:
-            return matches[0]
+    except subprocess.TimeoutExpired:
+        return (
+            f"git grep timed out after 30 seconds while searching for {symbol}. "
+            "Use viewcode/grep with a narrower file path, or increase the "
+            "locate_symbol timeout for whole-repository symbol search."
+        )
+    if result.returncode not in (0, 1):
+        return None
 
-    return None
+    candidates = []
+    for line in result.stdout.splitlines():
+        parts = line.split(":", 3)
+        if len(parts) != 4:
+            continue
+        _, file_path, lineno_text, content = parts
+        try:
+            lineno = int(lineno_text)
+        except ValueError:
+            continue
+
+        stripped = content.strip()
+        score = -1
+        escaped = re.escape(symbol)
+        if re.search(rf"\b(class|struct|enum)\s+{escaped}\b", stripped):
+            score = 100
+        elif re.search(rf"\b{escaped}\s*\(", stripped):
+            score = 70 if stripped.endswith(";") else 90
+        elif re.search(rf"\b{escaped}\b", stripped):
+            score = 20
+
+        if score >= 0 and not stripped.startswith(("//", "/*", "*")):
+            candidates.append((score, file_path, lineno))
+
+    if not candidates:
+        return None
+
+    candidates.sort(key=lambda item: (-item[0], item[1], item[2]))
+    seen = set()
+    lines = []
+    for _, file_path, lineno in candidates:
+        key = (file_path, lineno)
+        if key in seen:
+            continue
+        seen.add(key)
+        lines.append(f"{file_path}:{lineno}")
+        if len(lines) >= 20:
+            break
+
+    return "\n".join(lines)
+
+
+def find_ctags() -> str | None:
+    return shutil.which("ctags")
 
 
 def add_temp_worktree(repo_dir: Path, ref: str) -> Path:
@@ -102,6 +146,10 @@ def locate_symbol(repo_dir: str, ref: str, symbol: str) -> str:
     except Exception as e:
         return f"Invalid git repository {repo_path}: {e}"
 
+    grep_result = run_git_grep(repo_path, ref, symbol)
+    if grep_result:
+        return grep_result
+
     ctags_path = find_ctags()
     if not ctags_path:
         return (
@@ -124,6 +172,7 @@ def locate_symbol(repo_dir: str, ref: str, symbol: str) -> str:
             text=True,
             encoding="utf-8",
             errors="replace",
+            timeout=60,
         )
         if ctags.returncode != 0:
             return f"Failed to run ctags at {ctags_path}: {(ctags.stderr or ctags.stdout).strip()}"
@@ -152,7 +201,6 @@ def locate_symbol(repo_dir: str, ref: str, symbol: str) -> str:
 
         most_similar = None
         smallest_distance = float("inf")
-
         for symbol_i in symbol_map.keys():
             distance = levenshtein_distance(symbol, symbol_i)
             if distance < smallest_distance:
@@ -169,6 +217,12 @@ def locate_symbol(repo_dir: str, ref: str, symbol: str) -> str:
             return ret
 
         return f"No similar symbols found for {symbol}."
+    except subprocess.TimeoutExpired:
+        return (
+            f"No exact git-grep matches found for {symbol}. ctags fallback timed out "
+            "after 60 seconds while indexing this repository. Use grep/viewcode for "
+            "targeted search or increase the locate_symbol timeout for full indexing."
+        )
     finally:
         remove_temp_worktree(repo_path, worktree)
 

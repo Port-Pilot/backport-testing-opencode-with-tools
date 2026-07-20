@@ -2724,13 +2724,7 @@ index b89de9ad16dab8..0d52283bd8fb9d 100644
  TEST_F(NgramKernelTest, ShapeFn) {
    ShapeInferenceTestOp op(""StringNGrams"");
    INFER_OK(op, ""?;?"", ""[?];[?]"");
-",0,,,"command failed (128): git -C /home/azureuser/backport-testing-opencode-with-tools/.opencode-backport-worktrees/row-0018-bf171d8341da status --porcelain --untracked-files=all
-stdout:
-
-
-stderr:
-fatal: cannot change to '/home/azureuser/backport-testing-opencode-with-tools/.opencode-backport-worktrees/row-0018-bf171d8341da': No such file or directory
-",45f35284fbe3ef9621fa8eb96765cac2df575278,bf171d8341da2cfe1b2500b6b0bbbaa9bacc63db,,,,,,,openai/gpt-5.5,,,,
+",,,,,,,,,,,,,,,,,
 CVE-2021-29542: TensorFlow - Heap Buffer Overflow in tf.raw_ops.StringNGrams,2.5.0,https://github.com/tensorflow/tensorflow/commit/ba424dd8f16f7110eea526a8086f1a155f14f22b,2.1.4,https://github.com/tensorflow/tensorflow/commit/45f35284fbe3ef9621fa8eb96765cac2df575278,1,"diff --git a/tensorflow/core/kernels/string_ngrams_op.cc b/tensorflow/core/kernels/string_ngrams_op.cc
 index 8aed2b3831a2f4..7008a1d766af25 100644
 --- a/tensorflow/core/kernels/string_ngrams_op.cc
@@ -2973,14 +2967,7 @@ index b89de9ad16dab8..0d52283bd8fb9d 100644
  TEST_F(NgramKernelTest, ShapeFn) {
    ShapeInferenceTestOp op(""StringNGrams"");
    INFER_OK(op, ""?;?"", ""[?];[?]"");
-",0,,,"command failed (128): git -C /home/azureuser/backport-testing-opencode-with-tools/tensorflow worktree remove --force /home/azureuser/backport-testing-opencode-with-tools/.opencode-backport-worktrees/row-0019-bf171d8341da
-stdout:
-
-
-stderr:
-fatal: cannot remove a locked working tree, lock reason: initializing
-use 'remove -f -f' to override or unlock first
-",45f35284fbe3ef9621fa8eb96765cac2df575278,bf171d8341da2cfe1b2500b6b0bbbaa9bacc63db,,,,,,,openai/gpt-5.5,,,,
+",,,,,,,,,,,,,,,,,
 "CVE-2021-29543: Denial of Service in TensorFlow
 ",2.5.0,https://github.com/tensorflow/tensorflow/commit/ea3b43e98c32c97b35d52b4c66f9107452ca8fb2,2.1.4,https://github.com/tensorflow/tensorflow/commit/b7c33ff91b756a8fb8b9c383f1b990d7b4432743,2,"diff --git a/tensorflow/core/kernels/ctc_decoder_ops.cc b/tensorflow/core/kernels/ctc_decoder_ops.cc
 index d62aef2d03b988..22681f97437f0c 100644

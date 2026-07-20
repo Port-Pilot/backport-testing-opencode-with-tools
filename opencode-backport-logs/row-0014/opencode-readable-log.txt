@@ -1,0 +1,739 @@
+I’ll locate the target-side `DrawBoundingBoxesOp` implementation, compare the older context to the provided 2.5.0 hunk, then apply the minimal equivalent change and validate the hunk against the target base.
+
+tool: viewcode
+{
+  "ref": "bf171d8341da2cfe1b2500b6b0bbbaa9bacc63db",
+  "path": "tensorflow/core/kernels/image/draw_bounding_box_op.cc",
+  "startline": 1,
+  "endline": 240
+}
+This file doesn't exist in this commit.
+
+tool: locate_symbol
+{
+  "ref": "bf171d8341da2cfe1b2500b6b0bbbaa9bacc63db",
+  "symbol": "DrawBoundingBoxesOp"
+}
+Failed to run ctags. Please ensure ctags is installed: [WinError 2] The system cannot find the file specified
+
+tokens used
+input: 5,185
+cache read: 3,584
+cache write: 0
+output: 180
+reasoning output: 0
+
+The 2.5.0 file path is not present in the target release, so I’m searching the older tree for the equivalent kernel file before editing.
+
+tool: grep
+{
+  "pattern": "DrawBoundingBoxes",
+  "path": "tensorflow",
+  "include": "*.cc"
+}
+Found 10 matches
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0014-bf171d8341da\tensorflow\core\ops\image_ops_test.cc:
+  Line 322: TEST(ImageOpsTest, DrawBoundingBoxes_ShapeFn) {
+
+  Line 323:   ShapeInferenceTestOp op("DrawBoundingBoxes");
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0014-bf171d8341da\tensorflow\core\ops\image_ops.cc:
+  Line 599: REGISTER_OP("DrawBoundingBoxes")
+
+  Line 631: REGISTER_OP("DrawBoundingBoxesV2")
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0014-bf171d8341da\tensorflow\core\kernels\draw_bounding_box_op.cc:
+  Line 53: class DrawBoundingBoxesOp : public OpKernel {
+
+  Line 55:   explicit DrawBoundingBoxesOp(OpKernelConstruction* context)
+
+  Line 206:       Name("DrawBoundingBoxes").Device(DEVICE_CPU).TypeConstraint<T>("T"),   \
+
+  Line 207:       DrawBoundingBoxesOp<T>);                                               \
+
+  Line 209:       Name("DrawBoundingBoxesV2").Device(DEVICE_CPU).TypeConstraint<T>("T"), \
+
+  Line 210:       DrawBoundingBoxesOp<T>);
+
+tool: grep
+{
+  "pattern": "class DrawBoundingBoxesOp",
+  "path": "."
+}
+Found 1 matches
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0014-bf171d8341da\tensorflow\core\kernels\draw_bounding_box_op.cc:
+  Line 53: class DrawBoundingBoxesOp : public OpKernel {
+
+tokens used
+input: 300
+cache read: 8,704
+cache write: 0
+output: 108
+reasoning output: 7
+
+The older target keeps this kernel at `tensorflow/core/kernels/draw_bounding_box_op.cc` rather than under `kernels/image`. I’m checking the exact local context and will replace the fatal `CHECK` assertions with `OP_REQUIRES` errors there.
+
+tool: read
+{
+  "filePath": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0014-bf171d8341da\\tensorflow\\core\\kernels\\draw_bounding_box_op.cc",
+  "offset": 1,
+  "limit": 260
+}
+<path>C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0014-bf171d8341da\tensorflow\core\kernels\draw_bounding_box_op.cc</path>
+<type>file</type>
+<content>
+1: /* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
+2: 
+3: Licensed under the Apache License, Version 2.0 (the "License");
+4: you may not use this file except in compliance with the License.
+5: You may obtain a copy of the License at
+6: 
+7:     http://www.apache.org/licenses/LICENSE-2.0
+8: 
+9: Unless required by applicable law or agreed to in writing, software
+10: distributed under the License is distributed on an "AS IS" BASIS,
+11: WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+12: See the License for the specific language governing permissions and
+13: limitations under the License.
+14: ==============================================================================*/
+15: // See ../ops/image_ops.cc for details.
+16: #define EIGEN_USE_THREADS
+17: 
+18: #include "tensorflow/core/framework/op_kernel.h"
+19: #include "tensorflow/core/framework/register_types.h"
+20: #include "tensorflow/core/framework/tensor.h"
+21: #include "tensorflow/core/framework/tensor_shape.h"
+22: #include "tensorflow/core/framework/types.h"
+23: #include "tensorflow/core/lib/core/errors.h"
+24: #include "tensorflow/core/platform/logging.h"
+25: 
+26: namespace tensorflow {
+27: 
+28: namespace {
+29: 
+30: std::vector<std::vector<float>> DefaultColorTable(int depth) {
+31:   std::vector<std::vector<float>> color_table;
+32:   color_table.emplace_back(std::vector<float>({1, 1, 0, 1}));      // 0: yellow
+33:   color_table.emplace_back(std::vector<float>({0, 0, 1, 1}));      // 1: blue
+34:   color_table.emplace_back(std::vector<float>({1, 0, 0, 1}));      // 2: red
+35:   color_table.emplace_back(std::vector<float>({0, 1, 0, 1}));      // 3: lime
+36:   color_table.emplace_back(std::vector<float>({0.5, 0, 0.5, 1}));  // 4: purple
+37:   color_table.emplace_back(std::vector<float>({0.5, 0.5, 0, 1}));  // 5: olive
+38:   color_table.emplace_back(std::vector<float>({0.5, 0, 0, 1}));    // 6: maroon
+39:   color_table.emplace_back(std::vector<float>({0, 0, 0.5, 1}));  // 7: navy blue
+40:   color_table.emplace_back(std::vector<float>({0, 1, 1, 1}));    // 8: aqua
+41:   color_table.emplace_back(std::vector<float>({1, 0, 1, 1}));    // 9: fuchsia
+42: 
+43:   if (depth == 1) {
+44:     for (int64 i = 0; i < color_table.size(); i++) {
+45:       color_table[i][0] = 1;
+46:     }
+47:   }
+48:   return color_table;
+49: }
+50: }  // namespace
+51: 
+52: template <class T>
+53: class DrawBoundingBoxesOp : public OpKernel {
+54:  public:
+55:   explicit DrawBoundingBoxesOp(OpKernelConstruction* context)
+56:       : OpKernel(context) {}
+57: 
+58:   void Compute(OpKernelContext* context) override {
+59:     const Tensor& images = context->input(0);
+60:     const Tensor& boxes = context->input(1);
+61:     const int64 depth = images.dim_size(3);
+62: 
+63:     OP_REQUIRES(context, images.dims() == 4,
+64:                 errors::InvalidArgument("The rank of the images should be 4"));
+65:     OP_REQUIRES(
+66:         context, boxes.dims() == 3,
+67:         errors::InvalidArgument("The rank of the boxes tensor should be 3"));
+68:     OP_REQUIRES(context, images.dim_size(0) == boxes.dim_size(0),
+69:                 errors::InvalidArgument("The batch sizes should be the same"));
+70: 
+71:     OP_REQUIRES(
+72:         context, depth == 4 || depth == 1 || depth == 3,
+73:         errors::InvalidArgument("Channel depth should be either 1 (GRY), "
+74:                                 "3 (RGB), or 4 (RGBA)"));
+75: 
+76:     const int64 batch_size = images.dim_size(0);
+77:     const int64 height = images.dim_size(1);
+78:     const int64 width = images.dim_size(2);
+79:     std::vector<std::vector<float>> color_table;
+80:     if (context->num_inputs() == 3) {
+81:       const Tensor& colors_tensor = context->input(2);
+82:       OP_REQUIRES(context, colors_tensor.shape().dims() == 2,
+83:                   errors::InvalidArgument("colors must be a 2-D matrix",
+84:                                           colors_tensor.shape().DebugString()));
+85:       OP_REQUIRES(context, colors_tensor.shape().dim_size(1) >= depth,
+86:                   errors::InvalidArgument("colors must have equal or more ",
+87:                                           "channels than the image provided: ",
+88:                                           colors_tensor.shape().DebugString()));
+89:       if (colors_tensor.NumElements() != 0) {
+90:         color_table.clear();
+91: 
+92:         auto colors = colors_tensor.matrix<float>();
+93:         for (int64 i = 0; i < colors.dimension(0); i++) {
+94:           std::vector<float> color_value(4);
+95:           for (int64 j = 0; j < 4; j++) {
+96:             color_value[j] = colors(i, j);
+97:           }
+98:           color_table.emplace_back(color_value);
+99:         }
+100:       }
+101:     }
+102:     if (color_table.empty()) {
+103:       color_table = DefaultColorTable(depth);
+104:     }
+105:     Tensor* output;
+106:     OP_REQUIRES_OK(
+107:         context,
+108:         context->allocate_output(
+109:             0, TensorShape({batch_size, height, width, depth}), &output));
+110: 
+111:     output->tensor<T, 4>() = images.tensor<T, 4>();
+112:     auto canvas = output->tensor<T, 4>();
+113: 
+114:     for (int64 b = 0; b < batch_size; ++b) {
+115:       const int64 num_boxes = boxes.dim_size(1);
+116:       const auto tboxes = boxes.tensor<T, 3>();
+117:       for (int64 bb = 0; bb < num_boxes; ++bb) {
+118:         int64 color_index = bb % color_table.size();
+119:         const int64 min_box_row =
+120:             static_cast<float>(tboxes(b, bb, 0)) * (height - 1);
+121:         const int64 min_box_row_clamp = std::max<int64>(min_box_row, int64{0});
+122:         const int64 max_box_row =
+123:             static_cast<float>(tboxes(b, bb, 2)) * (height - 1);
+124:         const int64 max_box_row_clamp =
+125:             std::min<int64>(max_box_row, height - 1);
+126:         const int64 min_box_col =
+127:             static_cast<float>(tboxes(b, bb, 1)) * (width - 1);
+128:         const int64 min_box_col_clamp = std::max<int64>(min_box_col, int64{0});
+129:         const int64 max_box_col =
+130:             static_cast<float>(tboxes(b, bb, 3)) * (width - 1);
+131:         const int64 max_box_col_clamp = std::min<int64>(max_box_col, width - 1);
+132: 
+133:         if (min_box_row > max_box_row || min_box_col > max_box_col) {
+134:           LOG(WARNING) << "Bounding box (" << min_box_row << "," << min_box_col
+135:                        << "," << max_box_row << "," << max_box_col
+136:                        << ") is inverted and will not be drawn.";
+137:           continue;
+138:         }
+139:         if (min_box_row >= height || max_box_row < 0 || min_box_col >= width ||
+140:             max_box_col < 0) {
+141:           LOG(WARNING) << "Bounding box (" << min_box_row << "," << min_box_col
+142:                        << "," << max_box_row << "," << max_box_col
+143:                        << ") is completely outside the image"
+144:                        << " and will not be drawn.";
+145:           continue;
+146:         }
+147: 
+148:         // At this point, {min,max}_box_{row,col}_clamp are inside the
+149:         // image.
+150:         CHECK_GE(min_box_row_clamp, 0);
+151:         CHECK_GE(max_box_row_clamp, 0);
+152:         CHECK_LT(min_box_row_clamp, height);
+153:         CHECK_LT(max_box_row_clamp, height);
+154:         CHECK_GE(min_box_col_clamp, 0);
+155:         CHECK_GE(max_box_col_clamp, 0);
+156:         CHECK_LT(min_box_col_clamp, width);
+157:         CHECK_LT(max_box_col_clamp, width);
+158: 
+159:         // At this point, the min_box_row and min_box_col are either
+160:         // in the image or above/left of it, and max_box_row and
+161:         // max_box_col are either in the image or below/right or it.
+162:         CHECK_LT(min_box_row, height);
+163:         CHECK_GE(max_box_row, 0);
+164:         CHECK_LT(min_box_col, width);
+165:         CHECK_GE(max_box_col, 0);
+166: 
+167:         // Draw top line.
+168:         if (min_box_row >= 0) {
+169:           for (int64 j = min_box_col_clamp; j <= max_box_col_clamp; ++j)
+170:             for (int64 c = 0; c < depth; c++) {
+171:               canvas(b, min_box_row, j, c) =
+172:                   static_cast<T>(color_table[color_index][c]);
+173:             }
+174:         }
+175:         // Draw bottom line.
+176:         if (max_box_row < height) {
+177:           for (int64 j = min_box_col_clamp; j <= max_box_col_clamp; ++j)
+178:             for (int64 c = 0; c < depth; c++) {
+179:               canvas(b, max_box_row, j, c) =
+180:                   static_cast<T>(color_table[color_index][c]);
+181:             }
+182:         }
+183:         // Draw left line.
+184:         if (min_box_col >= 0) {
+185:           for (int64 i = min_box_row_clamp; i <= max_box_row_clamp; ++i)
+186:             for (int64 c = 0; c < depth; c++) {
+187:               canvas(b, i, min_box_col, c) =
+188:                   static_cast<T>(color_table[color_index][c]);
+189:             }
+190:         }
+191:         // Draw right line.
+192:         if (max_box_col < width) {
+193:           for (int64 i = min_box_row_clamp; i <= max_box_row_clamp; ++i)
+194:             for (int64 c = 0; c < depth; c++) {
+195:               canvas(b, i, max_box_col, c) =
+196:                   static_cast<T>(color_table[color_index][c]);
+197:             }
+198:         }
+199:       }
+200:     }
+201:   }
+202: };
+203: 
+204: #define REGISTER_CPU_KERNEL(T)                                               \
+205:   REGISTER_KERNEL_BUILDER(                                                   \
+206:       Name("DrawBoundingBoxes").Device(DEVICE_CPU).TypeConstraint<T>("T"),   \
+207:       DrawBoundingBoxesOp<T>);                                               \
+208:   REGISTER_KERNEL_BUILDER(                                                   \
+209:       Name("DrawBoundingBoxesV2").Device(DEVICE_CPU).TypeConstraint<T>("T"), \
+210:       DrawBoundingBoxesOp<T>);
+211: TF_CALL_half(REGISTER_CPU_KERNEL);
+212: TF_CALL_float(REGISTER_CPU_KERNEL);
+213: 
+214: }  // namespace tensorflow
+
+(End of file - total 214 lines)
+</content>
+
+tool: viewcode
+{
+  "ref": "bf171d8341da2cfe1b2500b6b0bbbaa9bacc63db",
+  "path": "tensorflow/core/kernels/draw_bounding_box_op.cc",
+  "startline": 1,
+  "endline": 260
+}
+This file only has 215 lines. Here are lines 1 through 215.
+
+/* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+==============================================================================*/
+// See ../ops/image_ops.cc for details.
+#define EIGEN_USE_THREADS
+
+#include "tensorflow/core/framework/op_kernel.h"
+#include "tensorflow/core/framework/register_types.h"
+#include "tensorflow/core/framework/tensor.h"
+#include "tensorflow/core/framework/tensor_shape.h"
+#include "tensorflow/core/framework/types.h"
+#include "tensorflow/core/lib/core/errors.h"
+#include "tensorflow/core/platform/logging.h"
+
+namespace tensorflow {
+
+namespace {
+
+std::vector<std::vector<float>> DefaultColorTable(int depth) {
+  std::vector<std::vector<float>> color_table;
+  color_table.emplace_back(std::vector<float>({1, 1, 0, 1}));      // 0: yellow
+  color_table.emplace_back(std::vector<float>({0, 0, 1, 1}));      // 1: blue
+  color_table.emplace_back(std::vector<float>({1, 0, 0, 1}));      // 2: red
+  color_table.emplace_back(std::vector<float>({0, 1, 0, 1}));      // 3: lime
+  color_table.emplace_back(std::vector<float>({0.5, 0, 0.5, 1}));  // 4: purple
+  color_table.emplace_back(std::vector<float>({0.5, 0.5, 0, 1}));  // 5: olive
+  color_table.emplace_back(std::vector<float>({0.5, 0, 0, 1}));    // 6: maroon
+  color_table.emplace_back(std::vector<float>({0, 0, 0.5, 1}));  // 7: navy blue
+  color_table.emplace_back(std::vector<float>({0, 1, 1, 1}));    // 8: aqua
+  color_table.emplace_back(std::vector<float>({1, 0, 1, 1}));    // 9: fuchsia
+
+  if (depth == 1) {
+    for (int64 i = 0; i < color_table.size(); i++) {
+      color_table[i][0] = 1;
+    }
+  }
+  return color_table;
+}
+}  // namespace
+
+template <class T>
+class DrawBoundingBoxesOp : public OpKernel {
+ public:
+  explicit DrawBoundingBoxesOp(OpKernelConstruction* context)
+      : OpKernel(context) {}
+
+  void Compute(OpKernelContext* context) override {
+    const Tensor& images = context->input(0);
+    const Tensor& boxes = context->input(1);
+    const int64 depth = images.dim_size(3);
+
+    OP_REQUIRES(context, images.dims() == 4,
+                errors::InvalidArgument("The rank of the images should be 4"));
+    OP_REQUIRES(
+        context, boxes.dims() == 3,
+        errors::InvalidArgument("The rank of the boxes tensor should be 3"));
+    OP_REQUIRES(context, images.dim_size(0) == boxes.dim_size(0),
+                errors::InvalidArgument("The batch sizes should be the same"));
+
+    OP_REQUIRES(
+        context, depth == 4 || depth == 1 || depth == 3,
+        errors::InvalidArgument("Channel depth should be either 1 (GRY), "
+                                "3 (RGB), or 4 (RGBA)"));
+
+    const int64 batch_size = images.dim_size(0);
+    const int64 height = images.dim_size(1);
+    const int64 width = images.dim_size(2);
+    std::vector<std::vector<float>> color_table;
+    if (context->num_inputs() == 3) {
+      const Tensor& colors_tensor = context->input(2);
+      OP_REQUIRES(context, colors_tensor.shape().dims() == 2,
+                  errors::InvalidArgument("colors must be a 2-D matrix",
+                                          colors_tensor.shape().DebugString()));
+      OP_REQUIRES(context, colors_tensor.shape().dim_size(1) >= depth,
+                  errors::InvalidArgument("colors must have equal or more ",
+                                          "channels than the image provided: ",
+                                          colors_tensor.shape().DebugString()));
+      if (colors_tensor.NumElements() != 0) {
+        color_table.clear();
+
+        auto colors = colors_tensor.matrix<float>();
+        for (int64 i = 0; i < colors.dimension(0); i++) {
+          std::vector<float> color_value(4);
+          for (int64 j = 0; j < 4; j++) {
+            color_value[j] = colors(i, j);
+          }
+          color_table.emplace_back(color_value);
+        }
+      }
+    }
+    if (color_table.empty()) {
+      color_table = DefaultColorTable(depth);
+    }
+    Tensor* output;
+    OP_REQUIRES_OK(
+        context,
+        context->allocate_output(
+            0, TensorShape({batch_size, height, width, depth}), &output));
+
+    output->tensor<T, 4>() = images.tensor<T, 4>();
+    auto canvas = output->tensor<T, 4>();
+
+    for (int64 b = 0; b < batch_size; ++b) {
+      const int64 num_boxes = boxes.dim_size(1);
+      const auto tboxes = boxes.tensor<T, 3>();
+      for (int64 bb = 0; bb < num_boxes; ++bb) {
+        int64 color_index = bb % color_table.size();
+        const int64 min_box_row =
+            static_cast<float>(tboxes(b, bb, 0)) * (height - 1);
+        const int64 min_box_row_clamp = std::max<int64>(min_box_row, int64{0});
+        const int64 max_box_row =
+            static_cast<float>(tboxes(b, bb, 2)) * (height - 1);
+        const int64 max_box_row_clamp =
+            std::min<int64>(max_box_row, height - 1);
+        const int64 min_box_col =
+            static_cast<float>(tboxes(b, bb, 1)) * (width - 1);
+        const int64 min_box_col_clamp = std::max<int64>(min_box_col, int64{0});
+        const int64 max_box_col =
+            static_cast<float>(tboxes(b, bb, 3)) * (width - 1);
+        const int64 max_box_col_clamp = std::min<int64>(max_box_col, width - 1);
+
+        if (min_box_row > max_box_row || min_box_col > max_box_col) {
+          LOG(WARNING) << "Bounding box (" << min_box_row << "," << min_box_col
+                       << "," << max_box_row << "," << max_box_col
+                       << ") is inverted and will not be drawn.";
+          continue;
+        }
+        if (min_box_row >= height || max_box_row < 0 || min_box_col >= width ||
+            max_box_col < 0) {
+          LOG(WARNING) << "Bounding box (" << min_box_row << "," << min_box_col
+                       << "," << max_box_row << "," << max_box_col
+                       << ") is completely outside the image"
+                       << " and will not be drawn.";
+          continue;
+        }
+
+        // At this point, {min,max}_box_{row,col}_clamp are inside the
+        // image.
+        CHECK_GE(min_box_row_clamp, 0);
+        CHECK_GE(max_box_row_clamp, 0);
+        CHECK_LT(min_box_row_clamp, height);
+        CHECK_LT(max_box_row_clamp, height);
+        CHECK_GE(min_box_col_clamp, 0);
+        CHECK_GE(max_box_col_clamp, 0);
+        CHECK_LT(min_box_col_clamp, width);
+        CHECK_LT(max_box_col_clamp, width);
+
+        // At this point, the min_box_row and min_box_col are either
+        // in the image or above/left of it, and max_box_row and
+        // max_box_col are either in the image or below/right or it.
+        CHECK_LT(min_box_row, height);
+        CHECK_GE(max_box_row, 0);
+        CHECK_LT(min_box_col, width);
+        CHECK_GE(max_box_col, 0);
+
+        // Draw top line.
+        if (min_box_row >= 0) {
+          for (int64 j = min_box_col_clamp; j <= max_box_col_clamp; ++j)
+            for (int64 c = 0; c < depth; c++) {
+              canvas(b, min_box_row, j, c) =
+                  static_cast<T>(color_table[color_index][c]);
+            }
+        }
+        // Draw bottom line.
+        if (max_box_row < height) {
+          for (int64 j = min_box_col_clamp; j <= max_box_col_clamp; ++j)
+            for (int64 c = 0; c < depth; c++) {
+              canvas(b, max_box_row, j, c) =
+                  static_cast<T>(color_table[color_index][c]);
+            }
+        }
+        // Draw left line.
+        if (min_box_col >= 0) {
+          for (int64 i = min_box_row_clamp; i <= max_box_row_clamp; ++i)
+            for (int64 c = 0; c < depth; c++) {
+              canvas(b, i, min_box_col, c) =
+                  static_cast<T>(color_table[color_index][c]);
+            }
+        }
+        // Draw right line.
+        if (max_box_col < width) {
+          for (int64 i = min_box_row_clamp; i <= max_box_row_clamp; ++i)
+            for (int64 c = 0; c < depth; c++) {
+              canvas(b, i, max_box_col, c) =
+                  static_cast<T>(color_table[color_index][c]);
+            }
+        }
+      }
+    }
+  }
+};
+
+#define REGISTER_CPU_KERNEL(T)                                               \
+  REGISTER_KERNEL_BUILDER(                                                   \
+      Name("DrawBoundingBoxes").Device(DEVICE_CPU).TypeConstraint<T>("T"),   \
+      DrawBoundingBoxesOp<T>);                                               \
+  REGISTER_KERNEL_BUILDER(                                                   \
+      Name("DrawBoundingBoxesV2").Device(DEVICE_CPU).TypeConstraint<T>("T"), \
+      DrawBoundingBoxesOp<T>);
+TF_CALL_half(REGISTER_CPU_KERNEL);
+TF_CALL_float(REGISTER_CPU_KERNEL);
+
+}  // namespace tensorflow
+
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tokens used
+input: 847
+cache read: 8,704
+cache write: 0
+output: 214
+reasoning output: 0
+
+The target code matches the vulnerable assertion block directly, with only the file path differing. I’m validating the adapted hunk against the target base before applying it locally.
+
+tool: validate
+{
+  "ref": "bf171d8341da2cfe1b2500b6b0bbbaa9bacc63db",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/draw_bounding_box_op.cc b/tensorflow/core/kernels/draw_bounding_box_op.cc\n--- a/tensorflow/core/kernels/draw_bounding_box_op.cc\n+++ b/tensorflow/core/kernels/draw_bounding_box_op.cc\n@@ -147,22 +147,46 @@ class DrawBoundingBoxesOp : public OpKernel {\n \n         // At this point, {min,max}_box_{row,col}_clamp are inside the\n         // image.\n-        CHECK_GE(min_box_row_clamp, 0);\n-        CHECK_GE(max_box_row_clamp, 0);\n-        CHECK_LT(min_box_row_clamp, height);\n-        CHECK_LT(max_box_row_clamp, height);\n-        CHECK_GE(min_box_col_clamp, 0);\n-        CHECK_GE(max_box_col_clamp, 0);\n-        CHECK_LT(min_box_col_clamp, width);\n-        CHECK_LT(max_box_col_clamp, width);\n+        OP_REQUIRES(\n+            context, min_box_row_clamp >= 0,\n+            errors::InvalidArgument(\"Min box row clamp is less than 0.\"));\n+        OP_REQUIRES(\n+            context, max_box_row_clamp >= 0,\n+            errors::InvalidArgument(\"Max box row clamp is less than 0.\"));\n+        OP_REQUIRES(context, min_box_row_clamp <= height,\n+                    errors::InvalidArgument(\n+                        \"Min box row clamp is greater than height.\"));\n+        OP_REQUIRES(context, max_box_row_clamp <= height,\n+                    errors::InvalidArgument(\n+                        \"Max box row clamp is greater than height.\"));\n+\n+        OP_REQUIRES(\n+            context, min_box_col_clamp >= 0,\n+            errors::InvalidArgument(\"Min box col clamp is less than 0.\"));\n+        OP_REQUIRES(\n+            context, max_box_col_clamp >= 0,\n+            errors::InvalidArgument(\"Max box col clamp is less than 0.\"));\n+        OP_REQUIRES(context, min_box_col_clamp <= width,\n+                    errors::InvalidArgument(\n+                        \"Min box col clamp is greater than width.\"));\n+        OP_REQUIRES(context, max_box_col_clamp <= width,\n+                    errors::InvalidArgument(\n+                        \"Max box col clamp is greater than width.\"));\n \n         // At this point, the min_box_row and min_box_col are either\n         // in the image or above/left of it, and max_box_row and\n         // max_box_col are either in the image or below/right or it.\n-        CHECK_LT(min_box_row, height);\n-        CHECK_GE(max_box_row, 0);\n-        CHECK_LT(min_box_col, width);\n-        CHECK_GE(max_box_col, 0);\n+\n+        OP_REQUIRES(\n+            context, min_box_row <= height,\n+            errors::InvalidArgument(\"Min box row is greater than height.\"));\n+        OP_REQUIRES(context, max_box_row >= 0,\n+                    errors::InvalidArgument(\"Max box row is less than 0.\"));\n+        OP_REQUIRES(\n+            context, min_box_col <= width,\n+            errors::InvalidArgument(\"Min box col is greater than width.\"));\n+        OP_REQUIRES(context, max_box_col >= 0,\n+                    errors::InvalidArgument(\"Max box col is less than 0.\"));\n \n         // Draw top line.\n         if (min_box_row >= 0) {\n"
+}
+Error executing validate: Traceback (most recent call last):
+  File "C:\Users\Akindu Himan\.config\opencode\scripts\validate.py", line 320, in <module>
+    main()
+  File "C:\Users\Akindu Himan\.config\opencode\scripts\validate.py", line 315, in main
+    result = validate(args.repo, args.ref, args.patch_file, args.mode, args.err_msg, args.revise_context)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Akindu Himan\.config\opencode\scripts\validate.py", line 284, in validate
+    return apply_hunk(repo, repo_dir, ref, patch, revise_context)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Akindu Himan\.config\opencode\scripts\validate.py", line 126, in apply_hunk
+    revised_patch, _ = utils.revise_patch(patch, repo_dir, revise_context)
+                       ^^^^^^^^^^^^^^^^^^
+AttributeError: 'NoneType' object has no attribute 'revise_patch'
+
+tokens used
+input: 6,295
+cache read: 8,704
+cache write: 0
+output: 908
+reasoning output: 21
+
+The validation helper failed internally before applying the hunk, not due to a patch mismatch. I’m proceeding with the same minimal source edit in the checked-out target file.
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/kernels/draw_bounding_box_op.cc\n@@\n         // At this point, {min,max}_box_{row,col}_clamp are inside the\n         // image.\n-        CHECK_GE(min_box_row_clamp, 0);\n-        CHECK_GE(max_box_row_clamp, 0);\n-        CHECK_LT(min_box_row_clamp, height);\n-        CHECK_LT(max_box_row_clamp, height);\n-        CHECK_GE(min_box_col_clamp, 0);\n-        CHECK_GE(max_box_col_clamp, 0);\n-        CHECK_LT(min_box_col_clamp, width);\n-        CHECK_LT(max_box_col_clamp, width);\n+        OP_REQUIRES(\n+            context, min_box_row_clamp >= 0,\n+            errors::InvalidArgument(\"Min box row clamp is less than 0.\"));\n+        OP_REQUIRES(\n+            context, max_box_row_clamp >= 0,\n+            errors::InvalidArgument(\"Max box row clamp is less than 0.\"));\n+        OP_REQUIRES(context, min_box_row_clamp <= height,\n+                    errors::InvalidArgument(\n+                        \"Min box row clamp is greater than height.\"));\n+        OP_REQUIRES(context, max_box_row_clamp <= height,\n+                    errors::InvalidArgument(\n+                        \"Max box row clamp is greater than height.\"));\n+\n+        OP_REQUIRES(\n+            context, min_box_col_clamp >= 0,\n+            errors::InvalidArgument(\"Min box col clamp is less than 0.\"));\n+        OP_REQUIRES(\n+            context, max_box_col_clamp >= 0,\n+            errors::InvalidArgument(\"Max box col clamp is less than 0.\"));\n+        OP_REQUIRES(context, min_box_col_clamp <= width,\n+                    errors::InvalidArgument(\n+                        \"Min box col clamp is greater than width.\"));\n+        OP_REQUIRES(context, max_box_col_clamp <= width,\n+                    errors::InvalidArgument(\n+                        \"Max box col clamp is greater than width.\"));\n \n         // At this point, the min_box_row and min_box_col are either\n         // in the image or above/left of it, and max_box_row and\n         // max_box_col are either in the image or below/right or it.\n-        CHECK_LT(min_box_row, height);\n-        CHECK_GE(max_box_row, 0);\n-        CHECK_LT(min_box_col, width);\n-        CHECK_GE(max_box_col, 0);\n+\n+        OP_REQUIRES(\n+            context, min_box_row <= height,\n+            errors::InvalidArgument(\"Min box row is greater than height.\"));\n+        OP_REQUIRES(context, max_box_row >= 0,\n+                    errors::InvalidArgument(\"Max box row is less than 0.\"));\n+        OP_REQUIRES(\n+            context, min_box_col <= width,\n+            errors::InvalidArgument(\"Min box col is greater than width.\"));\n+        OP_REQUIRES(context, max_box_col >= 0,\n+                    errors::InvalidArgument(\"Max box col is less than 0.\"));\n \n         // Draw top line.\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/kernels/draw_bounding_box_op.cc
+
+tokens used
+input: 1,339
+cache read: 14,848
+cache write: 0
+output: 806
+reasoning output: 25
+
+The source edit is applied. I’m inspecting the resulting diff to ensure only the intended TensorFlow kernel change is present.
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/kernels/draw_bounding_box_op.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0014-bf171d8341da",
+  "timeout": 120000
+}
+warning: in the working copy of 'tensorflow/core/kernels/draw_bounding_box_op.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/kernels/draw_bounding_box_op.cc b/tensorflow/core/kernels/draw_bounding_box_op.cc
+index 30de99b7d5..73db76333f 100644
+--- a/tensorflow/core/kernels/draw_bounding_box_op.cc
++++ b/tensorflow/core/kernels/draw_bounding_box_op.cc
+@@ -147,22 +147,46 @@ class DrawBoundingBoxesOp : public OpKernel {
+ 
+         // At this point, {min,max}_box_{row,col}_clamp are inside the
+         // image.
+-        CHECK_GE(min_box_row_clamp, 0);
+-        CHECK_GE(max_box_row_clamp, 0);
+-        CHECK_LT(min_box_row_clamp, height);
+-        CHECK_LT(max_box_row_clamp, height);
+-        CHECK_GE(min_box_col_clamp, 0);
+-        CHECK_GE(max_box_col_clamp, 0);
+-        CHECK_LT(min_box_col_clamp, width);
+-        CHECK_LT(max_box_col_clamp, width);
++        OP_REQUIRES(
++            context, min_box_row_clamp >= 0,
++            errors::InvalidArgument("Min box row clamp is less than 0."));
++        OP_REQUIRES(
++            context, max_box_row_clamp >= 0,
++            errors::InvalidArgument("Max box row clamp is less than 0."));
++        OP_REQUIRES(context, min_box_row_clamp <= height,
++                    errors::InvalidArgument(
++                        "Min box row clamp is greater than height."));
++        OP_REQUIRES(context, max_box_row_clamp <= height,
++                    errors::InvalidArgument(
++                        "Max box row clamp is greater than height."));
++
++        OP_REQUIRES(
++            context, min_box_col_clamp >= 0,
++            errors::InvalidArgument("Min box col clamp is less than 0."));
++        OP_REQUIRES(
++            context, max_box_col_clamp >= 0,
++            errors::InvalidArgument("Max box col clamp is less than 0."));
++        OP_REQUIRES(context, min_box_col_clamp <= width,
++                    errors::InvalidArgument(
++                        "Min box col clamp is greater than width."));
++        OP_REQUIRES(context, max_box_col_clamp <= width,
++                    errors::InvalidArgument(
++                        "Max box col clamp is greater than width."));
+ 
+         // At this point, the min_box_row and min_box_col are either
+         // in the image or above/left of it, and max_box_row and
+         // max_box_col are either in the image or below/right or it.
+-        CHECK_LT(min_box_row, height);
+-        CHECK_GE(max_box_row, 0);
+-        CHECK_LT(min_box_col, width);
+-        CHECK_GE(max_box_col, 0);
++
++        OP_REQUIRES(
++            context, min_box_row <= height,
++            errors::InvalidArgument("Min box row is greater than height."));
++        OP_REQUIRES(context, max_box_row >= 0,
++                    errors::InvalidArgument("Max box row is less than 0."));
++        OP_REQUIRES(
++            context, min_box_col <= width,
++            errors::InvalidArgument("Min box col is greater than width."));
++        OP_REQUIRES(context, max_box_col >= 0,
++                    errors::InvalidArgument("Max box col is less than 0."));
+ 
+         // Draw top line.
+         if (min_box_row >= 0) {
+
+tokens used
+input: 1,176
+cache read: 15,872
+cache write: 0
+output: 110
+reasoning output: 24
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/kernels/draw_bounding_box_op.cc b/tensorflow/core/kernels/draw_bounding_box_op.cc
+    index 30de99b7d5..73db76333f 100644
+    --- a/tensorflow/core/kernels/draw_bounding_box_op.cc
+    +++ b/tensorflow/core/kernels/draw_bounding_box_op.cc
+    @@ -147,22 +147,46 @@ class DrawBoundingBoxesOp : public OpKernel {
+     
+             // At this point, {min,max}_box_{row,col}_clamp are inside the
+             // image.
+    -        CHECK_GE(min_box_row_clamp, 0);
+    -        CHECK_GE(max_box_row_clamp, 0);
+    -        CHECK_LT(min_box_row_clamp, height);
+    -        CHECK_LT(max_box_row_clamp, height);
+    -        CHECK_GE(min_box_col_clamp, 0);
+    -        CHECK_GE(max_box_col_clamp, 0);
+    -        CHECK_LT(min_box_col_clamp, width);
+    -        CHECK_LT(max_box_col_clamp, width);
+    +        OP_REQUIRES(
+    +            context, min_box_row_clamp >= 0,
+    +            errors::InvalidArgument("Min box row clamp is less than 0."));
+    +        OP_REQUIRES(
+    +            context, max_box_row_clamp >= 0,
+    +            errors::InvalidArgument("Max box row clamp is less than 0."));
+    +        OP_REQUIRES(context, min_box_row_clamp <= height,
+    +                    errors::InvalidArgument(
+    +                        "Min box row clamp is greater than height."));
+    +        OP_REQUIRES(context, max_box_row_clamp <= height,
+    +                    errors::InvalidArgument(
+    +                        "Max box row clamp is greater than height."));
+    +
+    +        OP_REQUIRES(
+    +            context, min_box_col_clamp >= 0,
+    +            errors::InvalidArgument("Min box col clamp is less than 0."));
+    +        OP_REQUIRES(
+    +            context, max_box_col_clamp >= 0,
+    +            errors::InvalidArgument("Max box col clamp is less than 0."));
+    +        OP_REQUIRES(context, min_box_col_clamp <= width,
+    +                    errors::InvalidArgument(
+    +                        "Min box col clamp is greater than width."));
+    +        OP_REQUIRES(context, max_box_col_clamp <= width,
+    +                    errors::InvalidArgument(
+    +                        "Max box col clamp is greater than width."));
+     
+             // At this point, the min_box_row and min_box_col are either
+             // in the image or above/left of it, and max_box_row and
+             // max_box_col are either in the image or below/right or it.
+    -        CHECK_LT(min_box_row, height);
+    -        CHECK_GE(max_box_row, 0);
+    -        CHECK_LT(min_box_col, width);
+    -        CHECK_GE(max_box_col, 0);
+    +
+    +        OP_REQUIRES(
+    +            context, min_box_row <= height,
+    +            errors::InvalidArgument("Min box row is greater than height."));
+    +        OP_REQUIRES(context, max_box_row >= 0,
+    +                    errors::InvalidArgument("Max box row is less than 0."));
+    +        OP_REQUIRES(
+    +            context, min_box_col <= width,
+    +            errors::InvalidArgument("Min box col is greater than width."));
+    +        OP_REQUIRES(context, max_box_col >= 0,
+    +                    errors::InvalidArgument("Max box col is less than 0."));
+     
+             // Draw top line.
+             if (min_box_row >= 0) {
+  notes: >
+    Replaced fatal CHECK assertions in the target DrawBoundingBoxes kernel with InvalidArgument OP_REQUIRES checks, adapted to the older file path.
+```
+
+tokens used
+input: 1,088
+cache read: 16,896
+cache write: 0
+output: 867
+reasoning output: 52

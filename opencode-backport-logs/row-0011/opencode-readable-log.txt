@@ -1,0 +1,646 @@
+I’ll inspect the target `conv_ops.cc` around the patched functions, then apply only the equivalent guard checks needed for TensorFlow 2.1.4.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target Conv2D CPU and dimension code",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Validate adapted hunks against target base",
+      "status": "pending",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply minimal backport changes",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "content": "Review resulting diff",
+      "status": "pending",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target Conv2D CPU and dimension code",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Validate adapted hunks against target base",
+    "status": "pending",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply minimal backport changes",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "content": "Review resulting diff",
+    "status": "pending",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 8,583
+cache read: 0
+cache write: 0
+output: 129
+reasoning output: 0
+
+tool: locate_symbol
+{
+  "ref": "62685fd76defff311eaf09c73f0d8221bb8ff6f6",
+  "symbol": "ComputeConv2DDimension"
+}
+tensorflow/core/kernels/conv_ops.cc:402
+tensorflow/core/kernels/conv_ops.h:114
+tensorflow/core/kernels/conv_grad_filter_ops_benchmark_test.cc:59
+tensorflow/core/kernels/conv_grad_input_ops_benchmark_test.cc:59
+tensorflow/core/kernels/conv_ops.cc:530
+tensorflow/core/kernels/conv_ops_fused_impl.h:716
+
+tool: locate_symbol
+{
+  "ref": "62685fd76defff311eaf09c73f0d8221bb8ff6f6",
+  "symbol": "LaunchConv2DOp"
+}
+tensorflow/core/kernels/conv_ops.cc:144
+tensorflow/core/kernels/conv_ops.cc:181
+tensorflow/core/kernels/conv_ops.cc:615
+tensorflow/core/kernels/conv_ops.cc:616
+tensorflow/core/kernels/conv_ops.cc:617
+tensorflow/core/kernels/conv_ops.cc:1161
+tensorflow/core/kernels/conv_ops.cc:1162
+tensorflow/core/kernels/conv_ops.cc:1163
+tensorflow/core/kernels/conv_ops.h:35
+tensorflow/core/kernels/conv_ops.h:46
+tensorflow/core/kernels/depthwise_conv_op.cc:249
+tensorflow/core/kernels/depthwise_conv_op.cc:250
+tensorflow/core/kernels/depthwise_conv_op.cc:251
+tensorflow/core/kernels/depthwise_conv_op.cc:256
+tensorflow/core/kernels/depthwise_conv_op.cc:257
+tensorflow/core/kernels/depthwise_conv_op.cc:258
+tensorflow/core/kernels/conv_ops.cc:595
+tensorflow/core/kernels/conv_ops.cc:647
+tensorflow/core/kernels/depthwise_conv_op.cc:449
+
+tokens used
+input: 1,168
+cache read: 7,680
+cache write: 0
+output: 110
+reasoning output: 0
+
+tool: viewcode
+{
+  "ref": "62685fd76defff311eaf09c73f0d8221bb8ff6f6",
+  "path": "tensorflow/core/kernels/conv_ops.cc",
+  "startline": 390,
+  "endline": 450
+}
+Here are lines 390 through 450.
+
+                              "dilations in the batch and depth dimensions."));
+  TF_REQUIRES(
+      dilation_h > 0 && dilation_w > 0,
+      errors::InvalidArgument("Dilated rates should be larger than 0."));
+
+  TF_RETURN_IF_ERROR(CheckValidPadding(params->padding,
+                                       params->explicit_paddings,
+                                       /*num_dims=*/4, data_format));
+
+  return Status::OK();
+}
+
+Status ComputeConv2DDimension(const Conv2DParameters& params,
+                              const Tensor& input, const Tensor& filter,
+                              Conv2DDimensions* dimensions) {
+  // Check that 2D convolution input and filter have exactly 4 dimensions.
+  TF_REQUIRES(input.dims() == 4,
+              errors::InvalidArgument("input must be 4-dimensional",
+                                      input.shape().DebugString()));
+  TF_REQUIRES(filter.dims() == 4,
+              errors::InvalidArgument("filter must be 4-dimensional: ",
+                                      filter.shape().DebugString()));
+  for (int i = 0; i < 3; i++) {
+    TF_REQUIRES(
+        FastBoundsCheck(filter.dim_size(i), std::numeric_limits<int>::max()),
+        errors::InvalidArgument("filter too large"));
+  }
+
+  // The last dimension for input is in_depth. Check that it is the same as the
+  // filter's in_depth or it is evenly divisible by filter's in_depth.
+  const int64 in_depth_raw = GetTensorDim(input, params.data_format, 'C');
+  const int64 patch_depth_raw = filter.dim_size(2);
+  TF_REQUIRES(FastBoundsCheck(in_depth_raw, std::numeric_limits<int>::max()),
+              errors::InvalidArgument("Input depth too large"));
+  TF_REQUIRES(FastBoundsCheck(patch_depth_raw, std::numeric_limits<int>::max()),
+              errors::InvalidArgument("Patch depth too large"));
+  const int in_depth = static_cast<int>(in_depth_raw);
+  const int patch_depth = static_cast<int>(patch_depth_raw);
+  TF_REQUIRES(in_depth % patch_depth == 0,
+              errors::InvalidArgument(
+                  "input depth must be evenly divisible by filter depth: ",
+                  in_depth, " vs ", patch_depth));
+
+  // The last dimension for filter is out_depth.
+  const int out_depth = static_cast<int>(filter.dim_size(3));
+
+  // The second dimension for input is rows/height.
+  // The first dimension for filter is rows/height.
+  const int64 input_rows_raw = GetTensorDim(input, params.data_format, 'H');
+  TF_REQUIRES(FastBoundsCheck(input_rows_raw, std::numeric_limits<int>::max()),
+              errors::InvalidArgument("Input rows too large"));
+  const int input_rows = static_cast<int>(input_rows_raw);
+  const int filter_rows = static_cast<int>(filter.dim_size(0));
+
+  // The third dimension for input is columns/width.
+  // The second dimension for filter is columns/width.
+  const int64 input_cols_raw = GetTensorDim(input, params.data_format, 'W');
+  TF_REQUIRES(FastBoundsCheck(input_cols_raw, std::numeric_limits<int>::max()),
+              errors::InvalidArgument("Input cols too large"));
+  const int input_cols = static_cast<int>(input_cols_raw);
+  const int filter_cols = static_cast<int>(filter.dim_size(1));
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: viewcode
+{
+  "ref": "62685fd76defff311eaf09c73f0d8221bb8ff6f6",
+  "path": "tensorflow/core/kernels/conv_ops.cc",
+  "startline": 220,
+  "endline": 310
+}
+Here are lines 220 through 310.
+
+ public:
+  static bool Run(OpKernelContext* ctx, const Tensor& input,
+                  const Tensor& filter, int batch, int input_rows,
+                  int input_cols, int in_depth, int filter_rows,
+                  int filter_cols, int pad_rows, int pad_cols, int out_rows,
+                  int /*out_cols*/, int /*out_depth*/, int /*dilation_rows*/,
+                  int /*dilation_cols*/, int /*stride_rows*/,
+                  int /*stride_cols*/, Tensor* /*output*/,
+                  TensorFormat /*data_format*/) {
+    return false;
+  }
+};
+
+// Conditionally launches DeepConv operation based on convolution parameters.
+template <>
+class LaunchDeepConvOp<CPUDevice, float> {
+ public:
+  static bool Run(OpKernelContext* ctx, const Tensor& input,
+                  const Tensor& filter, int batch, int input_rows,
+                  int input_cols, int in_depth, int filter_rows,
+                  int filter_cols, int pad_rows, int pad_cols, int out_rows,
+                  int out_cols, int out_depth, int dilation_rows,
+                  int dilation_cols, int stride_rows, int stride_cols,
+                  Tensor* output, TensorFormat data_format) {
+    if (data_format != FORMAT_NHWC || dilation_rows != 1 ||
+        dilation_cols != 1 ||
+        !CanUseDeepConv2D(stride_rows, stride_cols, filter_rows, filter_cols,
+                          in_depth, out_depth, out_rows, out_cols)) {
+      return false;
+    }
+
+    Conv2DArgs args;
+    args.batch = batch;
+    args.in_rows = input_rows;
+    args.in_cols = input_cols;
+    args.in_depth = in_depth;
+    args.filter_rows = filter_rows;
+    args.filter_cols = filter_cols;
+    args.pad_rows = pad_rows;
+    args.pad_cols = pad_cols;
+    args.out_rows = out_rows;
+    args.out_cols = out_cols;
+    args.out_depth = out_depth;
+
+    auto input_ptr = input.template flat<float>().data();
+    auto filter_ptr = filter.template flat<float>().data();
+    auto output_ptr = output->template flat<float>().data();
+
+    functor::DeepConv2D<CPUDevice, float>()(ctx, args, input_ptr, filter_ptr,
+                                            output_ptr);
+    return true;
+  }
+};
+
+#ifdef TENSORFLOW_USE_LIBXSMM_CONVOLUTIONS
+template <typename Device, typename T>
+class LaunchXsmmConvOp {
+ public:
+  static bool Run(OpKernelContext* ctx, const Tensor& input,
+                  const Tensor& filter, int batch, int input_rows,
+                  int input_cols, int in_depth, int filter_rows,
+                  int filter_cols, int pad_rows, int pad_cols, int out_rows,
+                  int out_cols, int out_depth, int stride_rows, int stride_cols,
+                  int dilation_rows, int dilation_cols, Tensor* output,
+                  TensorFormat data_format) {
+    return false;
+  }
+};
+
+template <>
+class LaunchXsmmConvOp<CPUDevice, float> {
+ public:
+  static bool Run(OpKernelContext* ctx, const Tensor& input,
+                  const Tensor& filter, int batch, int input_rows,
+                  int input_cols, int in_depth, int filter_rows,
+                  int filter_cols, int pad_rows, int pad_cols, int out_rows,
+                  int out_cols, int out_depth, int dilation_rows,
+                  int dilation_cols, int stride_rows, int stride_cols,
+                  Tensor* output, TensorFormat data_format) {
+    auto num_threads =
+        ctx->device()->tensorflow_cpu_worker_threads()->num_threads;
+    // See libxsmm_dnn.h for this struct definition.
+    libxsmm_dnn_conv_desc desc;
+    desc.N = batch;
+    desc.C = in_depth;
+    desc.H = input_rows;
+    desc.W = input_cols;
+    desc.K = out_depth;
+    desc.R = filter_rows;
+    desc.S = filter_cols;
+    desc.u = stride_rows;
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tokens used
+input: 579
+cache read: 8,704
+cache write: 0
+output: 134
+reasoning output: 0
+
+tool: viewcode
+{
+  "ref": "62685fd76defff311eaf09c73f0d8221bb8ff6f6",
+  "path": "tensorflow/core/kernels/conv_ops.cc",
+  "startline": 130,
+  "endline": 220
+}
+Here are lines 130 through 220.
+
+            static_cast<int>(explicit_paddings[4]),
+            static_cast<int>(explicit_paddings[5]));
+      } else {
+        functor::SpatialConvolution<Device, T>()(
+            ctx->eigen_device<Device>(), output->tensor<T, 4>(),
+            input.tensor<T, 4>(), filter.tensor<T, 4>(), row_stride, col_stride,
+            row_dilation, col_dilation, BrainPadding2EigenPadding(padding));
+      }
+    }
+  }
+};
+}  // namespace
+
+template <typename T>
+struct LaunchConv2DOp<CPUDevice, T> {
+  void operator()(OpKernelContext* ctx, bool use_cudnn, bool cudnn_use_autotune,
+                  const Tensor& input, const Tensor& filter, int row_dilation,
+                  int col_dilation, int row_stride, int col_stride,
+                  const Padding& padding,
+                  const std::vector<int64>& explicit_paddings, Tensor* output,
+                  TensorFormat data_format) {
+    if (data_format != FORMAT_NHWC) {
+      ctx->SetStatus(errors::Unimplemented(
+          "The Conv2D op currently only supports the NHWC tensor format on the "
+          "CPU. The op was given the format: ",
+          ToString(data_format)));
+      return;
+    }
+    const int64 in_depth = GetTensorDim(input, data_format, 'C');
+    OP_REQUIRES(ctx, in_depth == filter.dim_size(2),
+                errors::Unimplemented(
+                    "The Conv2D op currently does not support grouped "
+                    "convolutions on the CPU. A grouped convolution was "
+                    "attempted to be run because the input depth of ",
+                    in_depth, " does not match the filter input depth of ",
+                    filter.dim_size(2)));
+
+    for (int64 explicit_padding : explicit_paddings) {
+      if (!FastBoundsCheck(explicit_padding, std::numeric_limits<int>::max())) {
+        ctx->SetStatus(errors::InvalidArgument("filter too large"));
+        return;
+      }
+    }
+    LaunchGeneric<CPUDevice, T>()(ctx, input, filter, row_stride, col_stride,
+                                  row_dilation, col_dilation, padding,
+                                  explicit_paddings, output, data_format);
+  }
+};
+
+#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+template <>
+struct LaunchConv2DOp<GPUDevice, int32> {
+  void operator()(OpKernelContext* ctx, bool use_cudnn, bool cudnn_use_autotune,
+                  const Tensor& input, const Tensor& filter, int row_dilation,
+                  int col_dilation, int row_stride, int col_stride,
+                  const Padding& padding,
+                  const std::vector<int64>& explicit_paddings, Tensor* output,
+                  TensorFormat data_format) {
+    if (data_format != FORMAT_NHWC) {
+      ctx->SetStatus(
+          errors::Unimplemented("The Conv2D op currently only supports the "
+                                "NHWC tensor format for integer types. "
+                                "The op was given the format: ",
+                                ToString(data_format)));
+      return;
+    }
+    const int64 in_depth = GetTensorDim(input, data_format, 'C');
+    OP_REQUIRES(ctx, in_depth == filter.dim_size(2),
+                errors::Unimplemented(
+                    "The Conv2D op currently does not support grouped "
+                    "convolutions for integer types. A grouped convolution was "
+                    "attempted to be run because the input depth of ",
+                    in_depth, " does not match the filter input depth of ",
+                    filter.dim_size(2)));
+
+    for (int64 explicit_padding : explicit_paddings) {
+      if (!FastBoundsCheck(explicit_padding, std::numeric_limits<int>::max())) {
+        ctx->SetStatus(errors::InvalidArgument("filter too large"));
+        return;
+      }
+    }
+    LaunchGeneric<GPUDevice, int32>()(
+        ctx, input, filter, row_stride, col_stride, row_dilation, col_dilation,
+        padding, explicit_paddings, output, data_format);
+  }
+};
+#endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+
+template <typename Device, typename T>
+class LaunchDeepConvOp {
+ public:
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tokens used
+input: 2,323
+cache read: 8,704
+cache write: 0
+output: 63
+reasoning output: 29
+
+The target `LaunchConv2DOp<CPUDevice, T>` does not have the grouped-convolution path from 2.5.0, so the `num_groups` guard has no direct equivalent there. The target does have the vulnerable `in_depth % patch_depth` in `ComputeConv2DDimension`, so I’m validating the minimal guard at that point.
+
+tool: validate
+{
+  "ref": "62685fd76defff311eaf09c73f0d8221bb8ff6f6",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/conv_ops.cc b/tensorflow/core/kernels/conv_ops.cc\n--- a/tensorflow/core/kernels/conv_ops.cc\n+++ b/tensorflow/core/kernels/conv_ops.cc\n@@ -420,6 +420,9 @@ Status ComputeConv2DDimension(const Conv2DParameters& params,\n               errors::InvalidArgument(\"Patch depth too large\"));\n   const int in_depth = static_cast<int>(in_depth_raw);\n   const int patch_depth = static_cast<int>(patch_depth_raw);\n+  TF_REQUIRES(patch_depth > 0,\n+              errors::InvalidArgument(\n+                  \"filter depth must be stricly positive, got \", patch_depth));\n   TF_REQUIRES(in_depth % patch_depth == 0,\n               errors::InvalidArgument(\n                   \"input depth must be evenly divisible by filter depth: \",\n"
+}
+Patch applied successfully
+
+tokens used
+input: 1,301
+cache read: 10,752
+cache write: 0
+output: 331
+reasoning output: 273
+
+The adapted hunk applies cleanly. I’m applying that guard directly to the checked-out target file.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target Conv2D CPU and dimension code",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate adapted hunks against target base",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply minimal backport changes",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Review resulting diff",
+      "status": "pending",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target Conv2D CPU and dimension code",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate adapted hunks against target base",
+    "status": "completed",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply minimal backport changes",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Review resulting diff",
+    "status": "pending",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 894
+cache read: 11,776
+cache write: 0
+output: 117
+reasoning output: 0
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/kernels/conv_ops.cc\n@@\n   TF_REQUIRES(FastBoundsCheck(patch_depth_raw, std::numeric_limits<int>::max()),\n               errors::InvalidArgument(\"Patch depth too large\"));\n   const int in_depth = static_cast<int>(in_depth_raw);\n   const int patch_depth = static_cast<int>(patch_depth_raw);\n+  TF_REQUIRES(patch_depth > 0,\n+              errors::InvalidArgument(\n+                  \"filter depth must be stricly positive, got \", patch_depth));\n   TF_REQUIRES(in_depth % patch_depth == 0,\n               errors::InvalidArgument(\n                   \"input depth must be evenly divisible by filter depth: \",\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/kernels/conv_ops.cc
+
+tokens used
+input: 1,147
+cache read: 11,776
+cache write: 0
+output: 188
+reasoning output: 0
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target Conv2D CPU and dimension code",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate adapted hunks against target base",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply minimal backport changes",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Review resulting diff",
+      "status": "in_progress",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target Conv2D CPU and dimension code",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate adapted hunks against target base",
+    "status": "completed",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply minimal backport changes",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Review resulting diff",
+    "status": "in_progress",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 338
+cache read: 12,800
+cache write: 0
+output: 89
+reasoning output: 0
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/kernels/conv_ops.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0011-62685fd76def",
+  "timeout": 120000
+}
+warning: in the working copy of 'tensorflow/core/kernels/conv_ops.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/kernels/conv_ops.cc b/tensorflow/core/kernels/conv_ops.cc
+index d5ce7de1d2..cb710975cc 100644
+--- a/tensorflow/core/kernels/conv_ops.cc
++++ b/tensorflow/core/kernels/conv_ops.cc
+@@ -425,6 +425,9 @@ Status ComputeConv2DDimension(const Conv2DParameters& params,
+               errors::InvalidArgument("Patch depth too large"));
+   const int in_depth = static_cast<int>(in_depth_raw);
+   const int patch_depth = static_cast<int>(patch_depth_raw);
++  TF_REQUIRES(patch_depth > 0,
++              errors::InvalidArgument(
++                  "filter depth must be stricly positive, got ", patch_depth));
+   TF_REQUIRES(in_depth % patch_depth == 0,
+               errors::InvalidArgument(
+                   "input depth must be evenly divisible by filter depth: ",
+
+tokens used
+input: 563
+cache read: 12,800
+cache write: 0
+output: 73
+reasoning output: 0
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target Conv2D CPU and dimension code",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate adapted hunks against target base",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply minimal backport changes",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Review resulting diff",
+      "status": "completed",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target Conv2D CPU and dimension code",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate adapted hunks against target base",
+    "status": "completed",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply minimal backport changes",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Review resulting diff",
+    "status": "completed",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 880
+cache read: 12,800
+cache write: 0
+output: 90
+reasoning output: 16
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/kernels/conv_ops.cc b/tensorflow/core/kernels/conv_ops.cc
+    index d5ce7de1d2..cb710975cc 100644
+    --- a/tensorflow/core/kernels/conv_ops.cc
+    +++ b/tensorflow/core/kernels/conv_ops.cc
+    @@ -425,6 +425,9 @@ Status ComputeConv2DDimension(const Conv2DParameters& params,
+                   errors::InvalidArgument("Patch depth too large"));
+       const int in_depth = static_cast<int>(in_depth_raw);
+       const int patch_depth = static_cast<int>(patch_depth_raw);
+    +  TF_REQUIRES(patch_depth > 0,
+    +              errors::InvalidArgument(
+    +                  "filter depth must be stricly positive, got ", patch_depth));
+       TF_REQUIRES(in_depth % patch_depth == 0,
+                   errors::InvalidArgument(
+                       "input depth must be evenly divisible by filter depth: ",
+  notes: >
+    Added the missing positive filter-depth check before modulo division in Conv2D dimension computation; grouped CPU launch guards from 2.5.0 have no equivalent grouped path in TensorFlow 2.1.4.
+```
+
+tokens used
+input: 1,121
+cache read: 12,800
+cache write: 0
+output: 280
+reasoning output: 0

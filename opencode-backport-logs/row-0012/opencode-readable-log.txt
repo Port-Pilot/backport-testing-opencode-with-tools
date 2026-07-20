@@ -1,0 +1,275 @@
+I’ll locate the target-side `QuantizedMulOp` implementation and compare the exact surrounding branch structure before applying the minimal guard.
+
+tool: grep
+{
+  "pattern": "VectorTensorMultiply|class QuantizedMulOp|vector_num_elements",
+  "path": "tensorflow/core/kernels",
+  "include": "quantized_mul_op.cc"
+}
+Found 15 matches
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0012-bf171d8341da\tensorflow\core\kernels\quantized_mul_op.cc:
+  Line 189: void VectorTensorMultiply(const T* vector_data, int32 vector_offset,
+
+  Line 190:                           int64 vector_num_elements, const T* tensor_data,
+
+  Line 194:     const int64 vector_i = i % vector_num_elements;
+
+  Line 202: void VectorTensorMultiply<quint8, qint32>(
+
+  Line 203:     const quint8* vector_data, int32 vector_offset, int64 vector_num_elements,
+
+  Line 208:   CHECK_EQ(0, tensor_num_elements % vector_num_elements);
+
+  Line 210:        base_i += vector_num_elements) {
+
+  Line 212:     const int end_i = base_i + vector_num_elements;
+
+  Line 215:     for (vector_i = 0; vector_i < (vector_num_elements - 15);
+
+  Line 280: class QuantizedMulOp : public OpKernel {
+
+  Line 330:       int64 vector_num_elements;
+
+  Line 337:         vector_num_elements = x.NumElements();
+
+  Line 344:         vector_num_elements = y.NumElements();
+
+  Line 350:       VectorTensorMultiply<T, Toutput>(
+
+  Line 351:           vector_data, vector_offset, vector_num_elements, tensor_data,
+
+tool: locate_symbol
+{
+  "ref": "bf171d8341da2cfe1b2500b6b0bbbaa9bacc63db",
+  "symbol": "QuantizedMulOp"
+}
+Failed to run ctags. Please ensure ctags is installed: [WinError 2] The system cannot find the file specified
+
+tokens used
+input: 4,597
+cache read: 3,584
+cache write: 0
+output: 139
+reasoning output: 0
+
+The target file has the same vulnerable vector/tensor multiply path, with the division/modulo using `vector_num_elements` immediately after branch selection. I’m adding the same InvalidArgument guard before the helper call.
+
+tool: read
+{
+  "filePath": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0012-bf171d8341da\\tensorflow\\core\\kernels\\quantized_mul_op.cc",
+  "offset": 320,
+  "limit": 45
+}
+<path>C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0012-bf171d8341da\tensorflow\core\kernels\quantized_mul_op.cc</path>
+<type>file</type>
+<content>
+320:                                    x_data[0], offset_x, z_data);
+321:       } else if (y.NumElements() == 1) {
+322:         ScalarMultiply<T, Toutput>(context, x_data, offset_x, x.NumElements(),
+323:                                    y_data[0], offset_y, z_data);
+324:       } else {
+325:         VectorMultiply<T, Toutput>(context, x_data, offset_x, y_data, offset_y,
+326:                                    x.NumElements(), z_data);
+327:       }
+328:     } else if (ndims == 2) {
+329:       const T* vector_data;
+330:       int64 vector_num_elements;
+331:       int32 vector_offset;
+332:       const T* tensor_data;
+333:       int64 tensor_num_elements;
+334:       int32 tensor_offset;
+335:       if (x.NumElements() < y.NumElements()) {
+336:         vector_data = x_data;
+337:         vector_num_elements = x.NumElements();
+338:         vector_offset = offset_x;
+339:         tensor_data = y_data;
+340:         tensor_num_elements = y.NumElements();
+341:         tensor_offset = offset_y;
+342:       } else {
+343:         vector_data = y_data;
+344:         vector_num_elements = y.NumElements();
+345:         vector_offset = offset_y;
+346:         tensor_data = x_data;
+347:         tensor_num_elements = x.NumElements();
+348:         tensor_offset = offset_x;
+349:       }
+350:       VectorTensorMultiply<T, Toutput>(
+351:           vector_data, vector_offset, vector_num_elements, tensor_data,
+352:           tensor_offset, tensor_num_elements, z_data);
+353:     } else {
+354:       LOG(INFO) << "ndims=" << ndims;
+355:       LOG(INFO) << "bcast.x_reshape()="
+356:                 << TensorShape(bcast.x_reshape()).DebugString();
+357:       LOG(INFO) << "bcast.y_reshape()="
+358:                 << TensorShape(bcast.y_reshape()).DebugString();
+359:       LOG(INFO) << "bcast.x_bcast()="
+360:                 << TensorShape(bcast.x_bcast()).DebugString();
+361:       LOG(INFO) << "bcast.y_bcast()="
+362:                 << TensorShape(bcast.y_bcast()).DebugString();
+363: 
+364:       context->SetStatus(errors::Unimplemented(
+
+(Showing lines 320-364 of 392. Use offset=365 to continue.)
+</content>
+
+tool: viewcode
+{
+  "ref": "bf171d8341da2cfe1b2500b6b0bbbaa9bacc63db",
+  "path": "tensorflow/core/kernels/quantized_mul_op.cc",
+  "startline": 320,
+  "endline": 356
+}
+Here are lines 320 through 356.
+
+                                   x_data[0], offset_x, z_data);
+      } else if (y.NumElements() == 1) {
+        ScalarMultiply<T, Toutput>(context, x_data, offset_x, x.NumElements(),
+                                   y_data[0], offset_y, z_data);
+      } else {
+        VectorMultiply<T, Toutput>(context, x_data, offset_x, y_data, offset_y,
+                                   x.NumElements(), z_data);
+      }
+    } else if (ndims == 2) {
+      const T* vector_data;
+      int64 vector_num_elements;
+      int32 vector_offset;
+      const T* tensor_data;
+      int64 tensor_num_elements;
+      int32 tensor_offset;
+      if (x.NumElements() < y.NumElements()) {
+        vector_data = x_data;
+        vector_num_elements = x.NumElements();
+        vector_offset = offset_x;
+        tensor_data = y_data;
+        tensor_num_elements = y.NumElements();
+        tensor_offset = offset_y;
+      } else {
+        vector_data = y_data;
+        vector_num_elements = y.NumElements();
+        vector_offset = offset_y;
+        tensor_data = x_data;
+        tensor_num_elements = x.NumElements();
+        tensor_offset = offset_x;
+      }
+      VectorTensorMultiply<T, Toutput>(
+          vector_data, vector_offset, vector_num_elements, tensor_data,
+          tensor_offset, tensor_num_elements, z_data);
+    } else {
+      LOG(INFO) << "ndims=" << ndims;
+      LOG(INFO) << "bcast.x_reshape()="
+                << TensorShape(bcast.x_reshape()).DebugString();
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tokens used
+input: 1,020
+cache read: 7,680
+cache write: 0
+output: 200
+reasoning output: 0
+
+tool: validate
+{
+  "ref": "bf171d8341da2cfe1b2500b6b0bbbaa9bacc63db",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/quantized_mul_op.cc b/tensorflow/core/kernels/quantized_mul_op.cc\n--- a/tensorflow/core/kernels/quantized_mul_op.cc\n+++ b/tensorflow/core/kernels/quantized_mul_op.cc\n@@ -347,6 +347,11 @@ class QuantizedMulOp : public OpKernel {\n         tensor_num_elements = x.NumElements();\n         tensor_offset = offset_x;\n       }\n+      if (vector_num_elements == 0) {\n+        context->SetStatus(\n+            errors::InvalidArgument(\"vector must have at least 1 element\"));\n+        return;\n+      }\n       VectorTensorMultiply<T, Toutput>(\n           vector_data, vector_offset, vector_num_elements, tensor_data,\n           tensor_offset, tensor_num_elements, z_data);\n"
+}
+Error executing validate: Traceback (most recent call last):
+  File "C:\Users\Akindu Himan\.config\opencode\scripts\validate.py", line 320, in <module>
+    main()
+  File "C:\Users\Akindu Himan\.config\opencode\scripts\validate.py", line 315, in main
+    result = validate(args.repo, args.ref, args.patch_file, args.mode, args.err_msg, args.revise_context)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Akindu Himan\.config\opencode\scripts\validate.py", line 284, in validate
+    return apply_hunk(repo, repo_dir, ref, patch, revise_context)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Akindu Himan\.config\opencode\scripts\validate.py", line 126, in apply_hunk
+    revised_patch, _ = utils.revise_patch(patch, repo_dir, revise_context)
+                       ^^^^^^^^^^^^^^^^^^
+AttributeError: 'NoneType' object has no attribute 'revise_patch'
+
+tokens used
+input: 2,209
+cache read: 7,680
+cache write: 0
+output: 238
+reasoning output: 0
+
+The hunk context matches the target code directly. The validation helper failed internally before applying the hunk, so I’m proceeding with the minimal source edit based on the verified local context.
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/kernels/quantized_mul_op.cc\n@@\n         tensor_num_elements = x.NumElements();\n         tensor_offset = offset_x;\n       }\n+      if (vector_num_elements == 0) {\n+        context->SetStatus(\n+            errors::InvalidArgument(\"vector must have at least 1 element\"));\n+        return;\n+      }\n       VectorTensorMultiply<T, Toutput>(\n           vector_data, vector_offset, vector_num_elements, tensor_data,\n           tensor_offset, tensor_num_elements, z_data);\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/kernels/quantized_mul_op.cc
+
+tokens used
+input: 658
+cache read: 9,728
+cache write: 0
+output: 198
+reasoning output: 14
+
+I’ll inspect the resulting diff to ensure only the intended guard was added.
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/kernels/quantized_mul_op.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0012-bf171d8341da",
+  "timeout": 120000
+}
+warning: in the working copy of 'tensorflow/core/kernels/quantized_mul_op.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/kernels/quantized_mul_op.cc b/tensorflow/core/kernels/quantized_mul_op.cc
+index 4e191f1626..fb56f68bf1 100644
+--- a/tensorflow/core/kernels/quantized_mul_op.cc
++++ b/tensorflow/core/kernels/quantized_mul_op.cc
+@@ -347,6 +347,11 @@ class QuantizedMulOp : public OpKernel {
+         tensor_num_elements = x.NumElements();
+         tensor_offset = offset_x;
+       }
++      if (vector_num_elements == 0) {
++        context->SetStatus(
++            errors::InvalidArgument("vector must have at least 1 element"));
++        return;
++      }
+       VectorTensorMultiply<T, Toutput>(
+           vector_data, vector_offset, vector_num_elements, tensor_data,
+           tensor_offset, tensor_num_elements, z_data);
+
+tokens used
+input: 899
+cache read: 9,728
+cache write: 0
+output: 98
+reasoning output: 0
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/kernels/quantized_mul_op.cc b/tensorflow/core/kernels/quantized_mul_op.cc
+    index 4e191f1626..fb56f68bf1 100644
+    --- a/tensorflow/core/kernels/quantized_mul_op.cc
+    +++ b/tensorflow/core/kernels/quantized_mul_op.cc
+    @@ -347,6 +347,11 @@ class QuantizedMulOp : public OpKernel {
+             tensor_num_elements = x.NumElements();
+             tensor_offset = offset_x;
+           }
+    +      if (vector_num_elements == 0) {
+    +        context->SetStatus(
+    +            errors::InvalidArgument("vector must have at least 1 element"));
+    +        return;
+    +      }
+           VectorTensorMultiply<T, Toutput>(
+               vector_data, vector_offset, vector_num_elements, tensor_data,
+               tensor_offset, tensor_num_elements, z_data);
+  notes: >
+    Added the QuantizedMul empty-vector guard before VectorTensorMultiply to prevent division by zero.
+```
+
+tokens used
+input: 1,234
+cache read: 9,728
+cache write: 0
+output: 248
+reasoning output: 0

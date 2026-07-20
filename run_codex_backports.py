@@ -531,8 +531,10 @@ def build_prompt(
         - `locate_symbol(ref, symbol)`: find functions, classes, methods,
           kernels, ops, tests, or other symbols in TensorFlow at a ref.
         - `git_history(filepath, start_line, end_line, start_commit,
-          end_commit)`: trace code-region history when a hunk may have moved or
-          changed shape.
+          end_commit)`: inspect how the needed code files and relevant code
+          regions changed over time through commit history. Use it to understand
+          whether patch logic already existed, moved, was renamed, or changed
+          shape between the newer source code and the older target release.
         - `validate(ref, patch, mode="hunk", revise_context?)`: validate that a
           generated hunk applies to `{backport_parent}`. Use hunk mode only.
 
@@ -540,9 +542,12 @@ def build_prompt(
 
         1. Study every file and hunk in the newer-version patch.
         2. Use the tools to locate the equivalent TensorFlow code in the checked
-           out older target version. For renamed or moved logic, prefer
-           `locate_symbol`, `viewcode`, and targeted history checks over broad
-           searching.
+           out older target version. Use `git_history` to inspect how needed
+           files and code regions changed over time with commit histories,
+           especially when a hunk's target location, surrounding code, or
+           equivalent older implementation is not obvious. For renamed or moved
+           logic, prefer `locate_symbol`, `viewcode`, and targeted history
+           checks over broad searching.
         3. Construct the smallest correct backport that preserves the intent of
            `{original_commit}` while matching the APIs, file layout, and coding
            style of TensorFlow `{backport_version}`.
@@ -553,7 +558,9 @@ def build_prompt(
 
         ## Constraints
 
-        - Do not inspect or use the expected older-version patch.
+        - Do not inspect or use the target older-version patch, expected
+          older-version patch, or known backport diff. The older patch is held
+          out for benchmark evaluation only.
         - Do not inspect or use `{backport_commit}`.
         - Do not change unrelated files.
         - Do not run expensive full builds or full validation.

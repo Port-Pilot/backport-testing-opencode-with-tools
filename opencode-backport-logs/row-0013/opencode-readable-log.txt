@@ -1,0 +1,1642 @@
+I’ll inspect the target-side sparse Cholesky implementation and compare it to the provided patch shape, then apply the minimal equivalent change in the checked-out 2.1.4 tree.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Locate and inspect target sparse_cholesky_op.cc",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Map newer patch to TensorFlow 2.1.4 APIs and validate hunks if needed",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "content": "Apply minimal backport in current checkout",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "content": "Inspect final diff and report YAML result",
+      "status": "pending",
+      "priority": "high"
+    }
+  ]
+}
+[
+  {
+    "content": "Locate and inspect target sparse_cholesky_op.cc",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Map newer patch to TensorFlow 2.1.4 APIs and validate hunks if needed",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "content": "Apply minimal backport in current checkout",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "content": "Inspect final diff and report YAML result",
+    "status": "pending",
+    "priority": "high"
+  }
+]
+
+tokens used
+input: 9,374
+cache read: 0
+cache write: 0
+output: 153
+reasoning output: 0
+
+tool: glob
+{
+  "pattern": "tensorflow/core/kernels/sparse/sparse_cholesky_op.cc"
+}
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0013-bf171d8341da\tensorflow\core\kernels\sparse\sparse_cholesky_op.cc
+
+tool: locate_symbol
+{
+  "ref": "bf171d8341da2cfe1b2500b6b0bbbaa9bacc63db",
+  "symbol": "CSRSparseCholeskyCPUOp"
+}
+tensorflow/core/kernels/sparse/sparse_cholesky_op.cc:69
+tensorflow/core/kernels/sparse/sparse_cholesky_op.cc:75
+tensorflow/core/kernels/sparse/sparse_cholesky_op.cc:279
+
+tokens used
+input: 978
+cache read: 8,704
+cache write: 0
+output: 94
+reasoning output: 0
+
+tool: read
+{
+  "filePath": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0013-bf171d8341da\\tensorflow\\core\\kernels\\sparse\\sparse_cholesky_op.cc",
+  "offset": 1,
+  "limit": 360
+}
+<path>C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0013-bf171d8341da\tensorflow\core\kernels\sparse\sparse_cholesky_op.cc</path>
+<type>file</type>
+<content>
+1: /* Copyright 2019 The TensorFlow Authors. All Rights Reserved.
+2: 
+3: Licensed under the Apache License, Version 2.0 (the "License");
+4: you may not use this file except in compliance with the License.
+5: You may obtain a copy of the License at
+6: 
+7:     http://www.apache.org/licenses/LICENSE-2.0
+8: 
+9: Unless required by applicable law or agreed to in writing, software
+10: distributed under the License is distributed on an "AS IS" BASIS,
+11: WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+12: See the License for the specific language governing permissions and
+13: limitations under the License.
+14: ==============================================================================*/
+15: 
+16: #include <atomic>
+17: #include <numeric>
+18: #include <vector>
+19: 
+20: #define EIGEN_USE_THREADS
+21: 
+22: #include "third_party/eigen3/Eigen/Core"
+23: #include "third_party/eigen3/Eigen/SparseCholesky"
+24: #include "third_party/eigen3/Eigen/SparseCore"
+25: #include "third_party/eigen3/Eigen/OrderingMethods"
+26: #include "third_party/eigen3/unsupported/Eigen/CXX11/Tensor"
+27: #include "tensorflow/core/framework/op.h"
+28: #include "tensorflow/core/framework/op_kernel.h"
+29: #include "tensorflow/core/framework/tensor_types.h"
+30: #include "tensorflow/core/framework/variant_op_registry.h"
+31: #include "tensorflow/core/kernels/sparse/kernels.h"
+32: #include "tensorflow/core/kernels/sparse/sparse_matrix.h"
+33: #include "tensorflow/core/util/work_sharder.h"
+34: 
+35: namespace tensorflow {
+36: 
+37: // Op to compute the sparse Cholesky factorization of a sparse matrix.
+38: //
+39: // Implements a CPU kernel which returns the lower triangular sparse Cholesky
+40: // factor of a CSRSparseMatrix, using the fill-in reducing permutation.
+41: //
+42: // The CSRSparseMatrix may represent a single sparse matrix (rank 2) or a batch
+43: // of sparse matrices (rank 3). Each component must represent a symmetric
+44: // positive definite (SPD) matrix. In particular, this means the component
+45: // matrices must be square. We don't actually check if the input is symmetric,
+46: // only the lower triangular part of each component is read.
+47: //
+48: // The associated permutation must be a Tensor of rank (R - 1), where the
+49: // CSRSparseMatrix has rank R. Additionally, the batch dimension of the
+50: // CSRSparseMatrix and the permutation must be the same. Each batch of
+51: // the permutation should the contain each of the integers [0,..,N - 1] exactly
+52: // once, where N is the number of rows of each CSR SparseMatrix component.
+53: // TODO(anudhyan): Add checks to throw an InvalidArgument error if the
+54: // permutation is not valid.
+55: //
+56: // Returns a CSRSparseMatrix representing the lower triangular (batched)
+57: // Cholesky factors. It has the same shape as the input CSRSparseMatrix. For
+58: // each component sparse matrix A, the corresponding output sparse matrix L
+59: // satisfies the identity:
+60: //   A = L * Lt
+61: // where Lt denotes the adjoint of L.
+62: //
+63: // TODO(b/126472741): Due to the multiple batches of a 3D CSRSparseMatrix being
+64: // laid out in contiguous memory, this implementation allocates memory to store
+65: // a temporary copy of the Cholesky factor. Consequently, it uses roughly twice
+66: // the amount of memory that it needs to. This may cause a memory blowup for
+67: // sparse matrices with a high number of non-zero elements.
+68: template <typename T>
+69: class CSRSparseCholeskyCPUOp : public OpKernel {
+70:   // Note: We operate in column major (CSC) format in this Op since the
+71:   // SimplicialLLT returns the factor in column major.
+72:   using SparseMatrix = Eigen::SparseMatrix<T, Eigen::ColMajor>;
+73: 
+74:  public:
+75:   explicit CSRSparseCholeskyCPUOp(OpKernelConstruction* c) : OpKernel(c) {}
+76: 
+77:   void Compute(OpKernelContext* ctx) final {
+78:     // Extract inputs and valididate shapes and types.
+79:     const CSRSparseMatrix* input_matrix;
+80:     OP_REQUIRES_OK(ctx, ExtractVariantFromInput(ctx, 0, &input_matrix));
+81:     const Tensor& input_permutation_indices = ctx->input(1);
+82: 
+83:     int64 num_rows;
+84:     int batch_size;
+85:     ValidateInputs(ctx, *input_matrix, input_permutation_indices, &batch_size,
+86:                    &num_rows);
+87: 
+88:     // Allocate batch pointers.
+89:     Tensor batch_ptr(cpu_allocator(), DT_INT32, TensorShape({batch_size + 1}));
+90:     auto batch_ptr_vec = batch_ptr.vec<int32>();
+91:     batch_ptr_vec(0) = 0;
+92: 
+93:     // Temporary vector of Eigen SparseMatrices to store the Sparse Cholesky
+94:     // factors.
+95:     // Note: we use column-compressed (CSC) SparseMatrix because SimplicialLLT
+96:     // returns the factors in column major format. Since our input should be
+97:     // symmetric, column major and row major is identical in storage. We just
+98:     // have to switch to reading the upper triangular part of the input, which
+99:     // corresponds to the lower triangular part in row major format.
+100:     std::vector<SparseMatrix> sparse_cholesky_factors(batch_size);
+101: 
+102:     // TODO(anudhyan): Tune the cost per unit based on benchmarks.
+103:     const double nnz_per_row =
+104:         (input_matrix->total_nnz() / batch_size) / num_rows;
+105:     const int64 sparse_cholesky_cost_per_batch =
+106:         nnz_per_row * nnz_per_row * num_rows;
+107:     // Perform sparse Cholesky factorization of each batch in parallel.
+108:     auto worker_threads = *(ctx->device()->tensorflow_cpu_worker_threads());
+109:     std::atomic<int64> invalid_input_index(-1);
+110:     Shard(worker_threads.num_threads, worker_threads.workers, batch_size,
+111:           sparse_cholesky_cost_per_batch,
+112:           [&](int64 batch_begin, int64 batch_end) {
+113:             for (int64 batch_index = batch_begin; batch_index < batch_end;
+114:                  ++batch_index) {
+115:               // Define an Eigen SparseMatrix Map to operate on the
+116:               // CSRSparseMatrix component without copying the data.
+117:               Eigen::Map<const SparseMatrix> sparse_matrix(
+118:                   num_rows, num_rows, input_matrix->nnz(batch_index),
+119:                   input_matrix->row_pointers_vec(batch_index).data(),
+120:                   input_matrix->col_indices_vec(batch_index).data(),
+121:                   input_matrix->values_vec<T>(batch_index).data());
+122: 
+123:               Eigen::SimplicialLLT<SparseMatrix, Eigen::Upper,
+124:                                    Eigen::NaturalOrdering<int>>
+125:                   solver;
+126:               auto permutation_indices_flat =
+127:                   input_permutation_indices.flat<int32>().data();
+128: 
+129:               // Invert the fill-in reducing ordering and apply it to the input
+130:               // sparse matrix.
+131:               Eigen::Map<
+132:                   Eigen::PermutationMatrix<Eigen::Dynamic, Eigen::Dynamic, int>>
+133:                   permutation(permutation_indices_flat + batch_index * num_rows,
+134:                               num_rows);
+135:               auto permutation_inverse = permutation.inverse();
+136: 
+137:               SparseMatrix permuted_sparse_matrix;
+138:               permuted_sparse_matrix.template selfadjointView<Eigen::Upper>() =
+139:                   sparse_matrix.template selfadjointView<Eigen::Upper>()
+140:                       .twistedBy(permutation_inverse);
+141: 
+142:               // Compute the Cholesky decomposition.
+143:               solver.compute(permuted_sparse_matrix);
+144:               if (solver.info() != Eigen::Success) {
+145:                 invalid_input_index = batch_index;
+146:                 return;
+147:               }
+148: 
+149:               // Get the upper triangular factor, which would end up in the
+150:               // lower triangular part of the output CSRSparseMatrix when
+151:               // interpreted in row major format.
+152:               sparse_cholesky_factors[batch_index] =
+153:                   std::move(solver.matrixU());
+154:               // For now, batch_ptr contains the number of nonzeros in each
+155:               // batch.
+156:               batch_ptr_vec(batch_index + 1) =
+157:                   sparse_cholesky_factors[batch_index].nonZeros();
+158:             }
+159:           });
+160: 
+161:     // Check for invalid input.
+162:     OP_REQUIRES(
+163:         ctx, invalid_input_index == -1,
+164:         errors::InvalidArgument(
+165:             "Sparse Cholesky factorization failed for batch index ",
+166:             invalid_input_index.load(), ". The input might not be valid."));
+167: 
+168:     // Compute a cumulative sum to obtain the batch pointers.
+169:     std::partial_sum(batch_ptr_vec.data(),
+170:                      batch_ptr_vec.data() + batch_size + 1,
+171:                      batch_ptr_vec.data());
+172: 
+173:     // Allocate output Tensors.
+174:     const int64 total_nnz = batch_ptr_vec(batch_size);
+175:     Tensor output_row_ptr(cpu_allocator(), DT_INT32,
+176:                           TensorShape({(num_rows + 1) * batch_size}));
+177:     Tensor output_col_ind(cpu_allocator(), DT_INT32, TensorShape({total_nnz}));
+178:     Tensor output_values(cpu_allocator(), DataTypeToEnum<T>::value,
+179:                          TensorShape({total_nnz}));
+180:     auto output_row_ptr_ptr = output_row_ptr.flat<int32>().data();
+181:     auto output_col_ind_ptr = output_col_ind.flat<int32>().data();
+182:     auto output_values_ptr = output_values.flat<T>().data();
+183: 
+184:     // Copy the output matrices from each batch into the CSRSparseMatrix
+185:     // Tensors.
+186:     // TODO(b/129906419): Factor out the copy from Eigen SparseMatrix to
+187:     // CSRSparseMatrix into common utils. This is also used in
+188:     // SparseMatrixSparseMatMul.
+189:     Shard(worker_threads.num_threads, worker_threads.workers, batch_size,
+190:           (3 * total_nnz) / batch_size /* cost per unit */,
+191:           [&](int64 batch_begin, int64 batch_end) {
+192:             for (int64 batch_index = batch_begin; batch_index < batch_end;
+193:                  ++batch_index) {
+194:               const SparseMatrix& cholesky_factor =
+195:                   sparse_cholesky_factors[batch_index];
+196:               const int64 nnz = cholesky_factor.nonZeros();
+197: 
+198:               std::copy(cholesky_factor.outerIndexPtr(),
+199:                         cholesky_factor.outerIndexPtr() + num_rows + 1,
+200:                         output_row_ptr_ptr + batch_index * (num_rows + 1));
+201:               std::copy(cholesky_factor.innerIndexPtr(),
+202:                         cholesky_factor.innerIndexPtr() + nnz,
+203:                         output_col_ind_ptr + batch_ptr_vec(batch_index));
+204:               std::copy(cholesky_factor.valuePtr(),
+205:                         cholesky_factor.valuePtr() + nnz,
+206:                         output_values_ptr + batch_ptr_vec(batch_index));
+207:             }
+208:           });
+209: 
+210:     // Create the CSRSparseMatrix instance from its component Tensors and
+211:     // prepare the Variant output Tensor.
+212:     CSRSparseMatrix output_csr_matrix;
+213:     OP_REQUIRES_OK(
+214:         ctx,
+215:         CSRSparseMatrix::CreateCSRSparseMatrix(
+216:             DataTypeToEnum<T>::value, input_matrix->dense_shape(), batch_ptr,
+217:             output_row_ptr, output_col_ind, output_values, &output_csr_matrix));
+218:     Tensor* output_csr_matrix_tensor;
+219:     AllocatorAttributes cpu_alloc;
+220:     cpu_alloc.set_on_host(true);
+221:     OP_REQUIRES_OK(
+222:         ctx, ctx->allocate_output(0, TensorShape({}), &output_csr_matrix_tensor,
+223:                                   cpu_alloc));
+224:     output_csr_matrix_tensor->scalar<Variant>()() =
+225:         std::move(output_csr_matrix);
+226:   }
+227: 
+228:  private:
+229:   void ValidateInputs(OpKernelContext* ctx,
+230:                       const CSRSparseMatrix& sparse_matrix,
+231:                       const Tensor& permutation_indices, int* batch_size,
+232:                       int64* num_rows) {
+233:     OP_REQUIRES(ctx, sparse_matrix.dtype() == DataTypeToEnum<T>::value,
+234:                 errors::InvalidArgument(
+235:                     "Asked for a CSRSparseMatrix of type ",
+236:                     DataTypeString(DataTypeToEnum<T>::value),
+237:                     " but saw dtype: ", DataTypeString(sparse_matrix.dtype())));
+238: 
+239:     const Tensor& dense_shape = sparse_matrix.dense_shape();
+240:     const int rank = dense_shape.dim_size(0);
+241:     OP_REQUIRES(ctx, rank == 2 || rank == 3,
+242:                 errors::InvalidArgument("sparse matrix must have rank 2 or 3; ",
+243:                                         "but dense_shape has size ", rank));
+244:     const int row_dim = (rank == 2) ? 0 : 1;
+245:     auto dense_shape_vec = dense_shape.vec<int64>();
+246:     *num_rows = dense_shape_vec(row_dim);
+247:     const int64 num_cols = dense_shape_vec(row_dim + 1);
+248:     OP_REQUIRES(ctx, *num_rows == num_cols,
+249:                 errors::InvalidArgument("sparse matrix must be square; got: ",
+250:                                         *num_rows, " != ", num_cols));
+251:     const TensorShape& perm_shape = permutation_indices.shape();
+252:     OP_REQUIRES(
+253:         ctx, perm_shape.dims() + 1 == rank,
+254:         errors::InvalidArgument(
+255:             "sparse matrix must have the same rank as permutation; got: ", rank,
+256:             " != ", perm_shape.dims(), " + 1."));
+257:     OP_REQUIRES(
+258:         ctx, perm_shape.dim_size(rank - 2) == *num_rows,
+259:         errors::InvalidArgument(
+260:             "permutation must have the same number of elements in each batch "
+261:             "as the number of rows in sparse matrix; got: ",
+262:             perm_shape.dim_size(rank - 2), " != ", *num_rows));
+263: 
+264:     *batch_size = sparse_matrix.batch_size();
+265:     if (*batch_size > 1) {
+266:       OP_REQUIRES(
+267:           ctx, perm_shape.dim_size(0) == *batch_size,
+268:           errors::InvalidArgument("permutation must have the same batch size "
+269:                                   "as sparse matrix; got: ",
+270:                                   perm_shape.dim_size(0), " != ", *batch_size));
+271:     }
+272:   }
+273: };
+274: 
+275: #define REGISTER_CPU(T)                                      \
+276:   REGISTER_KERNEL_BUILDER(Name("SparseMatrixSparseCholesky") \
+277:                               .Device(DEVICE_CPU)            \
+278:                               .TypeConstraint<T>("type"),    \
+279:                           CSRSparseCholeskyCPUOp<T>);
+280: REGISTER_CPU(float);
+281: REGISTER_CPU(double);
+282: REGISTER_CPU(complex64);
+283: REGISTER_CPU(complex128);
+284: 
+285: #undef REGISTER_CPU
+286: 
+287: }  // namespace tensorflow
+
+(End of file - total 287 lines)
+</content>
+
+tool: viewcode
+{
+  "ref": "bf171d8341da2cfe1b2500b6b0bbbaa9bacc63db",
+  "path": "tensorflow/core/kernels/sparse/sparse_cholesky_op.cc",
+  "startline": 1,
+  "endline": 340
+}
+This file only has 288 lines. Here are lines 1 through 288.
+
+/* Copyright 2019 The TensorFlow Authors. All Rights Reserved.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+==============================================================================*/
+
+#include <atomic>
+#include <numeric>
+#include <vector>
+
+#define EIGEN_USE_THREADS
+
+#include "third_party/eigen3/Eigen/Core"
+#include "third_party/eigen3/Eigen/SparseCholesky"
+#include "third_party/eigen3/Eigen/SparseCore"
+#include "third_party/eigen3/Eigen/OrderingMethods"
+#include "third_party/eigen3/unsupported/Eigen/CXX11/Tensor"
+#include "tensorflow/core/framework/op.h"
+#include "tensorflow/core/framework/op_kernel.h"
+#include "tensorflow/core/framework/tensor_types.h"
+#include "tensorflow/core/framework/variant_op_registry.h"
+#include "tensorflow/core/kernels/sparse/kernels.h"
+#include "tensorflow/core/kernels/sparse/sparse_matrix.h"
+#include "tensorflow/core/util/work_sharder.h"
+
+namespace tensorflow {
+
+// Op to compute the sparse Cholesky factorization of a sparse matrix.
+//
+// Implements a CPU kernel which returns the lower triangular sparse Cholesky
+// factor of a CSRSparseMatrix, using the fill-in reducing permutation.
+//
+// The CSRSparseMatrix may represent a single sparse matrix (rank 2) or a batch
+// of sparse matrices (rank 3). Each component must represent a symmetric
+// positive definite (SPD) matrix. In particular, this means the component
+// matrices must be square. We don't actually check if the input is symmetric,
+// only the lower triangular part of each component is read.
+//
+// The associated permutation must be a Tensor of rank (R - 1), where the
+// CSRSparseMatrix has rank R. Additionally, the batch dimension of the
+// CSRSparseMatrix and the permutation must be the same. Each batch of
+// the permutation should the contain each of the integers [0,..,N - 1] exactly
+// once, where N is the number of rows of each CSR SparseMatrix component.
+// TODO(anudhyan): Add checks to throw an InvalidArgument error if the
+// permutation is not valid.
+//
+// Returns a CSRSparseMatrix representing the lower triangular (batched)
+// Cholesky factors. It has the same shape as the input CSRSparseMatrix. For
+// each component sparse matrix A, the corresponding output sparse matrix L
+// satisfies the identity:
+//   A = L * Lt
+// where Lt denotes the adjoint of L.
+//
+// TODO(b/126472741): Due to the multiple batches of a 3D CSRSparseMatrix being
+// laid out in contiguous memory, this implementation allocates memory to store
+// a temporary copy of the Cholesky factor. Consequently, it uses roughly twice
+// the amount of memory that it needs to. This may cause a memory blowup for
+// sparse matrices with a high number of non-zero elements.
+template <typename T>
+class CSRSparseCholeskyCPUOp : public OpKernel {
+  // Note: We operate in column major (CSC) format in this Op since the
+  // SimplicialLLT returns the factor in column major.
+  using SparseMatrix = Eigen::SparseMatrix<T, Eigen::ColMajor>;
+
+ public:
+  explicit CSRSparseCholeskyCPUOp(OpKernelConstruction* c) : OpKernel(c) {}
+
+  void Compute(OpKernelContext* ctx) final {
+    // Extract inputs and valididate shapes and types.
+    const CSRSparseMatrix* input_matrix;
+    OP_REQUIRES_OK(ctx, ExtractVariantFromInput(ctx, 0, &input_matrix));
+    const Tensor& input_permutation_indices = ctx->input(1);
+
+    int64 num_rows;
+    int batch_size;
+    ValidateInputs(ctx, *input_matrix, input_permutation_indices, &batch_size,
+                   &num_rows);
+
+    // Allocate batch pointers.
+    Tensor batch_ptr(cpu_allocator(), DT_INT32, TensorShape({batch_size + 1}));
+    auto batch_ptr_vec = batch_ptr.vec<int32>();
+    batch_ptr_vec(0) = 0;
+
+    // Temporary vector of Eigen SparseMatrices to store the Sparse Cholesky
+    // factors.
+    // Note: we use column-compressed (CSC) SparseMatrix because SimplicialLLT
+    // returns the factors in column major format. Since our input should be
+    // symmetric, column major and row major is identical in storage. We just
+    // have to switch to reading the upper triangular part of the input, which
+    // corresponds to the lower triangular part in row major format.
+    std::vector<SparseMatrix> sparse_cholesky_factors(batch_size);
+
+    // TODO(anudhyan): Tune the cost per unit based on benchmarks.
+    const double nnz_per_row =
+        (input_matrix->total_nnz() / batch_size) / num_rows;
+    const int64 sparse_cholesky_cost_per_batch =
+        nnz_per_row * nnz_per_row * num_rows;
+    // Perform sparse Cholesky factorization of each batch in parallel.
+    auto worker_threads = *(ctx->device()->tensorflow_cpu_worker_threads());
+    std::atomic<int64> invalid_input_index(-1);
+    Shard(worker_threads.num_threads, worker_threads.workers, batch_size,
+          sparse_cholesky_cost_per_batch,
+          [&](int64 batch_begin, int64 batch_end) {
+            for (int64 batch_index = batch_begin; batch_index < batch_end;
+                 ++batch_index) {
+              // Define an Eigen SparseMatrix Map to operate on the
+              // CSRSparseMatrix component without copying the data.
+              Eigen::Map<const SparseMatrix> sparse_matrix(
+                  num_rows, num_rows, input_matrix->nnz(batch_index),
+                  input_matrix->row_pointers_vec(batch_index).data(),
+                  input_matrix->col_indices_vec(batch_index).data(),
+                  input_matrix->values_vec<T>(batch_index).data());
+
+              Eigen::SimplicialLLT<SparseMatrix, Eigen::Upper,
+                                   Eigen::NaturalOrdering<int>>
+                  solver;
+              auto permutation_indices_flat =
+                  input_permutation_indices.flat<int32>().data();
+
+              // Invert the fill-in reducing ordering and apply it to the input
+              // sparse matrix.
+              Eigen::Map<
+                  Eigen::PermutationMatrix<Eigen::Dynamic, Eigen::Dynamic, int>>
+                  permutation(permutation_indices_flat + batch_index * num_rows,
+                              num_rows);
+              auto permutation_inverse = permutation.inverse();
+
+              SparseMatrix permuted_sparse_matrix;
+              permuted_sparse_matrix.template selfadjointView<Eigen::Upper>() =
+                  sparse_matrix.template selfadjointView<Eigen::Upper>()
+                      .twistedBy(permutation_inverse);
+
+              // Compute the Cholesky decomposition.
+              solver.compute(permuted_sparse_matrix);
+              if (solver.info() != Eigen::Success) {
+                invalid_input_index = batch_index;
+                return;
+              }
+
+              // Get the upper triangular factor, which would end up in the
+              // lower triangular part of the output CSRSparseMatrix when
+              // interpreted in row major format.
+              sparse_cholesky_factors[batch_index] =
+                  std::move(solver.matrixU());
+              // For now, batch_ptr contains the number of nonzeros in each
+              // batch.
+              batch_ptr_vec(batch_index + 1) =
+                  sparse_cholesky_factors[batch_index].nonZeros();
+            }
+          });
+
+    // Check for invalid input.
+    OP_REQUIRES(
+        ctx, invalid_input_index == -1,
+        errors::InvalidArgument(
+            "Sparse Cholesky factorization failed for batch index ",
+            invalid_input_index.load(), ". The input might not be valid."));
+
+    // Compute a cumulative sum to obtain the batch pointers.
+    std::partial_sum(batch_ptr_vec.data(),
+                     batch_ptr_vec.data() + batch_size + 1,
+                     batch_ptr_vec.data());
+
+    // Allocate output Tensors.
+    const int64 total_nnz = batch_ptr_vec(batch_size);
+    Tensor output_row_ptr(cpu_allocator(), DT_INT32,
+                          TensorShape({(num_rows + 1) * batch_size}));
+    Tensor output_col_ind(cpu_allocator(), DT_INT32, TensorShape({total_nnz}));
+    Tensor output_values(cpu_allocator(), DataTypeToEnum<T>::value,
+                         TensorShape({total_nnz}));
+    auto output_row_ptr_ptr = output_row_ptr.flat<int32>().data();
+    auto output_col_ind_ptr = output_col_ind.flat<int32>().data();
+    auto output_values_ptr = output_values.flat<T>().data();
+
+    // Copy the output matrices from each batch into the CSRSparseMatrix
+    // Tensors.
+    // TODO(b/129906419): Factor out the copy from Eigen SparseMatrix to
+    // CSRSparseMatrix into common utils. This is also used in
+    // SparseMatrixSparseMatMul.
+    Shard(worker_threads.num_threads, worker_threads.workers, batch_size,
+          (3 * total_nnz) / batch_size /* cost per unit */,
+          [&](int64 batch_begin, int64 batch_end) {
+            for (int64 batch_index = batch_begin; batch_index < batch_end;
+                 ++batch_index) {
+              const SparseMatrix& cholesky_factor =
+                  sparse_cholesky_factors[batch_index];
+              const int64 nnz = cholesky_factor.nonZeros();
+
+              std::copy(cholesky_factor.outerIndexPtr(),
+                        cholesky_factor.outerIndexPtr() + num_rows + 1,
+                        output_row_ptr_ptr + batch_index * (num_rows + 1));
+              std::copy(cholesky_factor.innerIndexPtr(),
+                        cholesky_factor.innerIndexPtr() + nnz,
+                        output_col_ind_ptr + batch_ptr_vec(batch_index));
+              std::copy(cholesky_factor.valuePtr(),
+                        cholesky_factor.valuePtr() + nnz,
+                        output_values_ptr + batch_ptr_vec(batch_index));
+            }
+          });
+
+    // Create the CSRSparseMatrix instance from its component Tensors and
+    // prepare the Variant output Tensor.
+    CSRSparseMatrix output_csr_matrix;
+    OP_REQUIRES_OK(
+        ctx,
+        CSRSparseMatrix::CreateCSRSparseMatrix(
+            DataTypeToEnum<T>::value, input_matrix->dense_shape(), batch_ptr,
+            output_row_ptr, output_col_ind, output_values, &output_csr_matrix));
+    Tensor* output_csr_matrix_tensor;
+    AllocatorAttributes cpu_alloc;
+    cpu_alloc.set_on_host(true);
+    OP_REQUIRES_OK(
+        ctx, ctx->allocate_output(0, TensorShape({}), &output_csr_matrix_tensor,
+                                  cpu_alloc));
+    output_csr_matrix_tensor->scalar<Variant>()() =
+        std::move(output_csr_matrix);
+  }
+
+ private:
+  void ValidateInputs(OpKernelContext* ctx,
+                      const CSRSparseMatrix& sparse_matrix,
+                      const Tensor& permutation_indices, int* batch_size,
+                      int64* num_rows) {
+    OP_REQUIRES(ctx, sparse_matrix.dtype() == DataTypeToEnum<T>::value,
+                errors::InvalidArgument(
+                    "Asked for a CSRSparseMatrix of type ",
+                    DataTypeString(DataTypeToEnum<T>::value),
+                    " but saw dtype: ", DataTypeString(sparse_matrix.dtype())));
+
+    const Tensor& dense_shape = sparse_matrix.dense_shape();
+    const int rank = dense_shape.dim_size(0);
+    OP_REQUIRES(ctx, rank == 2 || rank == 3,
+                errors::InvalidArgument("sparse matrix must have rank 2 or 3; ",
+                                        "but dense_shape has size ", rank));
+    const int row_dim = (rank == 2) ? 0 : 1;
+    auto dense_shape_vec = dense_shape.vec<int64>();
+    *num_rows = dense_shape_vec(row_dim);
+    const int64 num_cols = dense_shape_vec(row_dim + 1);
+    OP_REQUIRES(ctx, *num_rows == num_cols,
+                errors::InvalidArgument("sparse matrix must be square; got: ",
+                                        *num_rows, " != ", num_cols));
+    const TensorShape& perm_shape = permutation_indices.shape();
+    OP_REQUIRES(
+        ctx, perm_shape.dims() + 1 == rank,
+        errors::InvalidArgument(
+            "sparse matrix must have the same rank as permutation; got: ", rank,
+            " != ", perm_shape.dims(), " + 1."));
+    OP_REQUIRES(
+        ctx, perm_shape.dim_size(rank - 2) == *num_rows,
+        errors::InvalidArgument(
+            "permutation must have the same number of elements in each batch "
+            "as the number of rows in sparse matrix; got: ",
+            perm_shape.dim_size(rank - 2), " != ", *num_rows));
+
+    *batch_size = sparse_matrix.batch_size();
+    if (*batch_size > 1) {
+      OP_REQUIRES(
+          ctx, perm_shape.dim_size(0) == *batch_size,
+          errors::InvalidArgument("permutation must have the same batch size "
+                                  "as sparse matrix; got: ",
+                                  perm_shape.dim_size(0), " != ", *batch_size));
+    }
+  }
+};
+
+#define REGISTER_CPU(T)                                      \
+  REGISTER_KERNEL_BUILDER(Name("SparseMatrixSparseCholesky") \
+                              .Device(DEVICE_CPU)            \
+                              .TypeConstraint<T>("type"),    \
+                          CSRSparseCholeskyCPUOp<T>);
+REGISTER_CPU(float);
+REGISTER_CPU(double);
+REGISTER_CPU(complex64);
+REGISTER_CPU(complex128);
+
+#undef REGISTER_CPU
+
+}  // namespace tensorflow
+
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tokens used
+input: 1,193
+cache read: 8,704
+cache write: 0
+output: 159
+reasoning output: 0
+
+The vulnerable control-flow pattern exists unchanged: `ValidateInputs` currently uses `OP_REQUIRES` internally but returns `void`, so `Compute` continues after validation failures. I’m converting it to return `Status` and making the caller stop on errors.
+
+tool: grep
+{
+  "pattern": "return Status::OK\\(\\);",
+  "path": "tensorflow/core/kernels",
+  "include": "*.cc"
+}
+Found 100 matches (more matches available)
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0013-bf171d8341da\tensorflow\core\kernels\barrier_ops.cc:
+  Line 403:     return Status::OK();
+
+  Line 491:     return Status::OK();
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0013-bf171d8341da\tensorflow\core\kernels\batch_kernels.cc:
+  Line 90:       return Status::OK();
+
+  Line 96:   return Status::OK();
+
+  Line 125:     return Status::OK();
+
+  Line 136:     return Status::OK();
+
+  Line 139:   return Status::OK();
+
+  Line 174:   return Status::OK();
+
+  Line 200:     return Status::OK();
+
+  Line 237:     return Status::OK();
+
+  Line 317:     return Status::OK();
+
+  Line 411:     return Status::OK();
+
+  Line 477:     return Status::OK();
+
+  Line 659:     return Status::OK();
+
+  Line 671:       return Status::OK();
+
+  Line 686:     return Status::OK();
+
+  Line 743:       return Status::OK();
+
+  Line 760:       return Status::OK();
+
+  Line 775:     return Status::OK();
+
+  Line 823:       return Status::OK();
+
+  Line 840:       return Status::OK();
+
+  Line 855:     return Status::OK();
+
+  Line 953:         return Status::OK();
+
+  Line 992:       return Status::OK();
+
+  Line 1083:           return Status::OK();
+
+  Line 1142:     return Status::OK();
+
+  Line 1219:     return Status::OK();
+
+  Line 1269:           return Status::OK();
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0013-bf171d8341da\tensorflow\core\kernels\bincount_op.cc:
+  Line 83:     return Status::OK();
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0013-bf171d8341da\tensorflow\core\kernels\bincount_op_gpu.cu.cc:
+  Line 58:       return Status::OK();
+
+  Line 109:     return Status::OK();
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0013-bf171d8341da\tensorflow\core\kernels\bucketize_op.cc:
+  Line 47:     return Status::OK();
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0013-bf171d8341da\tensorflow\core\kernels\bucketize_op_gpu.cu.cc:
+  Line 111:     return Status::OK();
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0013-bf171d8341da\tensorflow\core\kernels\cast_op.cc:
+  Line 129:     return Status::OK();
+
+  Line 183:       return Status::OK();
+
+  Line 266:       return Status::OK();
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0013-bf171d8341da\tensorflow\core\kernels\collective_nccl.cc:
+  Line 58:   return Status::OK();
+
+  Line 73:   return Status::OK();
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0013-bf171d8341da\tensorflow\core\kernels\collective_nccl_reducer.cc:
+  Line 30:     return Status::OK();
+
+  Line 33:     return Status::OK();
+
+  Line 36:     return Status::OK();
+
+  Line 39:     return Status::OK();
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0013-bf171d8341da\tensorflow\core\kernels\conditional_accumulator_base.cc:
+  Line 34:   return Status::OK();
+
+  Line 50:   return Status::OK();
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0013-bf171d8341da\tensorflow\core\kernels\conditional_accumulator_op.cc:
+  Line 40:       return Status::OK();
+
+  Line 46:     return Status::OK();
+
+  Line 77:       return Status::OK();
+
+  Line 83:     return Status::OK();
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0013-bf171d8341da\tensorflow\core\kernels\conv_grad_input_ops.cc:
+  Line 1064:     return Status::OK();
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0013-bf171d8341da\tensorflow\core\kernels\conv_grad_shape_utils.cc:
+  Line 88:   return Status::OK();
+
+  Line 155:   return Status::OK();
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0013-bf171d8341da\tensorflow\core\kernels\conv_ops.cc:
+  Line 399:   return Status::OK();
+
+  Line 503:   return Status::OK();
+
+  Line 922:     return Status::OK();
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0013-bf171d8341da\tensorflow\core\kernels\conv_ops_fused_image_transform.cc:
+  Line 346:           return Status::OK();
+
+  Line 384:               return Status::OK();
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0013-bf171d8341da\tensorflow\core\kernels\conv_ops_using_gemm.cc:
+  Line 312:           return Status::OK();
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0013-bf171d8341da\tensorflow\core\kernels\crop_and_resize_op.cc:
+  Line 62:     return Status::OK();
+
+  Line 81:   return Status::OK();
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0013-bf171d8341da\tensorflow\core\kernels\ctc_decoder_ops.cc:
+  Line 111:     return Status::OK();
+
+  Line 167:     return Status::OK();
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0013-bf171d8341da\tensorflow\core\kernels\cuda_solvers.cc:
+  Line 340:   return Status::OK();
+
+  Line 376:   return Status::OK();
+
+  Line 410:   return Status::OK();
+
+  Line 446:   return Status::OK();
+
+  Line 472:   return Status::OK();
+
+  Line 506:   return Status::OK();
+
+  Line 543:   return Status::OK();
+
+  Line 587:   return Status::OK();
+
+  Line 628:   return Status::OK();
+
+  Line 666:   return Status::OK();
+
+  Line 709:   return Status::OK();
+
+  Line 756:   return Status::OK();
+
+  Line 799:   return Status::OK();
+
+  Line 843:   return Status::OK();
+
+  Line 885:   return Status::OK();
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0013-bf171d8341da\tensorflow\core\kernels\cuda_sparse.cc:
+  Line 98:     if (initialized_) return Status::OK();
+
+  Line 102:     return Status::OK();
+
+  Line 180:   return Status::OK();
+
+  Line 211:   return Status::OK();
+
+  Line 248:   return Status::OK();
+
+  Line 272:   return Status::OK();
+
+  Line 309:   return Status::OK();
+
+  Line 348:   return Status::OK();
+
+  Line 373:   return Status::OK();
+
+  Line 404:   return Status::OK();
+
+  Line 420:   return Status::OK();
+
+  Line 437:   return Status::OK();
+
+  Line 459:   return Status::OK();
+
+  Line 491:   return Status::OK();
+
+  Line 535:   return Status::OK();
+
+  Line 572:   return Status::OK();
+
+  Line 591:   return Status::OK();
+
+  Line 643:   return Status::OK();
+
+  Line 671:   return Status::OK();
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0013-bf171d8341da\tensorflow\core\kernels\cudnn_rnn_ops.cc:
+  Line 231:     return Status::OK();
+
+  Line 234:     return Status::OK();
+
+  Line 237:     return Status::OK();
+
+  Line 240:     return Status::OK();
+
+  Line 248:     return Status::OK();
+
+
+(Results truncated. Consider using a more specific path or pattern.)
+
+tool: grep
+{
+  "pattern": "#include \"tensorflow/core/framework/op_requires.h\"",
+  "path": "tensorflow/core",
+  "include": "*.cc"
+}
+No files found
+
+tokens used
+input: 6,914
+cache read: 9,728
+cache write: 0
+output: 147
+reasoning output: 64
+
+tool: glob
+{
+  "pattern": "tensorflow/core/framework/op_requires.h"
+}
+No files found
+
+tool: grep
+{
+  "pattern": "#define OP_REQUIRES_OK|OP_REQUIRES_OK",
+  "path": "tensorflow/core/framework",
+  "include": "*.h"
+}
+Found 22 matches
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0013-bf171d8341da\tensorflow\core\framework\numeric_op.h:
+  Line 34:     OP_REQUIRES_OK(context, context->MatchSignature({dt}, {dt}));
+
+  Line 44:     OP_REQUIRES_OK(context, context->MatchSignature({dt, dt}, {dt}));
+
+  Line 60:     OP_REQUIRES_OK(context, context->forward_input_or_allocate_output(
+
+  Line 81:     OP_REQUIRES_OK(context, context->forward_input_or_allocate_output(
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0013-bf171d8341da\tensorflow\core\framework\op_kernel.h:
+  Line 1758: //   OP_REQUIRES_OK(context, status);
+
+  Line 1762: // Generate a fatal error if OP_REQUIRES or OP_REQUIRES_OK are used in
+
+  Line 1784: #define OP_REQUIRES_OK(CTX, ...)                             \
+
+  Line 1788:       CheckNotInComputeAsync((CTX), "OP_REQUIRES_OK_ASYNC"); \
+
+  Line 1803: #define OP_REQUIRES_OK_ASYNC(CTX, STATUS, CALLBACK)         \
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0013-bf171d8341da\tensorflow\core\framework\resource_mgr.h:
+  Line 739:   OP_REQUIRES_OK(ctx, ctx->allocate_output(0, {}, &output));
+
+  Line 755:   OP_REQUIRES_OK(context, context->GetAttr("container", &container_));
+
+  Line 756:   OP_REQUIRES_OK(context, context->GetAttr("shared_name", &name_));
+
+  Line 765:     OP_REQUIRES_OK(
+
+  Line 777:         OP_REQUIRES_OK(ctx, ctx->allocate_temp(DT_RESOURCE, TensorShape({}),
+
+  Line 792:   OP_REQUIRES_OK(context, context->GetAttr("N", &n));
+
+  Line 793:   OP_REQUIRES_OK(context, context->GetAttr("containers", &containers_));
+
+  Line 794:   OP_REQUIRES_OK(context, context->GetAttr("shared_names", &names_));
+
+  Line 814:         OP_REQUIRES_OK(ctx, ctx->allocate_temp(DT_RESOURCE, TensorShape({}),
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0013-bf171d8341da\tensorflow\core\framework\resource_op_kernel.h:
+  Line 51:       OP_REQUIRES_OK(context,
+
+  Line 77:       OP_REQUIRES_OK(context, cinfo_.Init(mgr, def()));
+
+  Line 80:       OP_REQUIRES_OK(
+
+  Line 106:       OP_REQUIRES_OK(context, MakeResourceHandleToOutput(
+
+tokens used
+input: 3,348
+cache read: 15,872
+cache write: 0
+output: 77
+reasoning output: 19
+
+In TensorFlow 2.1.4 there is no `tensorflow/core/framework/op_requires.h`; `OP_REQUIRES_OK` is defined by the already-included `op_kernel.h`. I’m omitting that include while preserving the control-flow fix.
+
+tool: validate
+{
+  "ref": "bf171d8341da2cfe1b2500b6b0bbbaa9bacc63db",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/sparse/sparse_cholesky_op.cc b/tensorflow/core/kernels/sparse/sparse_cholesky_op.cc\n--- a/tensorflow/core/kernels/sparse/sparse_cholesky_op.cc\n+++ b/tensorflow/core/kernels/sparse/sparse_cholesky_op.cc\n@@ -82,8 +82,8 @@ class CSRSparseCholeskyCPUOp : public OpKernel {\n \n     int64 num_rows;\n     int batch_size;\n-    ValidateInputs(ctx, *input_matrix, input_permutation_indices, &batch_size,\n-                   &num_rows);\n+    OP_REQUIRES_OK(ctx, ValidateInputs(*input_matrix, input_permutation_indices,\n+                                       &batch_size, &num_rows));\n \n     // Allocate batch pointers.\n     Tensor batch_ptr(cpu_allocator(), DT_INT32, TensorShape({batch_size + 1}));\n@@ -226,49 +226,48 @@ class CSRSparseCholeskyCPUOp : public OpKernel {\n   }\n \n  private:\n-  void ValidateInputs(OpKernelContext* ctx,\n-                      const CSRSparseMatrix& sparse_matrix,\n-                      const Tensor& permutation_indices, int* batch_size,\n-                      int64* num_rows) {\n-    OP_REQUIRES(ctx, sparse_matrix.dtype() == DataTypeToEnum<T>::value,\n-                errors::InvalidArgument(\n-                    \"Asked for a CSRSparseMatrix of type \",\n-                    DataTypeString(DataTypeToEnum<T>::value),\n-                    \" but saw dtype: \", DataTypeString(sparse_matrix.dtype())));\n+  Status ValidateInputs(const CSRSparseMatrix& sparse_matrix,\n+                        const Tensor& permutation_indices, int* batch_size,\n+                        int64* num_rows) {\n+    if (sparse_matrix.dtype() != DataTypeToEnum<T>::value)\n+      return errors::InvalidArgument(\n+          \"Asked for a CSRSparseMatrix of type \",\n+          DataTypeString(DataTypeToEnum<T>::value),\n+          \" but saw dtype: \", DataTypeString(sparse_matrix.dtype()));\n \n     const Tensor& dense_shape = sparse_matrix.dense_shape();\n     const int rank = dense_shape.dim_size(0);\n-    OP_REQUIRES(ctx, rank == 2 || rank == 3,\n-                errors::InvalidArgument(\"sparse matrix must have rank 2 or 3; \",\n-                                        \"but dense_shape has size \", rank));\n+    if (rank < 2 || rank > 3)\n+      return errors::InvalidArgument(\"sparse matrix must have rank 2 or 3; \",\n+                                     \"but dense_shape has size \", rank);\n     const int row_dim = (rank == 2) ? 0 : 1;\n     auto dense_shape_vec = dense_shape.vec<int64>();\n     *num_rows = dense_shape_vec(row_dim);\n     const int64 num_cols = dense_shape_vec(row_dim + 1);\n-    OP_REQUIRES(ctx, *num_rows == num_cols,\n-                errors::InvalidArgument(\"sparse matrix must be square; got: \",\n-                                        *num_rows, \" != \", num_cols));\n+    if (*num_rows != num_cols)\n+      return errors::InvalidArgument(\n+          \"sparse matrix must be square; got: \", *num_rows, \" != \", num_cols);\n     const TensorShape& perm_shape = permutation_indices.shape();\n-    OP_REQUIRES(\n-        ctx, perm_shape.dims() + 1 == rank,\n-        errors::InvalidArgument(\n-            \"sparse matrix must have the same rank as permutation; got: \", rank,\n-            \" != \", perm_shape.dims(), \" + 1.\"));\n-    OP_REQUIRES(\n-        ctx, perm_shape.dim_size(rank - 2) == *num_rows,\n-        errors::InvalidArgument(\n-            \"permutation must have the same number of elements in each batch \"\n-            \"as the number of rows in sparse matrix; got: \",\n-            perm_shape.dim_size(rank - 2), \" != \", *num_rows));\n+    if (perm_shape.dims() + 1 != rank)\n+      return errors::InvalidArgument(\n+          \"sparse matrix must have the same rank as permutation; got: \", rank,\n+          \" != \", perm_shape.dims(), \" + 1.\");\n+    if (perm_shape.dim_size(rank - 2) != *num_rows)\n+      return errors::InvalidArgument(\n+          \"permutation must have the same number of elements in each batch \"\n+          \"as the number of rows in sparse matrix; got: \",\n+          perm_shape.dim_size(rank - 2), \" != \", *num_rows);\n \n     *batch_size = sparse_matrix.batch_size();\n     if (*batch_size > 1) {\n-      OP_REQUIRES(\n-          ctx, perm_shape.dim_size(0) == *batch_size,\n-          errors::InvalidArgument(\"permutation must have the same batch size \"\n-                                  \"as sparse matrix; got: \",\n-                                  perm_shape.dim_size(0), \" != \", *batch_size));\n+      if (perm_shape.dim_size(0) != *batch_size)\n+        return errors::InvalidArgument(\n+            \"permutation must have the same batch size \"\n+            \"as sparse matrix; got: \",\n+            perm_shape.dim_size(0), \" != \", *batch_size);\n     }\n+\n+    return Status::OK();\n   }\n };\n"
+}
+This patch does not apply to the target TensorFlow ref.
+Git apply output:
+error: corrupt patch at line 94
+Touched files:
+- tensorflow/core/kernels/sparse/sparse_cholesky_op.cc
+Fix the patch context against the older TensorFlow version, then run validate again in hunk mode.
+
+tokens used
+input: 1,095
+cache read: 18,944
+cache write: 0
+output: 1,408
+reasoning output: 58
+
+The first hand-written validation diff was malformed, not a semantic mismatch. I’m applying the exact target edit now and will inspect the resulting unified diff.
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/kernels/sparse/sparse_cholesky_op.cc\n@@\n     int64 num_rows;\n     int batch_size;\n-    ValidateInputs(ctx, *input_matrix, input_permutation_indices, &batch_size,\n-                   &num_rows);\n+    OP_REQUIRES_OK(ctx, ValidateInputs(*input_matrix, input_permutation_indices,\n+                                       &batch_size, &num_rows));\n@@\n-  void ValidateInputs(OpKernelContext* ctx,\n-                      const CSRSparseMatrix& sparse_matrix,\n-                      const Tensor& permutation_indices, int* batch_size,\n-                      int64* num_rows) {\n-    OP_REQUIRES(ctx, sparse_matrix.dtype() == DataTypeToEnum<T>::value,\n-                errors::InvalidArgument(\n-                    \"Asked for a CSRSparseMatrix of type \",\n-                    DataTypeString(DataTypeToEnum<T>::value),\n-                    \" but saw dtype: \", DataTypeString(sparse_matrix.dtype())));\n+  Status ValidateInputs(const CSRSparseMatrix& sparse_matrix,\n+                        const Tensor& permutation_indices, int* batch_size,\n+                        int64* num_rows) {\n+    if (sparse_matrix.dtype() != DataTypeToEnum<T>::value)\n+      return errors::InvalidArgument(\n+          \"Asked for a CSRSparseMatrix of type \",\n+          DataTypeString(DataTypeToEnum<T>::value),\n+          \" but saw dtype: \", DataTypeString(sparse_matrix.dtype()));\n \n     const Tensor& dense_shape = sparse_matrix.dense_shape();\n     const int rank = dense_shape.dim_size(0);\n-    OP_REQUIRES(ctx, rank == 2 || rank == 3,\n-                errors::InvalidArgument(\"sparse matrix must have rank 2 or 3; \",\n-                                        \"but dense_shape has size \", rank));\n+    if (rank < 2 || rank > 3)\n+      return errors::InvalidArgument(\"sparse matrix must have rank 2 or 3; \",\n+                                     \"but dense_shape has size \", rank);\n     const int row_dim = (rank == 2) ? 0 : 1;\n     auto dense_shape_vec = dense_shape.vec<int64>();\n     *num_rows = dense_shape_vec(row_dim);\n     const int64 num_cols = dense_shape_vec(row_dim + 1);\n-    OP_REQUIRES(ctx, *num_rows == num_cols,\n-                errors::InvalidArgument(\"sparse matrix must be square; got: \",\n-                                        *num_rows, \" != \", num_cols));\n+    if (*num_rows != num_cols)\n+      return errors::InvalidArgument(\n+          \"sparse matrix must be square; got: \", *num_rows, \" != \", num_cols);\n     const TensorShape& perm_shape = permutation_indices.shape();\n-    OP_REQUIRES(\n-        ctx, perm_shape.dims() + 1 == rank,\n-        errors::InvalidArgument(\n-            \"sparse matrix must have the same rank as permutation; got: \", rank,\n-            \" != \", perm_shape.dims(), \" + 1.\"));\n-    OP_REQUIRES(\n-        ctx, perm_shape.dim_size(rank - 2) == *num_rows,\n-        errors::InvalidArgument(\n-            \"permutation must have the same number of elements in each batch \"\n-            \"as the number of rows in sparse matrix; got: \",\n-            perm_shape.dim_size(rank - 2), \" != \", *num_rows));\n+    if (perm_shape.dims() + 1 != rank)\n+      return errors::InvalidArgument(\n+          \"sparse matrix must have the same rank as permutation; got: \", rank,\n+          \" != \", perm_shape.dims(), \" + 1.\");\n+    if (perm_shape.dim_size(rank - 2) != *num_rows)\n+      return errors::InvalidArgument(\n+          \"permutation must have the same number of elements in each batch \"\n+          \"as the number of rows in sparse matrix; got: \",\n+          perm_shape.dim_size(rank - 2), \" != \", *num_rows);\n \n     *batch_size = sparse_matrix.batch_size();\n     if (*batch_size > 1) {\n-      OP_REQUIRES(\n-          ctx, perm_shape.dim_size(0) == *batch_size,\n-          errors::InvalidArgument(\"permutation must have the same batch size \"\n-                                  \"as sparse matrix; got: \",\n-                                  perm_shape.dim_size(0), \" != \", *batch_size));\n+      if (perm_shape.dim_size(0) != *batch_size)\n+        return errors::InvalidArgument(\n+            \"permutation must have the same batch size \"\n+            \"as sparse matrix; got: \",\n+            perm_shape.dim_size(0), \" != \", *batch_size);\n     }\n+\n+    return Status::OK();\n   }\n };\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/kernels/sparse/sparse_cholesky_op.cc
+
+tokens used
+input: 1,610
+cache read: 19,968
+cache write: 0
+output: 1,222
+reasoning output: 41
+
+The source edit is in place. I’m checking the diff and running a lightweight patch-application validation against the target ref.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Locate and inspect target sparse_cholesky_op.cc",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Map newer patch to TensorFlow 2.1.4 APIs and validate hunks if needed",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Apply minimal backport in current checkout",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Inspect final diff and report YAML result",
+      "status": "in_progress",
+      "priority": "high"
+    }
+  ]
+}
+[
+  {
+    "content": "Locate and inspect target sparse_cholesky_op.cc",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Map newer patch to TensorFlow 2.1.4 APIs and validate hunks if needed",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Apply minimal backport in current checkout",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Inspect final diff and report YAML result",
+    "status": "in_progress",
+    "priority": "high"
+  }
+]
+
+tokens used
+input: 1,881
+cache read: 20,992
+cache write: 0
+output: 140
+reasoning output: 0
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/kernels/sparse/sparse_cholesky_op.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0013-bf171d8341da",
+  "timeout": 120000
+}
+warning: in the working copy of 'tensorflow/core/kernels/sparse/sparse_cholesky_op.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/kernels/sparse/sparse_cholesky_op.cc b/tensorflow/core/kernels/sparse/sparse_cholesky_op.cc
+index 3786033c98..223fd51f2a 100644
+--- a/tensorflow/core/kernels/sparse/sparse_cholesky_op.cc
++++ b/tensorflow/core/kernels/sparse/sparse_cholesky_op.cc
+@@ -82,8 +82,8 @@ class CSRSparseCholeskyCPUOp : public OpKernel {
+ 
+     int64 num_rows;
+     int batch_size;
+-    ValidateInputs(ctx, *input_matrix, input_permutation_indices, &batch_size,
+-                   &num_rows);
++    OP_REQUIRES_OK(ctx, ValidateInputs(*input_matrix, input_permutation_indices,
++                                       &batch_size, &num_rows));
+ 
+     // Allocate batch pointers.
+     Tensor batch_ptr(cpu_allocator(), DT_INT32, TensorShape({batch_size + 1}));
+@@ -226,49 +226,48 @@ class CSRSparseCholeskyCPUOp : public OpKernel {
+   }
+ 
+  private:
+-  void ValidateInputs(OpKernelContext* ctx,
+-                      const CSRSparseMatrix& sparse_matrix,
+-                      const Tensor& permutation_indices, int* batch_size,
+-                      int64* num_rows) {
+-    OP_REQUIRES(ctx, sparse_matrix.dtype() == DataTypeToEnum<T>::value,
+-                errors::InvalidArgument(
+-                    "Asked for a CSRSparseMatrix of type ",
+-                    DataTypeString(DataTypeToEnum<T>::value),
+-                    " but saw dtype: ", DataTypeString(sparse_matrix.dtype())));
++  Status ValidateInputs(const CSRSparseMatrix& sparse_matrix,
++                        const Tensor& permutation_indices, int* batch_size,
++                        int64* num_rows) {
++    if (sparse_matrix.dtype() != DataTypeToEnum<T>::value)
++      return errors::InvalidArgument(
++          "Asked for a CSRSparseMatrix of type ",
++          DataTypeString(DataTypeToEnum<T>::value),
++          " but saw dtype: ", DataTypeString(sparse_matrix.dtype()));
+ 
+     const Tensor& dense_shape = sparse_matrix.dense_shape();
+     const int rank = dense_shape.dim_size(0);
+-    OP_REQUIRES(ctx, rank == 2 || rank == 3,
+-                errors::InvalidArgument("sparse matrix must have rank 2 or 3; ",
+-                                        "but dense_shape has size ", rank));
++    if (rank < 2 || rank > 3)
++      return errors::InvalidArgument("sparse matrix must have rank 2 or 3; ",
++                                     "but dense_shape has size ", rank);
+     const int row_dim = (rank == 2) ? 0 : 1;
+     auto dense_shape_vec = dense_shape.vec<int64>();
+     *num_rows = dense_shape_vec(row_dim);
+     const int64 num_cols = dense_shape_vec(row_dim + 1);
+-    OP_REQUIRES(ctx, *num_rows == num_cols,
+-                errors::InvalidArgument("sparse matrix must be square; got: ",
+-                                        *num_rows, " != ", num_cols));
++    if (*num_rows != num_cols)
++      return errors::InvalidArgument(
++          "sparse matrix must be square; got: ", *num_rows, " != ", num_cols);
+     const TensorShape& perm_shape = permutation_indices.shape();
+-    OP_REQUIRES(
+-        ctx, perm_shape.dims() + 1 == rank,
+-        errors::InvalidArgument(
+-            "sparse matrix must have the same rank as permutation; got: ", rank,
+-            " != ", perm_shape.dims(), " + 1."));
+-    OP_REQUIRES(
+-        ctx, perm_shape.dim_size(rank - 2) == *num_rows,
+-        errors::InvalidArgument(
+-            "permutation must have the same number of elements in each batch "
+-            "as the number of rows in sparse matrix; got: ",
+-            perm_shape.dim_size(rank - 2), " != ", *num_rows));
++    if (perm_shape.dims() + 1 != rank)
++      return errors::InvalidArgument(
++          "sparse matrix must have the same rank as permutation; got: ", rank,
++          " != ", perm_shape.dims(), " + 1.");
++    if (perm_shape.dim_size(rank - 2) != *num_rows)
++      return errors::InvalidArgument(
++          "permutation must have the same number of elements in each batch "
++          "as the number of rows in sparse matrix; got: ",
++          perm_shape.dim_size(rank - 2), " != ", *num_rows);
+ 
+     *batch_size = sparse_matrix.batch_size();
+     if (*batch_size > 1) {
+-      OP_REQUIRES(
+-          ctx, perm_shape.dim_size(0) == *batch_size,
+-          errors::InvalidArgument("permutation must have the same batch size "
+-                                  "as sparse matrix; got: ",
+-                                  perm_shape.dim_size(0), " != ", *batch_size));
++      if (perm_shape.dim_size(0) != *batch_size)
++        return errors::InvalidArgument(
++            "permutation must have the same batch size "
++            "as sparse matrix; got: ",
++            perm_shape.dim_size(0), " != ", *batch_size);
+     }
++
++    return Status::OK();
+   }
+ };
+
+tokens used
+input: 1,152
+cache read: 22,016
+cache write: 0
+output: 79
+reasoning output: 0
+
+tool: validate
+{
+  "ref": "bf171d8341da2cfe1b2500b6b0bbbaa9bacc63db",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/sparse/sparse_cholesky_op.cc b/tensorflow/core/kernels/sparse/sparse_cholesky_op.cc\nindex 3786033c98..223fd51f2a 100644\n--- a/tensorflow/core/kernels/sparse/sparse_cholesky_op.cc\n+++ b/tensorflow/core/kernels/sparse/sparse_cholesky_op.cc\n@@ -82,8 +82,8 @@ class CSRSparseCholeskyCPUOp : public OpKernel {\n \n     int64 num_rows;\n     int batch_size;\n-    ValidateInputs(ctx, *input_matrix, input_permutation_indices, &batch_size,\n-                   &num_rows);\n+    OP_REQUIRES_OK(ctx, ValidateInputs(*input_matrix, input_permutation_indices,\n+                                       &batch_size, &num_rows));\n \n     // Allocate batch pointers.\n     Tensor batch_ptr(cpu_allocator(), DT_INT32, TensorShape({batch_size + 1}));\n@@ -226,49 +226,48 @@ class CSRSparseCholeskyCPUOp : public OpKernel {\n   }\n \n  private:\n-  void ValidateInputs(OpKernelContext* ctx,\n-                      const CSRSparseMatrix& sparse_matrix,\n-                      const Tensor& permutation_indices, int* batch_size,\n-                      int64* num_rows) {\n-    OP_REQUIRES(ctx, sparse_matrix.dtype() == DataTypeToEnum<T>::value,\n-                errors::InvalidArgument(\n-                    \"Asked for a CSRSparseMatrix of type \",\n-                    DataTypeString(DataTypeToEnum<T>::value),\n-                    \" but saw dtype: \", DataTypeString(sparse_matrix.dtype())));\n+  Status ValidateInputs(const CSRSparseMatrix& sparse_matrix,\n+                        const Tensor& permutation_indices, int* batch_size,\n+                        int64* num_rows) {\n+    if (sparse_matrix.dtype() != DataTypeToEnum<T>::value)\n+      return errors::InvalidArgument(\n+          \"Asked for a CSRSparseMatrix of type \",\n+          DataTypeString(DataTypeToEnum<T>::value),\n+          \" but saw dtype: \", DataTypeString(sparse_matrix.dtype()));\n \n     const Tensor& dense_shape = sparse_matrix.dense_shape();\n     const int rank = dense_shape.dim_size(0);\n-    OP_REQUIRES(ctx, rank == 2 || rank == 3,\n-                errors::InvalidArgument(\"sparse matrix must have rank 2 or 3; \",\n-                                        \"but dense_shape has size \", rank));\n+    if (rank < 2 || rank > 3)\n+      return errors::InvalidArgument(\"sparse matrix must have rank 2 or 3; \",\n+                                     \"but dense_shape has size \", rank);\n     const int row_dim = (rank == 2) ? 0 : 1;\n     auto dense_shape_vec = dense_shape.vec<int64>();\n     *num_rows = dense_shape_vec(row_dim);\n     const int64 num_cols = dense_shape_vec(row_dim + 1);\n-    OP_REQUIRES(ctx, *num_rows == num_cols,\n-                errors::InvalidArgument(\"sparse matrix must be square; got: \",\n-                                        *num_rows, \" != \", num_cols));\n+    if (*num_rows != num_cols)\n+      return errors::InvalidArgument(\n+          \"sparse matrix must be square; got: \", *num_rows, \" != \", num_cols);\n     const TensorShape& perm_shape = permutation_indices.shape();\n-    OP_REQUIRES(\n-        ctx, perm_shape.dims() + 1 == rank,\n-        errors::InvalidArgument(\n-            \"sparse matrix must have the same rank as permutation; got: \", rank,\n-            \" != \", perm_shape.dims(), \" + 1.\"));\n-    OP_REQUIRES(\n-        ctx, perm_shape.dim_size(rank - 2) == *num_rows,\n-        errors::InvalidArgument(\n-            \"permutation must have the same number of elements in each batch \"\n-            \"as the number of rows in sparse matrix; got: \",\n-            perm_shape.dim_size(rank - 2), \" != \", *num_rows));\n+    if (perm_shape.dims() + 1 != rank)\n+      return errors::InvalidArgument(\n+          \"sparse matrix must have the same rank as permutation; got: \", rank,\n+          \" != \", perm_shape.dims(), \" + 1.\");\n+    if (perm_shape.dim_size(rank - 2) != *num_rows)\n+      return errors::InvalidArgument(\n+          \"permutation must have the same number of elements in each batch \"\n+          \"as the number of rows in sparse matrix; got: \",\n+          perm_shape.dim_size(rank - 2), \" != \", *num_rows);\n \n     *batch_size = sparse_matrix.batch_size();\n     if (*batch_size > 1) {\n-      OP_REQUIRES(\n-          ctx, perm_shape.dim_size(0) == *batch_size,\n-          errors::InvalidArgument(\"permutation must have the same batch size \"\n-                                  \"as sparse matrix; got: \",\n-                                  perm_shape.dim_size(0), \" != \", *batch_size));\n+      if (perm_shape.dim_size(0) != *batch_size)\n+        return errors::InvalidArgument(\n+            \"permutation must have the same batch size \"\n+            \"as sparse matrix; got: \",\n+            perm_shape.dim_size(0), \" != \", *batch_size);\n     }\n+\n+    return Status::OK();\n   }\n };\n"
+}
+This patch does not apply to the target TensorFlow ref.
+Git apply output:
+error: corrupt patch at line 95
+Touched files:
+- tensorflow/core/kernels/sparse/sparse_cholesky_op.cc
+Fix the patch context against the older TensorFlow version, then run validate again in hunk mode.
+
+tokens used
+input: 1,424
+cache read: 23,040
+cache write: 0
+output: 1,367
+reasoning output: 34
+
+The applied diff is clean, but the validation helper is rejecting my pasted multi-hunk diff as “corrupt” before context matching. I’ll validate the two hunks separately with simpler generated hunks.
+
+tool: validate
+{
+  "ref": "bf171d8341da2cfe1b2500b6b0bbbaa9bacc63db",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/sparse/sparse_cholesky_op.cc b/tensorflow/core/kernels/sparse/sparse_cholesky_op.cc\n--- a/tensorflow/core/kernels/sparse/sparse_cholesky_op.cc\n+++ b/tensorflow/core/kernels/sparse/sparse_cholesky_op.cc\n@@ -83,8 +83,8 @@ class CSRSparseCholeskyCPUOp : public OpKernel {\n     int64 num_rows;\n     int batch_size;\n-    ValidateInputs(ctx, *input_matrix, input_permutation_indices, &batch_size,\n-                   &num_rows);\n+    OP_REQUIRES_OK(ctx, ValidateInputs(*input_matrix, input_permutation_indices,\n+                                       &batch_size, &num_rows));\n \n     // Allocate batch pointers.\n"
+}
+This patch does not apply to the target TensorFlow ref.
+Git apply output:
+error: corrupt patch at line 13
+Touched files:
+- tensorflow/core/kernels/sparse/sparse_cholesky_op.cc
+Fix the patch context against the older TensorFlow version, then run validate again in hunk mode.
+
+tokens used
+input: 1,874
+cache read: 24,064
+cache write: 0
+output: 277
+reasoning output: 203
+
+tool: validate
+{
+  "ref": "bf171d8341da2cfe1b2500b6b0bbbaa9bacc63db",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/sparse/sparse_cholesky_op.cc b/tensorflow/core/kernels/sparse/sparse_cholesky_op.cc\n--- a/tensorflow/core/kernels/sparse/sparse_cholesky_op.cc\n+++ b/tensorflow/core/kernels/sparse/sparse_cholesky_op.cc\n@@ -83,6 +83,6 @@ class CSRSparseCholeskyCPUOp : public OpKernel {\n     int64 num_rows;\n     int batch_size;\n-    ValidateInputs(ctx, *input_matrix, input_permutation_indices, &batch_size,\n-                   &num_rows);\n+    OP_REQUIRES_OK(ctx, ValidateInputs(*input_matrix, input_permutation_indices,\n+                                       &batch_size, &num_rows));\n \n"
+}
+This patch does not apply to the target TensorFlow ref.
+Git apply output:
+error: corrupt patch at line 12
+Touched files:
+- tensorflow/core/kernels/sparse/sparse_cholesky_op.cc
+Fix the patch context against the older TensorFlow version, then run validate again in hunk mode.
+
+tokens used
+input: 1,403
+cache read: 25,088
+cache write: 0
+output: 222
+reasoning output: 86
+
+tool: validate
+{
+  "ref": "bf171d8341da2cfe1b2500b6b0bbbaa9bacc63db",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/sparse/sparse_cholesky_op.cc b/tensorflow/core/kernels/sparse/sparse_cholesky_op.cc\n--- a/tensorflow/core/kernels/sparse/sparse_cholesky_op.cc\n+++ b/tensorflow/core/kernels/sparse/sparse_cholesky_op.cc\n@@ -83,5 +83,5 @@ class CSRSparseCholeskyCPUOp : public OpKernel {\n     int64 num_rows;\n     int batch_size;\n-    ValidateInputs(ctx, *input_matrix, input_permutation_indices, &batch_size,\n-                   &num_rows);\n+    OP_REQUIRES_OK(ctx, ValidateInputs(*input_matrix, input_permutation_indices,\n+                                       &batch_size, &num_rows));\n \n"
+}
+Patch applied successfully
+
+tokens used
+input: 760
+cache read: 26,112
+cache write: 0
+output: 222
+reasoning output: 41
+
+tool: bash
+{
+  "command": "git diff --unified=0 -- tensorflow/core/kernels/sparse/sparse_cholesky_op.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0013-bf171d8341da",
+  "timeout": 120000
+}
+warning: in the working copy of 'tensorflow/core/kernels/sparse/sparse_cholesky_op.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/kernels/sparse/sparse_cholesky_op.cc b/tensorflow/core/kernels/sparse/sparse_cholesky_op.cc
+index 3786033c98..223fd51f2a 100644
+--- a/tensorflow/core/kernels/sparse/sparse_cholesky_op.cc
++++ b/tensorflow/core/kernels/sparse/sparse_cholesky_op.cc
+@@ -85,2 +85,2 @@ class CSRSparseCholeskyCPUOp : public OpKernel {
+-    ValidateInputs(ctx, *input_matrix, input_permutation_indices, &batch_size,
+-                   &num_rows);
++    OP_REQUIRES_OK(ctx, ValidateInputs(*input_matrix, input_permutation_indices,
++                                       &batch_size, &num_rows));
+@@ -229,9 +229,8 @@ class CSRSparseCholeskyCPUOp : public OpKernel {
+-  void ValidateInputs(OpKernelContext* ctx,
+-                      const CSRSparseMatrix& sparse_matrix,
+-                      const Tensor& permutation_indices, int* batch_size,
+-                      int64* num_rows) {
+-    OP_REQUIRES(ctx, sparse_matrix.dtype() == DataTypeToEnum<T>::value,
+-                errors::InvalidArgument(
+-                    "Asked for a CSRSparseMatrix of type ",
+-                    DataTypeString(DataTypeToEnum<T>::value),
+-                    " but saw dtype: ", DataTypeString(sparse_matrix.dtype())));
++  Status ValidateInputs(const CSRSparseMatrix& sparse_matrix,
++                        const Tensor& permutation_indices, int* batch_size,
++                        int64* num_rows) {
++    if (sparse_matrix.dtype() != DataTypeToEnum<T>::value)
++      return errors::InvalidArgument(
++          "Asked for a CSRSparseMatrix of type ",
++          DataTypeString(DataTypeToEnum<T>::value),
++          " but saw dtype: ", DataTypeString(sparse_matrix.dtype()));
+@@ -241,3 +240,3 @@ class CSRSparseCholeskyCPUOp : public OpKernel {
+-    OP_REQUIRES(ctx, rank == 2 || rank == 3,
+-                errors::InvalidArgument("sparse matrix must have rank 2 or 3; ",
+-                                        "but dense_shape has size ", rank));
++    if (rank < 2 || rank > 3)
++      return errors::InvalidArgument("sparse matrix must have rank 2 or 3; ",
++                                     "but dense_shape has size ", rank);
+@@ -248,3 +247,3 @@ class CSRSparseCholeskyCPUOp : public OpKernel {
+-    OP_REQUIRES(ctx, *num_rows == num_cols,
+-                errors::InvalidArgument("sparse matrix must be square; got: ",
+-                                        *num_rows, " != ", num_cols));
++    if (*num_rows != num_cols)
++      return errors::InvalidArgument(
++          "sparse matrix must be square; got: ", *num_rows, " != ", num_cols);
+@@ -252,11 +251,9 @@ class CSRSparseCholeskyCPUOp : public OpKernel {
+-    OP_REQUIRES(
+-        ctx, perm_shape.dims() + 1 == rank,
+-        errors::InvalidArgument(
+-            "sparse matrix must have the same rank as permutation; got: ", rank,
+-            " != ", perm_shape.dims(), " + 1."));
+-    OP_REQUIRES(
+-        ctx, perm_shape.dim_size(rank - 2) == *num_rows,
+-        errors::InvalidArgument(
+-            "permutation must have the same number of elements in each batch "
+-            "as the number of rows in sparse matrix; got: ",
+-            perm_shape.dim_size(rank - 2), " != ", *num_rows));
++    if (perm_shape.dims() + 1 != rank)
++      return errors::InvalidArgument(
++          "sparse matrix must have the same rank as permutation; got: ", rank,
++          " != ", perm_shape.dims(), " + 1.");
++    if (perm_shape.dim_size(rank - 2) != *num_rows)
++      return errors::InvalidArgument(
++          "permutation must have the same number of elements in each batch "
++          "as the number of rows in sparse matrix; got: ",
++          perm_shape.dim_size(rank - 2), " != ", *num_rows);
+@@ -266,5 +263,5 @@ class CSRSparseCholeskyCPUOp : public OpKernel {
+-      OP_REQUIRES(
+-          ctx, perm_shape.dim_size(0) == *batch_size,
+-          errors::InvalidArgument("permutation must have the same batch size "
+-                                  "as sparse matrix; got: ",
+-                                  perm_shape.dim_size(0), " != ", *batch_size));
++      if (perm_shape.dim_size(0) != *batch_size)
++        return errors::InvalidArgument(
++            "permutation must have the same batch size "
++            "as sparse matrix; got: ",
++            perm_shape.dim_size(0), " != ", *batch_size);
+@@ -271,0 +269,2 @@ class CSRSparseCholeskyCPUOp : public OpKernel {
++
++    return Status::OK();
+
+tokens used
+input: 1,036
+cache read: 26,112
+cache write: 0
+output: 86
+reasoning output: 123
+
+The caller hunk validated successfully. I’m also validating the function-body conversion in a zero-context form to avoid hand-count errors.
+
+tool: validate
+{
+  "ref": "bf171d8341da2cfe1b2500b6b0bbbaa9bacc63db",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/sparse/sparse_cholesky_op.cc b/tensorflow/core/kernels/sparse/sparse_cholesky_op.cc\n--- a/tensorflow/core/kernels/sparse/sparse_cholesky_op.cc\n+++ b/tensorflow/core/kernels/sparse/sparse_cholesky_op.cc\n@@ -229,9 +229,8 @@ class CSRSparseCholeskyCPUOp : public OpKernel {\n-  void ValidateInputs(OpKernelContext* ctx,\n-                      const CSRSparseMatrix& sparse_matrix,\n-                      const Tensor& permutation_indices, int* batch_size,\n-                      int64* num_rows) {\n-    OP_REQUIRES(ctx, sparse_matrix.dtype() == DataTypeToEnum<T>::value,\n-                errors::InvalidArgument(\n-                    \"Asked for a CSRSparseMatrix of type \",\n-                    DataTypeString(DataTypeToEnum<T>::value),\n-                    \" but saw dtype: \", DataTypeString(sparse_matrix.dtype())));\n+  Status ValidateInputs(const CSRSparseMatrix& sparse_matrix,\n+                        const Tensor& permutation_indices, int* batch_size,\n+                        int64* num_rows) {\n+    if (sparse_matrix.dtype() != DataTypeToEnum<T>::value)\n+      return errors::InvalidArgument(\n+          \"Asked for a CSRSparseMatrix of type \",\n+          DataTypeString(DataTypeToEnum<T>::value),\n+          \" but saw dtype: \", DataTypeString(sparse_matrix.dtype()));\n"
+}
+This patch does not apply to the target TensorFlow ref.
+Git apply output:
+Checking patch tensorflow/core/kernels/sparse/sparse_cholesky_op.cc...
+error: while searching for:
+  void ValidateInputs(OpKernelContext* ctx,?
+                      const CSRSparseMatrix& sparse_matrix,?
+                      const Tensor& permutation_indices, int* batch_size,?
+                      int64* num_rows) {?
+    OP_REQUIRES(ctx, sparse_matrix.dtype() == DataTypeToEnum<T>::value,?
+                errors::InvalidArgument(?
+                    "Asked for a CSRSparseMatrix of type ",?
+                    DataTypeString(DataTypeToEnum<T>::value),?
+                    " but saw dtype: ", DataTypeString(sparse_matrix.dtype())));?
+
+error: patch failed: tensorflow/core/kernels/sparse/sparse_cholesky_op.cc:229
+error: tensorflow/core/kernels/sparse/sparse_cholesky_op.cc: patch does not apply
+Touched files:
+- tensorflow/core/kernels/sparse/sparse_cholesky_op.cc
+Fix the patch context against the older TensorFlow version, then run validate again in hunk mode.
+
+tokens used
+input: 2,414
+cache read: 26,112
+cache write: 0
+output: 425
+reasoning output: 14
+
+tool: validate
+{
+  "ref": "bf171d8341da2cfe1b2500b6b0bbbaa9bacc63db",
+  "mode": "hunk",
+  "revise_context": true,
+  "patch": "diff --git a/tensorflow/core/kernels/sparse/sparse_cholesky_op.cc b/tensorflow/core/kernels/sparse/sparse_cholesky_op.cc\n--- a/tensorflow/core/kernels/sparse/sparse_cholesky_op.cc\n+++ b/tensorflow/core/kernels/sparse/sparse_cholesky_op.cc\n@@ -229,9 +229,8 @@ class CSRSparseCholeskyCPUOp : public OpKernel {\n-  void ValidateInputs(OpKernelContext* ctx,\n-                      const CSRSparseMatrix& sparse_matrix,\n-                      const Tensor& permutation_indices, int* batch_size,\n-                      int64* num_rows) {\n-    OP_REQUIRES(ctx, sparse_matrix.dtype() == DataTypeToEnum<T>::value,\n-                errors::InvalidArgument(\n-                    \"Asked for a CSRSparseMatrix of type \",\n-                    DataTypeString(DataTypeToEnum<T>::value),\n-                    \" but saw dtype: \", DataTypeString(sparse_matrix.dtype())));\n+  Status ValidateInputs(const CSRSparseMatrix& sparse_matrix,\n+                        const Tensor& permutation_indices, int* batch_size,\n+                        int64* num_rows) {\n+    if (sparse_matrix.dtype() != DataTypeToEnum<T>::value)\n+      return errors::InvalidArgument(\n+          \"Asked for a CSRSparseMatrix of type \",\n+          DataTypeString(DataTypeToEnum<T>::value),\n+          \" but saw dtype: \", DataTypeString(sparse_matrix.dtype()));\n"
+}
+revise_context is not supported by the standalone TensorFlow validator. Run without revise_context and correct the patch context directly.
+
+tokens used
+input: 1,049
+cache read: 28,160
+cache write: 0
+output: 398
+reasoning output: 113
+
+tool: validate
+{
+  "ref": "bf171d8341da2cfe1b2500b6b0bbbaa9bacc63db",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/sparse/sparse_cholesky_op.cc b/tensorflow/core/kernels/sparse/sparse_cholesky_op.cc\n--- a/tensorflow/core/kernels/sparse/sparse_cholesky_op.cc\n+++ b/tensorflow/core/kernels/sparse/sparse_cholesky_op.cc\n@@ -228,11 +228,10 @@ class CSRSparseCholeskyCPUOp : public OpKernel {\n  private:\n-  void ValidateInputs(OpKernelContext* ctx,\n-                      const CSRSparseMatrix& sparse_matrix,\n-                      const Tensor& permutation_indices, int* batch_size,\n-                      int64* num_rows) {\n-    OP_REQUIRES(ctx, sparse_matrix.dtype() == DataTypeToEnum<T>::value,\n-                errors::InvalidArgument(\n-                    \"Asked for a CSRSparseMatrix of type \",\n-                    DataTypeString(DataTypeToEnum<T>::value),\n-                    \" but saw dtype: \", DataTypeString(sparse_matrix.dtype())));\n+  Status ValidateInputs(const CSRSparseMatrix& sparse_matrix,\n+                        const Tensor& permutation_indices, int* batch_size,\n+                        int64* num_rows) {\n+    if (sparse_matrix.dtype() != DataTypeToEnum<T>::value)\n+      return errors::InvalidArgument(\n+          \"Asked for a CSRSparseMatrix of type \",\n+          DataTypeString(DataTypeToEnum<T>::value),\n+          \" but saw dtype: \", DataTypeString(sparse_matrix.dtype()));\n \n"
+}
+Patch applied successfully
+
+tokens used
+input: 1,594
+cache read: 28,160
+cache write: 0
+output: 398
+reasoning output: 283
+
+The function signature/initial validation hunk now validates. I’m doing a final whitespace/error check on the applied diff.
+
+tool: bash
+{
+  "command": "git diff --check -- tensorflow/core/kernels/sparse/sparse_cholesky_op.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0013-bf171d8341da",
+  "timeout": 120000
+}
+warning: in the working copy of 'tensorflow/core/kernels/sparse/sparse_cholesky_op.cc', LF will be replaced by CRLF the next time Git touches it
+
+tokens used
+input: 1,264
+cache read: 29,184
+cache write: 0
+output: 114
+reasoning output: 67
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Locate and inspect target sparse_cholesky_op.cc",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Map newer patch to TensorFlow 2.1.4 APIs and validate hunks if needed",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Apply minimal backport in current checkout",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Inspect final diff and report YAML result",
+      "status": "completed",
+      "priority": "high"
+    }
+  ]
+}
+[
+  {
+    "content": "Locate and inspect target sparse_cholesky_op.cc",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Map newer patch to TensorFlow 2.1.4 APIs and validate hunks if needed",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Apply minimal backport in current checkout",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Inspect final diff and report YAML result",
+    "status": "completed",
+    "priority": "high"
+  }
+]
+
+tokens used
+input: 468
+cache read: 30,208
+cache write: 0
+output: 109
+reasoning output: 40
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/kernels/sparse/sparse_cholesky_op.cc b/tensorflow/core/kernels/sparse/sparse_cholesky_op.cc
+    index 3786033c98..223fd51f2a 100644
+    --- a/tensorflow/core/kernels/sparse/sparse_cholesky_op.cc
+    +++ b/tensorflow/core/kernels/sparse/sparse_cholesky_op.cc
+    @@ -82,8 +82,8 @@ class CSRSparseCholeskyCPUOp : public OpKernel {
+     
+         int64 num_rows;
+         int batch_size;
+    -    ValidateInputs(ctx, *input_matrix, input_permutation_indices, &batch_size,
+    -                   &num_rows);
+    +    OP_REQUIRES_OK(ctx, ValidateInputs(*input_matrix, input_permutation_indices,
+    +                                       &batch_size, &num_rows));
+     
+         // Allocate batch pointers.
+         Tensor batch_ptr(cpu_allocator(), DT_INT32, TensorShape({batch_size + 1}));
+    @@ -226,49 +226,48 @@ class CSRSparseCholeskyCPUOp : public OpKernel {
+       }
+     
+      private:
+    -  void ValidateInputs(OpKernelContext* ctx,
+    -                      const CSRSparseMatrix& sparse_matrix,
+    -                      const Tensor& permutation_indices, int* batch_size,
+    -                      int64* num_rows) {
+    -    OP_REQUIRES(ctx, sparse_matrix.dtype() == DataTypeToEnum<T>::value,
+    -                errors::InvalidArgument(
+    -                    "Asked for a CSRSparseMatrix of type ",
+    -                    DataTypeString(DataTypeToEnum<T>::value),
+    -                    " but saw dtype: ", DataTypeString(sparse_matrix.dtype())));
+    +  Status ValidateInputs(const CSRSparseMatrix& sparse_matrix,
+    +                        const Tensor& permutation_indices, int* batch_size,
+    +                        int64* num_rows) {
+    +    if (sparse_matrix.dtype() != DataTypeToEnum<T>::value)
+    +      return errors::InvalidArgument(
+    +          "Asked for a CSRSparseMatrix of type ",
+    +          DataTypeString(DataTypeToEnum<T>::value),
+    +          " but saw dtype: ", DataTypeString(sparse_matrix.dtype()));
+     
+         const Tensor& dense_shape = sparse_matrix.dense_shape();
+         const int rank = dense_shape.dim_size(0);
+    -    OP_REQUIRES(ctx, rank == 2 || rank == 3,
+    -                errors::InvalidArgument("sparse matrix must have rank 2 or 3; ",
+    -                                        "but dense_shape has size ", rank));
+    +    if (rank < 2 || rank > 3)
+    +      return errors::InvalidArgument("sparse matrix must have rank 2 or 3; ",
+    +                                     "but dense_shape has size ", rank);
+         const int row_dim = (rank == 2) ? 0 : 1;
+         auto dense_shape_vec = dense_shape.vec<int64>();
+         *num_rows = dense_shape_vec(row_dim);
+         const int64 num_cols = dense_shape_vec(row_dim + 1);
+    -    OP_REQUIRES(ctx, *num_rows == num_cols,
+    -                errors::InvalidArgument("sparse matrix must be square; got: ",
+    -                                        *num_rows, " != ", num_cols));
+    +    if (*num_rows != num_cols)
+    +      return errors::InvalidArgument(
+    +          "sparse matrix must be square; got: ", *num_rows, " != ", num_cols);
+         const TensorShape& perm_shape = permutation_indices.shape();
+    -    OP_REQUIRES(
+    -        ctx, perm_shape.dims() + 1 == rank,
+    -        errors::InvalidArgument(
+    -            "sparse matrix must have the same rank as permutation; got: ", rank,
+    -            " != ", perm_shape.dims(), " + 1."));
+    -    OP_REQUIRES(
+    -        ctx, perm_shape.dim_size(rank - 2) == *num_rows,
+    -        errors::InvalidArgument(
+    -            "permutation must have the same number of elements in each batch "
+    -            "as the number of rows in sparse matrix; got: ",
+    -            perm_shape.dim_size(rank - 2), " != ", *num_rows));
+    +    if (perm_shape.dims() + 1 != rank)
+    +      return errors::InvalidArgument(
+    +          "sparse matrix must have the same rank as permutation; got: ", rank,
+    +          " != ", perm_shape.dims(), " + 1.");
+    +    if (perm_shape.dim_size(rank - 2) != *num_rows)
+    +      return errors::InvalidArgument(
+    +          "permutation must have the same number of elements in each batch "
+    +          "as the number of rows in sparse matrix; got: ",
+    +          perm_shape.dim_size(rank - 2), " != ", *num_rows);
+     
+         *batch_size = sparse_matrix.batch_size();
+         if (*batch_size > 1) {
+    -      OP_REQUIRES(
+    -          ctx, perm_shape.dim_size(0) == *batch_size,
+    -          errors::InvalidArgument("permutation must have the same batch size "
+    -                                  "as sparse matrix; got: ",
+    -                                  perm_shape.dim_size(0), " != ", *batch_size));
+    +      if (perm_shape.dim_size(0) != *batch_size)
+    +        return errors::InvalidArgument(
+    +            "permutation must have the same batch size "
+    +            "as sparse matrix; got: ",
+    +            perm_shape.dim_size(0), " != ", *batch_size);
+         }
+    +
+    +    return Status::OK();
+       }
+     };
+  notes: >
+    Backported the SparseMatrixSparseCholesky validation fix by returning Status from ValidateInputs and stopping Compute with OP_REQUIRES_OK; the newer op_requires.h include was omitted because it does not exist in TensorFlow 2.1.4 and op_kernel.h already provides the macro.
+```
+
+tokens used
+input: 771
+cache read: 30,208
+cache write: 0
+output: 1,326
+reasoning output: 0

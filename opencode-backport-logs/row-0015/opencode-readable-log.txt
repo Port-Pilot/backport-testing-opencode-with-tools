@@ -1,0 +1,618 @@
+I’ll inspect the target-side `QuantizedMulOp` implementation and validate a minimal hunk against the specified base before editing the checkout.
+
+tool: viewcode
+{
+  "ref": "bf171d8341da2cfe1b2500b6b0bbbaa9bacc63db",
+  "path": "tensorflow/core/kernels/quantized_mul_op.cc",
+  "startline": 240,
+  "endline": 330
+}
+Here are lines 240 through 330.
+
+      // We have to work with 4-wide vectors, so extract them.
+      const int16x4_t x_high_high_16x4 =
+          vget_high_s16(x_minus_offset_high_16x8);
+      const int16x4_t x_high_low_16x4 = vget_low_s16(x_minus_offset_high_16x8);
+      const int16x4_t x_low_high_16x4 = vget_high_s16(x_minus_offset_low_16x8);
+      const int16x4_t x_low_low_16x4 = vget_low_s16(x_minus_offset_low_16x8);
+      const int16x4_t y_high_high_16x4 =
+          vget_high_s16(y_minus_offset_high_16x8);
+      const int16x4_t y_high_low_16x4 = vget_low_s16(y_minus_offset_high_16x8);
+      const int16x4_t y_low_high_16x4 = vget_high_s16(y_minus_offset_low_16x8);
+      const int16x4_t y_low_low_16x4 = vget_low_s16(y_minus_offset_low_16x8);
+
+      // Perform the multiplication.
+      const int32x4_t z_high_high_32x4 =
+          vmull_s16(x_high_high_16x4, y_high_high_16x4);
+      const int32x4_t z_high_low_32x4 =
+          vmull_s16(x_high_low_16x4, y_high_low_16x4);
+      const int32x4_t z_low_high_32x4 =
+          vmull_s16(x_low_high_16x4, y_low_high_16x4);
+      const int32x4_t z_low_low_32x4 =
+          vmull_s16(x_low_low_16x4, y_low_low_16x4);
+
+      // Write out the results.
+      int32* output_ptr = &(output->value) + i;
+      vst1q_s32(output_ptr + 0, z_low_low_32x4);
+      vst1q_s32(output_ptr + 4, z_low_high_32x4);
+      vst1q_s32(output_ptr + 8, z_high_low_32x4);
+      vst1q_s32(output_ptr + 12, z_high_high_32x4);
+    }
+    for (; i < end_i; ++i, ++vector_i) {
+      output[i] = (static_cast<int32>(vector_data[vector_i]) - vector_offset) *
+                  (static_cast<int32>(tensor_data[i]) - tensor_offset);
+    }
+  }
+}
+#endif  // USE_NEON
+
+}  // namespace
+
+template <class T, class Toutput>
+class QuantizedMulOp : public OpKernel {
+ public:
+  explicit QuantizedMulOp(OpKernelConstruction* context) : OpKernel(context) {}
+
+  void Compute(OpKernelContext* context) override {
+    const Tensor& x = context->input(0);
+    const Tensor& y = context->input(1);
+    const float min_x = context->input(2).flat<float>()(0);
+    const float max_x = context->input(3).flat<float>()(0);
+    const float min_y = context->input(4).flat<float>()(0);
+    const float max_y = context->input(5).flat<float>()(0);
+
+    BCast bcast(BCast::FromShape(x.shape()), BCast::FromShape(y.shape()));
+    if (!bcast.IsValid()) {
+      context->SetStatus(errors::InvalidArgument(
+          "Incompatible shapes: ", x.shape().DebugString(), " vs. ",
+          y.shape().DebugString()));
+      return;
+    }
+    Tensor* z;
+    OP_REQUIRES_OK(context, context->allocate_output(
+                                0, BCast::ToShape(bcast.output_shape()), &z));
+
+    // Make sure that we have valid quantization ranges for the input buffers.
+    // If the difference between the min and max is negative or zero, it makes
+    // it hard to do meaningful intermediate operations on the values.
+    OP_REQUIRES(context, (max_x > min_x),
+                errors::InvalidArgument("max_x must be larger than min_a."));
+    OP_REQUIRES(context, (max_y > min_y),
+                errors::InvalidArgument("max_x must be larger than min_b."));
+    const int32 offset_x = FloatToQuantizedUnclamped<T>(0.0f, min_x, max_x);
+    const int32 offset_y = FloatToQuantizedUnclamped<T>(0.0f, min_y, max_y);
+    const T* x_data = x.flat<T>().data();
+    const T* y_data = y.flat<T>().data();
+    Toutput* z_data = z->flat<Toutput>().data();
+
+    const int ndims = bcast.x_reshape().size();
+    if (ndims <= 1) {
+      if (x.NumElements() == 1) {
+        ScalarMultiply<T, Toutput>(context, y_data, offset_y, y.NumElements(),
+                                   x_data[0], offset_x, z_data);
+      } else if (y.NumElements() == 1) {
+        ScalarMultiply<T, Toutput>(context, x_data, offset_x, x.NumElements(),
+                                   y_data[0], offset_y, z_data);
+      } else {
+        VectorMultiply<T, Toutput>(context, x_data, offset_x, y_data, offset_y,
+                                   x.NumElements(), z_data);
+      }
+    } else if (ndims == 2) {
+      const T* vector_data;
+      int64 vector_num_elements;
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: locate_symbol
+{
+  "ref": "bf171d8341da2cfe1b2500b6b0bbbaa9bacc63db",
+  "symbol": "QuantizedMulOp"
+}
+Failed to run ctags. Please ensure ctags is installed: [WinError 2] The system cannot find the file specified
+
+tokens used
+input: 4,892
+cache read: 3,584
+cache write: 0
+output: 160
+reasoning output: 0
+
+The target file has the same vulnerable scalar reads in `QuantizedMulOp::Compute`; `locate_symbol` was unavailable because ctags is not installed, but direct target code inspection found the equivalent hunk. I’m applying the scalar shape checks around the four range inputs only.
+
+tool: validate
+{
+  "ref": "bf171d8341da2cfe1b2500b6b0bbbaa9bacc63db",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/quantized_mul_op.cc b/tensorflow/core/kernels/quantized_mul_op.cc\n--- a/tensorflow/core/kernels/quantized_mul_op.cc\n+++ b/tensorflow/core/kernels/quantized_mul_op.cc\n@@ -284,10 +284,22 @@ class QuantizedMulOp : public OpKernel {\n   void Compute(OpKernelContext* context) override {\n     const Tensor& x = context->input(0);\n     const Tensor& y = context->input(1);\n-    const float min_x = context->input(2).flat<float>()(0);\n-    const float max_x = context->input(3).flat<float>()(0);\n-    const float min_y = context->input(4).flat<float>()(0);\n-    const float max_y = context->input(5).flat<float>()(0);\n+    auto& min_x_tensor = context->input(2);\n+    OP_REQUIRES(context, TensorShapeUtils::IsScalar(min_x_tensor.shape()),\n+                errors::InvalidArgument(\"min_x must be a scalar\"));\n+    const float min_x = min_x_tensor.flat<float>()(0);\n+    auto& max_x_tensor = context->input(3);\n+    OP_REQUIRES(context, TensorShapeUtils::IsScalar(max_x_tensor.shape()),\n+                errors::InvalidArgument(\"max_x must be a scalar\"));\n+    const float max_x = max_x_tensor.flat<float>()(0);\n+    auto& min_y_tensor = context->input(4);\n+    OP_REQUIRES(context, TensorShapeUtils::IsScalar(min_y_tensor.shape()),\n+                errors::InvalidArgument(\"min_y must be a scalar\"));\n+    const float min_y = min_y_tensor.flat<float>()(0);\n+    auto& max_y_tensor = context->input(5);\n+    OP_REQUIRES(context, TensorShapeUtils::IsScalar(max_y_tensor.shape()),\n+                errors::InvalidArgument(\"max_y must be a scalar\"));\n+    const float max_y = max_y_tensor.flat<float>()(0);\n \n     BCast bcast(BCast::FromShape(x.shape()), BCast::FromShape(y.shape()));\n     if (!bcast.IsValid()) {\n"
+}
+Error executing validate: Traceback (most recent call last):
+  File "C:\Users\Akindu Himan\.config\opencode\scripts\validate.py", line 320, in <module>
+    main()
+  File "C:\Users\Akindu Himan\.config\opencode\scripts\validate.py", line 315, in main
+    result = validate(args.repo, args.ref, args.patch_file, args.mode, args.err_msg, args.revise_context)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Akindu Himan\.config\opencode\scripts\validate.py", line 284, in validate
+    return apply_hunk(repo, repo_dir, ref, patch, revise_context)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Akindu Himan\.config\opencode\scripts\validate.py", line 126, in apply_hunk
+    revised_patch, _ = utils.revise_patch(patch, repo_dir, revise_context)
+                       ^^^^^^^^^^^^^^^^^^
+AttributeError: 'NoneType' object has no attribute 'revise_patch'
+
+tokens used
+input: 2,240
+cache read: 7,680
+cache write: 0
+output: 629
+reasoning output: 22
+
+`validate` failed due to an internal tool error before applying the hunk, not because of patch context. I’ll proceed with the direct minimal edit and then inspect the resulting diff.
+
+tool: read
+{
+  "filePath": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0015-bf171d8341da\\tensorflow\\core\\kernels\\quantized_mul_op.cc",
+  "offset": 1,
+  "limit": 60
+}
+<path>C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0015-bf171d8341da\tensorflow\core\kernels\quantized_mul_op.cc</path>
+<type>file</type>
+<content>
+1: /* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
+2: 
+3: Licensed under the Apache License, Version 2.0 (the "License");
+4: you may not use this file except in compliance with the License.
+5: You may obtain a copy of the License at
+6: 
+7:     http://www.apache.org/licenses/LICENSE-2.0
+8: 
+9: Unless required by applicable law or agreed to in writing, software
+10: distributed under the License is distributed on an "AS IS" BASIS,
+11: WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+12: See the License for the specific language governing permissions and
+13: limitations under the License.
+14: ==============================================================================*/
+15: 
+16: // Implements a quantized eight-bit version of the matmul operation.
+17: 
+18: #define EIGEN_USE_THREADS
+19: 
+20: #if defined(__ARM_NEON__) || defined(__ARM_NEON)
+21: #define USE_NEON
+22: #include <arm_neon.h>
+23: #endif
+24: 
+25: #include "tensorflow/core/framework/op_kernel.h"
+26: #include "tensorflow/core/framework/tensor.h"
+27: #include "tensorflow/core/kernels/meta_support.h"
+28: #include "tensorflow/core/kernels/quantization_utils.h"
+29: #include "tensorflow/core/lib/core/errors.h"
+30: #include "tensorflow/core/util/bcast.h"
+31: 
+32: namespace tensorflow {
+33: namespace {
+34: 
+35: template <class T, class Toutput>
+36: void ScalarMultiply(OpKernelContext* context, const T* full_input,
+37:                     int32 full_input_offset, int64 num_elements, T scalar_input,
+38:                     int32 scalar_input_offset, Toutput* output) {
+39:   const int32 scalar_minus_offset =
+40:       static_cast<int32>(scalar_input) - scalar_input_offset;
+41:   for (int i = 0; i < num_elements; ++i) {
+42:     output[i] = (static_cast<int32>(full_input[i]) - full_input_offset) *
+43:                 scalar_minus_offset;
+44:   }
+45: }
+46: 
+47: #ifdef USE_NEON
+48: 
+49: template <>
+50: void ScalarMultiply<quint8, qint32>(OpKernelContext* context,
+51:                                     const quint8* full_input,
+52:                                     int32 full_input_offset, int64 num_elements,
+53:                                     quint8 scalar_input,
+54:                                     int32 scalar_input_offset, qint32* output) {
+55:   const int16 scalar_minus_offset =
+56:       static_cast<int16>(scalar_input) - scalar_input_offset;
+57:   const int16x4_t scalar_minus_offset_16x4 = vmov_n_s16(scalar_minus_offset);
+58:   const uint8x8_t full_input_offset_8x8 = vmov_n_u8(full_input_offset);
+59:   // Go through the results in 16-element chunks for NEON acceleration.
+60:   int i;
+
+(Showing lines 1-60 of 392. Use offset=61 to continue.)
+</content>
+
+tool: grep
+{
+  "path": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0015-bf171d8341da",
+  "pattern": "TensorShapeUtils::IsScalar\\(",
+  "include": "*.cc"
+}
+Found 100 matches (more matches available)
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0015-bf171d8341da\tensorflow\compiler\xrt\xrt_util.cc:
+  Line 190:     if (TensorShapeUtils::IsScalar(arg.shape())) {
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0015-bf171d8341da\tensorflow\compiler\xrt\kernels\xrt_execute_op.cc:
+  Line 256:   TF_RET_CHECK(TensorShapeUtils::IsScalar(execution_input.shape()));
+
+  Line 260:   TF_RET_CHECK(TensorShapeUtils::IsScalar(execution_config.shape()));
+
+  Line 341:   TF_RET_CHECK(TensorShapeUtils::IsScalar(execution_plan.shape()));
+
+  Line 346:   TF_RET_CHECK(TensorShapeUtils::IsScalar(execution_config.shape()));
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0015-bf171d8341da\tensorflow\compiler\xrt\kernels\xrt_compile_ops.cc:
+  Line 145:   OP_REQUIRES(ctx, TensorShapeUtils::IsScalar(computation_input.shape()),
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0015-bf171d8341da\tensorflow\core\framework\rendezvous_test.cc:
+  Line 96:   CHECK(TensorShapeUtils::IsScalar(tensor.shape()));
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0015-bf171d8341da\tensorflow\core\framework\dataset.cc:
+  Line 138:                     TensorShapeUtils::IsScalar(tensor.shape()),
+
+  Line 165:                     TensorShapeUtils::IsScalar(tensor.shape()),
+
+  Line 353:         TensorShapeUtils::IsScalar(tensor.shape()))) {
+
+  Line 371:         TensorShapeUtils::IsScalar(tensor->shape()))) {
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0015-bf171d8341da\tensorflow\core\distributed_runtime\rpc\rpc_rendezvous_mgr_test.cc:
+  Line 40:   CHECK(TensorShapeUtils::IsScalar(tensor.shape()));
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0015-bf171d8341da\tensorflow\core\kernels\barrier_ops.cc:
+  Line 586:     OP_REQUIRES_ASYNC(ctx, TensorShapeUtils::IsScalar(Tnum_elements->shape()),
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0015-bf171d8341da\tensorflow\core\kernels\argmax_op.cc:
+  Line 53:     OP_REQUIRES(context, TensorShapeUtils::IsScalar(dimension.shape()),
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0015-bf171d8341da\tensorflow\core\kernels\adjust_saturation_op.cc:
+  Line 59:     OP_REQUIRES(context, TensorShapeUtils::IsScalar(scale.shape()),
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0015-bf171d8341da\tensorflow\core\kernels\adjust_hue_op.cc:
+  Line 60:     OP_REQUIRES(context, TensorShapeUtils::IsScalar(delta.shape()),
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0015-bf171d8341da\tensorflow\core\kernels\adjust_contrast_op.cc:
+  Line 58:     OP_REQUIRES(context, TensorShapeUtils::IsScalar(factor.shape()),
+
+  Line 61:     OP_REQUIRES(context, TensorShapeUtils::IsScalar(min_value.shape()),
+
+  Line 64:     OP_REQUIRES(context, TensorShapeUtils::IsScalar(max_value.shape()),
+
+  Line 167:     OP_REQUIRES(context, TensorShapeUtils::IsScalar(factor.shape()),
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0015-bf171d8341da\tensorflow\core\kernels\control_flow_ops.cc:
+  Line 28:   OP_REQUIRES(context, TensorShapeUtils::IsScalar(outputPorts.shape()),
+
+  Line 44:   OP_REQUIRES(context, TensorShapeUtils::IsScalar(output_index_t.shape()),
+
+  Line 219:     OP_REQUIRES(context, TensorShapeUtils::IsScalar(index_tensor.shape()),
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0015-bf171d8341da\tensorflow\core\kernels\conditional_accumulator_base_op.cc:
+  Line 46:     if (!TensorShapeUtils::IsScalar(new_global_step_tensor->shape())) {
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0015-bf171d8341da\tensorflow\core\kernels\compare_and_bitpack_op.cc:
+  Line 46:         c, TensorShapeUtils::IsScalar(threshold_t.shape()),
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0015-bf171d8341da\tensorflow\core\kernels\clustering_ops.cc:
+  Line 92:                 TensorShapeUtils::IsScalar(num_to_sample_tensor.shape()),
+
+  Line 94:     OP_REQUIRES(context, TensorShapeUtils::IsScalar(seed_tensor.shape()),
+
+  Line 98:         TensorShapeUtils::IsScalar(num_retries_per_sample_tensor.shape()),
+
+  Line 242:     OP_REQUIRES(context, TensorShapeUtils::IsScalar(seed_tensor.shape()),
+
+  Line 299:     OP_REQUIRES(context, TensorShapeUtils::IsScalar(k_tensor.shape()),
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0015-bf171d8341da\tensorflow\core\kernels\count_up_to_op.cc:
+  Line 37:       OP_REQUIRES(context, TensorShapeUtils::IsScalar(tensor.shape()),
+
+  Line 75:         context, TensorShapeUtils::IsScalar(before_increment.shape()),
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0015-bf171d8341da\tensorflow\core\kernels\cwise_op_clip.cc:
+  Line 37:                       TensorShapeUtils::IsScalar(in1.shape())) &&
+
+  Line 39:                       TensorShapeUtils::IsScalar(in2.shape())),
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0015-bf171d8341da\tensorflow\core\kernels\cudnn_rnn_ops.cc:
+  Line 1009:     if (!TensorShapeUtils::IsScalar(num_layers_t->shape())) {
+
+  Line 1015:     if (!TensorShapeUtils::IsScalar(num_units_t->shape())) {
+
+  Line 1021:     if (!TensorShapeUtils::IsScalar(input_size_t->shape())) {
+
+  Line 1205:     CHECK(TensorShapeUtils::IsScalar(num_units_t->shape()))
+
+  Line 1211:     CHECK(TensorShapeUtils::IsScalar(input_size_t->shape()))
+
+  Line 1217:     CHECK(TensorShapeUtils::IsScalar(num_layers_t->shape()))
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0015-bf171d8341da\tensorflow\core\common_runtime\rendezvous_util_test.cc:
+  Line 43:   CHECK(TensorShapeUtils::IsScalar(tensor.shape()));
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0015-bf171d8341da\tensorflow\compiler\tf2xla\kernels\if_op.cc:
+  Line 80:   OP_REQUIRES(ctx, TensorShapeUtils::IsScalar(ctx->InputShape(0)),
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0015-bf171d8341da\tensorflow\compiler\tf2xla\kernels\gather_op.cc:
+  Line 165:     if (!TensorShapeUtils::IsScalar(axis_shape)) {
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0015-bf171d8341da\tensorflow\compiler\tf2xla\kernels\fill_op.cc:
+  Line 43:     OP_REQUIRES(ctx, TensorShapeUtils::IsScalar(value_shape),
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0015-bf171d8341da\tensorflow\compiler\tf2xla\kernels\concat_op.cc:
+  Line 48:     OP_REQUIRES(ctx, TensorShapeUtils::IsScalar(concat_dim_tensor_shape),
+
+  Line 127:     OP_REQUIRES(ctx, TensorShapeUtils::IsScalar(concat_dim_shape),
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0015-bf171d8341da\tensorflow\compiler\tf2xla\kernels\clip_by_value_op.cc:
+  Line 47:       OP_REQUIRES(ctx, TensorShapeUtils::IsScalar(min_shape), shape_error());
+
+  Line 51:       OP_REQUIRES(ctx, TensorShapeUtils::IsScalar(max_shape), shape_error());
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0015-bf171d8341da\tensorflow\compiler\tf2xla\kernels\case_op.cc:
+  Line 81:   OP_REQUIRES(ctx, TensorShapeUtils::IsScalar(ctx->InputShape(0)),
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0015-bf171d8341da\tensorflow\compiler\tf2xla\kernels\random_ops.cc:
+  Line 230:     OP_REQUIRES(ctx, TensorShapeUtils::IsScalar(minval_shape),
+
+  Line 233:     OP_REQUIRES(ctx, TensorShapeUtils::IsScalar(maxval_shape),
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0015-bf171d8341da\tensorflow\compiler\tf2xla\kernels\pad_op.cc:
+  Line 74:           ctx, TensorShapeUtils::IsScalar(ctx->InputShape("constant_values")),
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0015-bf171d8341da\tensorflow\compiler\tf2xla\kernels\one_hot_op.cc:
+  Line 46:     OP_REQUIRES(ctx, TensorShapeUtils::IsScalar(depth_shape),
+
+  Line 49:     OP_REQUIRES(ctx, TensorShapeUtils::IsScalar(on_value_shape),
+
+  Line 52:     OP_REQUIRES(ctx, TensorShapeUtils::IsScalar(off_value_shape),
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0015-bf171d8341da\tensorflow\compiler\tf2xla\kernels\matrix_band_part_op.cc:
+  Line 40:     OP_REQUIRES(context, TensorShapeUtils::IsScalar(num_lower_in_shape),
+
+  Line 45:     OP_REQUIRES(context, TensorShapeUtils::IsScalar(num_upper_in_shape),
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0015-bf171d8341da\tensorflow\compiler\tf2xla\kernels\index_ops.cc:
+  Line 42:   OP_REQUIRES(ctx, TensorShapeUtils::IsScalar(dimension_shape),
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0015-bf171d8341da\tensorflow\compiler\tf2xla\kernels\image_ops.cc:
+  Line 187:     OP_REQUIRES(context, TensorShapeUtils::IsScalar(factor_shape),
+
+  Line 230:     OP_REQUIRES(context, TensorShapeUtils::IsScalar(scale_shape),
+
+  Line 284:     OP_REQUIRES(context, TensorShapeUtils::IsScalar(delta_shape),
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0015-bf171d8341da\tensorflow\compiler\tf2xla\kernels\sequence_ops.cc:
+  Line 77:     OP_REQUIRES(ctx, TensorShapeUtils::IsScalar(start_in_shape),
+
+  Line 80:     OP_REQUIRES(ctx, TensorShapeUtils::IsScalar(limit_in_shape),
+
+  Line 83:     OP_REQUIRES(ctx, TensorShapeUtils::IsScalar(delta_in_shape),
+
+  Line 147:     OP_REQUIRES(ctx, TensorShapeUtils::IsScalar(start_in_shape),
+
+  Line 150:     OP_REQUIRES(ctx, TensorShapeUtils::IsScalar(stop_in_shape),
+
+  Line 153:     OP_REQUIRES(ctx, TensorShapeUtils::IsScalar(num_in_shape),
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0015-bf171d8341da\tensorflow\compiler\tf2xla\kernels\select_op.cc:
+  Line 51:     bool cond_is_scalar = TensorShapeUtils::IsScalar(cond_shape);
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0015-bf171d8341da\tensorflow\compiler\tf2xla\kernels\scan_ops.cc:
+  Line 55:     OP_REQUIRES(ctx, TensorShapeUtils::IsScalar(tensor_axis_shape),
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0015-bf171d8341da\tensorflow\compiler\tf2xla\kernels\stateless_random_ops.cc:
+  Line 167:     OP_REQUIRES(ctx, TensorShapeUtils::IsScalar(minval_shape),
+
+  Line 171:     OP_REQUIRES(ctx, TensorShapeUtils::IsScalar(maxval_shape),
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0015-bf171d8341da\tensorflow\compiler\tf2xla\kernels\split_op.cc:
+  Line 42:         ctx, TensorShapeUtils::IsScalar(split_dim_shape),
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0015-bf171d8341da\tensorflow\compiler\tf2xla\kernels\sparse_to_dense_op.cc:
+  Line 63:     OP_REQUIRES(context, TensorShapeUtils::IsScalar(default_value_shape),
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0015-bf171d8341da\tensorflow\compiler\tf2xla\kernels\training_ops.cc:
+  Line 40:     OP_REQUIRES(ctx, TensorShapeUtils::IsScalar(alpha_shape),
+
+  Line 85:     OP_REQUIRES(ctx, TensorShapeUtils::IsScalar(alpha_shape),
+
+  Line 89:     OP_REQUIRES(ctx, TensorShapeUtils::IsScalar(alpha_shape),
+
+  Line 93:     OP_REQUIRES(ctx, TensorShapeUtils::IsScalar(alpha_shape),
+
+  Line 137:     OP_REQUIRES(ctx, TensorShapeUtils::IsScalar(lr_shape),
+
+  Line 148:     OP_REQUIRES(ctx, TensorShapeUtils::IsScalar(momentum_shape),
+
+  Line 195:     OP_REQUIRES(ctx, TensorShapeUtils::IsScalar(lr_shape),
+
+  Line 206:     OP_REQUIRES(ctx, TensorShapeUtils::IsScalar(momentum_shape),
+
+  Line 253:     OP_REQUIRES(ctx, TensorShapeUtils::IsScalar(lr_shape),
+
+  Line 302:     OP_REQUIRES(ctx, TensorShapeUtils::IsScalar(lr_shape),
+
+  Line 307:     OP_REQUIRES(ctx, TensorShapeUtils::IsScalar(epsilon_shape),
+
+  Line 356:     OP_REQUIRES(ctx, TensorShapeUtils::IsScalar(lr_shape),
+
+  Line 360:     OP_REQUIRES(ctx, TensorShapeUtils::IsScalar(l1_shape),
+
+  Line 364:     OP_REQUIRES(ctx, TensorShapeUtils::IsScalar(l2_shape),
+
+  Line 427:     OP_REQUIRES(ctx, TensorShapeUtils::IsScalar(lr_shape),
+
+  Line 430:     OP_REQUIRES(ctx, TensorShapeUtils::IsScalar(l1_shape),
+
+  Line 433:     OP_REQUIRES(ctx, TensorShapeUtils::IsScalar(l2_shape),
+
+  Line 436:     OP_REQUIRES(ctx, TensorShapeUtils::IsScalar(global_step_shape),
+
+  Line 490:     OP_REQUIRES(ctx, TensorShapeUtils::IsScalar(beta1_power_shape),
+
+  Line 493:     OP_REQUIRES(ctx, TensorShapeUtils::IsScalar(beta2_power_shape),
+
+  Line 496:     OP_REQUIRES(ctx, TensorShapeUtils::IsScalar(lr_shape),
+
+  Line 499:     OP_REQUIRES(ctx, TensorShapeUtils::IsScalar(beta1_shape),
+
+  Line 502:     OP_REQUIRES(ctx, TensorShapeUtils::IsScalar(beta2_shape),
+
+  Line 505:     OP_REQUIRES(ctx, TensorShapeUtils::IsScalar(epsilon_shape),
+
+  Line 585:     OP_REQUIRES(ctx, TensorShapeUtils::IsScalar(beta1_power_shape),
+
+  Line 588:     OP_REQUIRES(ctx, TensorShapeUtils::IsScalar(lr_shape),
+
+  Line 591:     OP_REQUIRES(ctx, TensorShapeUtils::IsScalar(beta1_shape),
+
+
+(Results truncated. Consider using a more specific path or pattern.)
+
+tokens used
+input: 10,830
+cache read: 0
+cache write: 0
+output: 202
+reasoning output: 32
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/kernels/quantized_mul_op.cc\n@@\n   void Compute(OpKernelContext* context) override {\n     const Tensor& x = context->input(0);\n     const Tensor& y = context->input(1);\n-    const float min_x = context->input(2).flat<float>()(0);\n-    const float max_x = context->input(3).flat<float>()(0);\n-    const float min_y = context->input(4).flat<float>()(0);\n-    const float max_y = context->input(5).flat<float>()(0);\n+    auto& min_x_tensor = context->input(2);\n+    OP_REQUIRES(context, TensorShapeUtils::IsScalar(min_x_tensor.shape()),\n+                errors::InvalidArgument(\"min_x must be a scalar\"));\n+    const float min_x = min_x_tensor.flat<float>()(0);\n+    auto& max_x_tensor = context->input(3);\n+    OP_REQUIRES(context, TensorShapeUtils::IsScalar(max_x_tensor.shape()),\n+                errors::InvalidArgument(\"max_x must be a scalar\"));\n+    const float max_x = max_x_tensor.flat<float>()(0);\n+    auto& min_y_tensor = context->input(4);\n+    OP_REQUIRES(context, TensorShapeUtils::IsScalar(min_y_tensor.shape()),\n+                errors::InvalidArgument(\"min_y must be a scalar\"));\n+    const float min_y = min_y_tensor.flat<float>()(0);\n+    auto& max_y_tensor = context->input(5);\n+    OP_REQUIRES(context, TensorShapeUtils::IsScalar(max_y_tensor.shape()),\n+                errors::InvalidArgument(\"max_y must be a scalar\"));\n+    const float max_y = max_y_tensor.flat<float>()(0);\n \n     BCast bcast(BCast::FromShape(x.shape()), BCast::FromShape(y.shape()));\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/kernels/quantized_mul_op.cc
+
+tokens used
+input: 5,414
+cache read: 10,752
+cache write: 0
+output: 469
+reasoning output: 29
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/kernels/quantized_mul_op.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0015-bf171d8341da"
+}
+warning: in the working copy of 'tensorflow/core/kernels/quantized_mul_op.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/kernels/quantized_mul_op.cc b/tensorflow/core/kernels/quantized_mul_op.cc
+index 4e191f1626..b535382239 100644
+--- a/tensorflow/core/kernels/quantized_mul_op.cc
++++ b/tensorflow/core/kernels/quantized_mul_op.cc
+@@ -284,10 +284,22 @@ class QuantizedMulOp : public OpKernel {
+   void Compute(OpKernelContext* context) override {
+     const Tensor& x = context->input(0);
+     const Tensor& y = context->input(1);
+-    const float min_x = context->input(2).flat<float>()(0);
+-    const float max_x = context->input(3).flat<float>()(0);
+-    const float min_y = context->input(4).flat<float>()(0);
+-    const float max_y = context->input(5).flat<float>()(0);
++    auto& min_x_tensor = context->input(2);
++    OP_REQUIRES(context, TensorShapeUtils::IsScalar(min_x_tensor.shape()),
++                errors::InvalidArgument("min_x must be a scalar"));
++    const float min_x = min_x_tensor.flat<float>()(0);
++    auto& max_x_tensor = context->input(3);
++    OP_REQUIRES(context, TensorShapeUtils::IsScalar(max_x_tensor.shape()),
++                errors::InvalidArgument("max_x must be a scalar"));
++    const float max_x = max_x_tensor.flat<float>()(0);
++    auto& min_y_tensor = context->input(4);
++    OP_REQUIRES(context, TensorShapeUtils::IsScalar(min_y_tensor.shape()),
++                errors::InvalidArgument("min_y must be a scalar"));
++    const float min_y = min_y_tensor.flat<float>()(0);
++    auto& max_y_tensor = context->input(5);
++    OP_REQUIRES(context, TensorShapeUtils::IsScalar(max_y_tensor.shape()),
++                errors::InvalidArgument("max_y must be a scalar"));
++    const float max_y = max_y_tensor.flat<float>()(0);
+ 
+     BCast bcast(BCast::FromShape(x.shape()), BCast::FromShape(y.shape()));
+     if (!bcast.IsValid()) {
+
+tokens used
+input: 821
+cache read: 15,872
+cache write: 0
+output: 73
+reasoning output: 8
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/kernels/quantized_mul_op.cc b/tensorflow/core/kernels/quantized_mul_op.cc
+    index 4e191f1626..b535382239 100644
+    --- a/tensorflow/core/kernels/quantized_mul_op.cc
+    +++ b/tensorflow/core/kernels/quantized_mul_op.cc
+    @@ -284,10 +284,22 @@ class QuantizedMulOp : public OpKernel {
+       void Compute(OpKernelContext* context) override {
+         const Tensor& x = context->input(0);
+         const Tensor& y = context->input(1);
+    -    const float min_x = context->input(2).flat<float>()(0);
+    -    const float max_x = context->input(3).flat<float>()(0);
+    -    const float min_y = context->input(4).flat<float>()(0);
+    -    const float max_y = context->input(5).flat<float>()(0);
+    +    auto& min_x_tensor = context->input(2);
+    +    OP_REQUIRES(context, TensorShapeUtils::IsScalar(min_x_tensor.shape()),
+    +                errors::InvalidArgument("min_x must be a scalar"));
+    +    const float min_x = min_x_tensor.flat<float>()(0);
+    +    auto& max_x_tensor = context->input(3);
+    +    OP_REQUIRES(context, TensorShapeUtils::IsScalar(max_x_tensor.shape()),
+    +                errors::InvalidArgument("max_x must be a scalar"));
+    +    const float max_x = max_x_tensor.flat<float>()(0);
+    +    auto& min_y_tensor = context->input(4);
+    +    OP_REQUIRES(context, TensorShapeUtils::IsScalar(min_y_tensor.shape()),
+    +                errors::InvalidArgument("min_y must be a scalar"));
+    +    const float min_y = min_y_tensor.flat<float>()(0);
+    +    auto& max_y_tensor = context->input(5);
+    +    OP_REQUIRES(context, TensorShapeUtils::IsScalar(max_y_tensor.shape()),
+    +                errors::InvalidArgument("max_y must be a scalar"));
+    +    const float max_y = max_y_tensor.flat<float>()(0);
+     
+         BCast bcast(BCast::FromShape(x.shape()), BCast::FromShape(y.shape()));
+         if (!bcast.IsValid()) {
+  notes: >
+    Added scalar shape validation for QuantizedMul min/max range inputs before reading them.
+```
+
+tokens used
+input: 1,438
+cache read: 15,872
+cache write: 0
+output: 562
+reasoning output: 52

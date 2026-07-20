@@ -1,0 +1,460 @@
+I’ll inspect the target-side `SparseCount` implementation and the newer commit context, then apply only the equivalent safety check to the current checkout.
+
+tool: git_show
+{
+  "ref": "c57c0b9f3a4f8684f3489dd9a9ec627ad8b599f5",
+  "context": "class SparseCount : public OpKernel {\n  void Compute(OpKernelContext* context) override"
+}
+commit c57c0b9f3a4f8684f3489dd9a9ec627ad8b599f5
+Author: Amit Patankar <amitpatankar@google.com>
+Date:   Mon Apr 19 11:33:50 2021 -0700
+
+    Fix the segfault in `tf.raw_ops.SparseCountSparseOutput`.
+    
+    PiperOrigin-RevId: 369264941
+    Change-Id: I23a96a15b8370c01ee21ba3841e1c7dcbf55e93d
+
+ tensorflow/core/kernels/count_ops.cc | 10 +++++++++-
+ 1 file changed, 9 insertions(+), 1 deletion(-)
+
+--- Commit Details ---
+commit c57c0b9f3a4f8684f3489dd9a9ec627ad8b599f5
+Author: Amit Patankar <amitpatankar@google.com>
+Date:   Mon Apr 19 11:33:50 2021 -0700
+
+    Fix the segfault in `tf.raw_ops.SparseCountSparseOutput`.
+    
+    PiperOrigin-RevId: 369264941
+    Change-Id: I23a96a15b8370c01ee21ba3841e1c7dcbf55e93d
+
+diff --git a/tensorflow/core/kernels/count_ops.cc b/tensorflow/core/kernels/count_ops.cc
+index d6ab68c2c7..eeb0b853c7 100644
+--- a/tensorflow/core/kernels/count_ops.cc
++++ b/tensorflow/core/kernels/count_ops.cc
+@@ -197,9 +197,17 @@ class SparseCount : public OpKernel {
+                     "The shape argument requires at least one element."));
+ 
+     bool is_1d = shape.NumElements() == 1;
+-    int num_batches = is_1d ? 1 : shape.flat<int64>()(0);
++    auto shape_vector = shape.flat<int64>();
++    int num_batches = is_1d ? 1 : shape_vector(0);
+     int num_values = values.NumElements();
+ 
++    for (int b = 0; b < shape_vector.size(); b++) {
++      OP_REQUIRES(context, shape_vector(b) >= 0,
++                  errors::InvalidArgument(
++                      "Elements in dense_shape must be >= 0. Instead got:",
++                      shape.DebugString()));
++    }
++
+     OP_REQUIRES(context, num_values == indices.shape().dim_size(0),
+                 errors::InvalidArgument(
+                     "Number of values must match first dimension of indices.",
+
+tool: viewcode
+{
+  "ref": "73aa99469d027c5870936a7ef31d056ba8a64867",
+  "path": "tensorflow/core/kernels/count_ops.cc",
+  "startline": 170,
+  "endline": 230
+}
+Here are lines 170 through 230.
+
+    OP_REQUIRES_OK(context, context->GetAttr("maxlength", &maxlength_));
+    OP_REQUIRES_OK(context, context->GetAttr("binary_output", &binary_output_));
+  }
+
+  void Compute(OpKernelContext* context) override {
+    const Tensor& indices = context->input(0);
+    const Tensor& values = context->input(1);
+    const Tensor& shape = context->input(2);
+    const Tensor& weights = context->input(3);
+    bool use_weights = weights.NumElements() > 0;
+
+    OP_REQUIRES(context, TensorShapeUtils::IsMatrix(indices.shape()),
+                errors::InvalidArgument(
+                    "Input indices must be a 2-dimensional tensor. Got: ",
+                    indices.shape().DebugString()));
+
+    if (use_weights) {
+      OP_REQUIRES(
+          context, weights.shape() == values.shape(),
+          errors::InvalidArgument(
+              "Weights and values must have the same shape. Weight shape: ",
+              weights.shape().DebugString(),
+              "; values shape: ", values.shape().DebugString()));
+    }
+
+    bool is_1d = shape.NumElements() == 1;
+    int num_batches = is_1d ? 1 : shape.flat<int64>()(0);
+    int num_values = values.NumElements();
+
+    OP_REQUIRES(context, num_values == indices.shape().dim_size(0),
+                errors::InvalidArgument(
+                    "Number of values must match first dimension of indices.",
+                    "Got ", num_values,
+                    " values, indices shape: ", indices.shape().DebugString()));
+
+    const auto indices_values = indices.matrix<int64>();
+    const auto values_values = values.flat<T>();
+    const auto weight_values = weights.flat<W>();
+
+    auto per_batch_counts = BatchedMap<W>(num_batches);
+
+    T max_value = 0;
+
+    for (int idx = 0; idx < num_values; ++idx) {
+      int batch = is_1d ? 0 : indices_values(idx, 0);
+      const auto& value = values_values(idx);
+      if (value >= 0 && (maxlength_ <= 0 || value < maxlength_)) {
+        if (binary_output_) {
+          per_batch_counts[batch][value] = 1;
+        } else if (use_weights) {
+          per_batch_counts[batch][value] += weight_values(idx);
+        } else {
+          per_batch_counts[batch][value]++;
+        }
+        if (value > max_value) {
+          max_value = value;
+        }
+      }
+    }
+
+    int num_output_values = GetOutputSize(max_value, maxlength_, minlength_);
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: locate_symbol
+{
+  "ref": "73aa99469d027c5870936a7ef31d056ba8a64867",
+  "symbol": "SparseCount"
+}
+Failed to run ctags. Please ensure ctags is installed: [WinError 2] The system cannot find the file specified
+
+tokens used
+input: 8,280
+cache read: 0
+cache write: 0
+output: 213
+reasoning output: 0
+
+The target file has the same vulnerable calculation path, but its surrounding validation differs slightly from 2.5.0. I’m checking the immediate class context so the backport stays minimal and matches 2.3.3.
+
+tool: grep
+{
+  "pattern": "The shape argument requires|dense_shape|SparseCountSparseOutput|REGISTER_KERNEL_BUILDER",
+  "path": "tensorflow/core/kernels",
+  "include": "count_ops.cc"
+}
+Found 9 matches
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0008-73aa99469d02\tensorflow\core\kernels\count_ops.cc:
+  Line 68:   Tensor* dense_shape;
+
+  Line 71:         context->allocate_output(2, TensorShape({1}), &dense_shape));
+
+  Line 72:     dense_shape->flat<int64>().data()[0] = num_values;
+
+  Line 75:         context->allocate_output(2, TensorShape({2}), &dense_shape));
+
+  Line 76:     dense_shape->flat<int64>().data()[0] = num_batches;
+
+  Line 77:     dense_shape->flat<int64>().data()[1] = num_values;
+
+  Line 326:   REGISTER_KERNEL_BUILDER(Name("DenseCountSparseOutput")             \
+
+  Line 332:   REGISTER_KERNEL_BUILDER(Name("SparseCountSparseOutput")            \
+
+  Line 338:   REGISTER_KERNEL_BUILDER(Name("RaggedCountSparseOutput")            \
+
+tool: viewcode
+{
+  "ref": "73aa99469d027c5870936a7ef31d056ba8a64867",
+  "path": "tensorflow/core/kernels/count_ops.cc",
+  "startline": 130,
+  "endline": 180
+}
+Here are lines 130 through 180.
+
+    T max_value = 0;
+
+    const auto data_values = data.flat<T>();
+    const auto weight_values = weights.flat<W>();
+    int i = 0;
+    for (int b = 0; b < num_batch_elements; ++b) {
+      for (int v = 0; v < num_value_elements; ++v) {
+        const auto& value = data_values(i);
+        if (value >= 0 && (maxlength_ <= 0 || value < maxlength_)) {
+          if (binary_output_) {
+            per_batch_counts[b][value] = 1;
+          } else if (use_weights) {
+            per_batch_counts[b][value] += weight_values(i);
+          } else {
+            per_batch_counts[b][value]++;
+          }
+          if (value > max_value) {
+            max_value = value;
+          }
+        }
+        ++i;
+      }
+    }
+
+    int num_output_values = GetOutputSize(max_value, maxlength_, minlength_);
+    OP_REQUIRES_OK(context, OutputSparse<W>(per_batch_counts, num_output_values,
+                                            is_1d, context));
+  }
+
+ private:
+  int maxlength_;
+  int minlength_;
+  bool binary_output_;
+};
+
+template <class T, class W>
+class SparseCount : public OpKernel {
+ public:
+  explicit SparseCount(OpKernelConstruction* context) : OpKernel(context) {
+    OP_REQUIRES_OK(context, context->GetAttr("minlength", &minlength_));
+    OP_REQUIRES_OK(context, context->GetAttr("maxlength", &maxlength_));
+    OP_REQUIRES_OK(context, context->GetAttr("binary_output", &binary_output_));
+  }
+
+  void Compute(OpKernelContext* context) override {
+    const Tensor& indices = context->input(0);
+    const Tensor& values = context->input(1);
+    const Tensor& shape = context->input(2);
+    const Tensor& weights = context->input(3);
+    bool use_weights = weights.NumElements() > 0;
+
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: viewcode
+{
+  "ref": "73aa99469d027c5870936a7ef31d056ba8a64867",
+  "path": "tensorflow/core/kernels/count_ops.cc",
+  "startline": 230,
+  "endline": 320
+}
+Here are lines 230 through 320.
+
+    int num_output_values = GetOutputSize(max_value, maxlength_, minlength_);
+    OP_REQUIRES_OK(context, OutputSparse<W>(per_batch_counts, num_output_values,
+                                            is_1d, context));
+  }
+
+ private:
+  int maxlength_;
+  int minlength_;
+  bool binary_output_;
+  bool validate_;
+};
+
+template <class T, class W>
+class RaggedCount : public OpKernel {
+ public:
+  explicit RaggedCount(OpKernelConstruction* context) : OpKernel(context) {
+    OP_REQUIRES_OK(context, context->GetAttr("minlength", &minlength_));
+    OP_REQUIRES_OK(context, context->GetAttr("maxlength", &maxlength_));
+    OP_REQUIRES_OK(context, context->GetAttr("binary_output", &binary_output_));
+  }
+
+  void Compute(OpKernelContext* context) override {
+    const Tensor& splits = context->input(0);
+    const Tensor& values = context->input(1);
+    const Tensor& weights = context->input(2);
+    bool use_weights = weights.NumElements() > 0;
+    bool is_1d = false;
+
+    if (use_weights) {
+      OP_REQUIRES(
+          context, weights.shape() == values.shape(),
+          errors::InvalidArgument(
+              "Weights and values must have the same shape. Weight shape: ",
+              weights.shape().DebugString(),
+              "; values shape: ", values.shape().DebugString()));
+    }
+
+    const auto splits_values = splits.flat<int64>();
+    const auto values_values = values.flat<T>();
+    const auto weight_values = weights.flat<W>();
+    int num_batches = splits.NumElements() - 1;
+    int num_values = values.NumElements();
+
+    OP_REQUIRES(
+        context, num_batches > 0,
+        errors::InvalidArgument(
+            "Must provide at least 2 elements for the splits argument"));
+    OP_REQUIRES(context, splits_values(0) == 0,
+                errors::InvalidArgument("Splits must start with 0, not with ",
+                                        splits_values(0)));
+    OP_REQUIRES(context, splits_values(num_batches) == num_values,
+                errors::InvalidArgument(
+                    "Splits must end with the number of values, got ",
+                    splits_values(num_batches), " instead of ", num_values));
+
+    auto per_batch_counts = BatchedMap<W>(num_batches);
+    T max_value = 0;
+    int batch_idx = 0;
+
+    for (int idx = 0; idx < num_values; ++idx) {
+      while (idx >= splits_values(batch_idx)) {
+        batch_idx++;
+      }
+      const auto& value = values_values(idx);
+      if (value >= 0 && (maxlength_ <= 0 || value < maxlength_)) {
+        if (binary_output_) {
+          per_batch_counts[batch_idx - 1][value] = 1;
+        } else if (use_weights) {
+          per_batch_counts[batch_idx - 1][value] += weight_values(idx);
+        } else {
+          per_batch_counts[batch_idx - 1][value]++;
+        }
+        if (value > max_value) {
+          max_value = value;
+        }
+      }
+    }
+
+    int num_output_values = GetOutputSize(max_value, maxlength_, minlength_);
+    OP_REQUIRES_OK(context, OutputSparse<W>(per_batch_counts, num_output_values,
+                                            is_1d, context));
+  }
+
+ private:
+  int maxlength_;
+  int minlength_;
+  bool binary_output_;
+  bool validate_;
+};
+
+#define REGISTER_W(W_TYPE) \
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tokens used
+input: 2,017
+cache read: 7,680
+cache write: 0
+output: 227
+reasoning output: 74
+
+I’m going to add the dense shape vector reuse and reject negative `dense_shape` elements before `num_batches` is used to size the batch map.
+
+tool: validate
+{
+  "ref": "73aa99469d027c5870936a7ef31d056ba8a64867",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/count_ops.cc b/tensorflow/core/kernels/count_ops.cc\n--- a/tensorflow/core/kernels/count_ops.cc\n+++ b/tensorflow/core/kernels/count_ops.cc\n@@ -193,9 +193,17 @@ class SparseCount : public OpKernel {\n     }\n \n     bool is_1d = shape.NumElements() == 1;\n-    int num_batches = is_1d ? 1 : shape.flat<int64>()(0);\n+    auto shape_vector = shape.flat<int64>();\n+    int num_batches = is_1d ? 1 : shape_vector(0);\n     int num_values = values.NumElements();\n \n+    for (int b = 0; b < shape_vector.size(); b++) {\n+      OP_REQUIRES(context, shape_vector(b) >= 0,\n+                  errors::InvalidArgument(\n+                      \"Elements in dense_shape must be >= 0. Instead got:\",\n+                      shape.DebugString()));\n+    }\n+\n     OP_REQUIRES(context, num_values == indices.shape().dim_size(0),\n                 errors::InvalidArgument(\n                     \"Number of values must match first dimension of indices.\",\n"
+}
+Error executing validate: Traceback (most recent call last):
+  File "C:\Users\Akindu Himan\.config\opencode\scripts\validate.py", line 320, in <module>
+    main()
+  File "C:\Users\Akindu Himan\.config\opencode\scripts\validate.py", line 315, in main
+    result = validate(args.repo, args.ref, args.patch_file, args.mode, args.err_msg, args.revise_context)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Akindu Himan\.config\opencode\scripts\validate.py", line 284, in validate
+    return apply_hunk(repo, repo_dir, ref, patch, revise_context)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Akindu Himan\.config\opencode\scripts\validate.py", line 126, in apply_hunk
+    revised_patch, _ = utils.revise_patch(patch, repo_dir, revise_context)
+                       ^^^^^^^^^^^^^^^^^^
+AttributeError: 'NoneType' object has no attribute 'revise_patch'
+
+tokens used
+input: 2,788
+cache read: 8,704
+cache write: 0
+output: 362
+reasoning output: 54
+
+The custom hunk validator failed internally before applying the hunk, so I’ll proceed with the checked context and verify locally with `git diff` after editing.
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/kernels/count_ops.cc\n@@\n-    bool is_1d = shape.NumElements() == 1;\n-    int num_batches = is_1d ? 1 : shape.flat<int64>()(0);\n+    bool is_1d = shape.NumElements() == 1;\n+    auto shape_vector = shape.flat<int64>();\n+    int num_batches = is_1d ? 1 : shape_vector(0);\n     int num_values = values.NumElements();\n \n+    for (int b = 0; b < shape_vector.size(); b++) {\n+      OP_REQUIRES(context, shape_vector(b) >= 0,\n+                  errors::InvalidArgument(\n+                      \"Elements in dense_shape must be >= 0. Instead got:\",\n+                      shape.DebugString()));\n+    }\n+\n     OP_REQUIRES(context, num_values == indices.shape().dim_size(0),\n                 errors::InvalidArgument(\n                     \"Number of values must match first dimension of indices.\",\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/kernels/count_ops.cc
+
+tokens used
+input: 1,415
+cache read: 10,752
+cache write: 0
+output: 304
+reasoning output: 62
+
+The source change is applied. I’m checking the resulting diff to ensure no unrelated files were modified.
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/kernels/count_ops.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0008-73aa99469d02",
+  "timeout": 120000
+}
+warning: in the working copy of 'tensorflow/core/kernels/count_ops.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/kernels/count_ops.cc b/tensorflow/core/kernels/count_ops.cc
+index 087deef081..fa48c49a5f 100644
+--- a/tensorflow/core/kernels/count_ops.cc
++++ b/tensorflow/core/kernels/count_ops.cc
+@@ -193,9 +193,17 @@ class SparseCount : public OpKernel {
+     }
+ 
+     bool is_1d = shape.NumElements() == 1;
+-    int num_batches = is_1d ? 1 : shape.flat<int64>()(0);
++    auto shape_vector = shape.flat<int64>();
++    int num_batches = is_1d ? 1 : shape_vector(0);
+     int num_values = values.NumElements();
+ 
++    for (int b = 0; b < shape_vector.size(); b++) {
++      OP_REQUIRES(context, shape_vector(b) >= 0,
++                  errors::InvalidArgument(
++                      "Elements in dense_shape must be >= 0. Instead got:",
++                      shape.DebugString()));
++    }
++
+     OP_REQUIRES(context, num_values == indices.shape().dim_size(0),
+                 errors::InvalidArgument(
+                     "Number of values must match first dimension of indices.",
+
+tokens used
+input: 783
+cache read: 11,776
+cache write: 0
+output: 102
+reasoning output: 12
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/kernels/count_ops.cc b/tensorflow/core/kernels/count_ops.cc
+    index 087deef081..fa48c49a5f 100644
+    --- a/tensorflow/core/kernels/count_ops.cc
+    +++ b/tensorflow/core/kernels/count_ops.cc
+    @@ -193,9 +193,17 @@ class SparseCount : public OpKernel {
+         }
+     
+         bool is_1d = shape.NumElements() == 1;
+    -    int num_batches = is_1d ? 1 : shape.flat<int64>()(0);
+    +    auto shape_vector = shape.flat<int64>();
+    +    int num_batches = is_1d ? 1 : shape_vector(0);
+         int num_values = values.NumElements();
+     
+    +    for (int b = 0; b < shape_vector.size(); b++) {
+    +      OP_REQUIRES(context, shape_vector(b) >= 0,
+    +                  errors::InvalidArgument(
+    +                      "Elements in dense_shape must be >= 0. Instead got:",
+    +                      shape.DebugString()));
+    +    }
+    +
+         OP_REQUIRES(context, num_values == indices.shape().dim_size(0),
+                     errors::InvalidArgument(
+                         "Number of values must match first dimension of indices.",
+  notes: >
+    Backported the SparseCount dense_shape negative-element validation; custom hunk validation failed internally, and the final local diff was inspected.
+```
+
+tokens used
+input: 1,206
+cache read: 11,776
+cache write: 0
+output: 338
+reasoning output: 48

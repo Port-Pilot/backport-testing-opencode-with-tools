@@ -1,0 +1,1179 @@
+I’ll inspect the target-side `conv_grad_ops_3d.cc` around the affected classes and compare only against the provided 2.5.0 patch intent before editing.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target Conv3D backprop code locations",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Map each provided security hunk to TensorFlow 2.1.4 code",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "content": "Apply minimal backport changes",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "content": "Verify resulting diff and hunk applicability if needed",
+      "status": "pending",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target Conv3D backprop code locations",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Map each provided security hunk to TensorFlow 2.1.4 code",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "content": "Apply minimal backport changes",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "content": "Verify resulting diff and hunk applicability if needed",
+    "status": "pending",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 346
+cache read: 8,704
+cache write: 0
+output: 147
+reasoning output: 0
+
+tool: locate_symbol
+{
+  "ref": "a5d613d23c2aa234d370d04b19ccabe3824c284d",
+  "symbol": "Conv3DCustomBackpropInputOp"
+}
+Failed to checkout ref a5d613d23c2aa234d370d04b19ccabe3824c284d: Cmd('git') failed due to: exit code(128)
+  cmdline: git reset --hard
+  stderr: 'fatal: Unable to create 'C:/1 Disk D/Research/FYP/backport-testing-codex2/tensorflow/.git/worktrees/row-0009-a5d613d23c2a/index.lock': File exists.
+
+Another git process seems to be running in this repository, e.g.
+an editor opened by 'git commit'. Please make sure all processes
+are terminated then try again. If it still fails, a git process
+may have crashed in this repository earlier:
+remove the file manually to continue.'
+
+tool: locate_symbol
+{
+  "ref": "a5d613d23c2aa234d370d04b19ccabe3824c284d",
+  "symbol": "Conv3DBackpropFilterOp"
+}
+Failed to checkout ref a5d613d23c2aa234d370d04b19ccabe3824c284d: Cmd('git') failed due to: exit code(128)
+  cmdline: git reset --hard
+  stderr: 'fatal: Unable to create 'C:/1 Disk D/Research/FYP/backport-testing-codex2/tensorflow/.git/worktrees/row-0009-a5d613d23c2a/index.lock': File exists.
+
+Another git process seems to be running in this repository, e.g.
+an editor opened by 'git commit'. Please make sure all processes
+are terminated then try again. If it still fails, a git process
+may have crashed in this repository earlier:
+remove the file manually to continue.'
+
+tool: locate_symbol
+{
+  "ref": "a5d613d23c2aa234d370d04b19ccabe3824c284d",
+  "symbol": "Conv3DBackpropInputOp"
+}
+Failed to checkout ref a5d613d23c2aa234d370d04b19ccabe3824c284d: Cmd('git') failed due to: exit code(128)
+  cmdline: git reset --hard
+  stderr: 'fatal: Unable to create 'C:/1 Disk D/Research/FYP/backport-testing-codex2/tensorflow/.git/worktrees/row-0009-a5d613d23c2a/index.lock': File exists.
+
+Another git process seems to be running in this repository, e.g.
+an editor opened by 'git commit'. Please make sure all processes
+are terminated then try again. If it still fails, a git process
+may have crashed in this repository earlier:
+remove the file manually to continue.'
+
+tool: locate_symbol
+{
+  "ref": "a5d613d23c2aa234d370d04b19ccabe3824c284d",
+  "symbol": "Conv3DCustomBackpropFilterOp"
+}
+Failed to run ctags. Please ensure ctags is installed: [WinError 2] The system cannot find the file specified
+
+tokens used
+input: 644
+cache read: 8,704
+cache write: 0
+output: 210
+reasoning output: 0
+
+The ref-based symbol helper is blocked by a stale/contended git worktree lock, so I’m switching to direct inspection of the already checked-out target files without changing refs.
+
+tool: glob
+{
+  "pattern": "tensorflow/core/kernels/conv_grad_ops_3d.cc"
+}
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0009-a5d613d23c2a\tensorflow\core\kernels\conv_grad_ops_3d.cc
+
+tokens used
+input: 1,405
+cache read: 8,704
+cache write: 0
+output: 73
+reasoning output: 21
+
+tool: grep
+{
+  "pattern": "class Conv3D.*Backprop|work_unit_size|input_shape\\.dim_size\\(4\\)",
+  "path": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0009-a5d613d23c2a\\tensorflow\\core\\kernels\\conv_grad_ops_3d.cc"
+}
+Found 25 matches
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0009-a5d613d23c2a\tensorflow\core\kernels\conv_grad_filter_ops.cc:
+  Line 506:     // image ('work_unit_size').
+
+  Line 520:     const size_t work_unit_size = size_A + size_B + size_C;
+
+  Line 523:         (target_working_set_size + work_unit_size - 1) / work_unit_size;
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0009-a5d613d23c2a\tensorflow\core\kernels\conv_grad_input_ops.cc:
+  Line 655:     const size_t work_unit_size = size_A + size_B + size_C;
+
+  Line 660:     const size_t thread_work_unit_size =
+
+  Line 661:         work_unit_size / worker_threads.num_threads;
+
+  Line 664:     const size_t min_thread_work_unit_size = l2_cache_size / sizeof(T);
+
+  Line 674:         thread_work_unit_size >= min_thread_work_unit_size;
+
+  Line 679:             : (target_working_set_size + work_unit_size - 1) / work_unit_size;
+
+  Line 769:               work_unit_size, shard);
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0009-a5d613d23c2a\tensorflow\core\kernels\conv_grad_ops_3d.cc:
+  Line 172: class Conv3DBackpropInputOp : public OpKernel {
+
+  Line 272: class Conv3DCustomBackpropInputOp : public OpKernel {
+
+  Line 404:     const int64 work_unit_size = size_A + size_B + size_C;
+
+  Line 418:             : (target_working_set_size + work_unit_size - 1) / work_unit_size;
+
+  Line 571:               work_unit_size, shard);
+
+  Line 628: class Conv3DBackpropFilterOp : public OpKernel {
+
+  Line 734: class Conv3DCustomBackpropFilterOp : public OpKernel {
+
+  Line 861:     // of an individual image ('work_unit_size').
+
+  Line 877:     const int64 work_unit_size = size_A + size_B + size_C;
+
+  Line 880:         (target_working_set_size + work_unit_size - 1) / work_unit_size;
+
+  Line 1098: class Conv3DBackpropInputOp<GPUDevice, T> : public OpKernel {
+
+  Line 1266:         .set_spatial_dim(DimIndex::X, compatible_input_shape.dim_size(4))
+
+  Line 1536: class Conv3DBackpropFilterOp<GPUDevice, T> : public OpKernel {
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0009-a5d613d23c2a\tensorflow\core\kernels\pooling_ops_common.h:
+  Line 603:   const int64 work_unit_size =
+
+  Line 610:   const int64 work_unit_cost = std::max(int64{10000}, work_unit_size / 100LL);
+
+tokens used
+input: 540
+cache read: 9,728
+cache write: 0
+output: 96
+reasoning output: 0
+
+The affected classes exist in the same target file, with older line numbers. I’m going to add the same dimensionality guards before `dim_size()` access and the zero-work guard before shard-size division in the matching CPU custom paths.
+
+tool: read
+{
+  "filePath": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0009-a5d613d23c2a\\tensorflow\\core\\kernels\\conv_grad_ops_3d.cc",
+  "offset": 220,
+  "limit": 240
+}
+<path>C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0009-a5d613d23c2a\tensorflow\core\kernels\conv_grad_ops_3d.cc</path>
+<type>file</type>
+<content>
+220:     OP_REQUIRES_OK(context, context->GetAttr("padding", &padding_));
+221:   }
+222: 
+223:   void Compute(OpKernelContext* context) override {
+224:     const Tensor& filter = context->input(1);
+225:     const TensorShape& filter_shape = filter.shape();
+226: 
+227:     const Tensor& out_backprop = context->input(2);
+228:     const TensorShape& out_backprop_shape = out_backprop.shape();
+229: 
+230:     TensorShape input_shape;
+231:     if (takes_shape_) {
+232:       const Tensor& input_sizes = context->input(0);
+233:       // MakeShape is able to handle both DT_INT32 and DT_INT64 for input_sizes.
+234:       OP_REQUIRES_OK(context, MakeShape(input_sizes, &input_shape));
+235:     } else {
+236:       input_shape = context->input(0).shape();
+237:     }
+238: 
+239:     ConvBackpropDimensions dims;
+240:     OP_REQUIRES_OK(context, ConvBackpropComputeDimensions(
+241:                                 "Conv3DBackpropInputOp", /*num_spatial_dims=*/3,
+242:                                 input_shape, filter_shape, out_backprop_shape,
+243:                                 stride_, padding_, data_format_, &dims));
+244: 
+245:     Tensor* in_backprop;
+246:     OP_REQUIRES_OK(context,
+247:                    context->allocate_output(0, input_shape, &in_backprop));
+248: 
+249:     functor::CuboidConvolutionBackwardInput<Device, T>()(
+250:         context->eigen_device<Device>(),
+251:         in_backprop->tensor<T, 5>(),                     // input_backward
+252:         filter.tensor<T, 5>(),                           // filter
+253:         out_backprop.tensor<T, 5>(),                     // output_backward
+254:         static_cast<int>(dims.spatial_dims[0].stride),   // stride_planes
+255:         static_cast<int>(dims.spatial_dims[1].stride),   // stride_rows
+256:         static_cast<int>(dims.spatial_dims[2].stride));  // stride_cols
+257:   }
+258: 
+259:  private:
+260:   std::vector<int32> dilation_;
+261:   std::vector<int32> stride_;
+262:   Padding padding_;
+263:   TensorFormat data_format_;
+264:   bool takes_shape_;
+265: 
+266:   TF_DISALLOW_COPY_AND_ASSIGN(Conv3DBackpropInputOp);
+267: };
+268: 
+269: // Custom backprop for input that explicitly does the work sharding and calls
+270: // Eigen only to multiply matrices.
+271: template <typename Device, class T>
+272: class Conv3DCustomBackpropInputOp : public OpKernel {
+273:   // Limit the maximum size of allocated temporary buffer to
+274:   // kMaxTempAllocationOverhead times the size of the input tensors (input,
+275:   // filter, out_backprop). If the size of the temporary buffer exceeds this
+276:   // limit, fallback on Eigen implementation.
+277:   static constexpr int kMaxTempAllocationOverhead = 25;
+278: 
+279:  public:
+280:   explicit Conv3DCustomBackpropInputOp(OpKernelConstruction* context)
+281:       : OpKernel(context),
+282:         data_format_(FORMAT_NHWC),
+283:         takes_shape_(type_string().find("V2") != std::string::npos) {
+284:     // data_format is only available in V2.
+285:     if (takes_shape_) {
+286:       string data_format;
+287:       OP_REQUIRES_OK(context, context->GetAttr("data_format", &data_format));
+288:       OP_REQUIRES(context, FormatFromString(data_format, &data_format_),
+289:                   errors::InvalidArgument("Invalid data format"));
+290:       OP_REQUIRES(
+291:           context, data_format_ == FORMAT_NHWC,
+292:           errors::InvalidArgument(
+293:               "Conv3DBackpropInputOpV2 only supports NDHWC on the CPU."));
+294:     }
+295: 
+296:     OP_REQUIRES_OK(context, context->GetAttr("dilations", &dilation_));
+297:     OP_REQUIRES(context, dilation_.size() == 5,
+298:                 errors::InvalidArgument("Dilation rates field must "
+299:                                         "specify 5 dimensions"));
+300:     OP_REQUIRES(context,
+301:                 (GetTensorDim(dilation_, data_format_, 'C') == 1 &&
+302:                  GetTensorDim(dilation_, data_format_, 'N') == 1),
+303:                 errors::InvalidArgument(
+304:                     "Current implementation does not yet support "
+305:                     "dilation rates in the batch and depth dimensions."));
+306: 
+307:     // TODO(yangzihao): Add CPU version of dilated conv 3D.
+308:     OP_REQUIRES(context,
+309:                 (GetTensorDim(dilation_, data_format_, '0') == 1 &&
+310:                  GetTensorDim(dilation_, data_format_, '1') == 1 &&
+311:                  GetTensorDim(dilation_, data_format_, '2') == 1),
+312:                 errors::InvalidArgument(
+313:                     "Current CPU implementation does not yet support "
+314:                     "dilation rates larger than 1."));
+315: 
+316:     OP_REQUIRES_OK(context, context->GetAttr("strides", &stride_));
+317:     OP_REQUIRES(context, stride_.size() == 5,
+318:                 errors::InvalidArgument("Sliding window strides field must "
+319:                                         "specify 5 dimensions"));
+320:     OP_REQUIRES(
+321:         context,
+322:         (GetTensorDim(stride_, data_format_, 'C') == 1 &&
+323:          GetTensorDim(stride_, data_format_, 'N') == 1),
+324:         errors::InvalidArgument("Current implementation does not yet support "
+325:                                 "strides in the batch and depth dimensions."));
+326:     OP_REQUIRES_OK(context, context->GetAttr("padding", &padding_));
+327:   }
+328: 
+329:   void Compute(OpKernelContext* context) override {
+330:     const Tensor& filter = context->input(1);
+331:     const TensorShape& filter_shape = filter.shape();
+332: 
+333:     const Tensor& out_backprop = context->input(2);
+334:     const TensorShape& out_backprop_shape = out_backprop.shape();
+335: 
+336:     TensorShape input_shape;
+337:     if (takes_shape_) {
+338:       const Tensor& input_sizes = context->input(0);
+339:       // MakeShape is able to handle both DT_INT32 and DT_INT64 for input_sizes.
+340:       OP_REQUIRES_OK(context, MakeShape(input_sizes, &input_shape));
+341:     } else {
+342:       input_shape = context->input(0).shape();
+343:     }
+344: 
+345:     ConvBackpropDimensions dims;
+346:     OP_REQUIRES_OK(context, ConvBackpropComputeDimensions(
+347:                                 "Conv3DBackpropInputOp", /*num_spatial_dims=*/3,
+348:                                 input_shape, filter_shape, out_backprop_shape,
+349:                                 stride_, padding_, data_format_, &dims));
+350: 
+351:     Tensor* in_backprop;
+352:     OP_REQUIRES_OK(context,
+353:                    context->allocate_output(0, input_shape, &in_backprop));
+354: 
+355:     int64 top_pad_planes, bottom_pad_planes;
+356:     int64 top_pad_rows, bottom_pad_rows;
+357:     int64 left_pad_cols, right_pad_cols;
+358: 
+359:     OP_REQUIRES_OK(context, GetWindowedOutputSizeVerbose(
+360:                                 dims.spatial_dims[0].input_size,
+361:                                 dims.spatial_dims[0].filter_size,
+362:                                 dims.spatial_dims[0].stride, padding_,
+363:                                 &dims.spatial_dims[0].output_size,
+364:                                 &top_pad_planes, &bottom_pad_planes));
+365:     OP_REQUIRES_OK(context, GetWindowedOutputSizeVerbose(
+366:                                 dims.spatial_dims[1].input_size,
+367:                                 dims.spatial_dims[1].filter_size,
+368:                                 dims.spatial_dims[1].stride, padding_,
+369:                                 &dims.spatial_dims[1].output_size,
+370:                                 &top_pad_rows, &bottom_pad_rows));
+371:     OP_REQUIRES_OK(context, GetWindowedOutputSizeVerbose(
+372:                                 dims.spatial_dims[2].input_size,
+373:                                 dims.spatial_dims[2].filter_size,
+374:                                 dims.spatial_dims[2].stride, padding_,
+375:                                 &dims.spatial_dims[2].output_size,
+376:                                 &left_pad_cols, &right_pad_cols));
+377: 
+378:     // TODO(ezhulenev): Extract work size and shard estimation to shared
+379:     // functions in conv_grad_ops, and update 2d convolution backprop.
+380: 
+381:     // The total dimension size of each kernel.
+382:     const int64 filter_total_size =
+383:         dims.spatial_dims[0].filter_size * dims.spatial_dims[1].filter_size *
+384:         dims.spatial_dims[2].filter_size * dims.in_depth;
+385: 
+386:     // The output image size is the spatial size of the output.
+387:     const int64 output_image_size = dims.spatial_dims[0].output_size *
+388:                                     dims.spatial_dims[1].output_size *
+389:                                     dims.spatial_dims[2].output_size;
+390: 
+391:     const auto cache_sizes = Eigen::internal::CacheSizes();
+392:     const ptrdiff_t l3_cache_size = cache_sizes.m_l3;
+393: 
+394:     // Use L3 cache size as target working set size.
+395:     const size_t target_working_set_size = l3_cache_size / sizeof(T);
+396: 
+397:     // Calculate size of matrices involved in MatMul: C = A x B.
+398:     const int64 size_A = output_image_size * dims.out_depth;
+399: 
+400:     const int64 size_B = filter_total_size * dims.out_depth;
+401: 
+402:     const int64 size_C = output_image_size * filter_total_size;
+403: 
+404:     const int64 work_unit_size = size_A + size_B + size_C;
+405: 
+406:     auto worker_threads = *(context->device()->tensorflow_cpu_worker_threads());
+407: 
+408:     // Use parallel tensor contractions if there is no batching.
+409:     //
+410:     // Compared to Conv2D code, this version is missing work size estimation. In
+411:     // benchmarks I didn't find a case when it's beneficial to run parallel
+412:     // contraction compared to sharding and matmuls.
+413:     const bool use_parallel_contraction = dims.batch_size == 1;
+414: 
+415:     const size_t shard_size =
+416:         use_parallel_contraction
+417:             ? 1
+418:             : (target_working_set_size + work_unit_size - 1) / work_unit_size;
+419: 
+420:     // Total number of elements in all the tensors used by this kernel.
+421:     int64 total_tensor_elements = input_shape.num_elements() +
+422:                                   filter_shape.num_elements() +
+423:                                   out_backprop_shape.num_elements();
+424: 
+425:     // Shape of the temporary workspace buffer.
+426:     TensorShape col_buffer_shape = {static_cast<int64>(shard_size),
+427:                                     static_cast<int64>(output_image_size),
+428:                                     static_cast<int64>(filter_total_size)};
+429:     int64 col_buffer_elements = col_buffer_shape.num_elements();
+430: 
+431:     // If the temporary allocation overhead is too large, fallback on Eigen
+432:     // implementation which requires much less memory.
+433:     int64 col_buffer_overhead = col_buffer_elements / total_tensor_elements;
+434:     if (col_buffer_overhead > kMaxTempAllocationOverhead) {
+435:       VLOG(2) << "Fallback on Eigen implementation of Conv3DBackpropInputOp: "
+436:                  "col_buffer_overhead="
+437:               << col_buffer_overhead;
+438: 
+439:       functor::CuboidConvolutionBackwardInput<Device, T>()(
+440:           context->eigen_device<Device>(),
+441:           in_backprop->tensor<T, 5>(),                     // input_backward
+442:           filter.tensor<T, 5>(),                           // filter
+443:           out_backprop.tensor<T, 5>(),                     // output_backward
+444:           static_cast<int>(dims.spatial_dims[0].stride),   // stride_planes
+445:           static_cast<int>(dims.spatial_dims[1].stride),   // stride_rows
+446:           static_cast<int>(dims.spatial_dims[2].stride));  // stride_cols
+447: 
+448:       return;
+449:     }
+450: 
+451:     Tensor col_buffer;
+452:     OP_REQUIRES_OK(context,
+453:                    context->allocate_temp(DataTypeToEnum<T>::value,
+454:                                           col_buffer_shape, &col_buffer));
+455: 
+456:     // The input offset corresponding to a single input image.
+457:     const int64 input_offset = dims.spatial_dims[0].input_size *
+458:                                dims.spatial_dims[1].input_size *
+459:                                dims.spatial_dims[2].input_size * dims.in_depth;
+
+(Showing lines 220-459 of 1954. Use offset=460 to continue.)
+</content>
+
+tool: read
+{
+  "filePath": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0009-a5d613d23c2a\\tensorflow\\core\\kernels\\conv_grad_ops_3d.cc",
+  "offset": 680,
+  "limit": 240
+}
+<path>C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0009-a5d613d23c2a\tensorflow\core\kernels\conv_grad_ops_3d.cc</path>
+<type>file</type>
+<content>
+680:     const Tensor& input = context->input(0);
+681:     const TensorShape& input_shape = input.shape();
+682: 
+683:     const Tensor& out_backprop = context->input(2);
+684:     const TensorShape& out_backprop_shape = out_backprop.shape();
+685: 
+686:     TensorShape filter_shape;
+687:     if (takes_shape_) {
+688:       const Tensor& filter_sizes = context->input(1);
+689:       OP_REQUIRES_OK(context, TensorShapeUtils::MakeShape(
+690:                                   filter_sizes.vec<int32>(), &filter_shape));
+691:     } else {
+692:       filter_shape = context->input(1).shape();
+693:     }
+694: 
+695:     ConvBackpropDimensions dims;
+696:     OP_REQUIRES_OK(context,
+697:                    ConvBackpropComputeDimensions(
+698:                        "Conv3DBackpropFilterOp", /*num_spatial_dims=*/3,
+699:                        input_shape, filter_shape, out_backprop_shape, stride_,
+700:                        padding_, data_format_, &dims));
+701: 
+702:     Tensor* filter_backprop;
+703:     OP_REQUIRES_OK(context,
+704:                    context->allocate_output(0, filter_shape, &filter_backprop));
+705: 
+706:     if (input_shape.num_elements() == 0) {
+707:       filter_backprop->template flat<T>().setZero();
+708:       return;
+709:     }
+710: 
+711:     functor::CuboidConvolutionBackwardFilter<Device, T>()(
+712:         context->eigen_device<Device>(),
+713:         filter_backprop->tensor<T, 5>(),                 // filter_backward
+714:         input.tensor<T, 5>(),                            // input
+715:         out_backprop.tensor<T, 5>(),                     // output_backward
+716:         static_cast<int>(dims.spatial_dims[0].stride),   // stride_planes
+717:         static_cast<int>(dims.spatial_dims[1].stride),   // stride_rows
+718:         static_cast<int>(dims.spatial_dims[2].stride));  // stride_cols
+719:   }
+720: 
+721:  private:
+722:   std::vector<int32> dilation_;
+723:   std::vector<int32> stride_;
+724:   Padding padding_;
+725:   TensorFormat data_format_;
+726:   bool takes_shape_;
+727: 
+728:   TF_DISALLOW_COPY_AND_ASSIGN(Conv3DBackpropFilterOp);
+729: };
+730: 
+731: // Custom backprop for filter that explicitly does the work sharding and calls
+732: // Eigen only to multiply matrices.
+733: template <typename Device, class T>
+734: class Conv3DCustomBackpropFilterOp : public OpKernel {
+735:   // Limit the maximum size of allocated temporary buffer to
+736:   // kMaxTempAllocationOverhead times the size of the input tensors (input,
+737:   // filter, out_backprop). If the size of the temporary buffer exceeds this
+738:   // limit, fallback on Eigen implementation.
+739:   static constexpr int kMaxTempAllocationOverhead = 25;
+740: 
+741:  public:
+742:   explicit Conv3DCustomBackpropFilterOp(OpKernelConstruction* context)
+743:       : OpKernel(context),
+744:         data_format_(FORMAT_NHWC),
+745:         takes_shape_(type_string().find("V2") != std::string::npos) {
+746:     // data_format is only available in V2.
+747:     if (takes_shape_) {
+748:       string data_format;
+749:       OP_REQUIRES_OK(context, context->GetAttr("data_format", &data_format));
+750:       OP_REQUIRES(context, FormatFromString(data_format, &data_format_),
+751:                   errors::InvalidArgument("Invalid data format"));
+752:       OP_REQUIRES(
+753:           context, data_format_ == FORMAT_NHWC,
+754:           errors::InvalidArgument(
+755:               "Conv3DBackpropFilterOpV2 only supports NDHWC on the CPU."));
+756:     }
+757: 
+758:     OP_REQUIRES_OK(context, context->GetAttr("dilations", &dilation_));
+759:     OP_REQUIRES(context, dilation_.size() == 5,
+760:                 errors::InvalidArgument("Dilation rates field must "
+761:                                         "specify 5 dimensions"));
+762:     OP_REQUIRES(context,
+763:                 (GetTensorDim(dilation_, data_format_, 'C') == 1 &&
+764:                  GetTensorDim(dilation_, data_format_, 'N') == 1),
+765:                 errors::InvalidArgument(
+766:                     "Current implementation does not yet support "
+767:                     "dilation rates in the batch and depth dimensions."));
+768: 
+769:     // TODO(yangzihao): Add CPU version of dilated conv 3D.
+770:     OP_REQUIRES(context,
+771:                 (GetTensorDim(dilation_, data_format_, '0') == 1 &&
+772:                  GetTensorDim(dilation_, data_format_, '1') == 1 &&
+773:                  GetTensorDim(dilation_, data_format_, '2') == 1),
+774:                 errors::InvalidArgument(
+775:                     "Current CPU implementation does not yet support "
+776:                     "dilation rates larger than 1."));
+777: 
+778:     OP_REQUIRES_OK(context, context->GetAttr("strides", &stride_));
+779:     OP_REQUIRES(context, stride_.size() == 5,
+780:                 errors::InvalidArgument("Sliding window strides field must "
+781:                                         "specify 5 dimensions"));
+782:     OP_REQUIRES(
+783:         context,
+784:         (GetTensorDim(stride_, data_format_, 'C') == 1 &&
+785:          GetTensorDim(stride_, data_format_, 'N') == 1),
+786:         errors::InvalidArgument("Current implementation does not yet support "
+787:                                 "strides in the batch and depth dimensions."));
+788:     OP_REQUIRES_OK(context, context->GetAttr("padding", &padding_));
+789:   }
+790: 
+791:   void Compute(OpKernelContext* context) override {
+792:     const Tensor& input = context->input(0);
+793:     const TensorShape& input_shape = input.shape();
+794: 
+795:     const Tensor& out_backprop = context->input(2);
+796:     const TensorShape& out_backprop_shape = out_backprop.shape();
+797: 
+798:     TensorShape filter_shape;
+799:     if (takes_shape_) {
+800:       const Tensor& filter_sizes = context->input(1);
+801:       OP_REQUIRES_OK(context, TensorShapeUtils::MakeShape(
+802:                                   filter_sizes.vec<int32>(), &filter_shape));
+803:     } else {
+804:       filter_shape = context->input(1).shape();
+805:     }
+806: 
+807:     ConvBackpropDimensions dims;
+808:     OP_REQUIRES_OK(context,
+809:                    ConvBackpropComputeDimensions(
+810:                        "Conv3DBackpropFilterOp", /*num_spatial_dims=*/3,
+811:                        input_shape, filter_shape, out_backprop_shape, stride_,
+812:                        padding_, data_format_, &dims));
+813: 
+814:     Tensor* filter_backprop;
+815:     OP_REQUIRES_OK(context,
+816:                    context->allocate_output(0, filter_shape, &filter_backprop));
+817: 
+818:     if (input_shape.num_elements() == 0) {
+819:       filter_backprop->template flat<T>().setZero();
+820:       return;
+821:     }
+822: 
+823:     int64 top_pad_planes, bottom_pad_planes;
+824:     int64 top_pad_rows, bottom_pad_rows;
+825:     int64 left_pad_cols, right_pad_cols;
+826: 
+827:     OP_REQUIRES_OK(context, GetWindowedOutputSizeVerbose(
+828:                                 dims.spatial_dims[0].input_size,
+829:                                 dims.spatial_dims[0].filter_size,
+830:                                 dims.spatial_dims[0].stride, padding_,
+831:                                 &dims.spatial_dims[0].output_size,
+832:                                 &top_pad_planes, &bottom_pad_planes));
+833:     OP_REQUIRES_OK(context, GetWindowedOutputSizeVerbose(
+834:                                 dims.spatial_dims[1].input_size,
+835:                                 dims.spatial_dims[1].filter_size,
+836:                                 dims.spatial_dims[1].stride, padding_,
+837:                                 &dims.spatial_dims[1].output_size,
+838:                                 &top_pad_rows, &bottom_pad_rows));
+839:     OP_REQUIRES_OK(context, GetWindowedOutputSizeVerbose(
+840:                                 dims.spatial_dims[2].input_size,
+841:                                 dims.spatial_dims[2].filter_size,
+842:                                 dims.spatial_dims[2].stride, padding_,
+843:                                 &dims.spatial_dims[2].output_size,
+844:                                 &left_pad_cols, &right_pad_cols));
+845: 
+846:     // TODO(ezhulenev): Extract work size and shard estimation to shared
+847:     // functions in conv_grad_ops, and update 2d convolution backprop.
+848: 
+849:     // The total dimension size of each kernel.
+850:     const int64 filter_total_size =
+851:         dims.spatial_dims[0].filter_size * dims.spatial_dims[1].filter_size *
+852:         dims.spatial_dims[2].filter_size * dims.in_depth;
+853:     // The output image size is the spatial size of the output.
+854:     const int64 output_image_size = dims.spatial_dims[0].output_size *
+855:                                     dims.spatial_dims[1].output_size *
+856:                                     dims.spatial_dims[2].output_size;
+857: 
+858:     // Shard 'batch' images (volumes) into 'shard_size' groups of images
+859:     // (volumes) to be fed into the parallel matmul. Calculate 'shard_size' by
+860:     // dividing the L3 cache size ('target_working_set_size') by the matmul size
+861:     // of an individual image ('work_unit_size').
+862: 
+863:     const auto cache_sizes = Eigen::internal::CacheSizes();
+864:     const ptrdiff_t l3_cache_size = cache_sizes.m_l3;
+865: 
+866:     // TODO(andydavis)
+867:     // *) Consider reducing 'target_working_set_size' if L3 is shared by
+868:     //    other concurrently running tensorflow ops.
+869:     const size_t target_working_set_size = l3_cache_size / sizeof(T);
+870: 
+871:     const int64 size_A = output_image_size * filter_total_size;
+872: 
+873:     const int64 size_B = output_image_size * dims.out_depth;
+874: 
+875:     const int64 size_C = filter_total_size * dims.out_depth;
+876: 
+877:     const int64 work_unit_size = size_A + size_B + size_C;
+878: 
+879:     const size_t shard_size =
+880:         (target_working_set_size + work_unit_size - 1) / work_unit_size;
+881: 
+882:     // Total number of elements in all the tensors used by this kernel.
+883:     int64 total_tensor_elements = input_shape.num_elements() +
+884:                                   filter_shape.num_elements() +
+885:                                   out_backprop_shape.num_elements();
+886: 
+887:     // Shape of the temporary workspace buffer.
+888:     TensorShape col_buffer_shape = {static_cast<int64>(shard_size),
+889:                                     static_cast<int64>(output_image_size),
+890:                                     static_cast<int64>(filter_total_size)};
+891:     int64 col_buffer_elements = col_buffer_shape.num_elements();
+892: 
+893:     // If the temporary allocation overhead is too large, fallback on Eigen
+894:     // implementation which requires much less memory.
+895:     int64 col_buffer_overhead = col_buffer_elements / total_tensor_elements;
+896:     if (col_buffer_overhead > kMaxTempAllocationOverhead) {
+897:       VLOG(2) << "Fallback on Eigen implementation of Conv3DBackpropFilterOp: "
+898:                  "col_buffer_overhead="
+899:               << col_buffer_overhead;
+900: 
+901:       functor::CuboidConvolutionBackwardFilter<Device, T>()(
+902:           context->eigen_device<Device>(),
+903:           filter_backprop->tensor<T, 5>(),                 // filter_backward
+904:           input.tensor<T, 5>(),                            // input
+905:           out_backprop.tensor<T, 5>(),                     // output_backward
+906:           static_cast<int>(dims.spatial_dims[0].stride),   // stride_planes
+907:           static_cast<int>(dims.spatial_dims[1].stride),   // stride_rows
+908:           static_cast<int>(dims.spatial_dims[2].stride));  // stride_cols
+909: 
+910:       return;
+911:     }
+912: 
+913:     Tensor col_buffer;
+914:     OP_REQUIRES_OK(context,
+915:                    context->allocate_temp(DataTypeToEnum<T>::value,
+916:                                           col_buffer_shape, &col_buffer));
+917: 
+918:     // The input offset corresponding to a single input image.
+919:     const int64 input_offset = dims.spatial_dims[0].input_size *
+
+(Showing lines 680-919 of 1954. Use offset=920 to continue.)
+</content>
+
+tokens used
+input: 1,402
+cache read: 9,728
+cache write: 0
+output: 226
+reasoning output: 16
+
+tool: read
+{
+  "filePath": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0009-a5d613d23c2a\\tensorflow\\core\\kernels\\conv_grad_ops_3d.cc",
+  "offset": 620,
+  "limit": 90
+}
+<path>C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0009-a5d613d23c2a\tensorflow\core\kernels\conv_grad_ops_3d.cc</path>
+<type>file</type>
+<content>
+620: TF_CALL_half(REGISTER_CPU_KERNEL);
+621: TF_CALL_float(REGISTER_CPU_KERNEL);
+622: TF_CALL_double(REGISTER_CPU_KERNEL);
+623: #undef REGISTER_CPU_KERNEL
+624: 
+625: // Backprop for filter that offloads computation to
+626: // Eigen::CuboidConvolutionBackwardFilter.
+627: template <typename Device, class T>
+628: class Conv3DBackpropFilterOp : public OpKernel {
+629:  public:
+630:   explicit Conv3DBackpropFilterOp(OpKernelConstruction* context)
+631:       : OpKernel(context),
+632:         data_format_(FORMAT_NHWC),
+633:         takes_shape_(type_string().find("V2") != std::string::npos) {
+634:     // data_format is only available in V2.
+635:     if (takes_shape_) {
+636:       string data_format;
+637:       OP_REQUIRES_OK(context, context->GetAttr("data_format", &data_format));
+638:       OP_REQUIRES(context, FormatFromString(data_format, &data_format_),
+639:                   errors::InvalidArgument("Invalid data format"));
+640:       OP_REQUIRES(
+641:           context, data_format_ == FORMAT_NHWC,
+642:           errors::InvalidArgument(
+643:               "Conv3DBackpropFilterOpV2 only supports NDHWC on the CPU."));
+644:     }
+645: 
+646:     OP_REQUIRES_OK(context, context->GetAttr("dilations", &dilation_));
+647:     OP_REQUIRES(context, dilation_.size() == 5,
+648:                 errors::InvalidArgument("Dilation rates field must "
+649:                                         "specify 5 dimensions"));
+650:     OP_REQUIRES(context,
+651:                 (GetTensorDim(dilation_, data_format_, 'C') == 1 &&
+652:                  GetTensorDim(dilation_, data_format_, 'N') == 1),
+653:                 errors::InvalidArgument(
+654:                     "Current implementation does not yet support "
+655:                     "dilation rates in the batch and depth dimensions."));
+656: 
+657:     // TODO(yangzihao): Add CPU version of dilated conv 3D.
+658:     OP_REQUIRES(context,
+659:                 (GetTensorDim(dilation_, data_format_, '0') == 1 &&
+660:                  GetTensorDim(dilation_, data_format_, '1') == 1 &&
+661:                  GetTensorDim(dilation_, data_format_, '2') == 1),
+662:                 errors::InvalidArgument(
+663:                     "Current CPU implementation does not yet support "
+664:                     "dilation rates larger than 1."));
+665: 
+666:     OP_REQUIRES_OK(context, context->GetAttr("strides", &stride_));
+667:     OP_REQUIRES(context, stride_.size() == 5,
+668:                 errors::InvalidArgument("Sliding window strides field must "
+669:                                         "specify 5 dimensions"));
+670:     OP_REQUIRES(
+671:         context,
+672:         (GetTensorDim(stride_, data_format_, 'C') == 1 &&
+673:          GetTensorDim(stride_, data_format_, 'N') == 1),
+674:         errors::InvalidArgument("Current implementation does not yet support "
+675:                                 "strides in the batch and depth dimensions."));
+676:     OP_REQUIRES_OK(context, context->GetAttr("padding", &padding_));
+677:   }
+678: 
+679:   void Compute(OpKernelContext* context) override {
+680:     const Tensor& input = context->input(0);
+681:     const TensorShape& input_shape = input.shape();
+682: 
+683:     const Tensor& out_backprop = context->input(2);
+684:     const TensorShape& out_backprop_shape = out_backprop.shape();
+685: 
+686:     TensorShape filter_shape;
+687:     if (takes_shape_) {
+688:       const Tensor& filter_sizes = context->input(1);
+689:       OP_REQUIRES_OK(context, TensorShapeUtils::MakeShape(
+690:                                   filter_sizes.vec<int32>(), &filter_shape));
+691:     } else {
+692:       filter_shape = context->input(1).shape();
+693:     }
+694: 
+695:     ConvBackpropDimensions dims;
+696:     OP_REQUIRES_OK(context,
+697:                    ConvBackpropComputeDimensions(
+698:                        "Conv3DBackpropFilterOp", /*num_spatial_dims=*/3,
+699:                        input_shape, filter_shape, out_backprop_shape, stride_,
+700:                        padding_, data_format_, &dims));
+701: 
+702:     Tensor* filter_backprop;
+703:     OP_REQUIRES_OK(context,
+704:                    context->allocate_output(0, filter_shape, &filter_backprop));
+705: 
+706:     if (input_shape.num_elements() == 0) {
+707:       filter_backprop->template flat<T>().setZero();
+708:       return;
+709:     }
+
+(Showing lines 620-709 of 1954. Use offset=710 to continue.)
+</content>
+
+tokens used
+input: 6,626
+cache read: 10,752
+cache write: 0
+output: 81
+reasoning output: 44
+
+I’m applying the minimal source changes in `tensorflow/core/kernels/conv_grad_ops_3d.cc` only.
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/kernels/conv_grad_ops_3d.cc\n@@\n     } else {\n       input_shape = context->input(0).shape();\n     }\n \n+    OP_REQUIRES(context, input_shape.dims() == 5,\n+                errors::InvalidArgument(\"input tensor must have 5 dimensions\"));\n+    OP_REQUIRES(\n+        context, filter_shape.dims() == 5,\n+        errors::InvalidArgument(\"filter_sizes tensor must have 5 dimensions\"));\n+    OP_REQUIRES(\n+        context, out_backprop_shape.dims() == 5,\n+        errors::InvalidArgument(\"out_backprop tensor must have 5 dimensions\"));\n     ConvBackpropDimensions dims;\n     OP_REQUIRES_OK(context, ConvBackpropComputeDimensions(\n                                 \"Conv3DBackpropInputOp\", /*num_spatial_dims=*/3,\n@@\n     } else {\n       input_shape = context->input(0).shape();\n     }\n \n+    OP_REQUIRES(context, input_shape.dims() == 5,\n+                errors::InvalidArgument(\"input tensor must have 5 dimensions\"));\n+    OP_REQUIRES(\n+        context, filter_shape.dims() == 5,\n+        errors::InvalidArgument(\"filter_sizes tensor must have 5 dimensions\"));\n+    OP_REQUIRES(\n+        context, out_backprop_shape.dims() == 5,\n+        errors::InvalidArgument(\"out_backprop tensor must have 5 dimensions\"));\n     ConvBackpropDimensions dims;\n     OP_REQUIRES_OK(context, ConvBackpropComputeDimensions(\n                                 \"Conv3DBackpropInputOp\", /*num_spatial_dims=*/3,\n@@\n     // contraction compared to sharding and matmuls.\n     const bool use_parallel_contraction = dims.batch_size == 1;\n \n+    OP_REQUIRES(\n+        context, work_unit_size > 0,\n+        errors::InvalidArgument(\"input, filter_sizes and out_backprop tensors \"\n+                                \"must all have at least 1 element\"));\n+\n     const size_t shard_size =\n         use_parallel_contraction\n             ? 1\n@@\n     } else {\n       filter_shape = context->input(1).shape();\n     }\n \n+    OP_REQUIRES(context, input_shape.dims() == 5,\n+                errors::InvalidArgument(\"input tensor must have 5 dimensions\"));\n+    OP_REQUIRES(\n+        context, filter_shape.dims() == 5,\n+        errors::InvalidArgument(\"filter_sizes tensor must have 5 dimensions\"));\n+    OP_REQUIRES(\n+        context, out_backprop_shape.dims() == 5,\n+        errors::InvalidArgument(\"out_backprop tensor must have 5 dimensions\"));\n     ConvBackpropDimensions dims;\n     OP_REQUIRES_OK(context,\n                    ConvBackpropComputeDimensions(\n@@\n     } else {\n       filter_shape = context->input(1).shape();\n     }\n \n+    OP_REQUIRES(context, input_shape.dims() == 5,\n+                errors::InvalidArgument(\"input tensor must have 5 dimensions\"));\n+    OP_REQUIRES(\n+        context, filter_shape.dims() == 5,\n+        errors::InvalidArgument(\"filter_sizes tensor must have 5 dimensions\"));\n+    OP_REQUIRES(\n+        context, out_backprop_shape.dims() == 5,\n+        errors::InvalidArgument(\"out_backprop tensor must have 5 dimensions\"));\n     ConvBackpropDimensions dims;\n     OP_REQUIRES_OK(context,\n                    ConvBackpropComputeDimensions(\n@@\n \n     const int64 work_unit_size = size_A + size_B + size_C;\n \n+    OP_REQUIRES(\n+        context, work_unit_size > 0,\n+        errors::InvalidArgument(\"input, filter_sizes and out_backprop tensors \"\n+                                \"must all have at least 1 element\"));\n+\n     const size_t shard_size =\n         (target_working_set_size + work_unit_size - 1) / work_unit_size;\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/kernels/conv_grad_ops_3d.cc
+
+tokens used
+input: 1,769
+cache read: 16,896
+cache write: 0
+output: 1,022
+reasoning output: 33
+
+The guards are now in place. I’ll inspect the resulting diff and do a lightweight validation of the edited file/diff, without running a full build.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target Conv3D backprop code locations",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Map each provided security hunk to TensorFlow 2.1.4 code",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Apply minimal backport changes",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Verify resulting diff and hunk applicability if needed",
+      "status": "in_progress",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target Conv3D backprop code locations",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Map each provided security hunk to TensorFlow 2.1.4 code",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Apply minimal backport changes",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Verify resulting diff and hunk applicability if needed",
+    "status": "in_progress",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 1,831
+cache read: 17,920
+cache write: 0
+output: 142
+reasoning output: 0
+
+tool: bash
+{
+  "command": "git status --short",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0009-a5d613d23c2a"
+}
+ M tensorflow/core/kernels/conv_grad_ops_3d.cc
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/kernels/conv_grad_ops_3d.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0009-a5d613d23c2a"
+}
+warning: in the working copy of 'tensorflow/core/kernels/conv_grad_ops_3d.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/kernels/conv_grad_ops_3d.cc b/tensorflow/core/kernels/conv_grad_ops_3d.cc
+index 96bc41a726..f662e17e74 100644
+--- a/tensorflow/core/kernels/conv_grad_ops_3d.cc
++++ b/tensorflow/core/kernels/conv_grad_ops_3d.cc
+@@ -236,6 +236,14 @@ class Conv3DBackpropInputOp : public OpKernel {
+       input_shape = context->input(0).shape();
+     }
+ 
++    OP_REQUIRES(context, input_shape.dims() == 5,
++                errors::InvalidArgument("input tensor must have 5 dimensions"));
++    OP_REQUIRES(
++        context, filter_shape.dims() == 5,
++        errors::InvalidArgument("filter_sizes tensor must have 5 dimensions"));
++    OP_REQUIRES(
++        context, out_backprop_shape.dims() == 5,
++        errors::InvalidArgument("out_backprop tensor must have 5 dimensions"));
+     ConvBackpropDimensions dims;
+     OP_REQUIRES_OK(context, ConvBackpropComputeDimensions(
+                                 "Conv3DBackpropInputOp", /*num_spatial_dims=*/3,
+@@ -342,6 +350,14 @@ class Conv3DCustomBackpropInputOp : public OpKernel {
+       input_shape = context->input(0).shape();
+     }
+ 
++    OP_REQUIRES(context, input_shape.dims() == 5,
++                errors::InvalidArgument("input tensor must have 5 dimensions"));
++    OP_REQUIRES(
++        context, filter_shape.dims() == 5,
++        errors::InvalidArgument("filter_sizes tensor must have 5 dimensions"));
++    OP_REQUIRES(
++        context, out_backprop_shape.dims() == 5,
++        errors::InvalidArgument("out_backprop tensor must have 5 dimensions"));
+     ConvBackpropDimensions dims;
+     OP_REQUIRES_OK(context, ConvBackpropComputeDimensions(
+                                 "Conv3DBackpropInputOp", /*num_spatial_dims=*/3,
+@@ -412,6 +428,11 @@ class Conv3DCustomBackpropInputOp : public OpKernel {
+     // contraction compared to sharding and matmuls.
+     const bool use_parallel_contraction = dims.batch_size == 1;
+ 
++    OP_REQUIRES(
++        context, work_unit_size > 0,
++        errors::InvalidArgument("input, filter_sizes and out_backprop tensors "
++                                "must all have at least 1 element"));
++
+     const size_t shard_size =
+         use_parallel_contraction
+             ? 1
+@@ -692,6 +713,14 @@ class Conv3DBackpropFilterOp : public OpKernel {
+       filter_shape = context->input(1).shape();
+     }
+ 
++    OP_REQUIRES(context, input_shape.dims() == 5,
++                errors::InvalidArgument("input tensor must have 5 dimensions"));
++    OP_REQUIRES(
++        context, filter_shape.dims() == 5,
++        errors::InvalidArgument("filter_sizes tensor must have 5 dimensions"));
++    OP_REQUIRES(
++        context, out_backprop_shape.dims() == 5,
++        errors::InvalidArgument("out_backprop tensor must have 5 dimensions"));
+     ConvBackpropDimensions dims;
+     OP_REQUIRES_OK(context,
+                    ConvBackpropComputeDimensions(
+@@ -804,6 +833,14 @@ class Conv3DCustomBackpropFilterOp : public OpKernel {
+       filter_shape = context->input(1).shape();
+     }
+ 
++    OP_REQUIRES(context, input_shape.dims() == 5,
++                errors::InvalidArgument("input tensor must have 5 dimensions"));
++    OP_REQUIRES(
++        context, filter_shape.dims() == 5,
++        errors::InvalidArgument("filter_sizes tensor must have 5 dimensions"));
++    OP_REQUIRES(
++        context, out_backprop_shape.dims() == 5,
++        errors::InvalidArgument("out_backprop tensor must have 5 dimensions"));
+     ConvBackpropDimensions dims;
+     OP_REQUIRES_OK(context,
+                    ConvBackpropComputeDimensions(
+@@ -876,6 +913,11 @@ class Conv3DCustomBackpropFilterOp : public OpKernel {
+ 
+     const int64 work_unit_size = size_A + size_B + size_C;
+ 
++    OP_REQUIRES(
++        context, work_unit_size > 0,
++        errors::InvalidArgument("input, filter_sizes and out_backprop tensors "
++                                "must all have at least 1 element"));
++
+     const size_t shard_size =
+         (target_working_set_size + work_unit_size - 1) / work_unit_size;
+
+tokens used
+input: 1,100
+cache read: 18,944
+cache write: 0
+output: 151
+reasoning output: 0
+
+The diff matches all six provided intent points in the older file. I’ll run `git diff --check` for whitespace/syntax-adjacent patch hygiene.
+
+tool: bash
+{
+  "command": "git diff --check -- tensorflow/core/kernels/conv_grad_ops_3d.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0009-a5d613d23c2a"
+}
+warning: in the working copy of 'tensorflow/core/kernels/conv_grad_ops_3d.cc', LF will be replaced by CRLF the next time Git touches it
+
+tokens used
+input: 1,323
+cache read: 19,968
+cache write: 0
+output: 118
+reasoning output: 36
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target Conv3D backprop code locations",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Map each provided security hunk to TensorFlow 2.1.4 code",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Apply minimal backport changes",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Verify resulting diff and hunk applicability if needed",
+      "status": "completed",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target Conv3D backprop code locations",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Map each provided security hunk to TensorFlow 2.1.4 code",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Apply minimal backport changes",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Verify resulting diff and hunk applicability if needed",
+    "status": "completed",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 499
+cache read: 20,992
+cache write: 0
+output: 105
+reasoning output: 19
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/kernels/conv_grad_ops_3d.cc b/tensorflow/core/kernels/conv_grad_ops_3d.cc
+    index 96bc41a726..f662e17e74 100644
+    --- a/tensorflow/core/kernels/conv_grad_ops_3d.cc
+    +++ b/tensorflow/core/kernels/conv_grad_ops_3d.cc
+    @@ -236,6 +236,14 @@ class Conv3DBackpropInputOp : public OpKernel {
+           input_shape = context->input(0).shape();
+         }
+     
+    +    OP_REQUIRES(context, input_shape.dims() == 5,
+    +                errors::InvalidArgument("input tensor must have 5 dimensions"));
+    +    OP_REQUIRES(
+    +        context, filter_shape.dims() == 5,
+    +        errors::InvalidArgument("filter_sizes tensor must have 5 dimensions"));
+    +    OP_REQUIRES(
+    +        context, out_backprop_shape.dims() == 5,
+    +        errors::InvalidArgument("out_backprop tensor must have 5 dimensions"));
+         ConvBackpropDimensions dims;
+         OP_REQUIRES_OK(context, ConvBackpropComputeDimensions(
+                                     "Conv3DBackpropInputOp", /*num_spatial_dims=*/3,
+    @@ -342,6 +350,14 @@ class Conv3DCustomBackpropInputOp : public OpKernel {
+           input_shape = context->input(0).shape();
+         }
+     
+    +    OP_REQUIRES(context, input_shape.dims() == 5,
+    +                errors::InvalidArgument("input tensor must have 5 dimensions"));
+    +    OP_REQUIRES(
+    +        context, filter_shape.dims() == 5,
+    +        errors::InvalidArgument("filter_sizes tensor must have 5 dimensions"));
+    +    OP_REQUIRES(
+    +        context, out_backprop_shape.dims() == 5,
+    +        errors::InvalidArgument("out_backprop tensor must have 5 dimensions"));
+         ConvBackpropDimensions dims;
+         OP_REQUIRES_OK(context, ConvBackpropComputeDimensions(
+                                     "Conv3DBackpropInputOp", /*num_spatial_dims=*/3,
+    @@ -412,6 +428,11 @@ class Conv3DCustomBackpropInputOp : public OpKernel {
+         // contraction compared to sharding and matmuls.
+         const bool use_parallel_contraction = dims.batch_size == 1;
+     
+    +    OP_REQUIRES(
+    +        context, work_unit_size > 0,
+    +        errors::InvalidArgument("input, filter_sizes and out_backprop tensors "
+    +                                "must all have at least 1 element"));
+    +
+         const size_t shard_size =
+             use_parallel_contraction
+                 ? 1
+    @@ -692,6 +713,14 @@ class Conv3DBackpropFilterOp : public OpKernel {
+           filter_shape = context->input(1).shape();
+         }
+     
+    +    OP_REQUIRES(context, input_shape.dims() == 5,
+    +                errors::InvalidArgument("input tensor must have 5 dimensions"));
+    +    OP_REQUIRES(
+    +        context, filter_shape.dims() == 5,
+    +        errors::InvalidArgument("filter_sizes tensor must have 5 dimensions"));
+    +    OP_REQUIRES(
+    +        context, out_backprop_shape.dims() == 5,
+    +        errors::InvalidArgument("out_backprop tensor must have 5 dimensions"));
+         ConvBackpropDimensions dims;
+         OP_REQUIRES_OK(context,
+                        ConvBackpropComputeDimensions(
+    @@ -804,6 +833,14 @@ class Conv3DCustomBackpropFilterOp : public OpKernel {
+           filter_shape = context->input(1).shape();
+         }
+     
+    +    OP_REQUIRES(context, input_shape.dims() == 5,
+    +                errors::InvalidArgument("input tensor must have 5 dimensions"));
+    +    OP_REQUIRES(
+    +        context, filter_shape.dims() == 5,
+    +        errors::InvalidArgument("filter_sizes tensor must have 5 dimensions"));
+    +    OP_REQUIRES(
+    +        context, out_backprop_shape.dims() == 5,
+    +        errors::InvalidArgument("out_backprop tensor must have 5 dimensions"));
+         ConvBackpropDimensions dims;
+         OP_REQUIRES_OK(context,
+                        ConvBackpropComputeDimensions(
+    @@ -876,6 +913,11 @@ class Conv3DCustomBackpropFilterOp : public OpKernel {
+     
+         const int64 work_unit_size = size_A + size_B + size_C;
+     
+    +    OP_REQUIRES(
+    +        context, work_unit_size > 0,
+    +        errors::InvalidArgument("input, filter_sizes and out_backprop tensors "
+    +                                "must all have at least 1 element"));
+    +
+         const size_t shard_size =
+             (target_working_set_size + work_unit_size - 1) / work_unit_size;
+  notes: >
+    Backported Conv3D gradient dimension checks and zero-work-unit guards to TensorFlow 2.1.4; verified with git diff --check.
+```
+
+tokens used
+input: 773
+cache read: 20,992
+cache write: 0
+output: 1,135
+reasoning output: 0

@@ -1,0 +1,496 @@
+I’ll inspect the target-side implementation of `ComputeInterpolationWeights`, validate the minimal hunk against the target base, then apply only that source change.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target TensorFlow 2.5.0 code location for the patched function",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Validate the adapted hunk against target base",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "content": "Apply the minimal backport change",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "content": "Capture final diff for response",
+      "status": "pending",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target TensorFlow 2.5.0 code location for the patched function",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Validate the adapted hunk against target base",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "content": "Apply the minimal backport change",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "content": "Capture final diff for response",
+    "status": "pending",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 3,752
+cache read: 4,608
+cache write: 0
+output: 137
+reasoning output: 0
+
+tool: viewcode
+{
+  "ref": "dd3f0b701e6b0a31cabf4a8bced119d7acc8f95d",
+  "path": "tensorflow/core/kernels/quantized_resize_bilinear_op.cc",
+  "startline": 1,
+  "endline": 100
+}
+Here are lines 1 through 100.
+
+/* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+==============================================================================*/
+
+// Implements a quantized version of the resize bilinear op.
+
+#define EIGEN_USE_THREADS
+
+#if defined(__ARM_NEON__) || defined(__ARM_NEON)
+#define USE_NEON
+#define QUANTIZED_RESIZE_BILINEAR_USE_NEON
+#include <arm_neon.h>
+#endif
+
+#include "tensorflow/core/framework/op_kernel.h"
+#include "tensorflow/core/framework/types.h"
+#include "tensorflow/core/kernels/quantization_utils.h"
+#include "tensorflow/core/platform/macros.h"
+#include "tensorflow/core/util/image_resizer_state.h"
+
+namespace tensorflow {
+
+static constexpr bool USE_REFERENCE = false;
+
+namespace {
+// Compute the interpolation indices only once.
+template <typename T_SCALE>
+struct InterpolationCache {
+  std::vector<int64> lower;  // Lower source index used in the interpolation
+  std::vector<int64> upper;  // Upper source index used in the interpolation
+  // 1-D linear interpolation scale (see:
+  // https://en.wikipedia.org/wiki/Bilinear_interpolation)
+  std::vector<float> lerp;
+  std::vector<T_SCALE> ilerp;
+};
+
+template <typename T_SCALE, typename Scaler>
+inline void ComputeInterpolationWeights(
+    const int64 out_size, const int64 in_size, const float scale,
+    const int resolution, InterpolationCache<T_SCALE>* interpolation) {
+  const Scaler scaler;
+  interpolation->lower.resize(out_size + 1);
+  interpolation->upper.resize(out_size + 1);
+  interpolation->lerp.resize(out_size + 1);
+  interpolation->ilerp.resize(out_size + 1);
+
+  interpolation->lower[out_size] = 0;
+  interpolation->upper[out_size] = 0;
+  for (int64 i = out_size - 1; i >= 0; --i) {
+    const float in = scaler(i, scale);
+    const float in_f = std::floor(in);
+    interpolation->lower[i] =
+        std::max(static_cast<int64>(in_f), static_cast<int64>(0));
+    interpolation->upper[i] =
+        std::min(static_cast<int64>(std::ceil(in)), in_size - 1);
+    interpolation->lerp[i] = in - in_f;
+    interpolation->ilerp[i] =
+        static_cast<T_SCALE>((in - in_f) * (1 << resolution));
+  }
+}
+
+template <typename T_SCALE>
+inline InterpolationCache<T_SCALE> BuildLerpCache(
+    const int64 out_size, const int64 in_size, const float scale,
+    const int index_step, const int resolution, const bool half_pixel_centers) {
+  InterpolationCache<T_SCALE> cache;
+  // Compute the cached interpolation weights on the x and y dimensions.
+  if (half_pixel_centers) {
+    ComputeInterpolationWeights<T_SCALE, HalfPixelScaler>(
+        out_size, in_size, scale, resolution, &cache);
+  } else {
+    ComputeInterpolationWeights<T_SCALE, LegacyScaler>(out_size, in_size, scale,
+                                                       resolution, &cache);
+  }
+  CHECK(index_step > 0);
+  if (index_step > 1) {
+    for (int i = 0; i < cache.lower.size(); ++i) {
+      cache.lower[i] *= index_step;
+      cache.upper[i] *= index_step;
+    }
+  }
+  return cache;
+}
+
+/**
+ * Computes the bilinear interpolation from the appropriate 4 float points
+ * and the linear interpolation weights.
+ */
+template <typename T>
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: locate_symbol
+{
+  "ref": "dd3f0b701e6b0a31cabf4a8bced119d7acc8f95d",
+  "symbol": "ComputeInterpolationWeights"
+}
+tensorflow/core/kernels/quantized_resize_bilinear_op.cc:49
+tensorflow/core/kernels/quantized_resize_bilinear_op.cc:80
+tensorflow/core/kernels/quantized_resize_bilinear_op.cc:83
+
+tokens used
+input: 964
+cache read: 7,680
+cache write: 0
+output: 133
+reasoning output: 0
+
+The target file has the same function and matching context; the backport appears to be a one-line clamp inserted after computing `upper`.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target TensorFlow 2.5.0 code location for the patched function",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate the adapted hunk against target base",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Apply the minimal backport change",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "content": "Capture final diff for response",
+      "status": "pending",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target TensorFlow 2.5.0 code location for the patched function",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate the adapted hunk against target base",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Apply the minimal backport change",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "content": "Capture final diff for response",
+    "status": "pending",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 2,040
+cache read: 7,680
+cache write: 0
+output: 136
+reasoning output: 9
+
+tool: validate
+{
+  "ref": "dd3f0b701e6b0a31cabf4a8bced119d7acc8f95d",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/quantized_resize_bilinear_op.cc b/tensorflow/core/kernels/quantized_resize_bilinear_op.cc\nindex 07453c7e73284b..2fd807f6df9614 100644\n--- a/tensorflow/core/kernels/quantized_resize_bilinear_op.cc\n+++ b/tensorflow/core/kernels/quantized_resize_bilinear_op.cc\n@@ -64,6 +64,8 @@ inline void ComputeInterpolationWeights(\n         std::max(static_cast<int64>(in_f), static_cast<int64>(0));\n     interpolation->upper[i] =\n         std::min(static_cast<int64>(std::ceil(in)), in_size - 1);\n+    interpolation->lower[i] =\n+        std::min(interpolation->lower[i], interpolation->upper[i]);\n     interpolation->lerp[i] = in - in_f;\n     interpolation->ilerp[i] =\n         static_cast<T_SCALE>((in - in_f) * (1 << resolution));\n"
+}
+Patch applied successfully
+
+tokens used
+input: 1,308
+cache read: 8,704
+cache write: 0
+output: 285
+reasoning output: 0
+
+The hunk validates cleanly against the target base. I’m applying the same minimal source edit now.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target TensorFlow 2.5.0 code location for the patched function",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate the adapted hunk against target base",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Apply the minimal backport change",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Capture final diff for response",
+      "status": "pending",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target TensorFlow 2.5.0 code location for the patched function",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate the adapted hunk against target base",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Apply the minimal backport change",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Capture final diff for response",
+    "status": "pending",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 582
+cache read: 9,728
+cache write: 0
+output: 128
+reasoning output: 0
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/kernels/quantized_resize_bilinear_op.cc\n@@\n     interpolation->upper[i] =\n         std::min(static_cast<int64>(std::ceil(in)), in_size - 1);\n+    interpolation->lower[i] =\n+        std::min(interpolation->lower[i], interpolation->upper[i]);\n     interpolation->lerp[i] = in - in_f;\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/kernels/quantized_resize_bilinear_op.cc
+
+tokens used
+input: 857
+cache read: 9,728
+cache write: 0
+output: 118
+reasoning output: 0
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target TensorFlow 2.5.0 code location for the patched function",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate the adapted hunk against target base",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Apply the minimal backport change",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Capture final diff for response",
+      "status": "in_progress",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target TensorFlow 2.5.0 code location for the patched function",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate the adapted hunk against target base",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Apply the minimal backport change",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Capture final diff for response",
+    "status": "in_progress",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 1,007
+cache read: 9,728
+cache write: 0
+output: 100
+reasoning output: 0
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/kernels/quantized_resize_bilinear_op.cc"
+}
+warning: in the working copy of 'tensorflow/core/kernels/quantized_resize_bilinear_op.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/kernels/quantized_resize_bilinear_op.cc b/tensorflow/core/kernels/quantized_resize_bilinear_op.cc
+index da0a35a655..52c751d02d 100644
+--- a/tensorflow/core/kernels/quantized_resize_bilinear_op.cc
++++ b/tensorflow/core/kernels/quantized_resize_bilinear_op.cc
+@@ -64,6 +64,8 @@ inline void ComputeInterpolationWeights(
+         std::max(static_cast<int64>(in_f), static_cast<int64>(0));
+     interpolation->upper[i] =
+         std::min(static_cast<int64>(std::ceil(in)), in_size - 1);
++    interpolation->lower[i] =
++        std::min(interpolation->lower[i], interpolation->upper[i]);
+     interpolation->lerp[i] = in - in_f;
+     interpolation->ilerp[i] =
+         static_cast<T_SCALE>((in - in_f) * (1 << resolution));
+
+tool: bash
+{
+  "command": "git status --short"
+}
+ M tensorflow/core/kernels/quantized_resize_bilinear_op.cc
+
+tokens used
+input: 1,254
+cache read: 9,728
+cache write: 0
+output: 66
+reasoning output: 0
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target TensorFlow 2.5.0 code location for the patched function",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate the adapted hunk against target base",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Apply the minimal backport change",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Capture final diff for response",
+      "status": "completed",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target TensorFlow 2.5.0 code location for the patched function",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate the adapted hunk against target base",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Apply the minimal backport change",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Capture final diff for response",
+    "status": "completed",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 581
+cache read: 10,752
+cache write: 0
+output: 99
+reasoning output: 0
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/kernels/quantized_resize_bilinear_op.cc b/tensorflow/core/kernels/quantized_resize_bilinear_op.cc
+    index da0a35a655..52c751d02d 100644
+    --- a/tensorflow/core/kernels/quantized_resize_bilinear_op.cc
+    +++ b/tensorflow/core/kernels/quantized_resize_bilinear_op.cc
+    @@ -64,6 +64,8 @@ inline void ComputeInterpolationWeights(
+             std::max(static_cast<int64>(in_f), static_cast<int64>(0));
+         interpolation->upper[i] =
+             std::min(static_cast<int64>(std::ceil(in)), in_size - 1);
+    +    interpolation->lower[i] =
+    +        std::min(interpolation->lower[i], interpolation->upper[i]);
+         interpolation->lerp[i] = in - in_f;
+         interpolation->ilerp[i] =
+             static_cast<T_SCALE>((in - in_f) * (1 << resolution));
+  notes: >
+    Backported the QuantizedResizeBilinear interpolation bounds fix by clamping lower to upper after upper is computed.
+```
+
+tokens used
+input: 826
+cache read: 10,752
+cache write: 0
+output: 271
+reasoning output: 0

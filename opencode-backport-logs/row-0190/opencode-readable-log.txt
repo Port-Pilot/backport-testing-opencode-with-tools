@@ -1,0 +1,523 @@
+I’ll locate the equivalent sparse reduction implementation in the 2.3.4 target, compare it against the provided 2.7.0 hunk context, then apply the minimal bounds checks only where the same write-index path exists.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect source patch context and target sparse_reduce_op.cc",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Validate backport hunk context against target base",
+      "status": "pending",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply minimal source change in current checkout",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "content": "Review resulting diff",
+      "status": "pending",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect source patch context and target sparse_reduce_op.cc",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Validate backport hunk context against target base",
+    "status": "pending",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply minimal source change in current checkout",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "content": "Review resulting diff",
+    "status": "pending",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 3,873
+cache read: 4,608
+cache write: 0
+output: 149
+reasoning output: 0
+
+tool: git_show
+{
+  "ref": "87158f43f05f2720a374f3e6d22a7aaa3a33f750",
+  "context": "class SparseReduceOp : public OpKernel {\n    sp.Reorder<T>(reduction.reorder_dims);\n    for (const auto &g : sp.group(reduction.group_by_dims)) {\n      Op::template Run<T>(ctx, reduced_val, g.template values<T>());\n      const int64_t idx = CoordinatesToFlatIndex(g.group(), output_strides);\n      out_flat(idx) = reduced_val();"
+}
+commit 87158f43f05f2720a374f3e6d22a7aaa3a33f750
+Author: Mihai Maruseac <mihaimaruseac@google.com>
+Date:   Fri Jul 30 21:11:18 2021 -0700
+
+    Prevent heap OOB in sparse reduction ops.
+    
+    PiperOrigin-RevId: 387934524
+    Change-Id: I894aa30f1e454f09b471d565b4a325da49322c1a
+
+ tensorflow/core/kernels/sparse_reduce_op.cc | 13 +++++++++++++
+ 1 file changed, 13 insertions(+)
+This commit shows that there is a high probability that this code is new, so the corresponding code segment cannot be found in the old version.
+You can call `viewcode` and `locate_symbol` to further check the results step by step. For newly introduced code, we consider that this hunk `need not ported`.
+
+tokens used
+input: 4,163
+cache read: 4,608
+cache write: 0
+output: 149
+reasoning output: 0
+
+The source commit only modifies `tensorflow/core/kernels/sparse_reduce_op.cc`. I’m checking the target file directly because the symbol and path likely still exist despite the tool’s low-confidence context match.
+
+tool: grep
+{
+  "pattern": "CoordinatesToFlatIndex\\(g\\.group\\(\\), output_strides\\)|out_flat\\(idx\\) = reduced_val",
+  "path": "tensorflow/core/kernels",
+  "include": "sparse_reduce_op.cc"
+}
+Found 2 matches
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0190-161a0b4bb7be\tensorflow\core\kernels\sparse_reduce_op.cc:
+  Line 222:       const int64 idx = CoordinatesToFlatIndex(g.group(), output_strides);
+
+  Line 223:       out_flat(idx) = reduced_val();
+
+tool: viewcode
+{
+  "ref": "161a0b4bb7beac223400ecd248d1494e0e5b2711",
+  "path": "tensorflow/core/kernels/sparse_reduce_op.cc",
+  "startline": 180,
+  "endline": 250
+}
+Here are lines 180 through 250.
+
+        sp, reduction_axes_t->flat<int32>(), keep_dims_);
+
+    Tensor *out_values;
+    OP_REQUIRES_OK(
+        ctx, ctx->allocate_output(0, reduction.reduced_shape, &out_values));
+    auto out_flat = out_values->flat<T>();
+    out_flat.setZero();
+
+    Tensor tmp_reduced_val;
+    OP_REQUIRES_OK(ctx, ctx->allocate_temp(DataTypeToEnum<T>::value,
+                                           TensorShape({}), &tmp_reduced_val));
+    auto reduced_val = tmp_reduced_val.scalar<T>();
+
+    // Compute strides, and use it to convert coords to flat index.  The
+    // coordinates returned by .group() have the same ndims as group_by_dims.
+    gtl::InlinedVector<int64, 8> output_strides(reduction.group_by_dims.size());
+    if (!output_strides.empty()) {  // Do this iff we don't reduce all.
+      output_strides.back() = 1;
+      for (int d = output_strides.size() - 2; d >= 0; --d) {
+        output_strides[d] =
+            output_strides[d + 1] * shape_vec(reduction.group_by_dims[d + 1]);
+      }
+    }
+
+    auto CoordinatesToFlatIndex = [](ArraySlice<int64> coords,
+                                     ArraySlice<int64> strides) -> int64 {
+      if (strides.empty()) {  // Reduce all.
+        return 0;
+      }
+      CHECK_EQ(coords.size(), strides.size());
+      int64 idx = 0;
+      for (int i = 0; i < coords.size(); ++i) {
+        idx += coords[i] * strides[i];
+      }
+      return idx;
+    };
+
+    // Each group maps one-on-one onto a value in the reduced tensor.
+    // g.group() provides the coordinates of a particular reduced value.
+    sp.Reorder<T>(reduction.reorder_dims);
+    for (const auto &g : sp.group(reduction.group_by_dims)) {
+      Op::template Run<T>(ctx, reduced_val, g.template values<T>());
+      const int64 idx = CoordinatesToFlatIndex(g.group(), output_strides);
+      out_flat(idx) = reduced_val();
+      VLOG(2) << "coords: " << absl::StrJoin(g.group(), ",")
+              << "; idx: " << idx << "; group " << Op::Name() << ": "
+              << reduced_val();
+    }
+  }
+
+ private:
+  // True if the number of dimensions should be maintained.
+  bool keep_dims_;
+};
+
+#define REGISTER_KERNELS(T)                                              \
+  REGISTER_KERNEL_BUILDER(                                               \
+      Name("SparseReduceSum").Device(DEVICE_CPU).TypeConstraint<T>("T"), \
+      SparseReduceOp<T, SumOp>)
+TF_CALL_NUMBER_TYPES(REGISTER_KERNELS);
+#undef REGISTER_KERNELS
+
+#define REGISTER_KERNELS(T)                                              \
+  REGISTER_KERNEL_BUILDER(                                               \
+      Name("SparseReduceMax").Device(DEVICE_CPU).TypeConstraint<T>("T"), \
+      SparseReduceOp<T, MaxOp>)
+TF_CALL_REAL_NUMBER_TYPES(REGISTER_KERNELS);
+#undef REGISTER_KERNELS
+
+template <typename T, typename Op>
+class SparseReduceSparseOp : public OpKernel {
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: locate_symbol
+{
+  "ref": "161a0b4bb7beac223400ecd248d1494e0e5b2711",
+  "symbol": "SparseReduceOp"
+}
+tensorflow/core/kernels/sparse_reduce_op.cc:154
+tensorflow/core/kernels/sparse_reduce_op.cc:156
+tensorflow/core/kernels/sparse_reduce_op.cc:238
+tensorflow/core/kernels/sparse_reduce_op.cc:245
+
+tokens used
+input: 423
+cache read: 8,704
+cache write: 0
+output: 224
+reasoning output: 0
+
+The vulnerable write path is present in the target with `int64` typedef style instead of `int64_t`. I’m validating a target-shaped hunk before editing.
+
+tool: validate
+{
+  "ref": "161a0b4bb7beac223400ecd248d1494e0e5b2711",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/sparse_reduce_op.cc b/tensorflow/core/kernels/sparse_reduce_op.cc\n--- a/tensorflow/core/kernels/sparse_reduce_op.cc\n+++ b/tensorflow/core/kernels/sparse_reduce_op.cc\n@@ -219,7 +219,20 @@ class SparseReduceOp : public OpKernel {\n     sp.Reorder<T>(reduction.reorder_dims);\n     for (const auto &g : sp.group(reduction.group_by_dims)) {\n       Op::template Run<T>(ctx, reduced_val, g.template values<T>());\n+      OP_REQUIRES(ctx,\n+                  output_strides.empty() ||\n+                      (g.group().size() == output_strides.size()),\n+                  errors::Internal(\n+                      \"Expected group size and output_strides size to match\",\n+                      \", but got \", g.group().size(), \" and \",\n+                      output_strides.size()));\n       const int64 idx = CoordinatesToFlatIndex(g.group(), output_strides);\n+      OP_REQUIRES(ctx, idx >= 0 && idx < out_flat.size(),\n+                  errors::Internal(\n+                      \"Obtained a write index of \", idx,\n+                      \" which is outside of bounds of [0, \", out_flat.size(),\n+                      \")\"));\n       out_flat(idx) = reduced_val();\n       VLOG(2) << \"coords: \" << absl::StrJoin(g.group(), \",\")\n               << \"; idx: \" << idx << \"; group \" << Op::Name() << \": \"\n"
+}
+This patch does not apply to the target TensorFlow ref.
+Git apply output:
+error: corrupt patch at line 24
+Touched files:
+- tensorflow/core/kernels/sparse_reduce_op.cc
+Fix the patch context against the older TensorFlow version, then run validate again in hunk mode.
+
+tokens used
+input: 1,525
+cache read: 8,704
+cache write: 0
+output: 450
+reasoning output: 68
+
+tool: validate
+{
+  "ref": "161a0b4bb7beac223400ecd248d1494e0e5b2711",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/sparse_reduce_op.cc b/tensorflow/core/kernels/sparse_reduce_op.cc\n--- a/tensorflow/core/kernels/sparse_reduce_op.cc\n+++ b/tensorflow/core/kernels/sparse_reduce_op.cc\n@@ -219,10 +219,23 @@ class SparseReduceOp : public OpKernel {\n     sp.Reorder<T>(reduction.reorder_dims);\n     for (const auto &g : sp.group(reduction.group_by_dims)) {\n       Op::template Run<T>(ctx, reduced_val, g.template values<T>());\n+      OP_REQUIRES(ctx,\n+                  output_strides.empty() ||\n+                      (g.group().size() == output_strides.size()),\n+                  errors::Internal(\n+                      \"Expected group size and output_strides size to match\",\n+                      \", but got \", g.group().size(), \" and \",\n+                      output_strides.size()));\n       const int64 idx = CoordinatesToFlatIndex(g.group(), output_strides);\n+      OP_REQUIRES(ctx, idx >= 0 && idx < out_flat.size(),\n+                  errors::Internal(\n+                      \"Obtained a write index of \", idx,\n+                      \" which is outside of bounds of [0, \", out_flat.size(),\n+                      \")\"));\n       out_flat(idx) = reduced_val();\n       VLOG(2) << \"coords: \" << absl::StrJoin(g.group(), \",\")\n               << \"; idx: \" << idx << \"; group \" << Op::Name() << \": \"\n               << reduced_val();\n     }\n"
+}
+This patch does not apply to the target TensorFlow ref.
+Git apply output:
+error: corrupt patch at line 26
+Touched files:
+- tensorflow/core/kernels/sparse_reduce_op.cc
+Fix the patch context against the older TensorFlow version, then run validate again in hunk mode.
+
+tokens used
+input: 3,136
+cache read: 7,680
+cache write: 0
+output: 419
+reasoning output: 176
+
+tool: validate
+{
+  "ref": "161a0b4bb7beac223400ecd248d1494e0e5b2711",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/sparse_reduce_op.cc b/tensorflow/core/kernels/sparse_reduce_op.cc\n--- a/tensorflow/core/kernels/sparse_reduce_op.cc\n+++ b/tensorflow/core/kernels/sparse_reduce_op.cc\n@@ -219,9 +219,21 @@ class SparseReduceOp : public OpKernel {\n     sp.Reorder<T>(reduction.reorder_dims);\n     for (const auto &g : sp.group(reduction.group_by_dims)) {\n       Op::template Run<T>(ctx, reduced_val, g.template values<T>());\n+      OP_REQUIRES(ctx,\n+                  output_strides.empty() ||\n+                      (g.group().size() == output_strides.size()),\n+                  errors::Internal(\n+                      \"Expected group size and output_strides size to match\",\n+                      \", but got \", g.group().size(), \" and \",\n+                      output_strides.size()));\n       const int64 idx = CoordinatesToFlatIndex(g.group(), output_strides);\n+      OP_REQUIRES(ctx, idx >= 0 && idx < out_flat.size(),\n+                  errors::Internal(\n+                      \"Obtained a write index of \", idx,\n+                      \" which is outside of bounds of [0, \", out_flat.size(),\n+                      \")\"));\n       out_flat(idx) = reduced_val();\n       VLOG(2) << \"coords: \" << absl::StrJoin(g.group(), \",\")\n               << \"; idx: \" << idx << \"; group \" << Op::Name() << \": \"\n               << reduced_val();\n     }\n"
+}
+Patch applied successfully
+
+tokens used
+input: 728
+cache read: 10,752
+cache write: 0
+output: 419
+reasoning output: 170
+
+The target-shaped hunk applies cleanly. I’m applying the same minimal checks to the current checkout now.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect source patch context and target sparse_reduce_op.cc",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate backport hunk context against target base",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply minimal source change in current checkout",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Review resulting diff",
+      "status": "pending",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect source patch context and target sparse_reduce_op.cc",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate backport hunk context against target base",
+    "status": "completed",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply minimal source change in current checkout",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Review resulting diff",
+    "status": "pending",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 2,354
+cache read: 9,728
+cache write: 0
+output: 123
+reasoning output: 0
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/kernels/sparse_reduce_op.cc\n@@\n     sp.Reorder<T>(reduction.reorder_dims);\n     for (const auto &g : sp.group(reduction.group_by_dims)) {\n       Op::template Run<T>(ctx, reduced_val, g.template values<T>());\n+      OP_REQUIRES(ctx,\n+                  output_strides.empty() ||\n+                      (g.group().size() == output_strides.size()),\n+                  errors::Internal(\n+                      \"Expected group size and output_strides size to match\",\n+                      \", but got \", g.group().size(), \" and \",\n+                      output_strides.size()));\n       const int64 idx = CoordinatesToFlatIndex(g.group(), output_strides);\n+      OP_REQUIRES(ctx, idx >= 0 && idx < out_flat.size(),\n+                  errors::Internal(\n+                      \"Obtained a write index of \", idx,\n+                      \" which is outside of bounds of [0, \", out_flat.size(),\n+                      \")\"));\n       out_flat(idx) = reduced_val();\n       VLOG(2) << \"coords: \" << absl::StrJoin(g.group(), \",\")\n               << \"; idx: \" << idx << \"; group \" << Op::Name() << \": \"\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/kernels/sparse_reduce_op.cc
+
+tokens used
+input: 570
+cache read: 11,776
+cache write: 0
+output: 326
+reasoning output: 0
+
+The source change is applied. I’m reviewing the exact diff to ensure only the intended sparse reduction bounds checks changed.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect source patch context and target sparse_reduce_op.cc",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate backport hunk context against target base",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply minimal source change in current checkout",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Review resulting diff",
+      "status": "in_progress",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect source patch context and target sparse_reduce_op.cc",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate backport hunk context against target base",
+    "status": "completed",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply minimal source change in current checkout",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Review resulting diff",
+    "status": "in_progress",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 924
+cache read: 11,776
+cache write: 0
+output: 124
+reasoning output: 0
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/kernels/sparse_reduce_op.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0190-161a0b4bb7be",
+  "timeout": 120000
+}
+warning: in the working copy of 'tensorflow/core/kernels/sparse_reduce_op.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/kernels/sparse_reduce_op.cc b/tensorflow/core/kernels/sparse_reduce_op.cc
+index b65f31e5eb..57e7399d5b 100644
+--- a/tensorflow/core/kernels/sparse_reduce_op.cc
++++ b/tensorflow/core/kernels/sparse_reduce_op.cc
+@@ -219,7 +219,19 @@ class SparseReduceOp : public OpKernel {
+     sp.Reorder<T>(reduction.reorder_dims);
+     for (const auto &g : sp.group(reduction.group_by_dims)) {
+       Op::template Run<T>(ctx, reduced_val, g.template values<T>());
++      OP_REQUIRES(ctx,
++                  output_strides.empty() ||
++                      (g.group().size() == output_strides.size()),
++                  errors::Internal(
++                      "Expected group size and output_strides size to match",
++                      ", but got ", g.group().size(), " and ",
++                      output_strides.size()));
+       const int64 idx = CoordinatesToFlatIndex(g.group(), output_strides);
++      OP_REQUIRES(ctx, idx >= 0 && idx < out_flat.size(),
++                  errors::Internal(
++                      "Obtained a write index of ", idx,
++                      " which is outside of bounds of [0, ", out_flat.size(),
++                      ")"));
+       out_flat(idx) = reduced_val();
+       VLOG(2) << "coords: " << absl::StrJoin(g.group(), ",")
+               << "; idx: " << idx << "; group " << Op::Name() << ": "
+
+tool: bash
+{
+  "command": "git status --short",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0190-161a0b4bb7be",
+  "timeout": 120000
+}
+ M tensorflow/core/kernels/sparse_reduce_op.cc
+
+tokens used
+input: 2,213
+cache read: 10,752
+cache write: 0
+output: 158
+reasoning output: 0
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect source patch context and target sparse_reduce_op.cc",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate backport hunk context against target base",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply minimal source change in current checkout",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Review resulting diff",
+      "status": "completed",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect source patch context and target sparse_reduce_op.cc",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate backport hunk context against target base",
+    "status": "completed",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply minimal source change in current checkout",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Review resulting diff",
+    "status": "completed",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 724
+cache read: 12,800
+cache write: 0
+output: 95
+reasoning output: 21
+
+Applied the TensorFlow sparse reduction bounds checks to the 2.3.4 target implementation in `tensorflow/core/kernels/sparse_reduce_op.cc`. Validated the target-shaped hunk with `validate` in hunk mode.
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/kernels/sparse_reduce_op.cc b/tensorflow/core/kernels/sparse_reduce_op.cc
+    index b65f31e5eb..57e7399d5b 100644
+    --- a/tensorflow/core/kernels/sparse_reduce_op.cc
+    +++ b/tensorflow/core/kernels/sparse_reduce_op.cc
+    @@ -219,7 +219,19 @@ class SparseReduceOp : public OpKernel {
+         sp.Reorder<T>(reduction.reorder_dims);
+         for (const auto &g : sp.group(reduction.group_by_dims)) {
+           Op::template Run<T>(ctx, reduced_val, g.template values<T>());
+    +      OP_REQUIRES(ctx,
+    +                  output_strides.empty() ||
+    +                      (g.group().size() == output_strides.size()),
+    +                  errors::Internal(
+    +                      "Expected group size and output_strides size to match",
+    +                      ", but got ", g.group().size(), " and ",
+    +                      output_strides.size()));
+           const int64 idx = CoordinatesToFlatIndex(g.group(), output_strides);
+    +      OP_REQUIRES(ctx, idx >= 0 && idx < out_flat.size(),
+    +                  errors::Internal(
+    +                      "Obtained a write index of ", idx,
+    +                      " which is outside of bounds of [0, ", out_flat.size(),
+    +                      ")"));
+           out_flat(idx) = reduced_val();
+           VLOG(2) << "coords: " << absl::StrJoin(g.group(), ",")
+                   << "; idx: " << idx << "; group " << Op::Name() << ": "
+  notes: >
+    Added group-size and output index bounds checks before writing sparse reduction results.
+```
+
+tokens used
+input: 2,004
+cache read: 11,776
+cache write: 0
+output: 442
+reasoning output: 0

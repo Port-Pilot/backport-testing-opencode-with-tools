@@ -1,0 +1,359 @@
+I’ll inspect the target-side ResourceGather implementation and the provided source commit only, then apply the minimal equivalent guard if the code shape matches.
+
+tool: git_show
+{
+  "ref": "ac117ee8a8ea57b73d34665cdf00ef3303bc0b11",
+  "context": "class ResourceGatherOp : public OpKernel"
+}
+commit ac117ee8a8ea57b73d34665cdf00ef3303bc0b11
+Author: Mihai Maruseac <mihaimaruseac@google.com>
+Date:   Fri Jul 30 22:23:28 2021 -0700
+
+    Prevent division by 0 in `resource_variable_ops.cc`
+    
+    PiperOrigin-RevId: 387939939
+    Change-Id: Ib04902d63756633999959a70613f2eaa30c2c151
+
+ tensorflow/core/kernels/resource_variable_ops.cc | 11 +++++++++--
+ 1 file changed, 9 insertions(+), 2 deletions(-)
+This commit shows that there is a high probability that this code is new, so the corresponding code segment cannot be found in the old version.
+You can call `viewcode` and `locate_symbol` to further check the results step by step. For newly introduced code, we consider that this hunk `need not ported`.
+
+tool: locate_symbol
+{
+  "ref": "6a2b0f3d4addeef2f7b00f690ec705064e1dd946",
+  "symbol": "ResourceGatherOp"
+}
+tensorflow/compiler/tf2xla/kernels/variable_ops.cc:124
+tensorflow/core/kernels/resource_variable_ops.cc:625
+tensorflow/compiler/tf2xla/kernels/variable_ops.cc:126
+tensorflow/core/kernels/resource_variable_ops.cc:627
+tensorflow/compiler/tf2xla/kernels/variable_ops.cc:145
+tensorflow/core/kernels/resource_variable_ops.cc:749
+tensorflow/core/kernels/resource_variable_ops.cc:776
+tensorflow/core/kernels/resource_variable_ops.cc:783
+
+tokens used
+input: 3,929
+cache read: 4,608
+cache write: 0
+output: 146
+reasoning output: 0
+
+The target has `ResourceGatherOp` in the same file, so I’m checking the exact surrounding implementation before editing rather than relying on the commit similarity note.
+
+tool: viewcode
+{
+  "ref": "6a2b0f3d4addeef2f7b00f690ec705064e1dd946",
+  "path": "tensorflow/core/kernels/resource_variable_ops.cc",
+  "startline": 680,
+  "endline": 775
+}
+Here are lines 680 through 775.
+
+      Tensor tmp_indices;
+
+      // Points to the original or updated (if batch_dims is set) indices.
+      const Tensor* op_indices = &indices;
+      if (batch_dims_ > 0) {
+        OP_REQUIRES_OK(c, c->allocate_temp(indices.dtype(), indices.shape(),
+                                           &tmp_indices));
+        functor::DenseUpdate<Device, Index, ASSIGN> copy_functor;
+        copy_functor(c->eigen_device<Device>(), tmp_indices.flat<Index>(),
+                     indices.flat<Index>());
+
+        AddBatchOffsets(&tmp_indices, params);
+        op_indices = &tmp_indices;
+      }
+
+      int64 gather_dim_size = 1;
+      for (int idx = 0; idx <= batch_dims_; ++idx) {
+        gather_dim_size *= params.dim_size(idx);
+      }
+      int64 inner_size = 1;
+      for (int i = batch_dims_ + 1; i < params.dims(); ++i) {
+        inner_size *= params.dim_size(i);
+      }
+      auto params_flat = params.shaped<T, 3>({1, gather_dim_size, inner_size});
+      const auto indices_flat = op_indices->flat<Index>();
+      auto out_flat = out->shaped<T, 3>({1, N, out->NumElements() / N});
+
+      functor::GatherFunctor<Device, T, Index> functor;
+      int64 bad_i = functor(c, params_flat, indices_flat, out_flat);
+
+      OP_REQUIRES(
+          c, bad_i < 0,
+          errors::InvalidArgument(
+              "indices", SliceDebugString(indices.shape(), bad_i), " = ",
+              indices_flat(bad_i), " is not in [0, ", params.dim_size(0), ")"));
+    }
+  }
+
+ private:
+  // Add the batch offset derived from params to each batch of indices.
+  // Example: batch_dims = 1, indices = [[0, 1, 2], [0, 1, 2]]
+  // If indexing into a params dimension of size 4, then the indices will become
+  // [0, 1, 2, 4, 5, 6]
+  void AddBatchOffsets(Tensor* indices, const Tensor& params) {
+    int64 batch_size = 1;  // The size of all batch dimensions.
+    for (int idx = 0; idx < batch_dims_; ++idx) {
+      batch_size *= params.dim_size(idx);
+    }
+
+    auto indices_flat = indices->flat<Index>();
+    int64 const index_inner_size = indices->NumElements() / batch_size;
+    int64 const batch_offset = params.dim_size(batch_dims_);
+    for (int64 batch_idx = 0, dest_idx = 0; batch_idx < batch_size;
+         ++batch_idx) {
+      for (int64 idx = 0; idx < index_inner_size; ++idx) {
+        indices_flat(dest_idx++) += batch_offset * batch_idx;
+      }
+    }
+  }
+
+  int32 batch_dims_ = 0;
+};
+
+#define REGISTER_GATHER_FULL(dev, type, index_type)                    \
+  REGISTER_KERNEL_BUILDER(Name("ResourceGather")                       \
+                              .Device(DEVICE_##dev)                    \
+                              .HostMemory("resource")                  \
+                              .TypeConstraint<type>("dtype")           \
+                              .TypeConstraint<index_type>("Tindices"), \
+                          ResourceGatherOp<dev##Device, type, index_type>)
+
+#define REGISTER_GATHER_ALL_INDICES(dev, type) \
+  REGISTER_GATHER_FULL(dev, type, int32);      \
+  REGISTER_GATHER_FULL(dev, type, int64)
+
+#define REGISTER_GATHER_CPU(type) REGISTER_GATHER_ALL_INDICES(CPU, type)
+
+// Registration of the CPU implementations.
+TF_CALL_ALL_TYPES(REGISTER_GATHER_CPU);
+TF_CALL_QUANTIZED_TYPES(REGISTER_GATHER_CPU);
+
+// Registers GPU kernels.
+#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+#define REGISTER_GATHER_GPU(type) REGISTER_GATHER_ALL_INDICES(GPU, type)
+
+TF_CALL_int64(REGISTER_GATHER_GPU);
+TF_CALL_GPU_ALL_TYPES(REGISTER_GATHER_GPU);
+
+// Variant objects themselves sit on CPU, even if they contain data
+// pointing to a device.
+REGISTER_KERNEL_BUILDER(Name("ResourceGather")
+                            .Device(DEVICE_GPU)
+                            .HostMemory("resource")
+                            .HostMemory("indices")
+                            .TypeConstraint<Variant>("dtype")
+                            .TypeConstraint<int32>("Tindices"),
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: viewcode
+{
+  "ref": "6a2b0f3d4addeef2f7b00f690ec705064e1dd946",
+  "path": "tensorflow/core/kernels/resource_variable_ops.cc",
+  "startline": 620,
+  "endline": 680
+}
+Here are lines 620 through 680.
+
+                            .HostMemory("is_initialized"),
+                        IsResourceInitialized<Var>);
+#endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+
+template <typename Device, typename T, typename Index>
+class ResourceGatherOp : public OpKernel {
+ public:
+  explicit ResourceGatherOp(OpKernelConstruction* c) : OpKernel(c) {
+    OP_REQUIRES_OK(c, c->GetAttr("batch_dims", &batch_dims_));
+  }
+
+  void Compute(OpKernelContext* c) override {
+    core::RefCountPtr<Var> v;
+    OP_REQUIRES_OK(c, LookupResource(c, HandleFromInput(c, 0), &v));
+    OP_REQUIRES_OK(c, EnsureSparseVariableAccess<Device, T>(c, v.get()));
+    // NOTE: We hold the lock for the whole gather operation instead
+    // of increasing the reference count of v->tensor() to avoid a
+    // situation where a write to the same variable will see a
+    // reference count greater than one and make a copy of the
+    // (potentially very large) tensor buffer.
+    tf_shared_lock ml(*v->mu());
+    const Tensor& params = *v->tensor();
+    const Tensor& indices = c->input(1);
+    OP_REQUIRES(
+        c, TensorShapeUtils::IsVectorOrHigher(params.shape()),
+        errors::InvalidArgument("params must be at least 1 dimensional"));
+
+    // Check that we have enough index space
+    const int64 N = indices.NumElements();
+    OP_REQUIRES(
+        c, params.dim_size(0) <= std::numeric_limits<Index>::max(),
+        errors::InvalidArgument("params.shape[0] too large for ",
+                                DataTypeString(DataTypeToEnum<Index>::v()),
+                                " indexing: ", params.dim_size(0), " > ",
+                                std::numeric_limits<Index>::max()));
+
+    // The result shape is params.shape[:batch_dims] +
+    // indices.shape[batch_dims:] + params.shape[batch_dims+1:].
+    TensorShape result_shape;
+    for (int i = 0; i < batch_dims_; ++i) {
+      result_shape.AddDim(params.dim_size(i));
+    }
+    for (int i = batch_dims_; i < indices.dims(); ++i) {
+      result_shape.AddDim(indices.dim_size(i));
+    }
+    for (int i = batch_dims_ + 1; i < params.dims(); ++i) {
+      result_shape.AddDim(params.dim_size(i));
+    }
+
+    Tensor* out = nullptr;
+    Tensor tmp;
+    if (params.dtype() == DT_VARIANT) {
+      tmp = Tensor(DT_VARIANT, result_shape);
+      c->set_output(0, tmp);
+      out = &tmp;
+    } else {
+      OP_REQUIRES_OK(c, c->allocate_output(0, result_shape, &out));
+    }
+
+    if (N > 0) {
+      Tensor tmp_indices;
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tokens used
+input: 1,339
+cache read: 7,680
+cache write: 0
+output: 177
+reasoning output: 0
+
+I found the vulnerable division path unchanged in the target. I’m applying the same API adjustment as the source patch: pass the context into `AddBatchOffsets`, raise `InvalidArgument` when `batch_size` is zero, and return before using the temporary indices if the status is set.
+
+tool: validate
+{
+  "ref": "6a2b0f3d4addeef2f7b00f690ec705064e1dd946",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/resource_variable_ops.cc b/tensorflow/core/kernels/resource_variable_ops.cc\n--- a/tensorflow/core/kernels/resource_variable_ops.cc\n+++ b/tensorflow/core/kernels/resource_variable_ops.cc\n@@ -689,7 +689,8 @@ class ResourceGatherOp : public OpKernel {\n         copy_functor(c->eigen_device<Device>(), tmp_indices.flat<Index>(),\n                      indices.flat<Index>());\n \n-        AddBatchOffsets(&tmp_indices, params);\n+        AddBatchOffsets(c, &tmp_indices, params);\n+        if (!c->status().ok()) return;\n         op_indices = &tmp_indices;\n       }\n \n@@ -721,11 +722,17 @@ class ResourceGatherOp : public OpKernel {\n   // Example: batch_dims = 1, indices = [[0, 1, 2], [0, 1, 2]]\n   // If indexing into a params dimension of size 4, then the indices will become\n   // [0, 1, 2, 4, 5, 6]\n-  void AddBatchOffsets(Tensor* indices, const Tensor& params) {\n+  void AddBatchOffsets(OpKernelContext* ctx, Tensor* indices,\n+                       const Tensor& params) {\n     int64 batch_size = 1;  // The size of all batch dimensions.\n     for (int idx = 0; idx < batch_dims_; ++idx) {\n       batch_size *= params.dim_size(idx);\n     }\n+    OP_REQUIRES(\n+        ctx, batch_size != 0,\n+        errors::InvalidArgument(\n+            \"Inner size of indices would result in batch_size of 0 and a \",\n+            \"division by 0 in the implementation. This is illegal\"));\n \n     auto indices_flat = indices->flat<Index>();\n     int64 const index_inner_size = indices->NumElements() / batch_size;\n"
+}
+Patch applied successfully
+
+tokens used
+input: 2,135
+cache read: 8,704
+cache write: 0
+output: 556
+reasoning output: 34
+
+The hunk validates against the target base, so I’m applying it directly to the checked-out file now.
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/kernels/resource_variable_ops.cc\n@@\n-        AddBatchOffsets(&tmp_indices, params);\n+        AddBatchOffsets(c, &tmp_indices, params);\n+        if (!c->status().ok()) return;\n         op_indices = &tmp_indices;\n       }\n@@\n-  void AddBatchOffsets(Tensor* indices, const Tensor& params) {\n+  void AddBatchOffsets(OpKernelContext* ctx, Tensor* indices,\n+                       const Tensor& params) {\n     int64 batch_size = 1;  // The size of all batch dimensions.\n     for (int idx = 0; idx < batch_dims_; ++idx) {\n       batch_size *= params.dim_size(idx);\n     }\n+    OP_REQUIRES(\n+        ctx, batch_size != 0,\n+        errors::InvalidArgument(\n+            \"Inner size of indices would result in batch_size of 0 and a \",\n+            \"division by 0 in the implementation. This is illegal\"));\n \n     auto indices_flat = indices->flat<Index>();\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/kernels/resource_variable_ops.cc
+
+tokens used
+input: 690
+cache read: 10,752
+cache write: 0
+output: 300
+reasoning output: 0
+
+The source change is applied. I’m checking the resulting diff only, with no commit or full build.
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/kernels/resource_variable_ops.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0105-6a2b0f3d4add"
+}
+warning: in the working copy of 'tensorflow/core/kernels/resource_variable_ops.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/kernels/resource_variable_ops.cc b/tensorflow/core/kernels/resource_variable_ops.cc
+index e056d9cb0f..5621e7bf74 100644
+--- a/tensorflow/core/kernels/resource_variable_ops.cc
++++ b/tensorflow/core/kernels/resource_variable_ops.cc
+@@ -688,7 +688,8 @@ class ResourceGatherOp : public OpKernel {
+         copy_functor(c->eigen_device<Device>(), tmp_indices.flat<Index>(),
+                      indices.flat<Index>());
+ 
+-        AddBatchOffsets(&tmp_indices, params);
++        AddBatchOffsets(c, &tmp_indices, params);
++        if (!c->status().ok()) return;
+         op_indices = &tmp_indices;
+       }
+ 
+@@ -720,11 +721,17 @@ class ResourceGatherOp : public OpKernel {
+   // Example: batch_dims = 1, indices = [[0, 1, 2], [0, 1, 2]]
+   // If indexing into a params dimension of size 4, then the indices will become
+   // [0, 1, 2, 4, 5, 6]
+-  void AddBatchOffsets(Tensor* indices, const Tensor& params) {
++  void AddBatchOffsets(OpKernelContext* ctx, Tensor* indices,
++                       const Tensor& params) {
+     int64 batch_size = 1;  // The size of all batch dimensions.
+     for (int idx = 0; idx < batch_dims_; ++idx) {
+       batch_size *= params.dim_size(idx);
+     }
++    OP_REQUIRES(
++        ctx, batch_size != 0,
++        errors::InvalidArgument(
++            "Inner size of indices would result in batch_size of 0 and a ",
++            "division by 0 in the implementation. This is illegal"));
+ 
+     auto indices_flat = indices->flat<Index>();
+     int64 const index_inner_size = indices->NumElements() / batch_size;
+
+tokens used
+input: 1,017
+cache read: 10,752
+cache write: 0
+output: 103
+reasoning output: 13
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/kernels/resource_variable_ops.cc b/tensorflow/core/kernels/resource_variable_ops.cc
+    index e056d9cb0f..5621e7bf74 100644
+    --- a/tensorflow/core/kernels/resource_variable_ops.cc
+    +++ b/tensorflow/core/kernels/resource_variable_ops.cc
+    @@ -688,7 +688,8 @@ class ResourceGatherOp : public OpKernel {
+             copy_functor(c->eigen_device<Device>(), tmp_indices.flat<Index>(),
+                          indices.flat<Index>());
+     
+    -        AddBatchOffsets(&tmp_indices, params);
+    +        AddBatchOffsets(c, &tmp_indices, params);
+    +        if (!c->status().ok()) return;
+             op_indices = &tmp_indices;
+           }
+     
+    @@ -720,11 +721,17 @@ class ResourceGatherOp : public OpKernel {
+       // Example: batch_dims = 1, indices = [[0, 1, 2], [0, 1, 2]]
+       // If indexing into a params dimension of size 4, then the indices will become
+       // [0, 1, 2, 4, 5, 6]
+    -  void AddBatchOffsets(Tensor* indices, const Tensor& params) {
+    +  void AddBatchOffsets(OpKernelContext* ctx, Tensor* indices,
+    +                       const Tensor& params) {
+         int64 batch_size = 1;  // The size of all batch dimensions.
+         for (int idx = 0; idx < batch_dims_; ++idx) {
+           batch_size *= params.dim_size(idx);
+         }
+    +    OP_REQUIRES(
+    +        ctx, batch_size != 0,
+    +        errors::InvalidArgument(
+    +            "Inner size of indices would result in batch_size of 0 and a ",
+    +            "division by 0 in the implementation. This is illegal"));
+     
+         auto indices_flat = indices->flat<Index>();
+         int64 const index_inner_size = indices->NumElements() / batch_size;
+  notes: >
+    Backported the ResourceGather batch_size zero guard to prevent division by zero in AddBatchOffsets.
+```
+
+tokens used
+input: 1,598
+cache read: 10,752
+cache write: 0
+output: 486
+reasoning output: 0

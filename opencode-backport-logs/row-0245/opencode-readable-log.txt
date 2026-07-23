@@ -1,0 +1,203 @@
+I’ll inspect the target-side `InferenceContext::PreInputInit` implementation and validate the minimal hunk against the provided base before editing.
+
+tool: viewcode
+{
+  "ref": "e1192b098f699e4c18e2ecc1c8345edf50ccdf8b",
+  "path": "tensorflow/core/framework/shape_inference.cc",
+  "startline": 140,
+  "endline": 200
+}
+Here are lines 140 through 200.
+
+Status InferenceContext::input(StringPiece input_name,
+                               std::vector<ShapeHandle>* output) const {
+  const auto result = input_name_map_.find(input_name);
+  if (result == input_name_map_.end()) {
+    return errors::InvalidArgument("Unknown input name: ", input_name);
+  } else {
+    output->clear();
+    for (int i = result->second.first; i < result->second.second; ++i) {
+      output->push_back(inputs_[i]);
+    }
+  }
+  return Status::OK();
+}
+
+Status InferenceContext::output(StringPiece output_name,
+                                std::vector<ShapeHandle>* output) const {
+  const auto result = output_name_map_.find(output_name);
+  if (result == output_name_map_.end()) {
+    return errors::InvalidArgument("Unknown output name: ", output_name);
+  } else {
+    output->clear();
+    for (int i = result->second.first; i < result->second.second; ++i) {
+      output->push_back(outputs_[i]);
+    }
+  }
+  return Status::OK();
+}
+
+void InferenceContext::PreInputInit(
+    const OpDef& op_def, const std::vector<const Tensor*>& input_tensors,
+    const std::vector<ShapeHandle>& input_tensors_as_shapes) {
+  // TODO(mdan): This is also done at graph construction. Run only here instead?
+  const auto ret = full_type::SpecializeType(attrs_, op_def);
+  DCHECK(ret.status().ok()) << "while instantiating types: " << ret.status();
+  ret_types_ = ret.ValueOrDie();
+
+  input_tensors_ = input_tensors;
+  input_tensors_as_shapes_ = input_tensors_as_shapes;
+
+  construction_status_ =
+      NameRangesForNode(attrs_, op_def, &input_name_map_, &output_name_map_);
+  if (!construction_status_.ok()) return;
+
+  int num_outputs = 0;
+  for (const auto& e : output_name_map_) {
+    num_outputs = std::max(num_outputs, e.second.second);
+  }
+  outputs_.assign(num_outputs, nullptr);
+  output_handle_shapes_and_types_.resize(num_outputs);
+}
+
+Status InferenceContext::ExpandOutputs(int new_output_size) {
+  const int outputs_size = outputs_.size();
+  if (new_output_size < outputs_size) {
+    return errors::InvalidArgument("Trying to reduce number of outputs of op.");
+  }
+  outputs_.resize(new_output_size, nullptr);
+  output_handle_shapes_and_types_.resize(new_output_size);
+  return Status::OK();
+}
+
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: git_show
+{
+  "ref": "cb164786dc891ea11d3a900e90367c339305dc7b",
+  "context": "void InferenceContext::PreInputInit(\n    const std::vector<ShapeHandle>& input_tensors_as_shapes) {\n  // TODO(mdan): This is also done at graph construction. Run only here instead?\n  const auto ret = full_type::SpecializeType(attrs_, op_def);\n  DCHECK(ret.status().ok()) << \"while instantiating types: \" << ret.status();\n  ret_types_ = ret.ValueOrDie();"
+}
+commit cb164786dc891ea11d3a900e90367c339305dc7b
+Author: Mihai Maruseac <mihaimaruseac@google.com>
+Date:   Mon Nov 8 10:28:34 2021 -0800
+
+    Properly handle the case where `SpecializeType()` returns an error `Status`.
+    
+    If the error case in `SpecializeType()` is reached, then we would get a crash when trying to access the value of an errorenous `StatusOr` object
+    
+    PiperOrigin-RevId: 408380069
+    Change-Id: If3c3fc876dcf9384d5ec7a4985adc68c23ea7318
+
+ tensorflow/core/framework/shape_inference.cc | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+This commit shows that there is a high probability that this code is new, so the corresponding code segment cannot be found in the old version.
+You can call `viewcode` and `locate_symbol` to further check the results step by step. For newly introduced code, we consider that this hunk `need not ported`.
+
+tool: locate_symbol
+{
+  "ref": "e1192b098f699e4c18e2ecc1c8345edf50ccdf8b",
+  "symbol": "InferenceContext::PreInputInit"
+}
+tensorflow/core/framework/shape_inference.cc:168
+
+tokens used
+input: 3,710
+cache read: 4,608
+cache write: 0
+output: 292
+reasoning output: 0
+
+The target release has the same `PreInputInit` code pattern, so the security fix maps directly: convert the debug-only status check into a runtime status propagation via `construction_status_`.
+
+tool: validate
+{
+  "ref": "e1192b098f699e4c18e2ecc1c8345edf50ccdf8b",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/framework/shape_inference.cc b/tensorflow/core/framework/shape_inference.cc\n--- a/tensorflow/core/framework/shape_inference.cc\n+++ b/tensorflow/core/framework/shape_inference.cc\n@@ -170,7 +170,10 @@ void InferenceContext::PreInputInit(\n     const std::vector<ShapeHandle>& input_tensors_as_shapes) {\n   // TODO(mdan): This is also done at graph construction. Run only here instead?\n   const auto ret = full_type::SpecializeType(attrs_, op_def);\n-  DCHECK(ret.status().ok()) << \"while instantiating types: \" << ret.status();\n+  if (!ret.status().ok()) {\n+    construction_status_ = ret.status();\n+    return;\n+  }\n   ret_types_ = ret.ValueOrDie();\n \n   input_tensors_ = input_tensors;\n"
+}
+Patch applied successfully
+
+tokens used
+input: 1,795
+cache read: 7,680
+cache write: 0
+output: 300
+reasoning output: 30
+
+The backport hunk validates cleanly against the target base. I’m applying only that source change now.
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/framework/shape_inference.cc\n@@\n   // TODO(mdan): This is also done at graph construction. Run only here instead?\n   const auto ret = full_type::SpecializeType(attrs_, op_def);\n-  DCHECK(ret.status().ok()) << \"while instantiating types: \" << ret.status();\n+  if (!ret.status().ok()) {\n+    construction_status_ = ret.status();\n+    return;\n+  }\n   ret_types_ = ret.ValueOrDie();\n \n   input_tensors_ = input_tensors;\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/framework/shape_inference.cc
+
+tokens used
+input: 1,114
+cache read: 8,704
+cache write: 0
+output: 186
+reasoning output: 0
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/framework/shape_inference.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0245-e1192b098f69",
+  "timeout": 120000
+}
+warning: in the working copy of 'tensorflow/core/framework/shape_inference.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/framework/shape_inference.cc b/tensorflow/core/framework/shape_inference.cc
+index 28706c8ced..55a9830523 100644
+--- a/tensorflow/core/framework/shape_inference.cc
++++ b/tensorflow/core/framework/shape_inference.cc
+@@ -170,7 +170,10 @@ void InferenceContext::PreInputInit(
+     const std::vector<ShapeHandle>& input_tensors_as_shapes) {
+   // TODO(mdan): This is also done at graph construction. Run only here instead?
+   const auto ret = full_type::SpecializeType(attrs_, op_def);
+-  DCHECK(ret.status().ok()) << "while instantiating types: " << ret.status();
++  if (!ret.status().ok()) {
++    construction_status_ = ret.status();
++    return;
++  }
+   ret_types_ = ret.ValueOrDie();
+ 
+   input_tensors_ = input_tensors;
+
+tokens used
+input: 303
+cache read: 9,728
+cache write: 0
+output: 76
+reasoning output: 15
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/framework/shape_inference.cc b/tensorflow/core/framework/shape_inference.cc
+    index 28706c8ced..55a9830523 100644
+    --- a/tensorflow/core/framework/shape_inference.cc
+    +++ b/tensorflow/core/framework/shape_inference.cc
+    @@ -170,7 +170,10 @@ void InferenceContext::PreInputInit(
+         const std::vector<ShapeHandle>& input_tensors_as_shapes) {
+       // TODO(mdan): This is also done at graph construction. Run only here instead?
+       const auto ret = full_type::SpecializeType(attrs_, op_def);
+    -  DCHECK(ret.status().ok()) << "while instantiating types: " << ret.status();
+    +  if (!ret.status().ok()) {
+    +    construction_status_ = ret.status();
+    +    return;
+    +  }
+       ret_types_ = ret.ValueOrDie();
+     
+       input_tensors_ = input_tensors;
+  notes: >
+    Backported the runtime error handling for SpecializeType() failure in InferenceContext::PreInputInit and validated the hunk against the target base.
+```
+
+tokens used
+input: 643
+cache read: 9,728
+cache write: 0
+output: 274
+reasoning output: 0

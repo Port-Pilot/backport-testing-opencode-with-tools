@@ -1,0 +1,662 @@
+I’ll inspect the target-side sparse tensor map implementation and the source commit context, then apply only the equivalent overflow guard needed for TensorFlow 2.5.0.
+
+tool: git_show
+{
+  "ref": "69c68ecbb24dff3fa0e46da0d16c821a2dd22d7c"
+}
+commit 69c68ecbb24dff3fa0e46da0d16c821a2dd22d7c
+Author: Amit Patankar <amitpatankar@google.com>
+Date:   Tue Apr 20 12:14:41 2021 -0700
+
+    Fix overflow CHECK issue with `tf.raw_ops.AddManySparseToTensorsMap`.
+    
+    PiperOrigin-RevId: 369492969
+    Change-Id: I1d70d6c0c92e3d7a25bc3b3aa2a0c0ac9688bf81
+
+ tensorflow/core/kernels/sparse_tensors_map_ops.cc | 26 +++++++++++++++++------
+ 1 file changed, 19 insertions(+), 7 deletions(-)
+
+--- Commit Details ---
+commit 69c68ecbb24dff3fa0e46da0d16c821a2dd22d7c
+Author: Amit Patankar <amitpatankar@google.com>
+Date:   Tue Apr 20 12:14:41 2021 -0700
+
+    Fix overflow CHECK issue with `tf.raw_ops.AddManySparseToTensorsMap`.
+    
+    PiperOrigin-RevId: 369492969
+    Change-Id: I1d70d6c0c92e3d7a25bc3b3aa2a0c0ac9688bf81
+
+diff --git a/tensorflow/core/kernels/sparse_tensors_map_ops.cc b/tensorflow/core/kernels/sparse_tensors_map_ops.cc
+index c2c0e43ca2..5ea5fca544 100644
+--- a/tensorflow/core/kernels/sparse_tensors_map_ops.cc
++++ b/tensorflow/core/kernels/sparse_tensors_map_ops.cc
+@@ -21,9 +21,6 @@ limitations under the License.
+ #include <utility>
+ #include <vector>
+ 
+-#include "tensorflow/core/framework/op_kernel.h"
+-#include "tensorflow/core/framework/register_types.h"
+-
+ #include "tensorflow/core/framework/op_kernel.h"
+ #include "tensorflow/core/framework/register_types.h"
+ #include "tensorflow/core/framework/resource_mgr.h"
+@@ -31,6 +28,7 @@ limitations under the License.
+ #include "tensorflow/core/framework/tensor_util.h"
+ #include "tensorflow/core/framework/types.h"
+ #include "tensorflow/core/lib/gtl/inlined_vector.h"
++#include "tensorflow/core/util/overflow.h"
+ #include "tensorflow/core/util/sparse/sparse_tensor.h"
+ 
+ namespace tensorflow {
+@@ -254,7 +252,22 @@ class AddManySparseToTensorsMapOp : public SparseTensorAccessingOp {
+         errors::InvalidArgument(
+             "Rank of input SparseTensor should be > 1, but saw rank: ", rank));
+ 
+-    TensorShape tensor_input_shape(input_shape->vec<int64>());
++    auto input_shape_vec = input_shape->vec<int64>();
++    int new_num_elements = 1;
++    bool overflow_ocurred = false;
++    for (int i = 0; i < input_shape_vec.size(); i++) {
++      new_num_elements =
++          MultiplyWithoutOverflow(new_num_elements, input_shape_vec(i));
++      if (new_num_elements < 0) {
++        overflow_ocurred = true;
++      }
++    }
++
++    OP_REQUIRES(
++        context, !overflow_ocurred,
++        errors::Internal("Encountered overflow from large input shape."));
++
++    TensorShape tensor_input_shape(input_shape_vec);
+     gtl::InlinedVector<int64, 8> std_order(rank);
+     std::iota(std_order.begin(), std_order.end(), 0);
+     SparseTensor input_st;
+@@ -262,8 +275,7 @@ class AddManySparseToTensorsMapOp : public SparseTensorAccessingOp {
+                                                  tensor_input_shape, std_order,
+                                                  &input_st));
+ 
+-    auto input_shape_t = input_shape->vec<int64>();
+-    const int64 N = input_shape_t(0);
++    const int64 N = input_shape_vec(0);
+ 
+     Tensor sparse_handles(DT_INT64, TensorShape({N}));
+     auto sparse_handles_t = sparse_handles.vec<int64>();
+@@ -274,7 +286,7 @@ class AddManySparseToTensorsMapOp : public SparseTensorAccessingOp {
+     // minibatch entries.
+     TensorShape output_shape;
+     OP_REQUIRES_OK(context, TensorShapeUtils::MakeShape(
+-                                input_shape_t.data() + 1,
++                                input_shape_vec.data() + 1,
+                                 input_shape->NumElements() - 1, &output_shape));
+ 
+     // Get groups by minibatch dimension
+
+tool: viewcode
+{
+  "ref": "95b2a30626d571e8f544f713c71cb568d16ec968",
+  "path": "tensorflow/core/kernels/sparse_tensors_map_ops.cc",
+  "startline": 1,
+  "endline": 330
+}
+Here are lines 1 through 330.
+
+/* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+==============================================================================*/
+
+#define EIGEN_USE_THREADS
+
+#include <algorithm>
+#include <numeric>
+#include <unordered_map>
+#include <utility>
+#include <vector>
+
+#include "tensorflow/core/framework/op_kernel.h"
+#include "tensorflow/core/framework/register_types.h"
+
+#include "tensorflow/core/framework/op_kernel.h"
+#include "tensorflow/core/framework/register_types.h"
+#include "tensorflow/core/framework/resource_mgr.h"
+#include "tensorflow/core/framework/tensor.h"
+#include "tensorflow/core/framework/tensor_util.h"
+#include "tensorflow/core/framework/types.h"
+#include "tensorflow/core/lib/gtl/inlined_vector.h"
+#include "tensorflow/core/util/sparse/sparse_tensor.h"
+
+namespace tensorflow {
+
+typedef Eigen::ThreadPoolDevice CPUDevice;
+
+using sparse::SparseTensor;
+
+class SparseTensorsMap : public ResourceBase {
+ public:
+  explicit SparseTensorsMap(const string& name) : name_(name), counter_(0) {}
+
+  string DebugString() const override { return "A SparseTensorsMap"; }
+
+  typedef struct {
+    PersistentTensor indices;
+    PersistentTensor values;
+    gtl::InlinedVector<int64, 8> shape;
+  } PersistentSparseTensor;
+
+  Status AddSparseTensor(OpKernelContext* ctx, const SparseTensor& sp,
+                         int64* handle) {
+    PersistentTensor persistent_ix;
+    Tensor* ix;
+    TF_RETURN_IF_ERROR(ctx->allocate_persistent(
+        sp.indices().dtype(), sp.indices().shape(), &persistent_ix, &ix));
+    *ix = sp.indices();
+
+    PersistentTensor persistent_values;
+    Tensor* values;
+    TF_RETURN_IF_ERROR(ctx->allocate_persistent(sp.indices().dtype(),
+                                                sp.indices().shape(),
+                                                &persistent_values, &values));
+    *values = sp.values();
+    {
+      mutex_lock l(mu_);
+      int64 unique_st_handle = counter_++;  // increment is guarded on purpose
+      sp_tensors_[unique_st_handle] = PersistentSparseTensor{
+          persistent_ix, persistent_values,
+          gtl::InlinedVector<int64, 8>(sp.shape().begin(), sp.shape().end())};
+      *handle = unique_st_handle;
+    }
+    return Status::OK();
+  }
+
+  Status RetrieveAndClearSparseTensors(
+      OpKernelContext* ctx, const TTypes<int64>::ConstVec& handles,
+      std::vector<SparseTensor>* sparse_tensors) {
+    sparse_tensors->clear();
+    sparse_tensors->reserve(handles.size());
+    {
+      mutex_lock l(mu_);
+      for (size_t i = 0; i < handles.size(); ++i) {
+        const int64 handle = handles(i);
+        auto sp_iter = sp_tensors_.find(handle);
+        if (sp_iter == sp_tensors_.end()) {
+          return errors::InvalidArgument(
+              "Unable to find SparseTensor: ", handle, " in map: ", name_);
+        }
+        const Tensor* ix = sp_iter->second.indices.AccessTensor(ctx);
+        const Tensor* values = sp_iter->second.values.AccessTensor(ctx);
+        const auto& shape = sp_iter->second.shape;
+        SparseTensor tensor;
+        TF_RETURN_IF_ERROR(SparseTensor::Create(*ix, *values, shape, &tensor));
+        sparse_tensors->push_back(std::move(tensor));
+        sp_tensors_.erase(sp_iter);
+      }
+    }
+
+    return Status::OK();
+  }
+
+ protected:
+  ~SparseTensorsMap() override {}
+
+ private:
+  string name_;
+
+  mutex mu_;
+  int64 counter_ TF_GUARDED_BY(mu_);
+  std::unordered_map<int64, PersistentSparseTensor> sp_tensors_
+      TF_GUARDED_BY(mu_);
+};
+
+class SparseTensorAccessingOp : public OpKernel {
+ public:
+  typedef std::function<Status(SparseTensorsMap**)> CreatorCallback;
+
+  explicit SparseTensorAccessingOp(OpKernelConstruction* context)
+      : OpKernel(context), sparse_tensors_map_(nullptr) {}
+
+ protected:
+  ~SparseTensorAccessingOp() override {
+    if (sparse_tensors_map_) sparse_tensors_map_->Unref();
+  }
+
+  Status GetMap(OpKernelContext* ctx, bool is_writing,
+                SparseTensorsMap** sparse_tensors_map) {
+    mutex_lock l(mu_);
+
+    if (sparse_tensors_map_) {
+      *sparse_tensors_map = sparse_tensors_map_;
+      return Status::OK();
+    }
+
+    TF_RETURN_IF_ERROR(cinfo_.Init(ctx->resource_manager(), def(),
+                                   is_writing /* use_node_name_as_default */));
+
+    CreatorCallback sparse_tensors_map_creator = [this](SparseTensorsMap** c) {
+      SparseTensorsMap* map = new SparseTensorsMap(cinfo_.name());
+      *c = map;
+      return Status::OK();
+    };
+
+    TF_RETURN_IF_ERROR(
+        cinfo_.resource_manager()->LookupOrCreate<SparseTensorsMap>(
+            cinfo_.container(), cinfo_.name(), &sparse_tensors_map_,
+            sparse_tensors_map_creator));
+
+    *sparse_tensors_map = sparse_tensors_map_;
+    return Status::OK();
+  }
+
+ private:
+  ContainerInfo cinfo_;
+
+  mutex mu_;
+  SparseTensorsMap* sparse_tensors_map_ TF_PT_GUARDED_BY(mu_);
+};
+
+class AddSparseToTensorsMapOp : public SparseTensorAccessingOp {
+ public:
+  explicit AddSparseToTensorsMapOp(OpKernelConstruction* context)
+      : SparseTensorAccessingOp(context) {}
+
+  void Compute(OpKernelContext* context) override {
+    const Tensor* input_indices;
+    const Tensor* input_values;
+    const Tensor* input_shape;
+    SparseTensorsMap* map;
+
+    OP_REQUIRES_OK(context, context->input("sparse_indices", &input_indices));
+    OP_REQUIRES_OK(context, context->input("sparse_values", &input_values));
+    OP_REQUIRES_OK(context, context->input("sparse_shape", &input_shape));
+    OP_REQUIRES_OK(context, GetMap(context, true /* is_writing */, &map));
+
+    OP_REQUIRES(context, TensorShapeUtils::IsMatrix(input_indices->shape()),
+                errors::InvalidArgument(
+                    "Input indices should be a matrix but received shape ",
+                    input_indices->shape().DebugString()));
+
+    OP_REQUIRES(context, TensorShapeUtils::IsVector(input_values->shape()),
+                errors::InvalidArgument(
+                    "Input values should be a vector but received shape ",
+                    input_values->shape().DebugString()));
+
+    OP_REQUIRES(context, TensorShapeUtils::IsVector(input_shape->shape()),
+                errors::InvalidArgument(
+                    "Input shape should be a vector but received shape ",
+                    input_shape->shape().DebugString()));
+
+    TensorShape input_shape_object;
+    OP_REQUIRES_OK(context,
+                   TensorShapeUtils::MakeShape(input_shape->vec<int64>().data(),
+                                               input_shape->NumElements(),
+                                               &input_shape_object));
+    SparseTensor st;
+    OP_REQUIRES_OK(context, SparseTensor::Create(*input_indices, *input_values,
+                                                 input_shape_object, &st));
+    int64 handle;
+    OP_REQUIRES_OK(context, map->AddSparseTensor(context, st, &handle));
+
+    Tensor sparse_handle(DT_INT64, TensorShape({}));
+    auto sparse_handle_t = sparse_handle.scalar<int64>();
+
+    sparse_handle_t() = handle;
+
+    context->set_output(0, sparse_handle);
+  }
+};
+
+REGISTER_KERNEL_BUILDER(Name("AddSparseToTensorsMap").Device(DEVICE_CPU),
+                        AddSparseToTensorsMapOp);
+
+template <typename T>
+class AddManySparseToTensorsMapOp : public SparseTensorAccessingOp {
+ public:
+  explicit AddManySparseToTensorsMapOp(OpKernelConstruction* context)
+      : SparseTensorAccessingOp(context) {}
+
+  void Compute(OpKernelContext* context) override {
+    const Tensor* input_indices;
+    const Tensor* input_values;
+    const Tensor* input_shape;
+    SparseTensorsMap* map;
+
+    OP_REQUIRES_OK(context, context->input("sparse_indices", &input_indices));
+    OP_REQUIRES_OK(context, context->input("sparse_values", &input_values));
+    OP_REQUIRES_OK(context, context->input("sparse_shape", &input_shape));
+    OP_REQUIRES_OK(context, GetMap(context, true /* is_writing */, &map));
+
+    OP_REQUIRES(context, TensorShapeUtils::IsMatrix(input_indices->shape()),
+                errors::InvalidArgument(
+                    "Input indices should be a matrix but received shape ",
+                    input_indices->shape().DebugString()));
+
+    OP_REQUIRES(context, TensorShapeUtils::IsVector(input_values->shape()),
+                errors::InvalidArgument(
+                    "Input values should be a vector but received shape ",
+                    input_values->shape().DebugString()));
+
+    OP_REQUIRES(context, TensorShapeUtils::IsVector(input_shape->shape()),
+                errors::InvalidArgument(
+                    "Input shape should be a vector but received shape ",
+                    input_shape->shape().DebugString()));
+
+    int rank = input_shape->NumElements();
+
+    OP_REQUIRES(
+        context, rank > 1,
+        errors::InvalidArgument(
+            "Rank of input SparseTensor should be > 1, but saw rank: ", rank));
+
+    TensorShape tensor_input_shape(input_shape->vec<int64>());
+    gtl::InlinedVector<int64, 8> std_order(rank);
+    std::iota(std_order.begin(), std_order.end(), 0);
+    SparseTensor input_st;
+    OP_REQUIRES_OK(context, SparseTensor::Create(*input_indices, *input_values,
+                                                 tensor_input_shape, std_order,
+                                                 &input_st));
+
+    auto input_shape_t = input_shape->vec<int64>();
+    const int64 N = input_shape_t(0);
+
+    Tensor sparse_handles(DT_INT64, TensorShape({N}));
+    auto sparse_handles_t = sparse_handles.vec<int64>();
+
+    OP_REQUIRES_OK(context, input_st.IndicesValid());
+
+    // We can generate the output shape proto string now, for all
+    // minibatch entries.
+    TensorShape output_shape;
+    OP_REQUIRES_OK(context, TensorShapeUtils::MakeShape(
+                                input_shape_t.data() + 1,
+                                input_shape->NumElements() - 1, &output_shape));
+
+    // Get groups by minibatch dimension
+    std::unordered_set<int64> visited;
+    sparse::GroupIterable minibatch = input_st.group({0});
+    for (const auto& subset : minibatch) {
+      const int64 b = subset.group()[0];
+      visited.insert(b);
+      OP_REQUIRES(
+          context, b > -1 && b < N,
+          errors::InvalidArgument(
+              "Received unexpected column 0 value in input SparseTensor: ", b,
+              " < 0 or >= N (= ", N, ")"));
+
+      const auto indices = subset.indices();
+      const auto values = subset.values<T>();
+      const int64 num_entries = values.size();
+
+      Tensor output_indices = Tensor(DT_INT64, {num_entries, rank - 1});
+      Tensor output_values = Tensor(DataTypeToEnum<T>::value, {num_entries});
+
+      auto output_indices_t = output_indices.matrix<int64>();
+      auto output_values_t = output_values.vec<T>();
+
+      for (int i = 0; i < num_entries; ++i) {
+        for (int d = 1; d < rank; ++d) {
+          output_indices_t(i, d - 1) = indices(i, d);
+        }
+        output_values_t(i) = values(i);
+      }
+
+      SparseTensor st_i;
+      OP_REQUIRES_OK(context,
+                     SparseTensor::Create(output_indices, output_values,
+                                          output_shape, &st_i));
+      int64 handle;
+      OP_REQUIRES_OK(context, map->AddSparseTensor(context, st_i, &handle));
+      sparse_handles_t(b) = handle;
+    }
+
+    // Fill in any gaps; we must provide an empty ST for batch entries
+    // the grouper didn't find.
+    if (visited.size() < N) {
+      Tensor empty_indices(DT_INT64, {0, rank - 1});
+      Tensor empty_values(DataTypeToEnum<T>::value, {0});
+      SparseTensor empty_st;
+      OP_REQUIRES_OK(context, SparseTensor::Create(empty_indices, empty_values,
+                                                   output_shape, &empty_st));
+
+      for (int64 b = 0; b < N; ++b) {
+        // We skipped this batch entry.
+        if (visited.find(b) == visited.end()) {
+          int64 handle;
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: locate_symbol
+{
+  "ref": "95b2a30626d571e8f544f713c71cb568d16ec968",
+  "symbol": "MultiplyWithoutOverflow"
+}
+tensorflow/compiler/xla/overflow_util.h:30
+tensorflow/compiler/xla/shape_util.cc:883
+tensorflow/core/kernels/one_hot_op.cc:85
+tensorflow/core/kernels/reshape_op.h:140
+tensorflow/core/util/overflow.h:27
+tensorflow/compiler/xla/service/hlo_sharding.cc:509
+tensorflow/compiler/xla/shape_util.cc:233
+tensorflow/compiler/xla/shape_util.cc:878
+tensorflow/core/framework/tensor_shape.cc:70
+tensorflow/core/framework/tensor_shape.cc:90
+tensorflow/core/framework/tensor_shape.cc:128
+tensorflow/core/framework/tensor_shape.cc:384
+tensorflow/core/framework/tensor_shape.cc:404
+tensorflow/core/framework/tensor_shape.cc:430
+tensorflow/core/framework/tensor_shape.cc:808
+tensorflow/core/framework/tensor_shape.cc:1004
+tensorflow/core/util/overflow_test.cc:65
+tensorflow/core/util/overflow_test.cc:78
+tensorflow/core/util/overflow_test.cc:79
+tensorflow/core/util/overflow_test.cc:80
+
+tokens used
+input: 4,245
+cache read: 4,608
+cache write: 0
+output: 201
+reasoning output: 0
+
+The target file has the same vulnerable `AddManySparseToTensorsMapOp` structure and already contains the duplicate includes shown in the source patch. I’m applying the minimal equivalent hunk: add `overflow.h`, compute the shape product with `MultiplyWithoutOverflow`, and reuse that validated shape vector.
+
+tool: validate
+{
+  "ref": "95b2a30626d571e8f544f713c71cb568d16ec968",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/sparse_tensors_map_ops.cc b/tensorflow/core/kernels/sparse_tensors_map_ops.cc\n--- a/tensorflow/core/kernels/sparse_tensors_map_ops.cc\n+++ b/tensorflow/core/kernels/sparse_tensors_map_ops.cc\n@@ -21,9 +21,6 @@ limitations under the License.\n #include <utility>\n #include <vector>\n \n-#include \"tensorflow/core/framework/op_kernel.h\"\n-#include \"tensorflow/core/framework/register_types.h\"\n-\n #include \"tensorflow/core/framework/op_kernel.h\"\n #include \"tensorflow/core/framework/register_types.h\"\n #include \"tensorflow/core/framework/resource_mgr.h\"\n@@ -31,6 +28,7 @@ limitations under the License.\n #include \"tensorflow/core/framework/tensor_util.h\"\n #include \"tensorflow/core/framework/types.h\"\n #include \"tensorflow/core/lib/gtl/inlined_vector.h\"\n+#include \"tensorflow/core/util/overflow.h\"\n #include \"tensorflow/core/util/sparse/sparse_tensor.h\"\n \n namespace tensorflow {\n@@ -254,7 +252,22 @@ class AddManySparseToTensorsMapOp : public SparseTensorAccessingOp {\n         errors::InvalidArgument(\n             \"Rank of input SparseTensor should be > 1, but saw rank: \", rank));\n \n-    TensorShape tensor_input_shape(input_shape->vec<int64>());\n+    auto input_shape_vec = input_shape->vec<int64>();\n+    int new_num_elements = 1;\n+    bool overflow_ocurred = false;\n+    for (int i = 0; i < input_shape_vec.size(); i++) {\n+      new_num_elements =\n+          MultiplyWithoutOverflow(new_num_elements, input_shape_vec(i));\n+      if (new_num_elements < 0) {\n+        overflow_ocurred = true;\n+      }\n+    }\n+\n+    OP_REQUIRES(\n+        context, !overflow_ocurred,\n+        errors::Internal(\"Encountered overflow from large input shape.\"));\n+\n+    TensorShape tensor_input_shape(input_shape_vec);\n     gtl::InlinedVector<int64, 8> std_order(rank);\n     std::iota(std_order.begin(), std_order.end(), 0);\n     SparseTensor input_st;\n@@ -262,8 +275,7 @@ class AddManySparseToTensorsMapOp : public SparseTensorAccessingOp {\n                                                  tensor_input_shape, std_order,\n                                                  &input_st));\n \n-    auto input_shape_t = input_shape->vec<int64>();\n-    const int64 N = input_shape_t(0);\n+    const int64 N = input_shape_vec(0);\n \n     Tensor sparse_handles(DT_INT64, TensorShape({N}));\n     auto sparse_handles_t = sparse_handles.vec<int64>();\n@@ -274,7 +286,7 @@ class AddManySparseToTensorsMapOp : public SparseTensorAccessingOp {\n     // minibatch entries.\n     TensorShape output_shape;\n     OP_REQUIRES_OK(context, TensorShapeUtils::MakeShape(\n-                                input_shape_t.data() + 1,\n+                                input_shape_vec.data() + 1,\n                                 input_shape->NumElements() - 1, &output_shape));\n \n     // Get groups by minibatch dimension\n"
+}
+Patch applied successfully
+
+tokens used
+input: 4,375
+cache read: 8,704
+cache write: 0
+output: 867
+reasoning output: 60
+
+The hunk validates cleanly against the target base. I’m applying it to the checkout now.
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/kernels/sparse_tensors_map_ops.cc\n@@\n-#include \"tensorflow/core/framework/op_kernel.h\"\n-#include \"tensorflow/core/framework/register_types.h\"\n-\n #include \"tensorflow/core/framework/op_kernel.h\"\n #include \"tensorflow/core/framework/register_types.h\"\n #include \"tensorflow/core/framework/resource_mgr.h\"\n@@\n #include \"tensorflow/core/framework/tensor_util.h\"\n #include \"tensorflow/core/framework/types.h\"\n #include \"tensorflow/core/lib/gtl/inlined_vector.h\"\n+#include \"tensorflow/core/util/overflow.h\"\n #include \"tensorflow/core/util/sparse/sparse_tensor.h\"\n@@\n-    TensorShape tensor_input_shape(input_shape->vec<int64>());\n+    auto input_shape_vec = input_shape->vec<int64>();\n+    int new_num_elements = 1;\n+    bool overflow_ocurred = false;\n+    for (int i = 0; i < input_shape_vec.size(); i++) {\n+      new_num_elements =\n+          MultiplyWithoutOverflow(new_num_elements, input_shape_vec(i));\n+      if (new_num_elements < 0) {\n+        overflow_ocurred = true;\n+      }\n+    }\n+\n+    OP_REQUIRES(\n+        context, !overflow_ocurred,\n+        errors::Internal(\"Encountered overflow from large input shape.\"));\n+\n+    TensorShape tensor_input_shape(input_shape_vec);\n@@\n-    auto input_shape_t = input_shape->vec<int64>();\n-    const int64 N = input_shape_t(0);\n+    const int64 N = input_shape_vec(0);\n@@\n-                                input_shape_t.data() + 1,\n+                                input_shape_vec.data() + 1,\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/kernels/sparse_tensors_map_ops.cc
+
+tokens used
+input: 1,219
+cache read: 12,800
+cache write: 0
+output: 451
+reasoning output: 0
+
+The source change is in place. I’m checking the resulting diff to confirm only the intended file changed.
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/kernels/sparse_tensors_map_ops.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0160-95b2a30626d5",
+  "timeout": 120000
+}
+warning: in the working copy of 'tensorflow/core/kernels/sparse_tensors_map_ops.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/kernels/sparse_tensors_map_ops.cc b/tensorflow/core/kernels/sparse_tensors_map_ops.cc
+index c2c0e43ca2..5ea5fca544 100644
+--- a/tensorflow/core/kernels/sparse_tensors_map_ops.cc
++++ b/tensorflow/core/kernels/sparse_tensors_map_ops.cc
+@@ -21,9 +21,6 @@ limitations under the License.
+ #include <utility>
+ #include <vector>
+ 
+-#include "tensorflow/core/framework/op_kernel.h"
+-#include "tensorflow/core/framework/register_types.h"
+-
+ #include "tensorflow/core/framework/op_kernel.h"
+ #include "tensorflow/core/framework/register_types.h"
+ #include "tensorflow/core/framework/resource_mgr.h"
+@@ -31,6 +28,7 @@ limitations under the License.
+ #include "tensorflow/core/framework/tensor_util.h"
+ #include "tensorflow/core/framework/types.h"
+ #include "tensorflow/core/lib/gtl/inlined_vector.h"
++#include "tensorflow/core/util/overflow.h"
+ #include "tensorflow/core/util/sparse/sparse_tensor.h"
+ 
+ namespace tensorflow {
+@@ -254,7 +252,22 @@ class AddManySparseToTensorsMapOp : public SparseTensorAccessingOp {
+         errors::InvalidArgument(
+             "Rank of input SparseTensor should be > 1, but saw rank: ", rank));
+ 
+-    TensorShape tensor_input_shape(input_shape->vec<int64>());
++    auto input_shape_vec = input_shape->vec<int64>();
++    int new_num_elements = 1;
++    bool overflow_ocurred = false;
++    for (int i = 0; i < input_shape_vec.size(); i++) {
++      new_num_elements =
++          MultiplyWithoutOverflow(new_num_elements, input_shape_vec(i));
++      if (new_num_elements < 0) {
++        overflow_ocurred = true;
++      }
++    }
++
++    OP_REQUIRES(
++        context, !overflow_ocurred,
++        errors::Internal("Encountered overflow from large input shape."));
++
++    TensorShape tensor_input_shape(input_shape_vec);
+     gtl::InlinedVector<int64, 8> std_order(rank);
+     std::iota(std_order.begin(), std_order.end(), 0);
+     SparseTensor input_st;
+@@ -262,8 +275,7 @@ class AddManySparseToTensorsMapOp : public SparseTensorAccessingOp {
+                                                  tensor_input_shape, std_order,
+                                                  &input_st));
+ 
+-    auto input_shape_t = input_shape->vec<int64>();
+-    const int64 N = input_shape_t(0);
++    const int64 N = input_shape_vec(0);
+ 
+     Tensor sparse_handles(DT_INT64, TensorShape({N}));
+     auto sparse_handles_t = sparse_handles.vec<int64>();
+@@ -274,7 +286,7 @@ class AddManySparseToTensorsMapOp : public SparseTensorAccessingOp {
+     // minibatch entries.
+     TensorShape output_shape;
+     OP_REQUIRES_OK(context, TensorShapeUtils::MakeShape(
+-                                input_shape_t.data() + 1,
++                                input_shape_vec.data() + 1,
+                                 input_shape->NumElements() - 1, &output_shape));
+ 
+     // Get groups by minibatch dimension
+
+tokens used
+input: 676
+cache read: 13,824
+cache write: 0
+output: 109
+reasoning output: 16
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/kernels/sparse_tensors_map_ops.cc b/tensorflow/core/kernels/sparse_tensors_map_ops.cc
+    index c2c0e43ca2..5ea5fca544 100644
+    --- a/tensorflow/core/kernels/sparse_tensors_map_ops.cc
+    +++ b/tensorflow/core/kernels/sparse_tensors_map_ops.cc
+    @@ -21,9 +21,6 @@ limitations under the License.
+     #include <utility>
+     #include <vector>
+     
+    -#include "tensorflow/core/framework/op_kernel.h"
+    -#include "tensorflow/core/framework/register_types.h"
+    -
+     #include "tensorflow/core/framework/op_kernel.h"
+     #include "tensorflow/core/framework/register_types.h"
+     #include "tensorflow/core/framework/resource_mgr.h"
+    @@ -31,6 +28,7 @@ limitations under the License.
+     #include "tensorflow/core/framework/tensor_util.h"
+     #include "tensorflow/core/framework/types.h"
+     #include "tensorflow/core/lib/gtl/inlined_vector.h"
+    +#include "tensorflow/core/util/overflow.h"
+     #include "tensorflow/core/util/sparse/sparse_tensor.h"
+     
+     namespace tensorflow {
+    @@ -254,7 +252,22 @@ class AddManySparseToTensorsMapOp : public SparseTensorAccessingOp {
+             errors::InvalidArgument(
+                 "Rank of input SparseTensor should be > 1, but saw rank: ", rank));
+     
+    -    TensorShape tensor_input_shape(input_shape->vec<int64>());
+    +    auto input_shape_vec = input_shape->vec<int64>();
+    +    int new_num_elements = 1;
+    +    bool overflow_ocurred = false;
+    +    for (int i = 0; i < input_shape_vec.size(); i++) {
+    +      new_num_elements =
+    +          MultiplyWithoutOverflow(new_num_elements, input_shape_vec(i));
+    +      if (new_num_elements < 0) {
+    +        overflow_ocurred = true;
+    +      }
+    +    }
+    +
+    +    OP_REQUIRES(
+    +        context, !overflow_ocurred,
+    +        errors::Internal("Encountered overflow from large input shape."));
+    +
+    +    TensorShape tensor_input_shape(input_shape_vec);
+         gtl::InlinedVector<int64, 8> std_order(rank);
+         std::iota(std_order.begin(), std_order.end(), 0);
+         SparseTensor input_st;
+    @@ -262,8 +275,7 @@ class AddManySparseToTensorsMapOp : public SparseTensorAccessingOp {
+                                                      tensor_input_shape, std_order,
+                                                      &input_st));
+     
+    -    auto input_shape_t = input_shape->vec<int64>();
+    -    const int64 N = input_shape_t(0);
+    +    const int64 N = input_shape_vec(0);
+     
+         Tensor sparse_handles(DT_INT64, TensorShape({N}));
+         auto sparse_handles_t = sparse_handles.vec<int64>();
+    @@ -274,7 +286,7 @@ class AddManySparseToTensorsMapOp : public SparseTensorAccessingOp {
+         // minibatch entries.
+         TensorShape output_shape;
+         OP_REQUIRES_OK(context, TensorShapeUtils::MakeShape(
+    -                                input_shape_t.data() + 1,
+    +                                input_shape_vec.data() + 1,
+                                     input_shape->NumElements() - 1, &output_shape));
+     
+         // Get groups by minibatch dimension
+  notes: >
+    Backported the AddManySparseToTensorsMap input shape overflow guard and validated the hunk against the target base.
+```
+
+tokens used
+input: 1,543
+cache read: 13,824
+cache write: 0
+output: 796
+reasoning output: 24

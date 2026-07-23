@@ -1,0 +1,109 @@
+diff --git a/tensorflow/python/tools/saved_model_cli.py b/tensorflow/python/tools/saved_model_cli.py
+index 124686dff1..c828718889 100644
+--- a/tensorflow/python/tools/saved_model_cli.py
++++ b/tensorflow/python/tools/saved_model_cli.py
+@@ -24,6 +24,7 @@ from __future__ import division
+ from __future__ import print_function
+ 
+ import argparse
++import ast
+ import os
+ import re
+ import sys
+@@ -518,7 +519,7 @@ def preprocess_inputs_arg_string(inputs_str):
+   return input_dict
+ 
+ 
+-def preprocess_input_exprs_arg_string(input_exprs_str):
++def preprocess_input_exprs_arg_string(input_exprs_str, safe=True):
+   """Parses input arg into dictionary that maps input key to python expression.
+ 
+   Parses input string in the format of 'input_key=<python expression>' into a
+@@ -526,8 +527,10 @@ def preprocess_input_exprs_arg_string(input_exprs_str):
+ 
+   Args:
+     input_exprs_str: A string that specifies python expression for input keys.
+-    Each input is separated by semicolon. For each input key:
++      Each input is separated by semicolon. For each input key:
+         'input_key=<python expression>'
++    safe: Whether to evaluate the python expression as literals or allow
++      arbitrary calls (e.g. numpy usage).
+ 
+   Returns:
+     A dictionary that maps input keys to their values.
+@@ -542,8 +545,15 @@ def preprocess_input_exprs_arg_string(input_exprs_str):
+       raise RuntimeError('--input_exprs "%s" format is incorrect. Please follow'
+                          '"<input_key>=<python expression>"' % input_exprs_str)
+     input_key, expr = input_raw.split('=', 1)
+-    # ast.literal_eval does not work with numpy expressions
+-    input_dict[input_key] = eval(expr)  # pylint: disable=eval-used
++    if safe:
++      try:
++        input_dict[input_key] = ast.literal_eval(expr)
++      except:
++        raise RuntimeError(
++            f'Expression "{expr}" is not a valid python literal.')
++    else:
++      # ast.literal_eval does not work with numpy expressions
++      input_dict[input_key] = eval(expr)  # pylint: disable=eval-used
+   return input_dict
+ 
+ 
+@@ -656,7 +666,7 @@ def load_inputs_from_input_arg_string(inputs_str, input_exprs_str,
+   tensor_key_feed_dict = {}
+ 
+   inputs = preprocess_inputs_arg_string(inputs_str)
+-  input_exprs = preprocess_input_exprs_arg_string(input_exprs_str)
++  input_exprs = preprocess_input_exprs_arg_string(input_exprs_str, safe=False)
+   input_examples = preprocess_input_examples_arg_string(input_examples_str)
+ 
+   for input_tensor_key, (filename, variable_name) in inputs.items():
+@@ -920,8 +930,10 @@ def add_run_subparser(subparsers):
+   parser_run.add_argument('--inputs', type=str, default='', help=msg)
+   msg = ('Specifying inputs by python expressions, in the format of'
+          ' "<input_key>=\'<python expression>\'", separated by \';\'. '
+-         'numpy module is available as \'np\'. '
+-         'Will override duplicate input keys from --inputs option.')
++         'numpy module is available as \'np\'. Please note that the expression '
++         'will be evaluated as-is, and is susceptible to code injection. '
++         'When this is set, the value will override duplicate input keys from '
++         '--inputs option.')
+   parser_run.add_argument('--input_exprs', type=str, default='', help=msg)
+   msg = (
+       'Specifying tf.Example inputs as list of dictionaries. For example: '
+diff --git a/tensorflow/python/tools/saved_model_cli_test.py b/tensorflow/python/tools/saved_model_cli_test.py
+index 2580cbd73c..df43ba0bbb 100644
+--- a/tensorflow/python/tools/saved_model_cli_test.py
++++ b/tensorflow/python/tools/saved_model_cli_test.py
+@@ -380,7 +380,7 @@ Defined Functions:
+     input_expr_str = 'input3=np.zeros([2,2]);input4=[4,5]'
+     input_dict = saved_model_cli.preprocess_inputs_arg_string(input_str)
+     input_expr_dict = saved_model_cli.preprocess_input_exprs_arg_string(
+-        input_expr_str)
++        input_expr_str, safe=False)
+     self.assertTrue(input_dict['input1'] == ('/path/file.txt', 'ab3'))
+     self.assertTrue(input_dict['input2'] == ('file2', None))
+     print(input_expr_dict['input3'])
+@@ -416,6 +416,11 @@ Defined Functions:
+           }
+     """, feature)
+ 
++  def testInputPreprocessExampleWithCodeInjection(self):
++    input_examples_str = 'inputs=os.system("echo hacked")'
++    with self.assertRaisesRegex(RuntimeError, 'not a valid python literal.'):
++      saved_model_cli.preprocess_input_examples_arg_string(input_examples_str)
++
+   def testInputPreProcessFileNames(self):
+     input_str = (r'inputx=C:\Program Files\data.npz[v:0];'
+                  r'input:0=c:\PROGRA~1\data.npy')
+@@ -432,8 +437,8 @@ Defined Functions:
+     with self.assertRaises(RuntimeError):
+       saved_model_cli.preprocess_inputs_arg_string(input_str)
+     input_str = 'inputx:np.zeros((5))'
+-    with self.assertRaises(RuntimeError):
+-      saved_model_cli.preprocess_input_exprs_arg_string(input_str)
++    with self.assertRaisesRegex(RuntimeError, 'format is incorrect'):
++      saved_model_cli.preprocess_input_exprs_arg_string(input_str, safe=False)
+ 
+   def testInputParserNPY(self):
+     x0 = np.array([[1], [2]])

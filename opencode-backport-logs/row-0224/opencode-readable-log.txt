@@ -1,0 +1,492 @@
+I’ll inspect the target-side `div.cc` context and the source commit metadata only for the provided newer fix, then apply the minimal equivalent change in the checked-out 2.3.4 tree.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect newer patch and target TensorFlow Lite div implementation",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Validate/apply minimal backport hunk",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "content": "Review resulting diff and provide YAML result",
+      "status": "pending",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect newer patch and target TensorFlow Lite div implementation",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Validate/apply minimal backport hunk",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "content": "Review resulting diff and provide YAML result",
+    "status": "pending",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 4,043
+cache read: 4,608
+cache write: 0
+output: 127
+reasoning output: 0
+
+tool: viewcode
+{
+  "ref": "0a3a3a33f5fe8630e85234f33276e3dbe4d7da46",
+  "path": "tensorflow/lite/kernels/div.cc",
+  "startline": 180,
+  "endline": 260
+}
+This file only has 255 lines. Here are lines 180 through 255.
+
+        TF_LITE_DIV(reference_ops, Div, uint8_t);
+      }
+    } else {
+      if (need_broadcast) {
+        TF_LITE_DIV(optimized_ops, BroadcastDivSlow, uint8_t);
+      } else {
+        TF_LITE_DIV(optimized_ops, Div, uint8_t);
+      }
+    }
+#undef TF_LITE_DIV
+  } else {
+    context->ReportError(
+        context, "Unsupported combination of input and output types in Div.");
+    return kTfLiteError;
+  }
+  return kTfLiteOk;
+}
+
+template <KernelType kernel_type>
+TfLiteStatus Eval(TfLiteContext* context, TfLiteNode* node) {
+  auto* params = reinterpret_cast<TfLiteDivParams*>(node->builtin_data);
+  OpData* data = reinterpret_cast<OpData*>(node->user_data);
+
+  const TfLiteTensor* input1 = GetInput(context, node, kInputTensor1);
+  const TfLiteTensor* input2 = GetInput(context, node, kInputTensor2);
+  TfLiteTensor* output = GetOutput(context, node, kOutputTensor);
+
+  if (output->type == kTfLiteFloat32 || output->type == kTfLiteInt32) {
+    EvalDiv<kernel_type>(context, node, params, data, input1, input2, output);
+  } else if (output->type == kTfLiteUInt8) {
+    TF_LITE_ENSURE_OK(
+        context, EvalQuantized<kernel_type>(context, node, params, data, input1,
+                                            input2, output));
+  } else {
+    context->ReportError(
+        context,
+        "Div only supports FLOAT32, INT32 and quantized UINT8 now, got %d.",
+        output->type);
+    return kTfLiteError;
+  }
+
+  return kTfLiteOk;
+}
+
+}  // namespace div
+
+TfLiteRegistration* Register_DIV_REF() {
+  static TfLiteRegistration r = {div::Init, div::Free, div::Prepare,
+                                 div::Eval<div::kReference>};
+  return &r;
+}
+
+TfLiteRegistration* Register_DIV_GENERIC_OPT() {
+  static TfLiteRegistration r = {div::Init, div::Free, div::Prepare,
+                                 div::Eval<div::kGenericOptimized>};
+  return &r;
+}
+
+TfLiteRegistration* Register_DIV_NEON_OPT() {
+  static TfLiteRegistration r = {div::Init, div::Free, div::Prepare,
+                                 div::Eval<div::kNeonOptimized>};
+  return &r;
+}
+
+TfLiteRegistration* Register_DIV() {
+#ifdef USE_NEON
+  return Register_DIV_NEON_OPT();
+#else
+  return Register_DIV_GENERIC_OPT();
+#endif
+}
+
+}  // namespace builtin
+}  // namespace ops
+}  // namespace tflite
+
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: git_show
+{
+  "ref": "1e206baedf8bef0334cca3eb92bab134ef525a28",
+  "context": "TfLiteStatus Eval(TfLiteContext* context, TfLiteNode* node) {\n  TF_LITE_ENSURE_OK(context,\n                    GetOutputSafe(context, node, kOutputTensor, &output));\n\n  if (output->type == kTfLiteFloat32 || output->type == kTfLiteInt32) {\n    EvalDiv<kernel_type>(context, node, params, data, input1, input2, output);\n  } else if (output->type == kTfLiteUInt8) {\n    TF_LITE_ENSURE_OK("
+}
+commit 1e206baedf8bef0334cca3eb92bab134ef525a28
+Author: Mihai Maruseac <mihaimaruseac@google.com>
+Date:   Fri Jul 16 14:23:21 2021 -0700
+
+    Prevent a division by 0 in division ops.
+    
+    PiperOrigin-RevId: 385223169
+    Change-Id: Ia4228960b5d2aa44480385f74bdd70d21a3613c3
+
+ tensorflow/lite/kernels/div.cc | 17 ++++++++++++++++-
+ 1 file changed, 16 insertions(+), 1 deletion(-)
+This commit shows that there is a high probability that this code is new, so the corresponding code segment cannot be found in the old version.
+You can call `viewcode` and `locate_symbol` to further check the results step by step. For newly introduced code, we consider that this hunk `need not ported`.
+
+tool: locate_symbol
+{
+  "ref": "0a3a3a33f5fe8630e85234f33276e3dbe4d7da46",
+  "symbol": "Eval"
+}
+tensorflow/core/platform/mutex.h:128
+tensorflow/lite/delegates/flex/kernel.cc:491
+tensorflow/lite/delegates/utils/dummy_delegate/dummy_delegate.cc:39
+tensorflow/lite/experimental/kernels/ctc_beam_search_decoder.cc:163
+tensorflow/lite/experimental/kernels/unidirectional_sequence_gru.cc:209
+tensorflow/lite/experimental/microfrontend/audio_microfrontend.cc:178
+tensorflow/lite/kernels/add.cc:310
+tensorflow/lite/kernels/add_n.cc:65
+tensorflow/lite/kernels/arg_min_max.cc:124
+tensorflow/lite/kernels/assign_variable.cc:51
+tensorflow/lite/kernels/audio_spectrogram.cc:105
+tensorflow/lite/kernels/basic_rnn.cc:260
+tensorflow/lite/kernels/batch_matmul.cc:558
+tensorflow/lite/kernels/batch_to_space_nd.cc:115
+tensorflow/lite/kernels/bidirectional_sequence_lstm.cc:852
+tensorflow/lite/kernels/bidirectional_sequence_rnn.cc:677
+tensorflow/lite/kernels/cast.cc:99
+tensorflow/lite/kernels/ceil.cc:41
+tensorflow/lite/kernels/concatenation.cc:108
+tensorflow/lite/kernels/conv.cc:1003
+
+tokens used
+input: 1,211
+cache read: 7,680
+cache write: 0
+output: 283
+reasoning output: 0
+
+tool: viewcode
+{
+  "ref": "0a3a3a33f5fe8630e85234f33276e3dbe4d7da46",
+  "path": "tensorflow/lite/kernels/div.cc",
+  "startline": 1,
+  "endline": 60
+}
+Here are lines 1 through 60.
+
+/* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+==============================================================================*/
+#include <stddef.h>
+#include <stdint.h>
+
+#include "tensorflow/lite/c/builtin_op_data.h"
+#include "tensorflow/lite/c/common.h"
+#include "tensorflow/lite/kernels/internal/compatibility.h"
+#include "tensorflow/lite/kernels/internal/optimized/cpu_check.h"
+#include "tensorflow/lite/kernels/internal/optimized/neon_check.h"
+#include "tensorflow/lite/kernels/internal/optimized/optimized_ops.h"
+#include "tensorflow/lite/kernels/internal/quantization_util.h"
+#include "tensorflow/lite/kernels/internal/reference/process_broadcast_shapes.h"
+#include "tensorflow/lite/kernels/internal/reference/reference_ops.h"
+#include "tensorflow/lite/kernels/internal/tensor.h"
+#include "tensorflow/lite/kernels/internal/tensor_ctypes.h"
+#include "tensorflow/lite/kernels/internal/types.h"
+#include "tensorflow/lite/kernels/kernel_util.h"
+
+namespace tflite {
+namespace ops {
+namespace builtin {
+namespace div {
+
+// This file has three implementation of Div.
+enum KernelType {
+  kReference,
+  kGenericOptimized,  // Neon-free
+  kNeonOptimized,
+};
+
+constexpr int kInputTensor1 = 0;
+constexpr int kInputTensor2 = 1;
+constexpr int kOutputTensor = 0;
+
+struct OpData {
+  bool requires_broadcast;
+
+  // Parameters used in the quantized paths where the output is 8bit
+  int32 output_activation_min;
+  int32 output_activation_max;
+
+  // Parameters used in all quantized paths
+  int32_t output_multiplier;
+  int output_shift;
+};
+
+void* Init(TfLiteContext* context, const char* buffer, size_t length) {
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tokens used
+input: 1,605
+cache read: 8,704
+cache write: 0
+output: 66
+reasoning output: 18
+
+The target 2.3.4 file has the same `Eval` structure, except it still uses direct `GetInput/GetOutput` instead of safe accessors. I’m applying only the division-by-zero checks around integer and uint8 paths, preserving the older APIs.
+
+tool: validate
+{
+  "ref": "0a3a3a33f5fe8630e85234f33276e3dbe4d7da46",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/lite/kernels/div.cc b/tensorflow/lite/kernels/div.cc\n--- a/tensorflow/lite/kernels/div.cc\n+++ b/tensorflow/lite/kernels/div.cc\n@@ -204,9 +204,23 @@ TfLiteStatus Eval(TfLiteContext* context, TfLiteNode* node) {\n   const TfLiteTensor* input2 = GetInput(context, node, kInputTensor2);\n   TfLiteTensor* output = GetOutput(context, node, kOutputTensor);\n \n-  if (output->type == kTfLiteFloat32 || output->type == kTfLiteInt32) {\n+  // TODO(b/193904910): This can written with C++ templates\n+#define TF_LITE_CHECK_DIV_NON_ZERO(data_type)                       \\\n+  const auto* input2_data = GetTensorData<data_type>(input2);       \\\n+  const size_t input2_elements = input2->bytes / sizeof(data_type); \\\n+  for (size_t i = 0; i < input2_elements; i++) {                    \\\n+    TF_LITE_ENSURE(context, input2_data[i] != 0);                   \\\n+  }\n+\n+  if (output->type == kTfLiteFloat32) {\n+    // Div by zero seems ok in this case, just like in TF case infinities are\n+    // returned. So we don't do a check at this point.\n+    EvalDiv<kernel_type>(context, node, params, data, input1, input2, output);\n+  } else if (output->type == kTfLiteInt32) {\n+    TF_LITE_CHECK_DIV_NON_ZERO(int32_t);\n     EvalDiv<kernel_type>(context, node, params, data, input1, input2, output);\n   } else if (output->type == kTfLiteUInt8) {\n+    TF_LITE_CHECK_DIV_NON_ZERO(uint8_t);\n     TF_LITE_ENSURE_OK(\n         context, EvalQuantized<kernel_type>(context, node, params, data, input1,\n                                             input2, output));\n@@ -217,6 +231,7 @@ TfLiteStatus Eval(TfLiteContext* context, TfLiteNode* node) {\n         output->type);\n     return kTfLiteError;\n   }\n+#undef TF_LITE_CHECK_DIV_NON_ZERO\n \n   return kTfLiteOk;\n }\n"
+}
+Patch applied successfully
+
+tokens used
+input: 1,177
+cache read: 9,728
+cache write: 0
+output: 662
+reasoning output: 22
+
+The hunk validates cleanly against the target base. I’m now applying it to the current checkout.
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/lite/kernels/div.cc\n@@\n-  if (output->type == kTfLiteFloat32 || output->type == kTfLiteInt32) {\n+  // TODO(b/193904910): This can written with C++ templates\n+#define TF_LITE_CHECK_DIV_NON_ZERO(data_type)                       \\\n+  const auto* input2_data = GetTensorData<data_type>(input2);       \\\n+  const size_t input2_elements = input2->bytes / sizeof(data_type); \\\n+  for (size_t i = 0; i < input2_elements; i++) {                    \\\n+    TF_LITE_ENSURE(context, input2_data[i] != 0);                   \\\n+  }\n+\n+  if (output->type == kTfLiteFloat32) {\n+    // Div by zero seems ok in this case, just like in TF case infinities are\n+    // returned. So we don't do a check at this point.\n+    EvalDiv<kernel_type>(context, node, params, data, input1, input2, output);\n+  } else if (output->type == kTfLiteInt32) {\n+    TF_LITE_CHECK_DIV_NON_ZERO(int32_t);\n     EvalDiv<kernel_type>(context, node, params, data, input1, input2, output);\n   } else if (output->type == kTfLiteUInt8) {\n+    TF_LITE_CHECK_DIV_NON_ZERO(uint8_t);\n     TF_LITE_ENSURE_OK(\n         context, EvalQuantized<kernel_type>(context, node, params, data, input1,\n                                             input2, output));\n@@\n     return kTfLiteError;\n   }\n+#undef TF_LITE_CHECK_DIV_NON_ZERO\n \n   return kTfLiteOk;\n }\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/lite/kernels/div.cc
+
+tokens used
+input: 850
+cache read: 10,752
+cache write: 0
+output: 465
+reasoning output: 0
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect newer patch and target TensorFlow Lite div implementation",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate/apply minimal backport hunk",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Review resulting diff and provide YAML result",
+      "status": "in_progress",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect newer patch and target TensorFlow Lite div implementation",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate/apply minimal backport hunk",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Review resulting diff and provide YAML result",
+    "status": "in_progress",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 1,341
+cache read: 10,752
+cache write: 0
+output: 79
+reasoning output: 0
+
+I’ll review the final diff to ensure only the intended TensorFlow Lite `Div` change was made.
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/lite/kernels/div.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0224-0a3a3a33f5fe",
+  "timeout": 120000
+}
+warning: in the working copy of 'tensorflow/lite/kernels/div.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/lite/kernels/div.cc b/tensorflow/lite/kernels/div.cc
+index c9eb1db531..aafe00f0d0 100644
+--- a/tensorflow/lite/kernels/div.cc
++++ b/tensorflow/lite/kernels/div.cc
+@@ -204,9 +204,23 @@ TfLiteStatus Eval(TfLiteContext* context, TfLiteNode* node) {
+   const TfLiteTensor* input2 = GetInput(context, node, kInputTensor2);
+   TfLiteTensor* output = GetOutput(context, node, kOutputTensor);
+ 
+-  if (output->type == kTfLiteFloat32 || output->type == kTfLiteInt32) {
++  // TODO(b/193904910): This can written with C++ templates
++#define TF_LITE_CHECK_DIV_NON_ZERO(data_type)                       \
++  const auto* input2_data = GetTensorData<data_type>(input2);       \
++  const size_t input2_elements = input2->bytes / sizeof(data_type); \
++  for (size_t i = 0; i < input2_elements; i++) {                    \
++    TF_LITE_ENSURE(context, input2_data[i] != 0);                   \
++  }
++
++  if (output->type == kTfLiteFloat32) {
++    // Div by zero seems ok in this case, just like in TF case infinities are
++    // returned. So we don't do a check at this point.
++    EvalDiv<kernel_type>(context, node, params, data, input1, input2, output);
++  } else if (output->type == kTfLiteInt32) {
++    TF_LITE_CHECK_DIV_NON_ZERO(int32_t);
+     EvalDiv<kernel_type>(context, node, params, data, input1, input2, output);
+   } else if (output->type == kTfLiteUInt8) {
++    TF_LITE_CHECK_DIV_NON_ZERO(uint8_t);
+     TF_LITE_ENSURE_OK(
+         context, EvalQuantized<kernel_type>(context, node, params, data, input1,
+                                             input2, output));
+@@ -217,6 +231,7 @@ TfLiteStatus Eval(TfLiteContext* context, TfLiteNode* node) {
+         output->type);
+     return kTfLiteError;
+   }
++#undef TF_LITE_CHECK_DIV_NON_ZERO
+ 
+   return kTfLiteOk;
+ }
+
+tokens used
+input: 509
+cache read: 11,776
+cache write: 0
+output: 105
+reasoning output: 0
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect newer patch and target TensorFlow Lite div implementation",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate/apply minimal backport hunk",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Review resulting diff and provide YAML result",
+      "status": "completed",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect newer patch and target TensorFlow Lite div implementation",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate/apply minimal backport hunk",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Review resulting diff and provide YAML result",
+    "status": "completed",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 1,184
+cache read: 11,776
+cache write: 0
+output: 80
+reasoning output: 14
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/lite/kernels/div.cc b/tensorflow/lite/kernels/div.cc
+    index c9eb1db531..aafe00f0d0 100644
+    --- a/tensorflow/lite/kernels/div.cc
+    +++ b/tensorflow/lite/kernels/div.cc
+    @@ -204,9 +204,23 @@ TfLiteStatus Eval(TfLiteContext* context, TfLiteNode* node) {
+       const TfLiteTensor* input2 = GetInput(context, node, kInputTensor2);
+       TfLiteTensor* output = GetOutput(context, node, kOutputTensor);
+     
+    -  if (output->type == kTfLiteFloat32 || output->type == kTfLiteInt32) {
+    +  // TODO(b/193904910): This can written with C++ templates
+    +#define TF_LITE_CHECK_DIV_NON_ZERO(data_type)                       \
+    +  const auto* input2_data = GetTensorData<data_type>(input2);       \
+    +  const size_t input2_elements = input2->bytes / sizeof(data_type); \
+    +  for (size_t i = 0; i < input2_elements; i++) {                    \
+    +    TF_LITE_ENSURE(context, input2_data[i] != 0);                   \
+    +  }
+    +
+    +  if (output->type == kTfLiteFloat32) {
+    +    // Div by zero seems ok in this case, just like in TF case infinities are
+    +    // returned. So we don't do a check at this point.
+    +    EvalDiv<kernel_type>(context, node, params, data, input1, input2, output);
+    +  } else if (output->type == kTfLiteInt32) {
+    +    TF_LITE_CHECK_DIV_NON_ZERO(int32_t);
+         EvalDiv<kernel_type>(context, node, params, data, input1, input2, output);
+       } else if (output->type == kTfLiteUInt8) {
+    +    TF_LITE_CHECK_DIV_NON_ZERO(uint8_t);
+         TF_LITE_ENSURE_OK(
+             context, EvalQuantized<kernel_type>(context, node, params, data, input1,
+                                                 input2, output));
+    @@ -217,6 +231,7 @@ TfLiteStatus Eval(TfLiteContext* context, TfLiteNode* node) {
+             output->type);
+         return kTfLiteError;
+       }
+    +#undef TF_LITE_CHECK_DIV_NON_ZERO
+     
+       return kTfLiteOk;
+     }
+  notes: >
+    Backported the TensorFlow Lite Div integer and uint8 divisor non-zero checks while preserving float division behavior and the older 2.3.4 tensor access APIs.
+```
+
+tokens used
+input: 366
+cache read: 12,800
+cache write: 0
+output: 616
+reasoning output: 0

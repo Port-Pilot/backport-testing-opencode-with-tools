@@ -1,0 +1,438 @@
+I’ll inspect the target-side decoder helper context, validate the minimal hunk against the specified base, then apply only that source change.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target CTC decoder context",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Validate minimal backport hunk",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "content": "Apply source change",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "content": "Report final diff in required YAML",
+      "status": "pending",
+      "priority": "high"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target CTC decoder context",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Validate minimal backport hunk",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "content": "Apply source change",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "content": "Report final diff in required YAML",
+    "status": "pending",
+    "priority": "high"
+  }
+]
+
+tokens used
+input: 3,691
+cache read: 4,608
+cache write: 0
+output: 120
+reasoning output: 0
+
+tool: viewcode
+{
+  "ref": "47612cd69a2fdd76156360ca9102816e156f7e5c",
+  "path": "tensorflow/core/kernels/ctc_decoder_ops.cc",
+  "startline": 50,
+  "endline": 90
+}
+Here are lines 50 through 90.
+
+}
+
+class CTCDecodeHelper {
+ public:
+  CTCDecodeHelper() : top_paths_(1) {}
+
+  inline int GetTopPaths() const { return top_paths_; }
+  void SetTopPaths(int tp) { top_paths_ = tp; }
+
+  Status ValidateInputsGenerateOutputs(
+      OpKernelContext* ctx, const Tensor** inputs, const Tensor** seq_len,
+      Tensor** log_prob, OpOutputList* decoded_indices,
+      OpOutputList* decoded_values, OpOutputList* decoded_shape) const {
+    Status status = ctx->input("inputs", inputs);
+    if (!status.ok()) return status;
+    status = ctx->input("sequence_length", seq_len);
+    if (!status.ok()) return status;
+
+    const TensorShape& inputs_shape = (*inputs)->shape();
+
+    if (inputs_shape.dims() != 3) {
+      return errors::InvalidArgument("inputs is not a 3-Tensor");
+    }
+
+    const int64 max_time = inputs_shape.dim_size(0);
+    const int64 batch_size = inputs_shape.dim_size(1);
+
+    if (max_time == 0) {
+      return errors::InvalidArgument("max_time is 0");
+    }
+    if (!TensorShapeUtils::IsVector((*seq_len)->shape())) {
+      return errors::InvalidArgument("sequence_length is not a vector");
+    }
+
+    if (!(batch_size == (*seq_len)->dim_size(0))) {
+      return errors::FailedPrecondition(
+          "len(sequence_length) != batch_size.  ",
+          "len(sequence_length):  ", (*seq_len)->dim_size(0),
+          " batch_size: ", batch_size);
+    }
+
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: locate_symbol
+{
+  "ref": "47612cd69a2fdd76156360ca9102816e156f7e5c",
+  "symbol": "CTCDecodeHelper"
+}
+tensorflow/core/kernels/ctc_decoder_ops.cc:52
+tensorflow/core/kernels/ctc_decoder_ops.cc:54
+tensorflow/core/kernels/ctc_decoder_ops.cc:172
+tensorflow/core/kernels/ctc_decoder_ops.cc:253
+tensorflow/core/kernels/ctc_decoder_ops.cc:351
+
+tokens used
+input: 872
+cache read: 7,680
+cache write: 0
+output: 121
+reasoning output: 0
+
+The target file has the same helper and validation path; the security check maps directly after the existing rank check.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target CTC decoder context",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate minimal backport hunk",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Apply source change",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "content": "Report final diff in required YAML",
+      "status": "pending",
+      "priority": "high"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target CTC decoder context",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate minimal backport hunk",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Apply source change",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "content": "Report final diff in required YAML",
+    "status": "pending",
+    "priority": "high"
+  }
+]
+
+tokens used
+input: 1,455
+cache read: 7,680
+cache write: 0
+output: 117
+reasoning output: 9
+
+tool: validate
+{
+  "ref": "47612cd69a2fdd76156360ca9102816e156f7e5c",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/ctc_decoder_ops.cc b/tensorflow/core/kernels/ctc_decoder_ops.cc\n--- a/tensorflow/core/kernels/ctc_decoder_ops.cc\n+++ b/tensorflow/core/kernels/ctc_decoder_ops.cc\n@@ -68,6 +68,9 @@ class CTCDecodeHelper {\n     if (inputs_shape.dims() != 3) {\n       return errors::InvalidArgument(\"inputs is not a 3-Tensor\");\n     }\n+    if (inputs_shape.num_elements() == 0) {\n+      return errors::InvalidArgument(\"inputs must not be empty\");\n+    }\n \n     const int64 max_time = inputs_shape.dim_size(0);\n     const int64 batch_size = inputs_shape.dim_size(1);\n"
+}
+Patch applied successfully
+
+tokens used
+input: 690
+cache read: 8,704
+cache write: 0
+output: 227
+reasoning output: 0
+
+The hunk validates cleanly against the target base. I’m applying that single guard now.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target CTC decoder context",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate minimal backport hunk",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Apply source change",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Report final diff in required YAML",
+      "status": "pending",
+      "priority": "high"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target CTC decoder context",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate minimal backport hunk",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Apply source change",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Report final diff in required YAML",
+    "status": "pending",
+    "priority": "high"
+  }
+]
+
+tokens used
+input: 930
+cache read: 8,704
+cache write: 0
+output: 112
+reasoning output: 0
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/kernels/ctc_decoder_ops.cc\n@@\n     if (inputs_shape.dims() != 3) {\n       return errors::InvalidArgument(\"inputs is not a 3-Tensor\");\n     }\n+    if (inputs_shape.num_elements() == 0) {\n+      return errors::InvalidArgument(\"inputs must not be empty\");\n+    }\n \n     const int64 max_time = inputs_shape.dim_size(0);\n     const int64 batch_size = inputs_shape.dim_size(1);\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/kernels/ctc_decoder_ops.cc
+
+tokens used
+input: 1,175
+cache read: 8,704
+cache write: 0
+output: 147
+reasoning output: 0
+
+The source change is applied. I’m checking the resulting diff so the final YAML contains exactly what changed.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target CTC decoder context",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate minimal backport hunk",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Apply source change",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Report final diff in required YAML",
+      "status": "in_progress",
+      "priority": "high"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target CTC decoder context",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate minimal backport hunk",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Apply source change",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Report final diff in required YAML",
+    "status": "in_progress",
+    "priority": "high"
+  }
+]
+
+tokens used
+input: 327
+cache read: 9,728
+cache write: 0
+output: 114
+reasoning output: 0
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/kernels/ctc_decoder_ops.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0142-47612cd69a2f"
+}
+warning: in the working copy of 'tensorflow/core/kernels/ctc_decoder_ops.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/kernels/ctc_decoder_ops.cc b/tensorflow/core/kernels/ctc_decoder_ops.cc
+index 1075b17694..60b1010753 100644
+--- a/tensorflow/core/kernels/ctc_decoder_ops.cc
++++ b/tensorflow/core/kernels/ctc_decoder_ops.cc
+@@ -70,6 +70,9 @@ class CTCDecodeHelper {
+     if (inputs_shape.dims() != 3) {
+       return errors::InvalidArgument("inputs is not a 3-Tensor");
+     }
++    if (inputs_shape.num_elements() == 0) {
++      return errors::InvalidArgument("inputs must not be empty");
++    }
+ 
+     const int64 max_time = inputs_shape.dim_size(0);
+     const int64 batch_size = inputs_shape.dim_size(1);
+
+tokens used
+input: 574
+cache read: 9,728
+cache write: 0
+output: 72
+reasoning output: 0
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target CTC decoder context",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate minimal backport hunk",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Apply source change",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Report final diff in required YAML",
+      "status": "completed",
+      "priority": "high"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target CTC decoder context",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate minimal backport hunk",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Apply source change",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Report final diff in required YAML",
+    "status": "completed",
+    "priority": "high"
+  }
+]
+
+tokens used
+input: 5,994
+cache read: 4,608
+cache write: 0
+output: 85
+reasoning output: 0
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/kernels/ctc_decoder_ops.cc b/tensorflow/core/kernels/ctc_decoder_ops.cc
+    index 1075b17694..60b1010753 100644
+    --- a/tensorflow/core/kernels/ctc_decoder_ops.cc
+    +++ b/tensorflow/core/kernels/ctc_decoder_ops.cc
+    @@ -70,6 +70,9 @@ class CTCDecodeHelper {
+         if (inputs_shape.dims() != 3) {
+           return errors::InvalidArgument("inputs is not a 3-Tensor");
+         }
+    +    if (inputs_shape.num_elements() == 0) {
+    +      return errors::InvalidArgument("inputs must not be empty");
+    +    }
+     
+         const int64 max_time = inputs_shape.dim_size(0);
+         const int64 batch_size = inputs_shape.dim_size(1);
+  notes: >
+    Added the empty inputs validation guard to CTCDecodeHelper and validated the hunk against the target base.
+```
+
+tokens used
+input: 1,091
+cache read: 9,728
+cache write: 0
+output: 240
+reasoning output: 0

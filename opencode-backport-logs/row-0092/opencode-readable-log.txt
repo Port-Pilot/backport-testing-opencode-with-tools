@@ -1,0 +1,407 @@
+I’ll inspect the target-side locations for the two patched hunks, then apply the smallest equivalent changes and validate uncertain hunks against the provided base.
+
+tool: viewcode
+{
+  "ref": "bb93d96771228278adee16f357f5b86d588887f4",
+  "path": "tensorflow/python/kernel_tests/shape_ops_test.py",
+  "startline": 700,
+  "endline": 745
+}
+This file only has 729 lines. Here are lines 700 through 729.
+
+    inp = constant_op.constant(0.0, shape=[4, 4, 4, 4])
+    tiled = array_ops.tile(inp, array_ops.placeholder(dtypes.int32))
+    self.assertEqual([None, None, None, None], tiled.get_shape().as_list())
+
+    # Unknown input shape.
+    inp = array_ops.placeholder(dtypes.float32)
+    tiled = array_ops.tile(inp, [2, 2, 2, 2])
+    self.assertEqual([None, None, None, None], tiled.get_shape().as_list())
+
+    # Unknown input and multiples shape.
+    inp = array_ops.placeholder(dtypes.float32)
+    tiled = array_ops.tile(inp, array_ops.placeholder(dtypes.int32))
+    self.assertIs(None, tiled.get_shape().ndims)
+
+    # Known input and partially known multiples.
+    inp = constant_op.constant(0.0, shape=[1, 1])
+    tiled = array_ops.tile(inp, [array_ops.placeholder(dtypes.int32), 7])
+    self.assertEqual([None, 7], tiled.get_shape().as_list())
+
+    # Mismatched input rank and multiples length.
+    inp = array_ops.placeholder(dtypes.float32, shape=[None, None])
+    with self.assertRaises(ValueError):
+      tiled = array_ops.tile(
+          inp, array_ops.placeholder(
+              dtypes.int32, shape=[3]))
+
+
+if __name__ == "__main__":
+  test.main()
+
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: viewcode
+{
+  "ref": "bb93d96771228278adee16f357f5b86d588887f4",
+  "path": "tensorflow/core/kernels/tile_ops.cc",
+  "startline": 160,
+  "endline": 210
+}
+Here are lines 160 through 210.
+
+ public:
+  explicit TileOp(OpKernelConstruction* context) : OpKernel(context) {}
+
+  void Compute(OpKernelContext* context) override {
+    const Tensor& input = context->input(0);
+    const Tensor& multiples = context->input(1);
+
+    OP_REQUIRES(
+        context, TensorShapeUtils::IsVector(multiples.shape()),
+        errors::InvalidArgument("Expected multiples to be 1-D, but got shape ",
+                                multiples.shape().DebugString()));
+    OP_REQUIRES(context, input.dims() == multiples.NumElements(),
+                errors::InvalidArgument(
+                    "Expected multiples argument to be a vector of length ",
+                    input.dims(), " but got length ", multiples.dim_size(0)));
+    const int input_dims = input.dims();
+
+    // Eigen doesn't support scalars on the GPU, so handle 0-D specially
+    if (input_dims == 0) {
+      context->set_output(0, input);
+      return;
+    }
+
+    const gtl::ArraySlice<Tmultiples> multiples_array(
+        multiples.flat<Tmultiples>().data(), input_dims);
+    TensorShape output_shape;
+    for (int i = 0; i < input_dims; ++i) {
+      OP_REQUIRES(
+          context, multiples_array[i] >= 0,
+          errors::InvalidArgument("Expected multiples[", i, "] >= 0, but got ",
+                                  multiples_array[i]));
+      output_shape.AddDim(input.dim_size(i) * multiples_array[i]);
+    }
+    if (output_shape == input.shape()) {
+      context->set_output(0, input);
+      return;
+    }
+    Tensor* result = nullptr;
+    OP_REQUIRES_OK(context, context->allocate_output(0, output_shape, &result));
+
+    // If there's no output, there's nothing to do.
+    if (output_shape.num_elements() == 0) return;
+
+#define HANDLE_TYPE(DT)                               \
+  if (context->input(0).dtype() == DT) {              \
+    HandleCase<DT>(context, multiples_array, result); \
+    return;                                           \
+  }
+
+#define HANDLE_TYPE_NAME(T) HANDLE_TYPE(DataTypeToEnum<T>::value)
+
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: locate_symbol
+{
+  "ref": "bb93d96771228278adee16f357f5b86d588887f4",
+  "symbol": "TileOp"
+}
+tensorflow/compiler/tf2xla/kernels/tile_ops.cc:39
+tensorflow/core/kernels/tile_ops.cc:159
+tensorflow/compiler/tf2xla/kernels/tile_ops.cc:41
+tensorflow/core/kernels/tile_ops.cc:161
+tensorflow/compiler/mlir/tensorflow/ir/tf_ops_n_z.cc:2029
+tensorflow/compiler/mlir/tensorflow/ir/tf_ops_n_z.cc:2083
+tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc:4016
+tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc:4020
+tensorflow/compiler/tf2xla/kernels/tile_ops.cc:106
+tensorflow/compiler/tf2xla/kernels/tile_ops.cc:109
+tensorflow/core/kernels/tile_ops.cc:235
+tensorflow/core/kernels/tile_ops.cc:256
+tensorflow/core/kernels/tile_ops.cc:261
+tensorflow/core/kernels/tile_ops.cc:266
+tensorflow/core/kernels/tile_ops.cc:274
+tensorflow/core/kernels/tile_ops.cc:583
+tensorflow/core/kernels/tile_ops.cc:588
+tensorflow/core/kernels/tile_ops.cc:607
+tensorflow/core/kernels/tile_ops.cc:613
+
+tokens used
+input: 3,933
+cache read: 4,608
+cache write: 0
+output: 208
+reasoning output: 0
+
+The target code matches the patch locations directly: `TileOp` still uses unchecked `AddDim`, and the shape ops test class ends immediately after `testShapeFunctionEdgeCases`. I’m applying the equivalent two-line safety change plus the regression test.
+
+tool: read
+{
+  "filePath": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0092-bb93d9677122\\tensorflow\\core\\kernels\\tile_ops.cc",
+  "offset": 180,
+  "limit": 20
+}
+<path>C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0092-bb93d9677122\tensorflow\core\kernels\tile_ops.cc</path>
+<type>file</type>
+<content>
+180:       return;
+181:     }
+182: 
+183:     const gtl::ArraySlice<Tmultiples> multiples_array(
+184:         multiples.flat<Tmultiples>().data(), input_dims);
+185:     TensorShape output_shape;
+186:     for (int i = 0; i < input_dims; ++i) {
+187:       OP_REQUIRES(
+188:           context, multiples_array[i] >= 0,
+189:           errors::InvalidArgument("Expected multiples[", i, "] >= 0, but got ",
+190:                                   multiples_array[i]));
+191:       output_shape.AddDim(input.dim_size(i) * multiples_array[i]);
+192:     }
+193:     if (output_shape == input.shape()) {
+194:       context->set_output(0, input);
+195:       return;
+196:     }
+197:     Tensor* result = nullptr;
+198:     OP_REQUIRES_OK(context, context->allocate_output(0, output_shape, &result));
+199: 
+
+(Showing lines 180-199 of 649. Use offset=200 to continue.)
+</content>
+
+tool: read
+{
+  "filePath": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0092-bb93d9677122\\tensorflow\\python\\kernel_tests\\shape_ops_test.py",
+  "offset": 1,
+  "limit": 80
+}
+<path>C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0092-bb93d9677122\tensorflow\python\kernel_tests\shape_ops_test.py</path>
+<type>file</type>
+<content>
+1: # Copyright 2015 The TensorFlow Authors. All Rights Reserved.
+2: #
+3: # Licensed under the Apache License, Version 2.0 (the "License");
+4: # you may not use this file except in compliance with the License.
+5: # You may obtain a copy of the License at
+6: #
+7: #     http://www.apache.org/licenses/LICENSE-2.0
+8: #
+9: # Unless required by applicable law or agreed to in writing, software
+10: # distributed under the License is distributed on an "AS IS" BASIS,
+11: # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+12: # See the License for the specific language governing permissions and
+13: # limitations under the License.
+14: # ==============================================================================
+15: """Tests for various tensorflow.ops.tf."""
+16: 
+17: from __future__ import absolute_import
+18: from __future__ import division
+19: from __future__ import print_function
+20: 
+21: from absl.testing import parameterized
+22: import numpy as np
+23: 
+24: from tensorflow.core.framework import node_def_pb2
+25: from tensorflow.python.framework import constant_op
+26: from tensorflow.python.framework import dtypes
+27: from tensorflow.python.framework import errors_impl
+28: from tensorflow.python.framework import importer
+29: from tensorflow.python.framework import sparse_tensor
+30: from tensorflow.python.framework import test_util
+31: from tensorflow.python.ops import array_ops
+32: from tensorflow.python.ops import gradient_checker
+33: from tensorflow.python.ops import gradients_impl
+34: from tensorflow.python.platform import test
+35: 
+36: 
+37: # TODO(zongheng): it'd be great to factor out this function and various random
+38: # SparseTensor gen funcs.
+39: def _sparsify(x, thresh=0.5, index_dtype=np.int64):
+40:   x[x < thresh] = 0
+41: 
+42:   non_zero = np.where(x)
+43:   x_indices = np.vstack(non_zero).astype(index_dtype).T
+44:   x_values = x[non_zero]
+45:   x_shape = x.shape
+46: 
+47:   return sparse_tensor.SparseTensor(
+48:       indices=x_indices, values=x_values, dense_shape=x_shape), len(x_values)
+49: 
+50: 
+51: class ShapeOpsTest(test.TestCase):
+52: 
+53:   def _compareShape(self, x, use_gpu=False):
+54:     np_ans = np.array(np.shape(x))
+55:     with self.cached_session(use_gpu=use_gpu):
+56:       tf_ans = array_ops.shape(x)
+57:       tf_ans_64 = array_ops.shape(x, out_type=dtypes.int64)
+58:       result = self.evaluate(tf_ans)
+59:       result_64 = self.evaluate(tf_ans_64)
+60:     self.assertAllEqual(np_ans, result)
+61:     self.assertAllEqual(np_ans, result_64)
+62:     self.assertShapeEqual(np_ans, tf_ans)
+63: 
+64:   def _compareShapeSparse(self, x_np, use_gpu=False):
+65:     np_ans = np.array(np.shape(x_np))
+66:     x_tf, unused_nnz = _sparsify(x_np)
+67:     with self.cached_session(use_gpu=use_gpu):
+68:       tf_ans = array_ops.shape(x_tf)
+69:       result = self.evaluate(tf_ans)
+70:     self.assertAllEqual(np_ans, result)
+71:     self.assertShapeEqual(np_ans, tf_ans)
+72: 
+73:   def _compareShapeN(self, x, use_gpu=False):
+74:     np_ans = np.array(np.shape(x))
+75:     with self.cached_session(use_gpu=use_gpu) as sess:
+76:       tf_ans = array_ops.shape_n([x, x, x])
+77:       tf_ans_64 = array_ops.shape_n([x, x, x], out_type=dtypes.int64)
+78:       result = self.evaluate(tf_ans)
+79:       result_64 = self.evaluate(tf_ans_64)
+80:     for i in range(3):
+
+(Showing lines 1-80 of 728. Use offset=81 to continue.)
+</content>
+
+tokens used
+input: 2,187
+cache read: 7,680
+cache write: 0
+output: 218
+reasoning output: 19
+
+tool: validate
+{
+  "ref": "bb93d96771228278adee16f357f5b86d588887f4",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/tile_ops.cc b/tensorflow/core/kernels/tile_ops.cc\n--- a/tensorflow/core/kernels/tile_ops.cc\n+++ b/tensorflow/core/kernels/tile_ops.cc\n@@ -188,7 +188,8 @@ class TileOp : public OpKernel {\n           context, multiples_array[i] >= 0,\n           errors::InvalidArgument(\"Expected multiples[\", i, \"] >= 0, but got \",\n                                   multiples_array[i]));\n-      output_shape.AddDim(input.dim_size(i) * multiples_array[i]);\n+      OP_REQUIRES_OK(context, output_shape.AddDimWithStatus(\n+                                  input.dim_size(i) * multiples_array[i]));\n     }\n     if (output_shape == input.shape()) {\n       context->set_output(0, input);\n"
+}
+Patch applied successfully
+
+tokens used
+input: 1,651
+cache read: 9,728
+cache write: 0
+output: 235
+reasoning output: 0
+
+The source hunk validates against the target base without context adjustment. The test hunk is also a direct insertion after the same method endpoint, so I’m patching both files now.
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/kernels/tile_ops.cc\n@@\n-      output_shape.AddDim(input.dim_size(i) * multiples_array[i]);\n+      OP_REQUIRES_OK(context, output_shape.AddDimWithStatus(\n+                                  input.dim_size(i) * multiples_array[i]));\n*** Update File: tensorflow/python/kernel_tests/shape_ops_test.py\n@@\n     with self.assertRaises(ValueError):\n       tiled = array_ops.tile(\n           inp, array_ops.placeholder(\n               dtypes.int32, shape=[3]))\n \n+  def testLargeTensor(self):\n+    # Test case for GItHub issue 46911.\n+    if test_util.is_xla_enabled():\n+      # The following test fails with XLA enabled.\n+      return\n+    with self.assertRaises(errors_impl.InternalError):\n+      with self.cached_session():\n+        tiled = array_ops.tile(\n+            np.ones((1, 1, 1)), [100000000, 100000000, 100000000])\n+        self.evaluate(tiled)\n+\n \n if __name__ == \"__main__\":\n   test.main()\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/kernels/tile_ops.cc
+M tensorflow/python/kernel_tests/shape_ops_test.py
+
+tokens used
+input: 875
+cache read: 10,752
+cache write: 0
+output: 336
+reasoning output: 0
+
+The backport edits are applied. I’m checking the final diff for exact scope and formatting.
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/kernels/tile_ops.cc tensorflow/python/kernel_tests/shape_ops_test.py",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0092-bb93d9677122"
+}
+warning: in the working copy of 'tensorflow/core/kernels/tile_ops.cc', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'tensorflow/python/kernel_tests/shape_ops_test.py', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/kernels/tile_ops.cc b/tensorflow/core/kernels/tile_ops.cc
+index c24c7f1b0b..2aec5252b6 100644
+--- a/tensorflow/core/kernels/tile_ops.cc
++++ b/tensorflow/core/kernels/tile_ops.cc
+@@ -188,7 +188,8 @@ class TileOp : public OpKernel {
+           context, multiples_array[i] >= 0,
+           errors::InvalidArgument("Expected multiples[", i, "] >= 0, but got ",
+                                   multiples_array[i]));
+-      output_shape.AddDim(input.dim_size(i) * multiples_array[i]);
++      OP_REQUIRES_OK(context, output_shape.AddDimWithStatus(
++                                  input.dim_size(i) * multiples_array[i]));
+     }
+     if (output_shape == input.shape()) {
+       context->set_output(0, input);
+diff --git a/tensorflow/python/kernel_tests/shape_ops_test.py b/tensorflow/python/kernel_tests/shape_ops_test.py
+index 5a165c9454..38d69be486 100644
+--- a/tensorflow/python/kernel_tests/shape_ops_test.py
++++ b/tensorflow/python/kernel_tests/shape_ops_test.py
+@@ -723,6 +723,17 @@ class TileTest(test.TestCase, parameterized.TestCase):
+           inp, array_ops.placeholder(
+               dtypes.int32, shape=[3]))
+ 
++  def testLargeTensor(self):
++    # Test case for GItHub issue 46911.
++    if test_util.is_xla_enabled():
++      # The following test fails with XLA enabled.
++      return
++    with self.assertRaises(errors_impl.InternalError):
++      with self.cached_session():
++        tiled = array_ops.tile(
++            np.ones((1, 1, 1)), [100000000, 100000000, 100000000])
++        self.evaluate(tiled)
++
+ 
+ if __name__ == "__main__":
+   test.main()
+
+tokens used
+input: 1,249
+cache read: 10,752
+cache write: 0
+output: 106
+reasoning output: 27
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/kernels/tile_ops.cc b/tensorflow/core/kernels/tile_ops.cc
+    index c24c7f1b0b..2aec5252b6 100644
+    --- a/tensorflow/core/kernels/tile_ops.cc
+    +++ b/tensorflow/core/kernels/tile_ops.cc
+    @@ -188,7 +188,8 @@ class TileOp : public OpKernel {
+               context, multiples_array[i] >= 0,
+               errors::InvalidArgument("Expected multiples[", i, "] >= 0, but got ",
+                                       multiples_array[i]));
+    -      output_shape.AddDim(input.dim_size(i) * multiples_array[i]);
+    +      OP_REQUIRES_OK(context, output_shape.AddDimWithStatus(
+    +                                  input.dim_size(i) * multiples_array[i]));
+         }
+         if (output_shape == input.shape()) {
+           context->set_output(0, input);
+    diff --git a/tensorflow/python/kernel_tests/shape_ops_test.py b/tensorflow/python/kernel_tests/shape_ops_test.py
+    index 5a165c9454..38d69be486 100644
+    --- a/tensorflow/python/kernel_tests/shape_ops_test.py
+    +++ b/tensorflow/python/kernel_tests/shape_ops_test.py
+    @@ -723,6 +723,17 @@ class TileTest(test.TestCase, parameterized.TestCase):
+               inp, array_ops.placeholder(
+                   dtypes.int32, shape=[3]))
+     
+    +  def testLargeTensor(self):
+    +    # Test case for GItHub issue 46911.
+    +    if test_util.is_xla_enabled():
+    +      # The following test fails with XLA enabled.
+    +      return
+    +    with self.assertRaises(errors_impl.InternalError):
+    +      with self.cached_session():
+    +        tiled = array_ops.tile(
+    +            np.ones((1, 1, 1)), [100000000, 100000000, 100000000])
+    +        self.evaluate(tiled)
+    +
+     
+     if __name__ == "__main__":
+       test.main()
+  notes: >
+    Backported the tf.tile output shape overflow check using AddDimWithStatus and added the large tensor regression test; source hunk was validated in hunk mode.
+```
+
+tokens used
+input: 862
+cache read: 11,776
+cache write: 0
+output: 517
+reasoning output: 23

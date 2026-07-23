@@ -1,0 +1,436 @@
+I’ll locate the target-side `InternalMakeShapeFromTensor` implementation, compare it to the provided newer hunk, validate the adapted patch against the base ref, then apply only the required changes.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target shape inference context",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Validate adapted backport hunk",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "content": "Apply source changes",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "content": "Verify resulting diff",
+      "status": "pending",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target shape inference context",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Validate adapted backport hunk",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "content": "Apply source changes",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "content": "Verify resulting diff",
+    "status": "pending",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 3,886
+cache read: 4,608
+cache write: 0
+output: 129
+reasoning output: 0
+
+tool: viewcode
+{
+  "ref": "b2b3444b71ea99685edafa7731fb7ba57939f437",
+  "path": "tensorflow/core/framework/shape_inference.cc",
+  "startline": 1,
+  "endline": 35
+}
+Here are lines 1 through 35.
+
+/* Copyright 2016 The TensorFlow Authors. All Rights Reserved.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+==============================================================================*/
+#include "tensorflow/core/framework/shape_inference.h"
+
+#include "tensorflow/core/framework/bounds_check.h"
+#include "tensorflow/core/framework/node_def.pb.h"
+#include "tensorflow/core/framework/partial_tensor_shape.h"
+#include "tensorflow/core/framework/tensor_shape.pb.h"
+#include "tensorflow/core/lib/core/errors.h"
+#include "tensorflow/core/lib/strings/numbers.h"
+#include "tensorflow/core/lib/strings/scanner.h"
+#include "tensorflow/core/lib/strings/str_util.h"
+
+namespace tensorflow {
+namespace shape_inference {
+
+constexpr int32 InferenceContext::kUnknownRank;
+constexpr int64 InferenceContext::kUnknownDim;
+
+// Same as above, but with PartialTensorShape instead of TensorShapeProto
+InferenceContext::InferenceContext(
+    int graph_def_version, const AttrSlice& attrs, const OpDef& op_def,
+    const std::vector<PartialTensorShape>& input_shapes,
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: viewcode
+{
+  "ref": "b2b3444b71ea99685edafa7731fb7ba57939f437",
+  "path": "tensorflow/core/framework/shape_inference.cc",
+  "startline": 760,
+  "endline": 815
+}
+Here are lines 760 through 815.
+
+      out);
+}
+
+Status InferenceContext::InternalMakeShapeFromTensor(
+    bool treat_unknown_scalar_tensor_as_unknown_shape, const Tensor* t,
+    ShapeHandle tensor_shape, ShapeHandle* out) {
+  // Only callers who have set
+  if (!treat_unknown_scalar_tensor_as_unknown_shape) {
+    TF_RETURN_IF_ERROR(WithRank(tensor_shape, 1, &tensor_shape));
+  }
+  if (t == nullptr) {
+    // This is guarded by the check above.
+    if (Rank(tensor_shape) == 0) {
+      return ReturnUnknownShape(out);
+    }
+    // Shape tensor is not known, but if the shape of the shape tensor is then
+    // the right number of unknown dims can be created.
+    DimensionHandle shape_dim = Dim(tensor_shape, 0);
+    if (!ValueKnown(shape_dim)) {
+      return ReturnUnknownShape(out);
+    }
+    const auto num_dims = Value(shape_dim);
+    std::vector<DimensionHandle> dims;
+    dims.reserve(num_dims);
+    for (int i = 0; i < num_dims; i++) dims.push_back(UnknownDim());
+    return ReturnCreatedShape(dims, out);
+  }
+
+  if (t->shape().dims() == 0) {
+    if (t->dtype() == DataType::DT_INT32) {
+      auto flat_t = t->scalar<int32>();
+      if (flat_t() != -1) {
+        *out = nullptr;
+        return errors::InvalidArgument(
+            "Input tensor must be rank 1, or if its rank 0 it must have value "
+            "-1 "
+            "(representing an unknown shape).  Saw value: ",
+            flat_t());
+      }
+      return ReturnUnknownShape(out);
+    } else if (t->dtype() == DataType::DT_INT64) {
+      auto flat_t = t->scalar<int64>();
+      if (flat_t() != -1) {
+        *out = nullptr;
+        return errors::InvalidArgument(
+            "Input tensor must be rank 1, or if its rank 0 it must have value "
+            "-1 "
+            "(representing an unknown shape).  Saw value: ",
+            flat_t());
+      }
+      return ReturnUnknownShape(out);
+    } else {
+      *out = nullptr;
+      return errors::InvalidArgument(
+          "Input tensor must be int32 or int64, but was ",
+          DataTypeString(t->dtype()));
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: locate_symbol
+{
+  "ref": "b2b3444b71ea99685edafa7731fb7ba57939f437",
+  "symbol": "InternalMakeShapeFromTensor"
+}
+tensorflow/core/framework/shape_inference.cc:731
+tensorflow/core/framework/shape_inference.cc:750
+tensorflow/core/framework/shape_inference.cc:758
+tensorflow/core/framework/shape_inference.cc:763
+tensorflow/core/framework/shape_inference.h:727
+
+tokens used
+input: 1,072
+cache read: 7,680
+cache write: 0
+output: 173
+reasoning output: 0
+
+The target code has the same vulnerable `dims.reserve(num_dims)` path and lacks the new `<cstdint>` include, so this is a direct minimal backport.
+
+tool: validate
+{
+  "ref": "b2b3444b71ea99685edafa7731fb7ba57939f437",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/framework/shape_inference.cc b/tensorflow/core/framework/shape_inference.cc\n--- a/tensorflow/core/framework/shape_inference.cc\n+++ b/tensorflow/core/framework/shape_inference.cc\n@@ -14,6 +14,8 @@ limitations under the License.\n ==============================================================================*/\n #include \"tensorflow/core/framework/shape_inference.h\"\n \n+#include <cstdint>\n+\n #include \"tensorflow/core/framework/bounds_check.h\"\n #include \"tensorflow/core/framework/node_def.pb.h\"\n #include \"tensorflow/core/framework/partial_tensor_shape.h\"\n@@ -777,6 +779,19 @@ Status InferenceContext::InternalMakeShapeFromTensor(\n       return ReturnUnknownShape(out);\n     }\n     const auto num_dims = Value(shape_dim);\n+    // TODO(mihaimaruseac): Should be `TensorShape::MaxDimensions()` as we are\n+    // not able to materialize shapes with more than this number of dimensions\n+    // but then shape inference would fail for operations such as\n+    // `tf.range`/`tf.ones`, etc. where the shape is not really materialized,\n+    // only used during the inference. Hence, just prevent doing a `reserve`\n+    // with a very large argument.\n+    const int64_t max_dimensions = 1 << 20;\n+    if (num_dims >= max_dimensions) {\n+      return errors::Internal(\n+          \"Cannot create a tensor with \", num_dims,\n+          \" dimensions, as these would be more than maximum of \",\n+          max_dimensions);\n+    }\n     std::vector<DimensionHandle> dims;\n     dims.reserve(num_dims);\n     for (int i = 0; i < num_dims; i++) dims.push_back(UnknownDim());\n"
+}
+Patch applied successfully
+
+tokens used
+input: 2,209
+cache read: 7,680
+cache write: 0
+output: 492
+reasoning output: 55
+
+The adapted hunk validates cleanly against the specified base ref. I’m applying the same guarded allocation check in `shape_inference.cc`.
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/framework/shape_inference.cc\n@@\n #include \"tensorflow/core/framework/shape_inference.h\"\n \n+#include <cstdint>\n+\n #include \"tensorflow/core/framework/bounds_check.h\"\n #include \"tensorflow/core/framework/node_def.pb.h\"\n #include \"tensorflow/core/framework/partial_tensor_shape.h\"\n@@\n     }\n     const auto num_dims = Value(shape_dim);\n+    // TODO(mihaimaruseac): Should be `TensorShape::MaxDimensions()` as we are\n+    // not able to materialize shapes with more than this number of dimensions\n+    // but then shape inference would fail for operations such as\n+    // `tf.range`/`tf.ones`, etc. where the shape is not really materialized,\n+    // only used during the inference. Hence, just prevent doing a `reserve`\n+    // with a very large argument.\n+    const int64_t max_dimensions = 1 << 20;\n+    if (num_dims >= max_dimensions) {\n+      return errors::Internal(\n+          \"Cannot create a tensor with \", num_dims,\n+          \" dimensions, as these would be more than maximum of \",\n+          max_dimensions);\n+    }\n     std::vector<DimensionHandle> dims;\n     dims.reserve(num_dims);\n     for (int i = 0; i < num_dims; i++) dims.push_back(UnknownDim());\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/framework/shape_inference.cc
+
+tokens used
+input: 721
+cache read: 9,728
+cache write: 0
+output: 381
+reasoning output: 0
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target shape inference context",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate adapted backport hunk",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Apply source changes",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Verify resulting diff",
+      "status": "in_progress",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target shape inference context",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate adapted backport hunk",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Apply source changes",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Verify resulting diff",
+    "status": "in_progress",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 1,129
+cache read: 9,728
+cache write: 0
+output: 82
+reasoning output: 0
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/framework/shape_inference.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0045-b2b3444b71ea",
+  "timeout": 120000
+}
+warning: in the working copy of 'tensorflow/core/framework/shape_inference.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/framework/shape_inference.cc b/tensorflow/core/framework/shape_inference.cc
+index 721c20b749..21c6f5feae 100644
+--- a/tensorflow/core/framework/shape_inference.cc
++++ b/tensorflow/core/framework/shape_inference.cc
+@@ -14,6 +14,8 @@ limitations under the License.
+ ==============================================================================*/
+ #include "tensorflow/core/framework/shape_inference.h"
+ 
++#include <cstdint>
++
+ #include "tensorflow/core/framework/bounds_check.h"
+ #include "tensorflow/core/framework/node_def.pb.h"
+ #include "tensorflow/core/framework/partial_tensor_shape.h"
+@@ -779,6 +781,19 @@ Status InferenceContext::InternalMakeShapeFromTensor(
+       return ReturnUnknownShape(out);
+     }
+     const auto num_dims = Value(shape_dim);
++    // TODO(mihaimaruseac): Should be `TensorShape::MaxDimensions()` as we are
++    // not able to materialize shapes with more than this number of dimensions
++    // but then shape inference would fail for operations such as
++    // `tf.range`/`tf.ones`, etc. where the shape is not really materialized,
++    // only used during the inference. Hence, just prevent doing a `reserve`
++    // with a very large argument.
++    const int64_t max_dimensions = 1 << 20;
++    if (num_dims >= max_dimensions) {
++      return errors::Internal(
++          "Cannot create a tensor with ", num_dims,
++          " dimensions, as these would be more than maximum of ",
++          max_dimensions);
++    }
+     std::vector<DimensionHandle> dims;
+     dims.reserve(num_dims);
+     for (int i = 0; i < num_dims; i++) dims.push_back(UnknownDim());
+
+tool: bash
+{
+  "command": "git status --short",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0045-b2b3444b71ea",
+  "timeout": 120000
+}
+ M tensorflow/core/framework/shape_inference.cc
+
+tokens used
+input: 316
+cache read: 10,752
+cache write: 0
+output: 155
+reasoning output: 0
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target shape inference context",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate adapted backport hunk",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Apply source changes",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Verify resulting diff",
+      "status": "completed",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target shape inference context",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate adapted backport hunk",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Apply source changes",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Verify resulting diff",
+    "status": "completed",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 925
+cache read: 10,752
+cache write: 0
+output: 81
+reasoning output: 0
+
+Applied the TensorFlow security backport to `tensorflow/core/framework/shape_inference.cc`.
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/framework/shape_inference.cc b/tensorflow/core/framework/shape_inference.cc
+    index 721c20b749..21c6f5feae 100644
+    --- a/tensorflow/core/framework/shape_inference.cc
+    +++ b/tensorflow/core/framework/shape_inference.cc
+    @@ -14,6 +14,8 @@ limitations under the License.
+     ==============================================================================*/
+     #include "tensorflow/core/framework/shape_inference.h"
+     
+    +#include <cstdint>
+    +
+     #include "tensorflow/core/framework/bounds_check.h"
+     #include "tensorflow/core/framework/node_def.pb.h"
+     #include "tensorflow/core/framework/partial_tensor_shape.h"
+    @@ -779,6 +781,19 @@ Status InferenceContext::InternalMakeShapeFromTensor(
+           return ReturnUnknownShape(out);
+         }
+         const auto num_dims = Value(shape_dim);
+    +    // TODO(mihaimaruseac): Should be `TensorShape::MaxDimensions()` as we are
+    +    // not able to materialize shapes with more than this number of dimensions
+    +    // but then shape inference would fail for operations such as
+    +    // `tf.range`/`tf.ones`, etc. where the shape is not really materialized,
+    +    // only used during the inference. Hence, just prevent doing a `reserve`
+    +    // with a very large argument.
+    +    const int64_t max_dimensions = 1 << 20;
+    +    if (num_dims >= max_dimensions) {
+    +      return errors::Internal(
+    +          "Cannot create a tensor with ", num_dims,
+    +          " dimensions, as these would be more than maximum of ",
+    +          max_dimensions);
+    +    }
+         std::vector<DimensionHandle> dims;
+         dims.reserve(num_dims);
+         for (int i = 0; i < num_dims; i++) dims.push_back(UnknownDim());
+  notes: >
+    Added the dimension-count guard before vector reserve in shape inference, matching the newer security fix; the adapted hunk was validated against the target base ref.
+```
+
+tokens used
+input: 1,134
+cache read: 10,752
+cache write: 0
+output: 497
+reasoning output: 16

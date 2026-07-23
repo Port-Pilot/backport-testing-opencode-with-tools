@@ -1,0 +1,1014 @@
+I’ll inspect the target-side files around the patched symbols first, then apply the minimal equivalent changes and validate uncertain hunks against the target base.
+
+tool: viewcode
+{
+  "ref": "75c56b4ace36e6b814f89ea092ca672714651054",
+  "path": "tensorflow/core/util/saved_tensor_slice_util.h",
+  "startline": 45,
+  "endline": 225
+}
+This file only has 216 lines. Here are lines 45 through 216.
+
+
+string EncodeTensorNameSlice(const string& name,
+                             const tensorflow::TensorSlice& slice);
+
+// Parse out the name and the slice from string encoded as an ordered code.
+Status DecodeTensorNameSlice(const string& code, string* name,
+                             tensorflow::TensorSlice* slice);
+
+// Extracts the full shape, slice spec, and shape of the slice from
+// "shape_and_slice".  On non-OK return, caller must clear the out-arguments
+// before reusing.
+Status ParseShapeAndSlice(const string& shape_and_slice, TensorShape* shape,
+                          TensorSlice* slice, TensorShape* shape_slice);
+
+template <typename T>
+struct SaveTypeTraits;
+
+template <typename T>
+const typename SaveTypeTraits<T>::SavedType* TensorProtoData(
+    const TensorProto& t);
+
+template <typename T>
+typename SaveTypeTraits<T>::RepeatedField* MutableTensorProtoData(
+    TensorProto* t);
+
+template <typename T>
+void Fill(T* data, size_t n, TensorProto* t);
+
+#define TENSOR_PROTO_EXTRACT_TYPE_HELPER(TYPE, FIELD, FTYPE, STYPE)      \
+  template <>                                                            \
+  struct SaveTypeTraits<TYPE> {                                          \
+    static constexpr bool supported = true;                              \
+    typedef STYPE SavedType;                                             \
+    typedef protobuf::RepeatedField<FTYPE> RepeatedField;                \
+  };                                                                     \
+  template <>                                                            \
+  inline const STYPE* TensorProtoData<TYPE>(const TensorProto& t) {      \
+    static_assert(SaveTypeTraits<TYPE>::supported,                       \
+                  "Specified type " #TYPE " not supported for Restore"); \
+    return reinterpret_cast<const STYPE*>(t.FIELD##_val().data());       \
+  }                                                                      \
+  template <>                                                            \
+  inline protobuf::RepeatedField<FTYPE>* MutableTensorProtoData<TYPE>(   \
+      TensorProto * t) {                                                 \
+    static_assert(SaveTypeTraits<TYPE>::supported,                       \
+                  "Specified type " #TYPE " not supported for Save");    \
+    return reinterpret_cast<protobuf::RepeatedField<FTYPE>*>(            \
+        t->mutable_##FIELD##_val());                                     \
+  }
+
+#define TENSOR_PROTO_EXTRACT_TYPE(TYPE, FIELD, FTYPE)             \
+  TENSOR_PROTO_EXTRACT_TYPE_HELPER(TYPE, FIELD, FTYPE, FTYPE)     \
+  template <>                                                     \
+  inline void Fill(const TYPE* data, size_t n, TensorProto* t) {  \
+    typename protobuf::RepeatedField<FTYPE> copy(data, data + n); \
+    t->mutable_##FIELD##_val()->Swap(&copy);                      \
+  }
+
+// Complex needs special treatment since proto doesn't have native complex
+#define TENSOR_PROTO_EXTRACT_TYPE_COMPLEX(TYPE, FIELD, FTYPE)       \
+  TENSOR_PROTO_EXTRACT_TYPE_HELPER(TYPE, FIELD, FTYPE, TYPE)        \
+  template <>                                                       \
+  inline void Fill(const TYPE* data, size_t n, TensorProto* t) {    \
+    const FTYPE* sub = reinterpret_cast<const FTYPE*>(data);        \
+    typename protobuf::RepeatedField<FTYPE> copy(sub, sub + 2 * n); \
+    t->mutable_##FIELD##_val()->Swap(&copy);                        \
+  }
+
+TENSOR_PROTO_EXTRACT_TYPE(bool, bool, bool);
+TENSOR_PROTO_EXTRACT_TYPE(float, float, float);
+TENSOR_PROTO_EXTRACT_TYPE(double, double, double);
+TENSOR_PROTO_EXTRACT_TYPE_COMPLEX(complex64, scomplex, float);
+TENSOR_PROTO_EXTRACT_TYPE_COMPLEX(complex128, dcomplex, double);
+TENSOR_PROTO_EXTRACT_TYPE(int32, int, int32);
+TENSOR_PROTO_EXTRACT_TYPE(uint32, uint32, uint32);
+TENSOR_PROTO_EXTRACT_TYPE(int64, int64, protobuf_int64);
+TENSOR_PROTO_EXTRACT_TYPE(uint64, uint64, protobuf_uint64);
+TENSOR_PROTO_EXTRACT_TYPE(uint16, int, int32);
+TENSOR_PROTO_EXTRACT_TYPE(uint8, int, int32);
+TENSOR_PROTO_EXTRACT_TYPE(int8, int, int32);
+TENSOR_PROTO_EXTRACT_TYPE(int16, int, int32);
+TENSOR_PROTO_EXTRACT_TYPE(qint8, int, int32);
+TENSOR_PROTO_EXTRACT_TYPE(quint8, int, int32);
+TENSOR_PROTO_EXTRACT_TYPE(quint16, int, int32);
+
+#undef TENSOR_PROTO_EXTRACT_TYPE_COMPLEX
+#undef TENSOR_PROTO_EXTRACT_TYPE_HELPER
+#undef TENSOR_PROTO_EXTRACT_TYPE
+
+// Custom implementation for qint32, based on the one for int32.
+
+template <>
+struct SaveTypeTraits<qint32> : SaveTypeTraits<int32> {};
+
+template <>
+inline const int32* TensorProtoData<qint32>(const TensorProto& t) {
+  static_assert(SaveTypeTraits<qint32>::supported,
+                "Specified type qint32 not supported for Restore");
+  return reinterpret_cast<const int32*>(t.int_val().data());
+}
+
+inline void Fill(const qint32* data, size_t n, TensorProto* t) {
+  const int32* p = reinterpret_cast<const int32*>(data);
+  typename protobuf::RepeatedField<int32> copy(p, p + n);
+  t->mutable_int_val()->Swap(&copy);
+}
+
+// Custom implementation for Eigen::half.
+
+template <>
+struct SaveTypeTraits<Eigen::half> {
+  static constexpr bool supported = true;
+  typedef int SavedType;
+  typedef protobuf::RepeatedField<int32> RepeatedField;
+};
+
+template <>
+inline const int* TensorProtoData<Eigen::half>(const TensorProto& t) {
+  return t.half_val().data();
+}
+
+template <>
+inline protobuf::RepeatedField<int32>* MutableTensorProtoData<Eigen::half>(
+    TensorProto* t) {
+  return t->mutable_half_val();
+}
+
+template <>
+inline void Fill(const Eigen::half* data, size_t n, TensorProto* t) {
+  typename protobuf::RepeatedField<int32>* val = t->mutable_half_val();
+  val->Resize(n, 0);
+  for (size_t i = 0; i < n; ++i) {
+    val->Set(i, data[i].x);
+  }
+}
+
+// Custom implementation for string.
+
+template <>
+struct SaveTypeTraits<tstring> {
+  static constexpr bool supported = true;
+  typedef const string* SavedType;
+  typedef protobuf::RepeatedPtrField<string> RepeatedField;
+};
+
+template <>
+inline const string* const* TensorProtoData<tstring>(const TensorProto& t) {
+  static_assert(SaveTypeTraits<tstring>::supported,
+                "Specified type tstring not supported for Restore");
+  return t.string_val().data();
+}
+
+template <>
+inline protobuf::RepeatedPtrField<string>* MutableTensorProtoData<tstring>(
+    TensorProto* t) {
+  static_assert(SaveTypeTraits<tstring>::supported,
+                "Specified type tstring not supported for Save");
+  return t->mutable_string_val();
+}
+
+template <>
+inline void Fill(const tstring* data, size_t n, TensorProto* t) {
+  typename protobuf::RepeatedPtrField<string> copy(data, data + n);
+  t->mutable_string_val()->Swap(&copy);
+}
+
+}  // namespace checkpoint
+
+}  // namespace tensorflow
+
+#endif  // TENSORFLOW_CORE_UTIL_SAVED_TENSOR_SLICE_UTIL_H_
+
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: viewcode
+{
+  "ref": "75c56b4ace36e6b814f89ea092ca672714651054",
+  "path": "tensorflow/core/util/tensor_slice_reader.h",
+  "startline": 150,
+  "endline": 215
+}
+This file only has 196 lines. Here are lines 150 through 196.
+
+    mutex_lock l(mu_);
+    tss = FindTensorSlice(name, slice, &details);
+    if (!tss && !all_shards_loaded_) {
+      VLOG(1) << "Did not find slice in preferred shard, loading all shards."
+              << name << ": " << slice.DebugString();
+      LoadAllShards();
+      tss = FindTensorSlice(name, slice, &details);
+    }
+    if (!tss) {
+      // No such tensor
+      return false;
+    }
+  }
+  // We have the data -- copy it over.
+  string value;
+  for (const auto& x : details) {
+    const TensorSlice& slice_s = x.first;
+    const string& fname = x.second;
+    int idx = gtl::FindWithDefault(fname_to_index_, fname, -1);
+    CHECK_GE(idx, 0) << "Failed to find the index for filename " << fname;
+    // We read a record in the corresponding sstable
+    const string key = EncodeTensorNameSlice(name, slice_s);
+    if (!sss_[idx]->Get(key, &value)) {
+      VLOG(1) << "Failed to seek to the record for tensor " << name
+              << ", slice " << slice_s.DebugString()
+              << ": computed key = " << key;
+      return false;
+    }
+    SavedTensorSlices sts;
+    if (!ParseProtoUnlimited(&sts, value)) {
+      VLOG(1) << "Failed to parse the record for tensor " << name << ", slice "
+              << slice_s.DebugString() << ": computed key = " << key;
+      return false;
+    }
+    CopyDataFromTensorSliceToTensorSlice(
+        tss->shape(), slice_s, slice,
+        checkpoint::TensorProtoData<T>(sts.data().data()), data);
+  }
+  return true;
+}
+
+}  // namespace checkpoint
+
+}  // namespace tensorflow
+
+#endif  // TENSORFLOW_CORE_UTIL_TENSOR_SLICE_READER_H_
+
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: viewcode
+{
+  "ref": "75c56b4ace36e6b814f89ea092ca672714651054",
+  "path": "tensorflow/core/util/tensor_slice_reader_test.cc",
+  "startline": 430,
+  "endline": 500
+}
+Here are lines 430 through 500.
+
+    }
+    return sts.SerializeAsString();
+  });
+
+  TensorSliceReader reader(fname, OpenTableTensorSliceReader);
+  // The negative dimension should cause loading to fail.
+  EXPECT_FALSE(reader.status().ok());
+}
+
+TEST(TensorSliceReaderTest, InvalidTensorSlice) {
+  const string fname =
+      io::JoinPath(testing::TmpDir(), "invalid_slice_checkpoint");
+  TensorSliceWriter writer(fname, CreateTableTensorSliceBuilder);
+  const int32 data[] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9};
+  TF_CHECK_OK(writer.Add("test", TensorShape({4, 5}),
+                         TensorSlice::ParseOrDie("0,2:-"), data));
+  TF_CHECK_OK(writer.Finish());
+
+  MutateSavedTensorSlices(fname, [](SavedTensorSlices sts) {
+    if (sts.has_meta()) {
+      for (auto& tensor : *sts.mutable_meta()->mutable_tensor()) {
+        tensor.mutable_slice(0)->mutable_extent(0)->set_length(-10);
+      }
+    }
+    return sts.SerializeAsString();
+  });
+
+  TensorSliceReader reader(fname, OpenTableTensorSliceReader);
+  // The negative exent length should cause loading to fail.
+  EXPECT_FALSE(reader.status().ok());
+}
+
+void CachedTensorSliceReaderTesterHelper(
+    const TensorSliceWriter::CreateBuilderFunction& create_function,
+    const TensorSliceReader::OpenTableFunction& open_function) {
+  const string fname_base = io::JoinPath(testing::TmpDir(), "float_checkpoint");
+
+  TensorShape shape({4, 5});
+
+  // File #0 contains a slice that is the top two rows:
+  //
+  //   0   1   2   3   4
+  //   5   6   7   8   9
+  //   .   .   .   .   .
+  //   .   .   .   .   .
+  {
+    const string fname = strings::StrCat(fname_base, "_0");
+    TensorSliceWriter writer(fname, create_function);
+    const float data[] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9};
+    TensorSlice slice = TensorSlice::ParseOrDie("0,2:-");
+    TF_CHECK_OK(writer.Add("test", shape, slice, data));
+    TF_CHECK_OK(writer.Finish());
+  }
+
+  // File #1 contains two slices:
+  //
+  // slice #0 is the bottom left corner
+  //   .   .   .   .   .
+  //   .   .   .   .   .
+  //  10  11  12   .   .
+  //  15  16  17   .   .
+  //
+  // slice #1 is the bottom right corner
+  //   .   .   .   .   .
+  //   .   .   .   .   .
+  //   .   .   .   .   .
+  //   .   .   .  18  19
+  {
+    const string fname = strings::StrCat(fname_base, "_1");
+    TensorSliceWriter writer(fname, create_function);
+    // slice #0
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tokens used
+input: 5,102
+cache read: 4,608
+cache write: 0
+output: 220
+reasoning output: 0
+
+The target files already contain the same locations and helper test mutation infrastructure. I’ll add the data-size trait specializations, enforce slice data length before copying, and add the regression test using this branch’s existing `TF_CHECK_OK` style.
+
+tool: read
+{
+  "filePath": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0084-75c56b4ace36\\tensorflow\\core\\util\\saved_tensor_slice_util.h",
+  "offset": 55,
+  "limit": 165
+}
+<path>C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0084-75c56b4ace36\tensorflow\core\util\saved_tensor_slice_util.h</path>
+<type>file</type>
+<content>
+55: // before reusing.
+56: Status ParseShapeAndSlice(const string& shape_and_slice, TensorShape* shape,
+57:                           TensorSlice* slice, TensorShape* shape_slice);
+58: 
+59: template <typename T>
+60: struct SaveTypeTraits;
+61: 
+62: template <typename T>
+63: const typename SaveTypeTraits<T>::SavedType* TensorProtoData(
+64:     const TensorProto& t);
+65: 
+66: template <typename T>
+67: typename SaveTypeTraits<T>::RepeatedField* MutableTensorProtoData(
+68:     TensorProto* t);
+69: 
+70: template <typename T>
+71: void Fill(T* data, size_t n, TensorProto* t);
+72: 
+73: #define TENSOR_PROTO_EXTRACT_TYPE_HELPER(TYPE, FIELD, FTYPE, STYPE)      \
+74:   template <>                                                            \
+75:   struct SaveTypeTraits<TYPE> {                                          \
+76:     static constexpr bool supported = true;                              \
+77:     typedef STYPE SavedType;                                             \
+78:     typedef protobuf::RepeatedField<FTYPE> RepeatedField;                \
+79:   };                                                                     \
+80:   template <>                                                            \
+81:   inline const STYPE* TensorProtoData<TYPE>(const TensorProto& t) {      \
+82:     static_assert(SaveTypeTraits<TYPE>::supported,                       \
+83:                   "Specified type " #TYPE " not supported for Restore"); \
+84:     return reinterpret_cast<const STYPE*>(t.FIELD##_val().data());       \
+85:   }                                                                      \
+86:   template <>                                                            \
+87:   inline protobuf::RepeatedField<FTYPE>* MutableTensorProtoData<TYPE>(   \
+88:       TensorProto * t) {                                                 \
+89:     static_assert(SaveTypeTraits<TYPE>::supported,                       \
+90:                   "Specified type " #TYPE " not supported for Save");    \
+91:     return reinterpret_cast<protobuf::RepeatedField<FTYPE>*>(            \
+92:         t->mutable_##FIELD##_val());                                     \
+93:   }
+94: 
+95: #define TENSOR_PROTO_EXTRACT_TYPE(TYPE, FIELD, FTYPE)             \
+96:   TENSOR_PROTO_EXTRACT_TYPE_HELPER(TYPE, FIELD, FTYPE, FTYPE)     \
+97:   template <>                                                     \
+98:   inline void Fill(const TYPE* data, size_t n, TensorProto* t) {  \
+99:     typename protobuf::RepeatedField<FTYPE> copy(data, data + n); \
+100:     t->mutable_##FIELD##_val()->Swap(&copy);                      \
+101:   }
+102: 
+103: // Complex needs special treatment since proto doesn't have native complex
+104: #define TENSOR_PROTO_EXTRACT_TYPE_COMPLEX(TYPE, FIELD, FTYPE)       \
+105:   TENSOR_PROTO_EXTRACT_TYPE_HELPER(TYPE, FIELD, FTYPE, TYPE)        \
+106:   template <>                                                       \
+107:   inline void Fill(const TYPE* data, size_t n, TensorProto* t) {    \
+108:     const FTYPE* sub = reinterpret_cast<const FTYPE*>(data);        \
+109:     typename protobuf::RepeatedField<FTYPE> copy(sub, sub + 2 * n); \
+110:     t->mutable_##FIELD##_val()->Swap(&copy);                        \
+111:   }
+112: 
+113: TENSOR_PROTO_EXTRACT_TYPE(bool, bool, bool);
+114: TENSOR_PROTO_EXTRACT_TYPE(float, float, float);
+115: TENSOR_PROTO_EXTRACT_TYPE(double, double, double);
+116: TENSOR_PROTO_EXTRACT_TYPE_COMPLEX(complex64, scomplex, float);
+117: TENSOR_PROTO_EXTRACT_TYPE_COMPLEX(complex128, dcomplex, double);
+118: TENSOR_PROTO_EXTRACT_TYPE(int32, int, int32);
+119: TENSOR_PROTO_EXTRACT_TYPE(uint32, uint32, uint32);
+120: TENSOR_PROTO_EXTRACT_TYPE(int64, int64, protobuf_int64);
+121: TENSOR_PROTO_EXTRACT_TYPE(uint64, uint64, protobuf_uint64);
+122: TENSOR_PROTO_EXTRACT_TYPE(uint16, int, int32);
+123: TENSOR_PROTO_EXTRACT_TYPE(uint8, int, int32);
+124: TENSOR_PROTO_EXTRACT_TYPE(int8, int, int32);
+125: TENSOR_PROTO_EXTRACT_TYPE(int16, int, int32);
+126: TENSOR_PROTO_EXTRACT_TYPE(qint8, int, int32);
+127: TENSOR_PROTO_EXTRACT_TYPE(quint8, int, int32);
+128: TENSOR_PROTO_EXTRACT_TYPE(quint16, int, int32);
+129: 
+130: #undef TENSOR_PROTO_EXTRACT_TYPE_COMPLEX
+131: #undef TENSOR_PROTO_EXTRACT_TYPE_HELPER
+132: #undef TENSOR_PROTO_EXTRACT_TYPE
+133: 
+134: // Custom implementation for qint32, based on the one for int32.
+135: 
+136: template <>
+137: struct SaveTypeTraits<qint32> : SaveTypeTraits<int32> {};
+138: 
+139: template <>
+140: inline const int32* TensorProtoData<qint32>(const TensorProto& t) {
+141:   static_assert(SaveTypeTraits<qint32>::supported,
+142:                 "Specified type qint32 not supported for Restore");
+143:   return reinterpret_cast<const int32*>(t.int_val().data());
+144: }
+145: 
+146: inline void Fill(const qint32* data, size_t n, TensorProto* t) {
+147:   const int32* p = reinterpret_cast<const int32*>(data);
+148:   typename protobuf::RepeatedField<int32> copy(p, p + n);
+149:   t->mutable_int_val()->Swap(&copy);
+150: }
+151: 
+152: // Custom implementation for Eigen::half.
+153: 
+154: template <>
+155: struct SaveTypeTraits<Eigen::half> {
+156:   static constexpr bool supported = true;
+157:   typedef int SavedType;
+158:   typedef protobuf::RepeatedField<int32> RepeatedField;
+159: };
+160: 
+161: template <>
+162: inline const int* TensorProtoData<Eigen::half>(const TensorProto& t) {
+163:   return t.half_val().data();
+164: }
+165: 
+166: template <>
+167: inline protobuf::RepeatedField<int32>* MutableTensorProtoData<Eigen::half>(
+168:     TensorProto* t) {
+169:   return t->mutable_half_val();
+170: }
+171: 
+172: template <>
+173: inline void Fill(const Eigen::half* data, size_t n, TensorProto* t) {
+174:   typename protobuf::RepeatedField<int32>* val = t->mutable_half_val();
+175:   val->Resize(n, 0);
+176:   for (size_t i = 0; i < n; ++i) {
+177:     val->Set(i, data[i].x);
+178:   }
+179: }
+180: 
+181: // Custom implementation for string.
+182: 
+183: template <>
+184: struct SaveTypeTraits<tstring> {
+185:   static constexpr bool supported = true;
+186:   typedef const string* SavedType;
+187:   typedef protobuf::RepeatedPtrField<string> RepeatedField;
+188: };
+189: 
+190: template <>
+191: inline const string* const* TensorProtoData<tstring>(const TensorProto& t) {
+192:   static_assert(SaveTypeTraits<tstring>::supported,
+193:                 "Specified type tstring not supported for Restore");
+194:   return t.string_val().data();
+195: }
+196: 
+197: template <>
+198: inline protobuf::RepeatedPtrField<string>* MutableTensorProtoData<tstring>(
+199:     TensorProto* t) {
+200:   static_assert(SaveTypeTraits<tstring>::supported,
+201:                 "Specified type tstring not supported for Save");
+202:   return t->mutable_string_val();
+203: }
+204: 
+205: template <>
+206: inline void Fill(const tstring* data, size_t n, TensorProto* t) {
+207:   typename protobuf::RepeatedPtrField<string> copy(data, data + n);
+208:   t->mutable_string_val()->Swap(&copy);
+209: }
+210: 
+211: }  // namespace checkpoint
+212: 
+213: }  // namespace tensorflow
+214: 
+215: #endif  // TENSORFLOW_CORE_UTIL_SAVED_TENSOR_SLICE_UTIL_H_
+
+(End of file - total 215 lines)
+</content>
+
+tool: read
+{
+  "filePath": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0084-75c56b4ace36\\tensorflow\\core\\util\\tensor_slice_reader.h",
+  "offset": 145,
+  "limit": 55
+}
+<path>C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0084-75c56b4ace36\tensorflow\core\util\tensor_slice_reader.h</path>
+<type>file</type>
+<content>
+145: bool TensorSliceReader::CopySliceData(const string& name,
+146:                                       const TensorSlice& slice, T* data) const {
+147:   std::vector<std::pair<TensorSlice, string>> details;
+148:   const TensorSliceSet* tss;
+149:   {
+150:     mutex_lock l(mu_);
+151:     tss = FindTensorSlice(name, slice, &details);
+152:     if (!tss && !all_shards_loaded_) {
+153:       VLOG(1) << "Did not find slice in preferred shard, loading all shards."
+154:               << name << ": " << slice.DebugString();
+155:       LoadAllShards();
+156:       tss = FindTensorSlice(name, slice, &details);
+157:     }
+158:     if (!tss) {
+159:       // No such tensor
+160:       return false;
+161:     }
+162:   }
+163:   // We have the data -- copy it over.
+164:   string value;
+165:   for (const auto& x : details) {
+166:     const TensorSlice& slice_s = x.first;
+167:     const string& fname = x.second;
+168:     int idx = gtl::FindWithDefault(fname_to_index_, fname, -1);
+169:     CHECK_GE(idx, 0) << "Failed to find the index for filename " << fname;
+170:     // We read a record in the corresponding sstable
+171:     const string key = EncodeTensorNameSlice(name, slice_s);
+172:     if (!sss_[idx]->Get(key, &value)) {
+173:       VLOG(1) << "Failed to seek to the record for tensor " << name
+174:               << ", slice " << slice_s.DebugString()
+175:               << ": computed key = " << key;
+176:       return false;
+177:     }
+178:     SavedTensorSlices sts;
+179:     if (!ParseProtoUnlimited(&sts, value)) {
+180:       VLOG(1) << "Failed to parse the record for tensor " << name << ", slice "
+181:               << slice_s.DebugString() << ": computed key = " << key;
+182:       return false;
+183:     }
+184:     CopyDataFromTensorSliceToTensorSlice(
+185:         tss->shape(), slice_s, slice,
+186:         checkpoint::TensorProtoData<T>(sts.data().data()), data);
+187:   }
+188:   return true;
+189: }
+190: 
+191: }  // namespace checkpoint
+192: 
+193: }  // namespace tensorflow
+194: 
+195: #endif  // TENSORFLOW_CORE_UTIL_TENSOR_SLICE_READER_H_
+
+(End of file - total 195 lines)
+</content>
+
+tool: read
+{
+  "filePath": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0084-75c56b4ace36\\tensorflow\\core\\util\\tensor_slice_reader_test.cc",
+  "offset": 1,
+  "limit": 80
+}
+<path>C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0084-75c56b4ace36\tensorflow\core\util\tensor_slice_reader_test.cc</path>
+<type>file</type>
+<content>
+1: /* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
+2: 
+3: Licensed under the Apache License, Version 2.0 (the "License");
+4: you may not use this file except in compliance with the License.
+5: You may obtain a copy of the License at
+6: 
+7:     http://www.apache.org/licenses/LICENSE-2.0
+8: 
+9: Unless required by applicable law or agreed to in writing, software
+10: distributed under the License is distributed on an "AS IS" BASIS,
+11: WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+12: See the License for the specific language governing permissions and
+13: limitations under the License.
+14: ==============================================================================*/
+15: 
+16: #include "tensorflow/core/util/tensor_slice_reader.h"
+17: 
+18: #include <utility>
+19: #include <vector>
+20: 
+21: #include "tensorflow/core/framework/tensor_shape.pb.h"
+22: #include "tensorflow/core/framework/types.h"
+23: #include "tensorflow/core/framework/versions.pb.h"
+24: #include "tensorflow/core/lib/core/status_test_util.h"
+25: #include "tensorflow/core/lib/core/stringpiece.h"
+26: #include "tensorflow/core/lib/io/iterator.h"
+27: #include "tensorflow/core/lib/io/path.h"
+28: #include "tensorflow/core/lib/io/table.h"
+29: #include "tensorflow/core/lib/io/table_builder.h"
+30: #include "tensorflow/core/lib/strings/str_util.h"
+31: #include "tensorflow/core/lib/strings/strcat.h"
+32: #include "tensorflow/core/platform/env.h"
+33: #include "tensorflow/core/platform/logging.h"
+34: #include "tensorflow/core/platform/protobuf.h"
+35: #include "tensorflow/core/platform/test.h"
+36: #include "tensorflow/core/platform/types.h"
+37: #include "tensorflow/core/public/version.h"
+38: #include "tensorflow/core/util/saved_tensor_slice.pb.h"
+39: #include "tensorflow/core/util/saved_tensor_slice_util.h"
+40: #include "tensorflow/core/util/tensor_slice_reader_cache.h"
+41: #include "tensorflow/core/util/tensor_slice_writer.h"
+42: 
+43: namespace tensorflow {
+44: 
+45: namespace checkpoint {
+46: 
+47: namespace {
+48: 
+49: // A simple test where we write a few tensor slices with a number of tensor
+50: // slice writers and then read them back from a tensor slice reader.
+51: //
+52: // We have a 2-d tensor of shape 4 X 5 that looks like this:
+53: //
+54: //   0   1   2   3   4
+55: //   5   6   7   8   9
+56: //  10  11  12  13  14
+57: //  15  16  17  18  19
+58: //
+59: // We assume this is a row-major matrix.
+60: 
+61: void SimpleFloatHelper(
+62:     const TensorSliceWriter::CreateBuilderFunction& create_function,
+63:     TensorSliceReader::OpenTableFunction open_function) {
+64:   const string fname_base = io::JoinPath(testing::TmpDir(), "float_checkpoint");
+65: 
+66:   TensorShape shape({4, 5});
+67: 
+68:   // File #0 contains a slice that is the top two rows:
+69:   //
+70:   //   0   1   2   3   4
+71:   //   5   6   7   8   9
+72:   //   .   .   .   .   .
+73:   //   .   .   .   .   .
+74:   {
+75:     const string fname = strings::StrCat(fname_base, "_0");
+76:     TensorSliceWriter writer(fname, create_function);
+77:     const float data[] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9};
+78:     TensorSlice slice = TensorSlice::ParseOrDie("0,2:-");
+79:     TF_CHECK_OK(writer.Add("test", shape, slice, data));
+80:     TF_CHECK_OK(writer.Finish());
+
+(Showing lines 1-80 of 617. Use offset=81 to continue.)
+</content>
+
+tokens used
+input: 4,028
+cache read: 8,704
+cache write: 0
+output: 289
+reasoning output: 44
+
+I’m editing the three touched files now; the only target-specific adjustment is using `TF_CHECK_OK` in the added test to match the surrounding test file.
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/util/saved_tensor_slice_util.h\n@@\n template <typename T>\n struct SaveTypeTraits;\n \n+template <typename T>\n+int TensorProtoDataSize(const TensorProto& t);\n+\n template <typename T>\n const typename SaveTypeTraits<T>::SavedType* TensorProtoData(\n     const TensorProto& t);\n@@\n #define TENSOR_PROTO_EXTRACT_TYPE(TYPE, FIELD, FTYPE)             \\\n   TENSOR_PROTO_EXTRACT_TYPE_HELPER(TYPE, FIELD, FTYPE, FTYPE)     \\\n   template <>                                                     \\\n+  inline int TensorProtoDataSize<TYPE>(const TensorProto& t) {    \\\n+    return t.FIELD##_val_size();                                  \\\n+  }                                                               \\\n+  template <>                                                     \\\n   inline void Fill(const TYPE* data, size_t n, TensorProto* t) {  \\\n     typename protobuf::RepeatedField<FTYPE> copy(data, data + n); \\\n     t->mutable_##FIELD##_val()->Swap(&copy);                      \\\n   }\n@@\n #define TENSOR_PROTO_EXTRACT_TYPE_COMPLEX(TYPE, FIELD, FTYPE)       \\\n   TENSOR_PROTO_EXTRACT_TYPE_HELPER(TYPE, FIELD, FTYPE, TYPE)        \\\n   template <>                                                       \\\n+  inline int TensorProtoDataSize<TYPE>(const TensorProto& t) {      \\\n+    return t.FIELD##_val_size() / 2;                                \\\n+  }                                                                 \\\n+  template <>                                                       \\\n   inline void Fill(const TYPE* data, size_t n, TensorProto* t) {    \\\n     const FTYPE* sub = reinterpret_cast<const FTYPE*>(data);        \\\n     typename protobuf::RepeatedField<FTYPE> copy(sub, sub + 2 * n); \\\n     t->mutable_##FIELD##_val()->Swap(&copy);                        \\\n@@\n template <>\n struct SaveTypeTraits<qint32> : SaveTypeTraits<int32> {};\n \n+template <>\n+inline int TensorProtoDataSize<qint32>(const TensorProto& t) {\n+  return t.int_val_size();\n+}\n+\n template <>\n inline const int32* TensorProtoData<qint32>(const TensorProto& t) {\n   static_assert(SaveTypeTraits<qint32>::supported,\n                 \"Specified type qint32 not supported for Restore\");\n@@\n struct SaveTypeTraits<Eigen::half> {\n   static constexpr bool supported = true;\n   typedef int SavedType;\n   typedef protobuf::RepeatedField<int32> RepeatedField;\n };\n \n+template <>\n+inline int TensorProtoDataSize<Eigen::half>(const TensorProto& t) {\n+  return t.half_val_size();\n+}\n+\n template <>\n inline const int* TensorProtoData<Eigen::half>(const TensorProto& t) {\n   return t.half_val().data();\n }\n@@\n struct SaveTypeTraits<tstring> {\n   static constexpr bool supported = true;\n   typedef const string* SavedType;\n   typedef protobuf::RepeatedPtrField<string> RepeatedField;\n };\n \n+template <>\n+inline int TensorProtoDataSize<tstring>(const TensorProto& t) {\n+  return t.string_val_size();\n+}\n+\n template <>\n inline const string* const* TensorProtoData<tstring>(const TensorProto& t) {\n   static_assert(SaveTypeTraits<tstring>::supported,\n                 \"Specified type tstring not supported for Restore\");\n*** Update File: tensorflow/core/util/tensor_slice_reader.h\n@@\n     if (!ParseProtoUnlimited(&sts, value)) {\n       VLOG(1) << \"Failed to parse the record for tensor \" << name << \", slice \"\n               << slice_s.DebugString() << \": computed key = \" << key;\n       return false;\n     }\n+    // Ensure the TensorSlice contains the expected amount of data.\n+    TensorShape shp_s;\n+    Status s = slice_s.SliceTensorShape(tss->shape(), &shp_s);\n+    if (!s.ok()) {\n+      VLOG(1) << \"Failed to slice tensor \" << name << \", slice \"\n+              << slice_s.DebugString() << \": \" << s;\n+      return false;\n+    }\n+    if (checkpoint::TensorProtoDataSize<T>(sts.data().data()) !=\n+        shp_s.num_elements()) {\n+      VLOG(1) << \"Tensor \" << name << \", slice \" << slice_s.DebugString()\n+              << \" had an unexpected amount of data: expected = \"\n+              << shp_s.num_elements() << \", got = \"\n+              << checkpoint::TensorProtoDataSize<T>(sts.data().data());\n+      return false;\n+    }\n     CopyDataFromTensorSliceToTensorSlice(\n         tss->shape(), slice_s, slice,\n         checkpoint::TensorProtoData<T>(sts.data().data()), data);\n   }\n*** Update File: tensorflow/core/util/tensor_slice_reader_test.cc\n@@\n TEST(TensorSliceReaderTest, InvalidTensorSlice) {\n   const string fname =\n       io::JoinPath(testing::TmpDir(), \"invalid_slice_checkpoint\");\n   TensorSliceWriter writer(fname, CreateTableTensorSliceBuilder);\n   const int32 data[] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9};\n@@\n   // The negative exent length should cause loading to fail.\n   EXPECT_FALSE(reader.status().ok());\n }\n \n+TEST(TensorSliceReaderTest, MissingTensorData) {\n+  const string fname =\n+      io::JoinPath(testing::TmpDir(), \"missing_data_checkpoint\");\n+  TensorSliceWriter writer(fname, CreateTableTensorSliceBuilder);\n+  const int32 data[] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9};\n+  TF_CHECK_OK(writer.Add(\"test\", TensorShape({4, 5}),\n+                         TensorSlice::ParseOrDie(\"0,2:-\"), data));\n+  TF_CHECK_OK(writer.Finish());\n+\n+  MutateSavedTensorSlices(fname, [&](SavedTensorSlices sts) {\n+    if (sts.has_data()) {\n+      // Replace the data with only 4 elements.\n+      Fill(data, 4, sts.mutable_data()->mutable_data());\n+    }\n+    return sts.SerializeAsString();\n+  });\n+\n+  TensorSliceReader reader(fname, OpenTableTensorSliceReader);\n+  TF_CHECK_OK(reader.status());\n+\n+  // The tensor should be present, but loading it should fail due to the missing\n+  // data.\n+  EXPECT_TRUE(reader.HasTensor(\"test\", nullptr, nullptr));\n+  std::unique_ptr<Tensor> tensor;\n+  EXPECT_FALSE(reader.GetTensor(\"test\", &tensor).ok());\n+}\n+\n void CachedTensorSliceReaderTesterHelper(\n     const TensorSliceWriter::CreateBuilderFunction& create_function,\n     const TensorSliceReader::OpenTableFunction& open_function) {\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/util/saved_tensor_slice_util.h
+M tensorflow/core/util/tensor_slice_reader.h
+M tensorflow/core/util/tensor_slice_reader_test.cc
+
+tokens used
+input: 4,849
+cache read: 11,776
+cache write: 0
+output: 1,736
+reasoning output: 20
+
+The source changes are applied. I’ll inspect the resulting diff and run hunk validation against the target base.
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/util/saved_tensor_slice_util.h tensorflow/core/util/tensor_slice_reader.h tensorflow/core/util/tensor_slice_reader_test.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0084-75c56b4ace36",
+  "timeout": 120000
+}
+warning: in the working copy of 'tensorflow/core/util/saved_tensor_slice_util.h', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'tensorflow/core/util/tensor_slice_reader.h', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'tensorflow/core/util/tensor_slice_reader_test.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/util/saved_tensor_slice_util.h b/tensorflow/core/util/saved_tensor_slice_util.h
+index 1f9768f516..27916095bf 100644
+--- a/tensorflow/core/util/saved_tensor_slice_util.h
++++ b/tensorflow/core/util/saved_tensor_slice_util.h
+@@ -59,6 +59,9 @@ Status ParseShapeAndSlice(const string& shape_and_slice, TensorShape* shape,
+ template <typename T>
+ struct SaveTypeTraits;
+ 
++template <typename T>
++int TensorProtoDataSize(const TensorProto& t);
++
+ template <typename T>
+ const typename SaveTypeTraits<T>::SavedType* TensorProtoData(
+     const TensorProto& t);
+@@ -95,6 +98,10 @@ void Fill(T* data, size_t n, TensorProto* t);
+ #define TENSOR_PROTO_EXTRACT_TYPE(TYPE, FIELD, FTYPE)             \
+   TENSOR_PROTO_EXTRACT_TYPE_HELPER(TYPE, FIELD, FTYPE, FTYPE)     \
+   template <>                                                     \
++  inline int TensorProtoDataSize<TYPE>(const TensorProto& t) {    \
++    return t.FIELD##_val_size();                                  \
++  }                                                               \
++  template <>                                                     \
+   inline void Fill(const TYPE* data, size_t n, TensorProto* t) {  \
+     typename protobuf::RepeatedField<FTYPE> copy(data, data + n); \
+     t->mutable_##FIELD##_val()->Swap(&copy);                      \
+@@ -104,6 +111,10 @@ void Fill(T* data, size_t n, TensorProto* t);
+ #define TENSOR_PROTO_EXTRACT_TYPE_COMPLEX(TYPE, FIELD, FTYPE)       \
+   TENSOR_PROTO_EXTRACT_TYPE_HELPER(TYPE, FIELD, FTYPE, TYPE)        \
+   template <>                                                       \
++  inline int TensorProtoDataSize<TYPE>(const TensorProto& t) {      \
++    return t.FIELD##_val_size() / 2;                                \
++  }                                                                 \
++  template <>                                                       \
+   inline void Fill(const TYPE* data, size_t n, TensorProto* t) {    \
+     const FTYPE* sub = reinterpret_cast<const FTYPE*>(data);        \
+     typename protobuf::RepeatedField<FTYPE> copy(sub, sub + 2 * n); \
+@@ -136,6 +147,11 @@ TENSOR_PROTO_EXTRACT_TYPE(quint16, int, int32);
+ template <>
+ struct SaveTypeTraits<qint32> : SaveTypeTraits<int32> {};
+ 
++template <>
++inline int TensorProtoDataSize<qint32>(const TensorProto& t) {
++  return t.int_val_size();
++}
++
+ template <>
+ inline const int32* TensorProtoData<qint32>(const TensorProto& t) {
+   static_assert(SaveTypeTraits<qint32>::supported,
+@@ -158,6 +174,11 @@ struct SaveTypeTraits<Eigen::half> {
+   typedef protobuf::RepeatedField<int32> RepeatedField;
+ };
+ 
++template <>
++inline int TensorProtoDataSize<Eigen::half>(const TensorProto& t) {
++  return t.half_val_size();
++}
++
+ template <>
+ inline const int* TensorProtoData<Eigen::half>(const TensorProto& t) {
+   return t.half_val().data();
+@@ -187,6 +208,11 @@ struct SaveTypeTraits<tstring> {
+   typedef protobuf::RepeatedPtrField<string> RepeatedField;
+ };
+ 
++template <>
++inline int TensorProtoDataSize<tstring>(const TensorProto& t) {
++  return t.string_val_size();
++}
++
+ template <>
+ inline const string* const* TensorProtoData<tstring>(const TensorProto& t) {
+   static_assert(SaveTypeTraits<tstring>::supported,
+diff --git a/tensorflow/core/util/tensor_slice_reader.h b/tensorflow/core/util/tensor_slice_reader.h
+index 0fb2e11bf8..bc0a91523f 100644
+--- a/tensorflow/core/util/tensor_slice_reader.h
++++ b/tensorflow/core/util/tensor_slice_reader.h
+@@ -181,6 +181,22 @@ bool TensorSliceReader::CopySliceData(const string& name,
+               << slice_s.DebugString() << ": computed key = " << key;
+       return false;
+     }
++    // Ensure the TensorSlice contains the expected amount of data.
++    TensorShape shp_s;
++    Status s = slice_s.SliceTensorShape(tss->shape(), &shp_s);
++    if (!s.ok()) {
++      VLOG(1) << "Failed to slice tensor " << name << ", slice "
++              << slice_s.DebugString() << ": " << s;
++      return false;
++    }
++    if (checkpoint::TensorProtoDataSize<T>(sts.data().data()) !=
++        shp_s.num_elements()) {
++      VLOG(1) << "Tensor " << name << ", slice " << slice_s.DebugString()
++              << " had an unexpected amount of data: expected = "
++              << shp_s.num_elements() << ", got = "
++              << checkpoint::TensorProtoDataSize<T>(sts.data().data());
++      return false;
++    }
+     CopyDataFromTensorSliceToTensorSlice(
+         tss->shape(), slice_s, slice,
+         checkpoint::TensorProtoData<T>(sts.data().data()), data);
+diff --git a/tensorflow/core/util/tensor_slice_reader_test.cc b/tensorflow/core/util/tensor_slice_reader_test.cc
+index e32af89ea5..05244d7eb0 100644
+--- a/tensorflow/core/util/tensor_slice_reader_test.cc
++++ b/tensorflow/core/util/tensor_slice_reader_test.cc
+@@ -459,6 +459,33 @@ TEST(TensorSliceReaderTest, InvalidTensorSlice) {
+   EXPECT_FALSE(reader.status().ok());
+ }
+ 
++TEST(TensorSliceReaderTest, MissingTensorData) {
++  const string fname =
++      io::JoinPath(testing::TmpDir(), "missing_data_checkpoint");
++  TensorSliceWriter writer(fname, CreateTableTensorSliceBuilder);
++  const int32 data[] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9};
++  TF_CHECK_OK(writer.Add("test", TensorShape({4, 5}),
++                         TensorSlice::ParseOrDie("0,2:-"), data));
++  TF_CHECK_OK(writer.Finish());
++
++  MutateSavedTensorSlices(fname, [&](SavedTensorSlices sts) {
++    if (sts.has_data()) {
++      // Replace the data with only 4 elements.
++      Fill(data, 4, sts.mutable_data()->mutable_data());
++    }
++    return sts.SerializeAsString();
++  });
++
++  TensorSliceReader reader(fname, OpenTableTensorSliceReader);
++  TF_CHECK_OK(reader.status());
++
++  // The tensor should be present, but loading it should fail due to the missing
++  // data.
++  EXPECT_TRUE(reader.HasTensor("test", nullptr, nullptr));
++  std::unique_ptr<Tensor> tensor;
++  EXPECT_FALSE(reader.GetTensor("test", &tensor).ok());
++}
++
+ void CachedTensorSliceReaderTesterHelper(
+     const TensorSliceWriter::CreateBuilderFunction& create_function,
+     const TensorSliceReader::OpenTableFunction& open_function) {
+
+tokens used
+input: 2,558
+cache read: 15,872
+cache write: 0
+output: 124
+reasoning output: 23
+
+The diff matches the supplied security change with the local assertion macro style. I’ll validate the patch application context now.
+
+tool: validate
+{
+  "ref": "75c56b4ace36e6b814f89ea092ca672714651054",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/util/saved_tensor_slice_util.h b/tensorflow/core/util/saved_tensor_slice_util.h\nindex 1f9768f516..27916095bf 100644\n--- a/tensorflow/core/util/saved_tensor_slice_util.h\n+++ b/tensorflow/core/util/saved_tensor_slice_util.h\n@@ -59,6 +59,9 @@ Status ParseShapeAndSlice(const string& shape_and_slice, TensorShape* shape,\n template <typename T>\n struct SaveTypeTraits;\n \n+template <typename T>\n+int TensorProtoDataSize(const TensorProto& t);\n+\n template <typename T>\n const typename SaveTypeTraits<T>::SavedType* TensorProtoData(\n     const TensorProto& t);\n@@ -95,6 +98,10 @@ void Fill(T* data, size_t n, TensorProto* t);\n #define TENSOR_PROTO_EXTRACT_TYPE(TYPE, FIELD, FTYPE)             \\\n   TENSOR_PROTO_EXTRACT_TYPE_HELPER(TYPE, FIELD, FTYPE, FTYPE)     \\\n   template <>                                                     \\\n+  inline int TensorProtoDataSize<TYPE>(const TensorProto& t) {    \\\n+    return t.FIELD##_val_size();                                  \\\n+  }                                                               \\\n+  template <>                                                     \\\n   inline void Fill(const TYPE* data, size_t n, TensorProto* t) {  \\\n     typename protobuf::RepeatedField<FTYPE> copy(data, data + n); \\\n     t->mutable_##FIELD##_val()->Swap(&copy);                      \\\n@@ -104,6 +111,10 @@ void Fill(T* data, size_t n, TensorProto* t);\n #define TENSOR_PROTO_EXTRACT_TYPE_COMPLEX(TYPE, FIELD, FTYPE)       \\\n   TENSOR_PROTO_EXTRACT_TYPE_HELPER(TYPE, FIELD, FTYPE, TYPE)        \\\n   template <>                                                       \\\n+  inline int TensorProtoDataSize<TYPE>(const TensorProto& t) {      \\\n+    return t.FIELD##_val_size() / 2;                                \\\n+  }                                                                 \\\n+  template <>                                                       \\\n   inline void Fill(const TYPE* data, size_t n, TensorProto* t) {    \\\n     const FTYPE* sub = reinterpret_cast<const FTYPE*>(data);        \\\n     typename protobuf::RepeatedField<FTYPE> copy(sub, sub + 2 * n); \\\n@@ -136,6 +147,11 @@ TENSOR_PROTO_EXTRACT_TYPE(quint16, int, int32);\n template <>\n struct SaveTypeTraits<qint32> : SaveTypeTraits<int32> {};\n \n+template <>\n+inline int TensorProtoDataSize<qint32>(const TensorProto& t) {\n+  return t.int_val_size();\n+}\n+\n template <>\n inline const int32* TensorProtoData<qint32>(const TensorProto& t) {\n   static_assert(SaveTypeTraits<qint32>::supported,\n@@ -158,6 +174,11 @@ struct SaveTypeTraits<Eigen::half> {\n   typedef protobuf::RepeatedField<int32> RepeatedField;\n };\n \n+template <>\n+inline int TensorProtoDataSize<Eigen::half>(const TensorProto& t) {\n+  return t.half_val_size();\n+}\n+\n template <>\n inline const int* TensorProtoData<Eigen::half>(const TensorProto& t) {\n   return t.half_val().data();\n@@ -187,6 +208,11 @@ struct SaveTypeTraits<tstring> {\n   typedef protobuf::RepeatedPtrField<string> RepeatedField;\n };\n \n+template <>\n+inline int TensorProtoDataSize<tstring>(const TensorProto& t) {\n+  return t.string_val_size();\n+}\n+\n template <>\n inline const string* const* TensorProtoData<tstring>(const TensorProto& t) {\n   static_assert(SaveTypeTraits<tstring>::supported,\ndiff --git a/tensorflow/core/util/tensor_slice_reader.h b/tensorflow/core/util/tensor_slice_reader.h\nindex 0fb2e11bf8..bc0a91523f 100644\n--- a/tensorflow/core/util/tensor_slice_reader.h\n+++ b/tensorflow/core/util/tensor_slice_reader.h\n@@ -181,6 +181,22 @@ bool TensorSliceReader::CopySliceData(const string& name,\n               << slice_s.DebugString() << \": computed key = \" << key;\n       return false;\n     }\n+    // Ensure the TensorSlice contains the expected amount of data.\n+    TensorShape shp_s;\n+    Status s = slice_s.SliceTensorShape(tss->shape(), &shp_s);\n+    if (!s.ok()) {\n+      VLOG(1) << \"Failed to slice tensor \" << name << \", slice \"\n+              << slice_s.DebugString() << \": \" << s;\n+      return false;\n+    }\n+    if (checkpoint::TensorProtoDataSize<T>(sts.data().data()) !=\n+        shp_s.num_elements()) {\n+      VLOG(1) << \"Tensor \" << name << \", slice \" << slice_s.DebugString()\n+              << \" had an unexpected amount of data: expected = \"\n+              << shp_s.num_elements() << \", got = \"\n+              << checkpoint::TensorProtoDataSize<T>(sts.data().data());\n+      return false;\n+    }\n     CopyDataFromTensorSliceToTensorSlice(\n         tss->shape(), slice_s, slice,\n         checkpoint::TensorProtoData<T>(sts.data().data()), data);\ndiff --git a/tensorflow/core/util/tensor_slice_reader_test.cc b/tensorflow/core/util/tensor_slice_reader_test.cc\nindex e32af89ea5..05244d7eb0 100644\n--- a/tensorflow/core/util/tensor_slice_reader_test.cc\n+++ b/tensorflow/core/util/tensor_slice_reader_test.cc\n@@ -459,6 +459,33 @@ TEST(TensorSliceReaderTest, InvalidTensorSlice) {\n   EXPECT_FALSE(reader.status().ok());\n }\n \n+TEST(TensorSliceReaderTest, MissingTensorData) {\n+  const string fname =\n+      io::JoinPath(testing::TmpDir(), \"missing_data_checkpoint\");\n+  TensorSliceWriter writer(fname, CreateTableTensorSliceBuilder);\n+  const int32 data[] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9};\n+  TF_CHECK_OK(writer.Add(\"test\", TensorShape({4, 5}),\n+                         TensorSlice::ParseOrDie(\"0,2:-\"), data));\n+  TF_CHECK_OK(writer.Finish());\n+\n+  MutateSavedTensorSlices(fname, [&](SavedTensorSlices sts) {\n+    if (sts.has_data()) {\n+      // Replace the data with only 4 elements.\n+      Fill(data, 4, sts.mutable_data()->mutable_data());\n+    }\n+    return sts.SerializeAsString();\n+  });\n+\n+  TensorSliceReader reader(fname, OpenTableTensorSliceReader);\n+  TF_CHECK_OK(reader.status());\n+\n+  // The tensor should be present, but loading it should fail due to the missing\n+  // data.\n+  EXPECT_TRUE(reader.HasTensor(\"test\", nullptr, nullptr));\n+  std::unique_ptr<Tensor> tensor;\n+  EXPECT_FALSE(reader.GetTensor(\"test\", &tensor).ok());\n+}\n+\n void CachedTensorSliceReaderTesterHelper(\n     const TensorSliceWriter::CreateBuilderFunction& create_function,\n     const TensorSliceReader::OpenTableFunction& open_function) {\n"
+}
+Patch applied successfully
+
+tokens used
+input: 2,343
+cache read: 17,920
+cache write: 0
+output: 1,838
+reasoning output: 25
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/util/saved_tensor_slice_util.h b/tensorflow/core/util/saved_tensor_slice_util.h
+    index 1f9768f516..27916095bf 100644
+    --- a/tensorflow/core/util/saved_tensor_slice_util.h
+    +++ b/tensorflow/core/util/saved_tensor_slice_util.h
+    @@ -59,6 +59,9 @@ Status ParseShapeAndSlice(const string& shape_and_slice, TensorShape* shape,
+     template <typename T>
+     struct SaveTypeTraits;
+     
+    +template <typename T>
+    +int TensorProtoDataSize(const TensorProto& t);
+    +
+     template <typename T>
+     const typename SaveTypeTraits<T>::SavedType* TensorProtoData(
+         const TensorProto& t);
+    @@ -95,6 +98,10 @@ void Fill(T* data, size_t n, TensorProto* t);
+     #define TENSOR_PROTO_EXTRACT_TYPE(TYPE, FIELD, FTYPE)             \
+       TENSOR_PROTO_EXTRACT_TYPE_HELPER(TYPE, FIELD, FTYPE, FTYPE)     \
+       template <>                                                     \
+    +  inline int TensorProtoDataSize<TYPE>(const TensorProto& t) {    \
+    +    return t.FIELD##_val_size();                                  \
+    +  }                                                               \
+    +  template <>                                                     \
+       inline void Fill(const TYPE* data, size_t n, TensorProto* t) {  \
+         typename protobuf::RepeatedField<FTYPE> copy(data, data + n); \
+         t->mutable_##FIELD##_val()->Swap(&copy);                      \
+    @@ -104,6 +111,10 @@ void Fill(T* data, size_t n, TensorProto* t);
+     #define TENSOR_PROTO_EXTRACT_TYPE_COMPLEX(TYPE, FIELD, FTYPE)       \
+       TENSOR_PROTO_EXTRACT_TYPE_HELPER(TYPE, FIELD, FTYPE, TYPE)        \
+       template <>                                                       \
+    +  inline int TensorProtoDataSize<TYPE>(const TensorProto& t) {      \
+    +    return t.FIELD##_val_size() / 2;                                \
+    +  }                                                                 \
+    +  template <>                                                       \
+       inline void Fill(const TYPE* data, size_t n, TensorProto* t) {    \
+         const FTYPE* sub = reinterpret_cast<const FTYPE*>(data);        \
+         typename protobuf::RepeatedField<FTYPE> copy(sub, sub + 2 * n); \
+    @@ -136,6 +147,11 @@ TENSOR_PROTO_EXTRACT_TYPE(quint16, int, int32);
+     template <>
+     struct SaveTypeTraits<qint32> : SaveTypeTraits<int32> {};
+     
+    +template <>
+    +inline int TensorProtoDataSize<qint32>(const TensorProto& t) {
+    +  return t.int_val_size();
+    +}
+    +
+     template <>
+     inline const int32* TensorProtoData<qint32>(const TensorProto& t) {
+       static_assert(SaveTypeTraits<qint32>::supported,
+    @@ -158,6 +174,11 @@ struct SaveTypeTraits<Eigen::half> {
+       typedef protobuf::RepeatedField<int32> RepeatedField;
+     };
+     
+    +template <>
+    +inline int TensorProtoDataSize<Eigen::half>(const TensorProto& t) {
+    +  return t.half_val_size();
+    +}
+    +
+     template <>
+     inline const int* TensorProtoData<Eigen::half>(const TensorProto& t) {
+       return t.half_val().data();
+    @@ -187,6 +208,11 @@ struct SaveTypeTraits<tstring> {
+       typedef protobuf::RepeatedPtrField<string> RepeatedField;
+     };
+     
+    +template <>
+    +inline int TensorProtoDataSize<tstring>(const TensorProto& t) {
+    +  return t.string_val_size();
+    +}
+    +
+     template <>
+     inline const string* const* TensorProtoData<tstring>(const TensorProto& t) {
+       static_assert(SaveTypeTraits<tstring>::supported,
+    diff --git a/tensorflow/core/util/tensor_slice_reader.h b/tensorflow/core/util/tensor_slice_reader.h
+    index 0fb2e11bf8..bc0a91523f 100644
+    --- a/tensorflow/core/util/tensor_slice_reader.h
+    +++ b/tensorflow/core/util/tensor_slice_reader.h
+    @@ -181,6 +181,22 @@ bool TensorSliceReader::CopySliceData(const string& name,
+                   << slice_s.DebugString() << ": computed key = " << key;
+           return false;
+         }
+    +    // Ensure the TensorSlice contains the expected amount of data.
+    +    TensorShape shp_s;
+    +    Status s = slice_s.SliceTensorShape(tss->shape(), &shp_s);
+    +    if (!s.ok()) {
+    +      VLOG(1) << "Failed to slice tensor " << name << ", slice "
+    +              << slice_s.DebugString() << ": " << s;
+    +      return false;
+    +    }
+    +    if (checkpoint::TensorProtoDataSize<T>(sts.data().data()) !=
+    +        shp_s.num_elements()) {
+    +      VLOG(1) << "Tensor " << name << ", slice " << slice_s.DebugString()
+    +              << " had an unexpected amount of data: expected = "
+    +              << shp_s.num_elements() << ", got = "
+    +              << checkpoint::TensorProtoDataSize<T>(sts.data().data());
+    +      return false;
+    +    }
+         CopyDataFromTensorSliceToTensorSlice(
+             tss->shape(), slice_s, slice,
+             checkpoint::TensorProtoData<T>(sts.data().data()), data);
+    diff --git a/tensorflow/core/util/tensor_slice_reader_test.cc b/tensorflow/core/util/tensor_slice_reader_test.cc
+    index e32af89ea5..05244d7eb0 100644
+    --- a/tensorflow/core/util/tensor_slice_reader_test.cc
+    +++ b/tensorflow/core/util/tensor_slice_reader_test.cc
+    @@ -459,6 +459,33 @@ TEST(TensorSliceReaderTest, InvalidTensorSlice) {
+       EXPECT_FALSE(reader.status().ok());
+     }
+     
+    +TEST(TensorSliceReaderTest, MissingTensorData) {
+    +  const string fname =
+    +      io::JoinPath(testing::TmpDir(), "missing_data_checkpoint");
+    +  TensorSliceWriter writer(fname, CreateTableTensorSliceBuilder);
+    +  const int32 data[] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9};
+    +  TF_CHECK_OK(writer.Add("test", TensorShape({4, 5}),
+    +                         TensorSlice::ParseOrDie("0,2:-"), data));
+    +  TF_CHECK_OK(writer.Finish());
+    +
+    +  MutateSavedTensorSlices(fname, [&](SavedTensorSlices sts) {
+    +    if (sts.has_data()) {
+    +      // Replace the data with only 4 elements.
+    +      Fill(data, 4, sts.mutable_data()->mutable_data());
+    +    }
+    +    return sts.SerializeAsString();
+    +  });
+    +
+    +  TensorSliceReader reader(fname, OpenTableTensorSliceReader);
+    +  TF_CHECK_OK(reader.status());
+    +
+    +  // The tensor should be present, but loading it should fail due to the missing
+    +  // data.
+    +  EXPECT_TRUE(reader.HasTensor("test", nullptr, nullptr));
+    +  std::unique_ptr<Tensor> tensor;
+    +  EXPECT_FALSE(reader.GetTensor("test", &tensor).ok());
+    +}
+    +
+     void CachedTensorSliceReaderTesterHelper(
+         const TensorSliceWriter::CreateBuilderFunction& create_function,
+         const TensorSliceReader::OpenTableFunction& open_function) {
+  notes: >
+    Backported the TensorProto data-size validation and regression test; hunk validation against the target base succeeded.
+```
+
+tokens used
+input: 2,171
+cache read: 19,968
+cache write: 0
+output: 1,739
+reasoning output: 104

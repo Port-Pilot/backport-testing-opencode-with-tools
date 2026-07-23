@@ -1,0 +1,699 @@
+I’ll locate the target-side `BuildXlaCompilationCache` implementation, compare its context to the provided newer patch, then apply only the null-check backport and validate the hunk if needed.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target TensorFlow 2.5.2 code around BuildXlaCompilationCache",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Construct and validate minimal backport hunk",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "content": "Apply source change and capture final diff",
+      "status": "pending",
+      "priority": "high"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target TensorFlow 2.5.2 code around BuildXlaCompilationCache",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Construct and validate minimal backport hunk",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "content": "Apply source change and capture final diff",
+    "status": "pending",
+    "priority": "high"
+  }
+]
+
+tokens used
+input: 8,389
+cache read: 0
+cache write: 0
+output: 133
+reasoning output: 0
+
+tool: locate_symbol
+{
+  "ref": "b2b3444b71ea99685edafa7731fb7ba57939f437",
+  "symbol": "BuildXlaCompilationCache"
+}
+tensorflow/compiler/jit/xla_compile_on_demand_op.cc:122
+tensorflow/compiler/jit/xla_platform_info.cc:22
+tensorflow/compiler/jit/xla_platform_info.h:85
+tensorflow/compiler/jit/get_compiler_ir.cc:100
+tensorflow/compiler/jit/kernels/xla_ops.cc:187
+
+tool: grep
+{
+  "pattern": "BuildXlaCompilationCache",
+  "path": "."
+}
+Found 5 matches
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0038-b2b3444b71ea\tensorflow\compiler\jit\get_compiler_ir.cc:
+  Line 100:         return BuildXlaCompilationCache(dev, platform_info, cache_write_into);
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0038-b2b3444b71ea\tensorflow\compiler\jit\kernels\xla_ops.cc:
+  Line 187:         return BuildXlaCompilationCache(ctx->device(), platform_info, cache);
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0038-b2b3444b71ea\tensorflow\compiler\jit\xla_compile_on_demand_op.cc:
+  Line 122:         return BuildXlaCompilationCache(ctx->device(), platform_info_,
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0038-b2b3444b71ea\tensorflow\compiler\jit\xla_platform_info.cc:
+  Line 22: Status BuildXlaCompilationCache(DeviceBase* device,
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0038-b2b3444b71ea\tensorflow\compiler\jit\xla_platform_info.h:
+  Line 85: Status BuildXlaCompilationCache(DeviceBase* dev,
+
+tokens used
+input: 962
+cache read: 7,680
+cache write: 0
+output: 85
+reasoning output: 0
+
+The target release has the equivalent function in the same file, but its signature/context differs from the newer patch, so I’m inspecting the local implementation before editing.
+
+tool: viewcode
+{
+  "ref": "b2b3444b71ea99685edafa7731fb7ba57939f437",
+  "path": "tensorflow/compiler/jit/xla_platform_info.cc",
+  "startline": 1,
+  "endline": 120
+}
+Here are lines 1 through 120.
+
+/* Copyright 2020 The TensorFlow Authors. All Rights Reserved.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+==============================================================================*/
+
+#include "tensorflow/compiler/jit/xla_platform_info.h"
+
+#include "tensorflow/compiler/xla/client/client_library.h"
+
+namespace tensorflow {
+
+Status BuildXlaCompilationCache(DeviceBase* device,
+                                const XlaPlatformInfo& platform_info,
+                                XlaCompilationCache** cache) {
+  if (platform_info.xla_device_metadata()) {
+    *cache = new XlaCompilationCache(
+        platform_info.xla_device_metadata()->client(),
+        platform_info.xla_device_metadata()->jit_device_type());
+    return Status::OK();
+  }
+
+  auto platform =
+      se::MultiPlatformManager::PlatformWithId(platform_info.platform_id());
+  if (!platform.ok()) {
+    return platform.status();
+  }
+
+  xla::StatusOr<xla::Compiler*> compiler_for_platform =
+      xla::Compiler::GetForPlatform(platform.ValueOrDie());
+  if (!compiler_for_platform.ok()) {
+    // In some rare cases (usually in unit tests with very small clusters) we
+    // may end up transforming an XLA cluster with at least one GPU operation
+    // (which would normally force the cluster to be compiled using XLA:GPU)
+    // into an XLA cluster with no GPU operations (i.e. containing only CPU
+    // operations).  Such a cluster can fail compilation (in way that
+    // MarkForCompilation could not have detected) if the CPU JIT is not linked
+    // in.
+    //
+    // So bail out of _XlaCompile in this case, and let the executor handle the
+    // situation for us.
+    const Status& status = compiler_for_platform.status();
+    if (status.code() == error::NOT_FOUND) {
+      return errors::Unimplemented("Could not find compiler for platform ",
+                                   platform.ValueOrDie()->Name(), ": ",
+                                   status.ToString());
+    }
+  }
+
+  xla::LocalClientOptions client_options;
+  client_options.set_platform(platform.ValueOrDie());
+  client_options.set_intra_op_parallelism_threads(
+      device->tensorflow_cpu_worker_threads()->num_threads);
+  auto client = xla::ClientLibrary::GetOrCreateLocalClient(client_options);
+  if (!client.ok()) {
+    return client.status();
+  }
+  const XlaOpRegistry::DeviceRegistration* registration;
+  if (!XlaOpRegistry::GetCompilationDevice(platform_info.device_type().type(),
+                                           &registration)) {
+    return errors::InvalidArgument("No JIT device registered for ",
+                                   platform_info.device_type().type());
+  }
+  *cache = new XlaCompilationCache(
+      client.ValueOrDie(), DeviceType(registration->compilation_device_name));
+  return Status::OK();
+}
+
+XlaPlatformInfo XlaPlatformInfoFromDevice(DeviceBase* device_base) {
+  auto device = static_cast<Device*>(device_base);
+  se::Platform::Id platform_id = nullptr;
+  const XlaDevice::Metadata* xla_device_metadata = nullptr;
+  std::shared_ptr<se::DeviceMemoryAllocator> custom_allocator;
+
+  if (device->device_type() == DEVICE_CPU) {
+    platform_id = se::host::kHostPlatformId;
+  } else if (device->device_type() == DEVICE_GPU) {
+    platform_id = device->tensorflow_gpu_device_info()
+                      ->stream->parent()
+                      ->platform()
+                      ->id();
+  } else if (XlaDevice::GetMetadataFromDevice(device, &xla_device_metadata)
+                 .ok()) {
+    // If we are on an XlaDevice, use the underlying XLA platform's allocator
+    // directly. We could use the StreamExecutor's allocator which may
+    // theoretically be more correct, but XLA returns a nice OOM message in a
+    // Status and StreamExecutor does not.
+    //
+    // Importantly we can't use ctx->device()->GetAllocator() as the allocator
+    // (which xla_allocator above uses) as on an XlaDevice, this is a dummy
+    // allocator that returns XlaTensor objects. The XlaCompiler needs a real
+    // allocator to allocate real buffers.
+    platform_id = xla_device_metadata->platform()->id();
+    custom_allocator =
+        xla_device_metadata->client()->backend().shared_memory_allocator();
+  }
+
+  return XlaPlatformInfo(DeviceType(device->device_type()), platform_id,
+                         xla_device_metadata, custom_allocator);
+}
+
+std::shared_ptr<se::DeviceMemoryAllocator> GetAllocator(
+    DeviceBase* device, se::Stream* stream,
+    const XlaPlatformInfo& platform_info) {
+  if (platform_info.custom_allocator()) {
+    return platform_info.custom_allocator();
+  }
+  auto* alloc = device->GetAllocator({});
+  if (!stream) {
+    // Stream is not set for the host platform.
+    se::Platform* platform =
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tokens used
+input: 9,178
+cache read: 0
+cache write: 0
+output: 99
+reasoning output: 0
+
+tool: grep
+{
+  "pattern": "visible_device_list\\(\\)",
+  "path": "tensorflow/compiler/jit",
+  "include": "*.cc"
+}
+Found 1 matches
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0038-b2b3444b71ea\tensorflow\compiler\jit\xla_gpu_device.cc:
+  Line 138:       session_options.config.gpu_options().visible_device_list();
+
+tool: grep
+{
+  "pattern": "set_allowed_devices|ParseVisibleDeviceList|allowed_gpus",
+  "path": "tensorflow",
+  "include": "*.cc"
+}
+Found 15 matches
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0038-b2b3444b71ea\tensorflow\core\common_runtime\gpu\gpu_device_test.cc:
+  Line 117: TEST_F(GPUDeviceTest, FailedToParseVisibleDeviceList) {
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0038-b2b3444b71ea\tensorflow\core\common_runtime\gpu\gpu_device.cc:
+  Line 1122:   // We don't want to call ParseVisibleDeviceList if num_gpus_to_use is 0,
+
+  Line 1126:     TF_RETURN_IF_ERROR(DeviceIdUtil::ParseVisibleDeviceList(
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0038-b2b3444b71ea\tensorflow\core\common_runtime\pluggable_device\pluggable_device_factory.cc:
+  Line 179:     TF_RETURN_IF_ERROR(DeviceIdUtil::ParseVisibleDeviceList(
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0038-b2b3444b71ea\tensorflow\compiler\xla\service\service.cc:
+  Line 124: ServiceOptions& ServiceOptions::set_allowed_devices(
+
+  Line 150:   backend_options.set_allowed_devices(options.allowed_devices());
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0038-b2b3444b71ea\tensorflow\compiler\xla\client\client_library.cc:
+  Line 63: LocalClientOptions& LocalClientOptions::set_allowed_devices(
+
+  Line 86:   default_options.set_allowed_devices(device_set);
+
+  Line 111:   service_options.set_allowed_devices(options.allowed_devices());
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0038-b2b3444b71ea\tensorflow\compiler\xla\service\backend.cc:
+  Line 59: BackendOptions& BackendOptions::set_allowed_devices(
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0038-b2b3444b71ea\tensorflow\compiler\xla\service\local_service.cc:
+  Line 58:       .set_allowed_devices(options.allowed_devices());
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0038-b2b3444b71ea\tensorflow\compiler\jit\xla_gpu_device.cc:
+  Line 38: static xla::StatusOr<absl::optional<std::set<int>>> ParseVisibleDeviceList(
+
+  Line 137:   string allowed_gpus =
+
+  Line 140:       ParseVisibleDeviceList(allowed_gpus).ValueOrDie();
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0038-b2b3444b71ea\tensorflow\compiler\jit\xla_device.cc:
+  Line 247:       .set_allowed_devices(allowed_devices_)
+
+tool: git_show
+{
+  "ref": "e21af685e1828f7ca65038307df5cc06de4479e8",
+  "context": "Status BuildXlaCompilationCache(DeviceBase* device, FunctionLibraryRuntime* flr"
+}
+commit e21af685e1828f7ca65038307df5cc06de4479e8
+Author: Smit Hinsu <hinsu@google.com>
+Date:   Fri Jan 7 16:20:27 2022 -0800
+
+    Fix Null-pointer dereference in BuildXlaCompilationCache
+    
+    If ConfigProto is not used, then use the default settings which is to allow all devices.
+    
+    PiperOrigin-RevId: 420391800
+    Change-Id: I88161ad7042990aef678e77b597a2fb2c8f815be
+
+ tensorflow/compiler/jit/xla_platform_info.cc | 12 +++++++-----
+ 1 file changed, 7 insertions(+), 5 deletions(-)
+This commit shows that there is a high probability that this code is new, so the corresponding code segment cannot be found in the old version.
+You can call `viewcode` and `locate_symbol` to further check the results step by step. For newly introduced code, we consider that this hunk `need not ported`.
+
+tokens used
+input: 2,749
+cache read: 7,680
+cache write: 0
+output: 143
+reasoning output: 240
+
+tool: viewcode
+{
+  "ref": "b2b3444b71ea99685edafa7731fb7ba57939f437",
+  "path": "tensorflow/compiler/jit/xla_platform_info.h",
+  "startline": 70,
+  "endline": 100
+}
+Here are lines 70 through 100.
+
+  // XlaLaunch/_XlaCompile/_XlaRun op is placed and thus does not die before the
+  // XlaLaunch/_XlaCompile/_XlaRun OpKernel.
+  const XlaDevice::Metadata* xla_device_metadata_;
+
+  // If the op associated with this XlaPlatformInfo is placed on an XLA device
+  // then device_allocator_ is the xla::Backend's memory allocator.  If the op
+  // is placed on a regular CPU or GPU device then device_allocator_ is null.
+  // The allocator is of unknown provenance; keep it in a shared pointer to
+  // set an artificial refcount of one.
+  std::shared_ptr<se::DeviceMemoryAllocator> device_allocator_;
+
+  TF_DISALLOW_COPY_AND_ASSIGN(XlaPlatformInfo);
+};
+
+// Returns created XLA compilation cache.
+Status BuildXlaCompilationCache(DeviceBase* dev,
+                                const XlaPlatformInfo& platform_info,
+                                XlaCompilationCache** cache);
+
+// Returns information about the platform from kernel context.
+XlaPlatformInfo XlaPlatformInfoFromDevice(DeviceBase* device);
+
+// Returns allocator from platform info if non-null, or populate and return a
+// pointer to the allocator adapter with allocator from context.
+//
+// This is necessary because for XLA devices the underlying TF allocator returns
+// dummy tensors.
+//
+// `stream` parameter is nullable when running on host.
+std::shared_ptr<se::DeviceMemoryAllocator> GetAllocator(
+    DeviceBase* device, se::Stream* stream,
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: viewcode
+{
+  "ref": "b2b3444b71ea99685edafa7731fb7ba57939f437",
+  "path": "tensorflow/compiler/jit/xla_gpu_device.cc",
+  "startline": 1,
+  "endline": 160
+}
+Here are lines 1 through 160.
+
+/* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+==============================================================================*/
+
+// Registers the XLA_GPU device, which is an XlaDevice instantiation that runs
+// operators using XLA via the XLA "CUDA" or "ROCM" (GPU) backend.
+
+#include <set>
+
+#include "absl/memory/memory.h"
+#include "absl/strings/numbers.h"
+#include "absl/strings/str_split.h"
+#include "tensorflow/compiler/jit/flags.h"
+#include "tensorflow/compiler/jit/kernels/xla_ops.h"
+#include "tensorflow/compiler/jit/xla_device.h"
+#include "tensorflow/compiler/jit/xla_device_ops.h"
+#include "tensorflow/compiler/tf2xla/xla_op_registry.h"
+#include "tensorflow/core/common_runtime/device_factory.h"
+#include "tensorflow/core/common_runtime/gpu/gpu_init.h"
+#include "tensorflow/core/lib/core/status.h"
+
+namespace tensorflow {
+
+// Returns a set containing the device ids contained in visible_device_list or
+// nullopt if it is empty. It returns error in case of malformed configuration
+// string.
+static xla::StatusOr<absl::optional<std::set<int>>> ParseVisibleDeviceList(
+    const string& visible_device_list) {
+  std::set<int> gpu_ids;
+  if (visible_device_list.empty()) {
+    return {{absl::nullopt}};
+  }
+  const std::vector<string> visible_devices =
+      absl::StrSplit(visible_device_list, ',');
+  for (const string& platform_device_id_str : visible_devices) {
+    int32 platform_device_id;
+    if (!absl::SimpleAtoi(platform_device_id_str, &platform_device_id)) {
+      return errors::InvalidArgument(
+          "Could not parse entry in 'visible_device_list': '",
+          platform_device_id_str,
+          "'. visible_device_list = ", visible_device_list);
+    }
+    gpu_ids.insert(platform_device_id);
+  }
+  return {{gpu_ids}};
+}
+
+class XlaGpuDeviceFactory : public DeviceFactory {
+ public:
+  Status ListPhysicalDevices(std::vector<string>* devices) override;
+  Status CreateDevices(const SessionOptions& options, const string& name_prefix,
+                       std::vector<std::unique_ptr<Device>>* devices) override;
+};
+
+Status XlaGpuDeviceFactory::ListPhysicalDevices(std::vector<string>* devices) {
+  XlaDeviceFlags* flags = GetXlaDeviceFlags();
+  if (!flags->tf_xla_enable_xla_devices) {
+    VLOG(1) << "Not creating XLA devices, tf_xla_enable_xla_devices not set";
+    return Status::OK();
+  }
+
+  auto platform =
+      se::MultiPlatformManager::PlatformWithName(tensorflow::GpuPlatformName());
+  if (!platform.ok()) {
+    // Treat failures as non-fatal; there might not be a GPU in the machine.
+    VLOG(1) << "Failed to create XLA_GPU device: " << platform.status();
+    return Status::OK();
+  }
+
+  int device_count = platform.ValueOrDie()->VisibleDeviceCount();
+  if (device_count <= 0) {
+    return Status::OK();
+  }
+
+  for (int i = 0; i < device_count; ++i) {
+    devices->push_back(
+        absl::StrCat("/physical_device:", DEVICE_XLA_GPU, ":", i));
+  }
+
+  return Status::OK();
+}
+
+Status XlaGpuDeviceFactory::CreateDevices(
+    const SessionOptions& session_options, const string& name_prefix,
+    std::vector<std::unique_ptr<Device>>* devices) {
+  XlaDeviceFlags* flags = GetXlaDeviceFlags();
+  if (!flags->tf_xla_enable_xla_devices) {
+    VLOG(1) << "Not creating XLA devices, tf_xla_enable_xla_devices not set";
+    return Status::OK();
+  }
+
+  XlaOpRegistry::DeviceRegistration registration;
+  registration.compilation_device_name = DEVICE_GPU_XLA_JIT;
+  registration.autoclustering_policy =
+      XlaOpRegistry::AutoclusteringPolicy::kAlways;
+  registration.cluster_resource_variable_ops_unsafely = true;
+  registration.cluster_stack_ops = false;
+  registration.cluster_tensor_array_ops = true;
+  registration.cluster_stateful_rng_ops = true;
+  registration.cluster_control_trigger = true;
+  registration.elide_assert_and_checknumerics = true;
+  registration.cluster_variant_ops = true;
+  registration.cluster_slow_ops = true;
+  registration.cluster_inaccurate_ops = true;
+  XlaOpRegistry::RegisterCompilationDevice(DEVICE_XLA_GPU, registration);
+
+  static XlaDeviceOpRegistrations* registrations =
+      RegisterXlaDeviceKernels(DEVICE_XLA_GPU, DEVICE_GPU_XLA_JIT);
+  (void)registrations;
+
+  auto platform =
+      se::MultiPlatformManager::PlatformWithName(tensorflow::GpuPlatformName());
+  if (!platform.ok()) {
+    // Treat failures as non-fatal; there might not be a GPU in the machine.
+    VLOG(1) << "Failed to create XLA_GPU device: " << platform.status();
+    return Status::OK();
+  }
+
+  auto iter = session_options.config.device_count().find("GPU");
+  if (iter != session_options.config.device_count().end() &&
+      iter->second == 0) {
+    // Device count for GPU is 0.
+    return Status::OK();
+  }
+
+  string allowed_gpus =
+      session_options.config.gpu_options().visible_device_list();
+  absl::optional<std::set<int>> gpu_ids =
+      ParseVisibleDeviceList(allowed_gpus).ValueOrDie();
+  if (!gpu_ids) {
+    gpu_ids.emplace();
+    // Fill the gpu_ids set with all devices if config string is empty.
+    for (int i = 0; i < platform.ValueOrDie()->VisibleDeviceCount(); ++i) {
+      gpu_ids->insert(i);
+    }
+  }
+  for (int i : *gpu_ids) {
+    XlaDevice::Options options;
+    options.platform = platform.ValueOrDie();
+    options.device_name_prefix = name_prefix;
+    options.device_name = DEVICE_XLA_GPU;
+    options.device_ordinal = i;
+    options.compilation_device_name = DEVICE_GPU_XLA_JIT;
+    options.use_multiple_streams = true;
+    options.allowed_devices = gpu_ids;
+    auto device = absl::make_unique<XlaDevice>(session_options, options);
+
+    Status status = device->UseGpuDeviceInfo();
+    if (!status.ok()) {
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: git_history
+{
+  "filepath": "tensorflow/compiler/jit/xla_platform_info.cc",
+  "start_line": 50,
+  "end_line": 65,
+  "start_commit": "b2b3444b71ea99685edafa7731fb7ba57939f437",
+  "end_commit": "e21af685e1828f7ca65038307df5cc06de4479e8"
+}
+b1b76e2428 [TF2XLA] Use tensorflow::StatusOr in TF2XLA bridge
+
+diff --git a/tensorflow/compiler/jit/xla_platform_info.cc b/tensorflow/compiler/jit/xla_platform_info.cc
+--- a/tensorflow/compiler/jit/xla_platform_info.cc
++++ b/tensorflow/compiler/jit/xla_platform_info.cc
+@@ -50,16 +50,16 @@
+     return Status::OK();
+   }
+ 
+   auto platform =
+       se::MultiPlatformManager::PlatformWithId(platform_info.platform_id());
+   if (!platform.ok()) {
+     return platform.status();
+   }
+ 
+-  xla::StatusOr<xla::Compiler*> compiler_for_platform =
++  StatusOr<xla::Compiler*> compiler_for_platform =
+       xla::Compiler::GetForPlatform(platform.ValueOrDie());
+   if (!compiler_for_platform.ok()) {
+     // In some rare cases (usually in unit tests with very small clusters) we
+     // may end up transforming an XLA cluster with at least one GPU operation
+     // (which would normally force the cluster to be compiled using XLA:GPU)
+     // into an XLA cluster with no GPU operations (i.e. containing only CP
+You need to do the following analysis based on the information in the last commit:
+Analyze the code logic of the context of the patch to be ported in this commit step by step.
+If code logic already existed before this commit, the patch context can be assumed to remain in a similar location. Use `locate` and `viewcode` to check your results.
+If code logic were added in this commit, then you need to `git_show` for further details.
+
+tokens used
+input: 2,181
+cache read: 9,728
+cache write: 0
+output: 217
+reasoning output: 66
+
+The target `BuildXlaCompilationCache` does not take a `FunctionLibraryRuntime*` and never calls `config_proto()`, so the exact null dereference fixed by the newer hunk is absent in this 2.5.2 base. I’m checking the worktree diff now to confirm no source change is needed.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target TensorFlow 2.5.2 code around BuildXlaCompilationCache",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Construct and validate minimal backport hunk",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Apply source change and capture final diff",
+      "status": "pending",
+      "priority": "high"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target TensorFlow 2.5.2 code around BuildXlaCompilationCache",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Construct and validate minimal backport hunk",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Apply source change and capture final diff",
+    "status": "pending",
+    "priority": "high"
+  }
+]
+
+tokens used
+input: 5,712
+cache read: 8,704
+cache write: 0
+output: 162
+reasoning output: 213
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/compiler/jit/xla_platform_info.cc tensorflow/compiler/jit/xla_platform_info.h",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0038-b2b3444b71ea"
+}
+(no output)
+
+tokens used
+input: 1,087
+cache read: 13,824
+cache write: 0
+output: 80
+reasoning output: 0
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target TensorFlow 2.5.2 code around BuildXlaCompilationCache",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Construct and validate minimal backport hunk",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Apply source change and capture final diff",
+      "status": "completed",
+      "priority": "high"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target TensorFlow 2.5.2 code around BuildXlaCompilationCache",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Construct and validate minimal backport hunk",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Apply source change and capture final diff",
+    "status": "completed",
+    "priority": "high"
+  }
+]
+
+tokens used
+input: 157
+cache read: 14,848
+cache write: 0
+output: 87
+reasoning output: 20
+
+```yaml
+backport_result:
+  status: need_not_ported
+  patch: |
+
+  notes: >
+    The target 2.5.2 BuildXlaCompilationCache has no FunctionLibraryRuntime/config_proto access or allowed_devices parsing, so the null-dereference hunk has no equivalent to port.
+```
+
+tokens used
+input: 383
+cache read: 14,848
+cache write: 0
+output: 69
+reasoning output: 0

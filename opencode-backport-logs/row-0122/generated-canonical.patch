@@ -1,0 +1,12 @@
+diff --git a/tensorflow/lite/kernels/hashtable_lookup.cc b/tensorflow/lite/kernels/hashtable_lookup.cc
+index da1116cf85..19fde91e0a 100644
+--- a/tensorflow/lite/kernels/hashtable_lookup.cc
++++ b/tensorflow/lite/kernels/hashtable_lookup.cc
+@@ -106,6 +106,7 @@ TfLiteStatus Eval(TfLiteContext* context, TfLiteNode* node) {
+   const TfLiteTensor* value = GetInput(context, node, 2);
+ 
+   const int num_rows = SizeOfDimension(value, 0);
++  TF_LITE_ENSURE(context, num_rows != 0);
+   const int row_bytes = value->bytes / num_rows;
+   void* pointer = nullptr;
+   DynamicBuffer buf;

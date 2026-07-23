@@ -1,0 +1,437 @@
+I’ll locate the older equivalent of `SparseDenseBinaryOpShared`, compare its surrounding validation logic to the new patch, then apply the minimal guard and validate the hunk against the target base.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target-side sparse dense binary op code",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Validate minimal backport hunk against target base",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "content": "Apply source change and capture final diff",
+      "status": "pending",
+      "priority": "high"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target-side sparse dense binary op code",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Validate minimal backport hunk against target base",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "content": "Apply source change and capture final diff",
+    "status": "pending",
+    "priority": "high"
+  }
+]
+
+tokens used
+input: 3,740
+cache read: 4,608
+cache write: 0
+output: 124
+reasoning output: 0
+
+tool: viewcode
+{
+  "ref": "47612cd69a2fdd76156360ca9102816e156f7e5c",
+  "path": "tensorflow/core/kernels/sparse_dense_binary_op_shared.cc",
+  "startline": 1,
+  "endline": 130
+}
+Here are lines 1 through 130.
+
+/* Copyright 2016 The TensorFlow Authors. All Rights Reserved.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+==============================================================================*/
+
+// SparseDenseBinaryOpShared is the shared code for binary coefficient-wise
+// (cwise) operations of the following form:
+//
+//   sparse_t <binary cwise op> dense_t -> new sparse_t
+//
+// where:
+//
+//   (1) "binary cwise op" can be, for example, cdiv, cmul, cfloordiv, etc.
+//   (2) LIMITATION: we only support broadcasting the dense side to the sparse
+//       side.  In other words, NumDims(sparse_t) >= NumDims(dense_t), and if
+//       they are equal, each dim size of sparse_t >= that of dense_t.
+//   (3) Note that the result is a new sparse tensor, which means the implicitly
+//       zero elements of sparse_t do not participate.  (Hence, this should not
+//       be used for, say, cadd.)
+//
+// The only output is a vector of flat values with shape [nnz], since this op
+// does not change neither the indices nor the shape of the sparse operand.
+//
+// See docs of all registered ops in ../ops/sparse_ops.cc.
+
+#define EIGEN_USE_THREADS
+
+#include "third_party/eigen3/unsupported/Eigen/CXX11/Tensor"
+#include "tensorflow/core/framework/op_kernel.h"
+#include "tensorflow/core/framework/register_types.h"
+#include "tensorflow/core/framework/tensor.h"
+#include "tensorflow/core/framework/tensor_util.h"
+#include "tensorflow/core/framework/types.h"
+#include "tensorflow/core/kernels/cwise_ops.h"
+#include "tensorflow/core/kernels/cwise_ops_common.h"
+#include "tensorflow/core/util/bcast.h"
+
+using Eigen::TensorRef;
+using tensorflow::gtl::ArraySlice;
+
+namespace tensorflow {
+
+typedef Eigen::ThreadPoolDevice CPUDevice;
+
+template <typename Device, typename T, typename Functor>
+class SparseDenseBinaryOpShared : public OpKernel {
+ public:
+  explicit SparseDenseBinaryOpShared(OpKernelConstruction *ctx)
+      : OpKernel(ctx) {}
+
+  void Compute(OpKernelContext *ctx) override {
+    const Tensor *indices_t, *values_t, *shape_t, *dense_t;
+    OP_REQUIRES_OK(ctx, ctx->input("sp_indices", &indices_t));
+    OP_REQUIRES_OK(ctx, ctx->input("sp_values", &values_t));
+    OP_REQUIRES_OK(ctx, ctx->input("sp_shape", &shape_t));
+    OP_REQUIRES_OK(ctx, ctx->input("dense", &dense_t));
+
+    // Validations.
+    OP_REQUIRES(ctx, TensorShapeUtils::IsMatrix(indices_t->shape()),
+                errors::InvalidArgument(
+                    "Input sp_indices should be a matrix but received shape: ",
+                    indices_t->shape().DebugString()));
+    OP_REQUIRES(ctx,
+                TensorShapeUtils::IsVector(values_t->shape()) &&
+                    TensorShapeUtils::IsVector(shape_t->shape()),
+                errors::InvalidArgument(
+                    "Inputs sp_values and sp_shape should be vectors "
+                    "but received shapes: ",
+                    values_t->shape().DebugString(), " and ",
+                    shape_t->shape().DebugString()));
+
+    const auto indices_mat = indices_t->matrix<int64>();
+    const auto shape_vec = shape_t->vec<int64>();
+    const auto lhs_dims = BCast::FromShape(TensorShape(shape_vec));
+    const auto rhs_dims = BCast::FromShape(dense_t->shape());
+    BCast b(lhs_dims, rhs_dims, false);  // false for keeping the same num dims.
+
+    // True iff (size(lhs) >= size(rhs)) and all dims in lhs is greater or equal
+    // to dims in rhs (from right to left).
+    auto VecGreaterEq = [](ArraySlice<int64> lhs, ArraySlice<int64> rhs) {
+      if (lhs.size() < rhs.size()) return false;
+      for (size_t i = 0; i < rhs.size(); ++i) {
+        if (lhs[lhs.size() - 1 - i] < rhs[rhs.size() - 1 - i]) return false;
+      }
+      return true;
+    };
+    OP_REQUIRES(ctx, VecGreaterEq(lhs_dims, rhs_dims) && b.IsValid(),
+                errors::InvalidArgument(
+                    "SparseDenseBinaryOpShared broadcasts dense to sparse "
+                    "only; got incompatible shapes: [",
+                    absl::StrJoin(lhs_dims, ","), "] vs. [",
+                    absl::StrJoin(rhs_dims, ","), "]"));
+
+    Tensor *output_values = nullptr;
+    Tensor dense_gathered;
+    const int64 nnz = indices_t->dim_size(0);
+    OP_REQUIRES_OK(ctx,
+                   ctx->allocate_output(0, TensorShape({nnz}), &output_values));
+    OP_REQUIRES_OK(
+        ctx, ctx->allocate_temp(DataTypeToEnum<T>::value, TensorShape({nnz}),
+                                &dense_gathered));
+
+    // Pulls relevant entries from the dense side, with reshape and broadcasting
+    // *of the dense side* taken into account.  Use a TensorRef to avoid blowing
+    // up memory.
+    //
+    // We can directly use the sparse indices to look up dense side, because
+    // "b.y_reshape()" and "b.y_bcast()" are guaranteed to have rank "ndims".
+    auto dense_gathered_flat = dense_gathered.flat<T>();
+    const int ndims = lhs_dims.size();
+    switch (ndims) {
+#define CASE(NDIM)                                                             \
+  case NDIM: {                                                                 \
+    TensorRef<Eigen::Tensor<const T, NDIM, Eigen::RowMajor>> rhs_ref =         \
+        dense_t->shaped<T, NDIM>(b.y_reshape())                                \
+            .broadcast(BCast::ToIndexArray<NDIM>(b.y_bcast()));                \
+    Eigen::array<Eigen::DenseIndex, NDIM> idx;                                 \
+    bool indices_valid = true;                                                 \
+    for (int i = 0; i < nnz; ++i) {                                            \
+      for (int d = 0; d < NDIM; ++d) {                                         \
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: locate_symbol
+{
+  "ref": "47612cd69a2fdd76156360ca9102816e156f7e5c",
+  "symbol": "SparseDenseBinaryOpShared"
+}
+tensorflow/core/kernels/sparse_dense_binary_op_shared.cc:56
+tensorflow/core/kernels/sparse_dense_binary_op_shared.cc:58
+tensorflow/core/kernels/sparse_dense_binary_op_shared.cc:99
+tensorflow/core/kernels/sparse_dense_binary_op_shared.cc:173
+tensorflow/core/kernels/sparse_dense_binary_op_shared.cc:177
+tensorflow/core/kernels/sparse_dense_binary_op_shared.cc:180
+
+tokens used
+input: 904
+cache read: 7,680
+cache write: 0
+output: 123
+reasoning output: 0
+
+The target file has the same validation sequence and lacks the new length check, so the backport is a direct minimal insertion after the vector-shape validation.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target-side sparse dense binary op code",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate minimal backport hunk against target base",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Apply source change and capture final diff",
+      "status": "pending",
+      "priority": "high"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target-side sparse dense binary op code",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate minimal backport hunk against target base",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Apply source change and capture final diff",
+    "status": "pending",
+    "priority": "high"
+  }
+]
+
+tokens used
+input: 2,575
+cache read: 7,680
+cache write: 0
+output: 118
+reasoning output: 28
+
+tool: validate
+{
+  "ref": "47612cd69a2fdd76156360ca9102816e156f7e5c",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/sparse_dense_binary_op_shared.cc b/tensorflow/core/kernels/sparse_dense_binary_op_shared.cc\n--- a/tensorflow/core/kernels/sparse_dense_binary_op_shared.cc\n+++ b/tensorflow/core/kernels/sparse_dense_binary_op_shared.cc\n@@ -75,6 +75,11 @@ class SparseDenseBinaryOpShared : public OpKernel {\n                     \"but received shapes: \",\n                     values_t->shape().DebugString(), \" and \",\n                     shape_t->shape().DebugString()));\n+    OP_REQUIRES(\n+        ctx, values_t->dim_size(0) == indices_t->dim_size(0),\n+        errors::InvalidArgument(\n+            \"The first dimension of values and indices should match. (\",\n+            values_t->dim_size(0), \" vs. \", indices_t->dim_size(0), \")\"));\n \n     const auto indices_mat = indices_t->matrix<int64>();\n     const auto shape_vec = shape_t->vec<int64>();\n"
+}
+Patch applied successfully
+
+tokens used
+input: 785
+cache read: 9,728
+cache write: 0
+output: 284
+reasoning output: 0
+
+The hunk applies cleanly to the target base. I’m applying that exact guard in the checked-out source now.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target-side sparse dense binary op code",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate minimal backport hunk against target base",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Apply source change and capture final diff",
+      "status": "in_progress",
+      "priority": "high"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target-side sparse dense binary op code",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate minimal backport hunk against target base",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Apply source change and capture final diff",
+    "status": "in_progress",
+    "priority": "high"
+  }
+]
+
+tokens used
+input: 1,082
+cache read: 9,728
+cache write: 0
+output: 109
+reasoning output: 0
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/kernels/sparse_dense_binary_op_shared.cc\n@@\n                     \"but received shapes: \",\n                     values_t->shape().DebugString(), \" and \",\n                     shape_t->shape().DebugString()));\n+    OP_REQUIRES(\n+        ctx, values_t->dim_size(0) == indices_t->dim_size(0),\n+        errors::InvalidArgument(\n+            \"The first dimension of values and indices should match. (\",\n+            values_t->dim_size(0), \" vs. \", indices_t->dim_size(0), \")\"));\n \n     const auto indices_mat = indices_t->matrix<int64>();\n     const auto shape_vec = shape_t->vec<int64>();\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/kernels/sparse_dense_binary_op_shared.cc
+
+tokens used
+input: 1,303
+cache read: 9,728
+cache write: 0
+output: 196
+reasoning output: 0
+
+The source change is applied. I’m checking the resulting diff to ensure only the intended file changed.
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/kernels/sparse_dense_binary_op_shared.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0182-47612cd69a2f"
+}
+warning: in the working copy of 'tensorflow/core/kernels/sparse_dense_binary_op_shared.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/kernels/sparse_dense_binary_op_shared.cc b/tensorflow/core/kernels/sparse_dense_binary_op_shared.cc
+index 3a5e66a0e7..dac4a3d3e6 100644
+--- a/tensorflow/core/kernels/sparse_dense_binary_op_shared.cc
++++ b/tensorflow/core/kernels/sparse_dense_binary_op_shared.cc
+@@ -78,6 +78,11 @@ class SparseDenseBinaryOpShared : public OpKernel {
+                     "but received shapes: ",
+                     values_t->shape().DebugString(), " and ",
+                     shape_t->shape().DebugString()));
++    OP_REQUIRES(
++        ctx, values_t->dim_size(0) == indices_t->dim_size(0),
++        errors::InvalidArgument(
++            "The first dimension of values and indices should match. (",
++            values_t->dim_size(0), " vs. ", indices_t->dim_size(0), ")"));
+ 
+     const auto indices_mat = indices_t->matrix<int64>();
+     const auto shape_vec = shape_t->vec<int64>();
+
+tokens used
+input: 505
+cache read: 10,752
+cache write: 0
+output: 102
+reasoning output: 14
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target-side sparse dense binary op code",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate minimal backport hunk against target base",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Apply source change and capture final diff",
+      "status": "completed",
+      "priority": "high"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target-side sparse dense binary op code",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate minimal backport hunk against target base",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Apply source change and capture final diff",
+    "status": "completed",
+    "priority": "high"
+  }
+]
+
+tokens used
+input: 904
+cache read: 10,752
+cache write: 0
+output: 77
+reasoning output: 0
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/kernels/sparse_dense_binary_op_shared.cc b/tensorflow/core/kernels/sparse_dense_binary_op_shared.cc
+    index 3a5e66a0e7..dac4a3d3e6 100644
+    --- a/tensorflow/core/kernels/sparse_dense_binary_op_shared.cc
+    +++ b/tensorflow/core/kernels/sparse_dense_binary_op_shared.cc
+    @@ -78,6 +78,11 @@ class SparseDenseBinaryOpShared : public OpKernel {
+                         "but received shapes: ",
+                         values_t->shape().DebugString(), " and ",
+                         shape_t->shape().DebugString()));
+    +    OP_REQUIRES(
+    +        ctx, values_t->dim_size(0) == indices_t->dim_size(0),
+    +        errors::InvalidArgument(
+    +            "The first dimension of values and indices should match. (",
+    +            values_t->dim_size(0), " vs. ", indices_t->dim_size(0), ")"));
+     
+         const auto indices_mat = indices_t->matrix<int64>();
+         const auto shape_vec = shape_t->vec<int64>();
+  notes: >
+    Added the missing validation that sparse values and indices have matching first dimensions; hunk validation succeeded against the target base.
+```
+
+tokens used
+input: 1,092
+cache read: 10,752
+cache write: 0
+output: 298
+reasoning output: 0

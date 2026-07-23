@@ -1,0 +1,252 @@
+I’ll locate the target implementation and verify the older-release context before applying the minimal scalar-shape check.
+
+tool: viewcode
+{
+  "ref": "75867f82431f8801f26d651ca567a3ff1b0d39c3",
+  "path": "tensorflow/core/kernels/unsorted_segment_join_op.cc",
+  "startline": 70,
+  "endline": 125
+}
+Here are lines 70 through 125.
+
+}
+
+}  // namespace
+
+template <typename INDICES_TYPE, typename NUM_SEGMENTS_TYPE>
+class UnsortedSegmentJoinOp : public OpKernel {
+ public:
+  using OpKernel::OpKernel;
+
+  explicit UnsortedSegmentJoinOp(OpKernelConstruction* ctx) : OpKernel(ctx) {
+    OP_REQUIRES_OK(ctx, ctx->GetAttr("separator", &separator_));
+  }
+
+  void Compute(OpKernelContext* context) override {
+    const Tensor& input = context->input(0);
+    const TensorShape& input_shape = input.shape();
+    const int32 input_dims = input_shape.dims();
+
+    const Tensor& segment_id = context->input(1);
+    const TensorShape& segment_id_shape = segment_id.shape();
+    const int32 segment_dims = segment_id_shape.dims();
+
+    const Tensor& num_segments_tensor = context->input(2);
+    OP_REQUIRES(context, num_segments_tensor.NumElements() != 0,
+                errors::InvalidArgument("Number of segments cannot be empty."));
+    auto num_segments = num_segments_tensor.scalar<NUM_SEGMENTS_TYPE>()();
+
+    OP_REQUIRES(context, segment_dims != 0,
+                errors::InvalidArgument("Segment_id cannot have rank 0"));
+
+    OP_REQUIRES(
+        context, segment_dims <= input_dims,
+        errors::OutOfRange("Invalid segment_id rank ", segment_dims,
+                           " for input with ", input_dims, " dimension(s)"));
+    for (auto i = 0; i < segment_dims; i++) {
+      OP_REQUIRES(
+          context, segment_id_shape.dim_size(i) == input_shape.dim_size(i),
+          errors::InvalidArgument(
+              "Segment dimension is ", segment_id_shape.dim_size(i),
+              " while input dimension is ", input_dims, " in rank ", i));
+    }
+
+    // Making output tensor.
+    Tensor* output_tensor = nullptr;
+    TensorShape output_shape =
+        GetOutputShape(input_shape, segment_id_shape, num_segments);
+    OP_REQUIRES_OK(context, context->allocate_output("output", output_shape,
+                                                     &output_tensor));
+
+    // Preparating flat tensors.
+    auto output_flat = output_tensor->flat<tstring>();
+    auto flat_segment_id = segment_id.flat<INDICES_TYPE>();
+    auto flat_input = input.flat<tstring>();
+
+    for (int i = 0; i < flat_segment_id.size(); i++) {
+      OP_REQUIRES(
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: git_show
+{
+  "ref": "13d38a07ce9143e044aa737cfd7bb759d0e9b400",
+  "context": "const Tensor& num_segments_tensor = context->input(2);\n    OP_REQUIRES(context, num_segments_tensor.NumElements() != 0,\n                errors::InvalidArgument(\"Number of segments cannot be empty.\"));\n    auto num_segments = num_segments_tensor.scalar<NUM_SEGMENTS_TYPE>()();"
+}
+commit 13d38a07ce9143e044aa737cfd7bb759d0e9b400
+Author: Alan Liu <liualan@google.com>
+Date:   Thu Apr 28 11:37:31 2022 -0700
+
+    Fix tf.raw_ops.UnsortedSegmentJoin vulnerability with invalid num_segments.
+    
+    Check that input is actually a scalar before treating it as such.
+    
+    PiperOrigin-RevId: 445206880
+
+ tensorflow/core/kernels/unsorted_segment_join_op.cc | 3 +++
+ 1 file changed, 3 insertions(+)
+This commit shows that there is a high probability that this code is new, so the corresponding code segment cannot be found in the old version.
+You can call `viewcode` and `locate_symbol` to further check the results step by step. For newly introduced code, we consider that this hunk `need not ported`.
+
+tool: locate_symbol
+{
+  "ref": "75867f82431f8801f26d651ca567a3ff1b0d39c3",
+  "symbol": "UnsortedSegmentJoinOp"
+}
+tensorflow/core/kernels/unsorted_segment_join_op.cc:75
+tensorflow/core/kernels/unsorted_segment_join_op.cc:79
+tensorflow/core/kernels/unsorted_segment_join_op.cc:160
+
+tokens used
+input: 3,728
+cache read: 4,608
+cache write: 0
+output: 258
+reasoning output: 0
+
+The vulnerable code path exists unchanged in the target file, so the backport is the same localized guard before scalar access.
+
+tool: viewcode
+{
+  "ref": "75867f82431f8801f26d651ca567a3ff1b0d39c3",
+  "path": "tensorflow/core/kernels/unsorted_segment_join_op.cc",
+  "startline": 1,
+  "endline": 40
+}
+Here are lines 1 through 40.
+
+/* Copyright 2019 The TensorFlow Authors. All Rights Reserved.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+==============================================================================*/
+
+// See docs in ../ops/string_ops.cc.
+
+#include <string>
+#include <utility>
+
+#include "tensorflow/core/framework/kernel_def_builder.h"
+#include "tensorflow/core/framework/op_kernel.h"
+#include "tensorflow/core/framework/tensor.h"
+#include "tensorflow/core/framework/tensor_shape.h"
+#include "tensorflow/core/lib/core/errors.h"
+#include "tensorflow/core/lib/core/status.h"
+#include "tensorflow/core/lib/core/stringpiece.h"
+#include "tensorflow/core/lib/gtl/inlined_vector.h"
+#include "tensorflow/core/lib/strings/str_util.h"
+
+namespace tensorflow {
+
+namespace {
+
+template <typename INDICES_TYPE>
+gtl::InlinedVector<INDICES_TYPE, 8> GetFlattenedRelativeOffsets(
+    INDICES_TYPE small_stride, INDICES_TYPE big_stride) {
+  gtl::InlinedVector<INDICES_TYPE, 8> flattened_offsets(small_stride);
+  for (auto i = 0; i < small_stride; i++) {
+    flattened_offsets[i] = i * big_stride;
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tokens used
+input: 1,714
+cache read: 7,680
+cache write: 0
+output: 98
+reasoning output: 22
+
+I’m validating the exact minimal hunk against the target base, then I’ll apply it to the current checkout.
+
+tool: validate
+{
+  "ref": "75867f82431f8801f26d651ca567a3ff1b0d39c3",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/unsorted_segment_join_op.cc b/tensorflow/core/kernels/unsorted_segment_join_op.cc\n--- a/tensorflow/core/kernels/unsorted_segment_join_op.cc\n+++ b/tensorflow/core/kernels/unsorted_segment_join_op.cc\n@@ -92,6 +92,9 @@ class UnsortedSegmentJoinOp : public OpKernel {\n     const Tensor& num_segments_tensor = context->input(2);\n     OP_REQUIRES(context, num_segments_tensor.NumElements() != 0,\n                 errors::InvalidArgument(\"Number of segments cannot be empty.\"));\n+    OP_REQUIRES(context,\n+                TensorShapeUtils::IsScalar(num_segments_tensor.shape()),\n+                errors::InvalidArgument(\"Number of segments must be a scalar\"));\n     auto num_segments = num_segments_tensor.scalar<NUM_SEGMENTS_TYPE>()();\n \n     OP_REQUIRES(context, segment_dims != 0,\n"
+}
+Patch applied successfully
+
+tokens used
+input: 5,280
+cache read: 4,608
+cache write: 0
+output: 291
+reasoning output: 17
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/kernels/unsorted_segment_join_op.cc\n@@\n     const Tensor& num_segments_tensor = context->input(2);\n     OP_REQUIRES(context, num_segments_tensor.NumElements() != 0,\n                 errors::InvalidArgument(\"Number of segments cannot be empty.\"));\n+    OP_REQUIRES(context,\n+                TensorShapeUtils::IsScalar(num_segments_tensor.shape()),\n+                errors::InvalidArgument(\"Number of segments must be a scalar\"));\n     auto num_segments = num_segments_tensor.scalar<NUM_SEGMENTS_TYPE>()();\n \n     OP_REQUIRES(context, segment_dims != 0,\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/kernels/unsorted_segment_join_op.cc
+
+tokens used
+input: 1,505
+cache read: 8,704
+cache write: 0
+output: 169
+reasoning output: 0
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/kernels/unsorted_segment_join_op.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0260-75867f82431f"
+}
+warning: in the working copy of 'tensorflow/core/kernels/unsorted_segment_join_op.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/kernels/unsorted_segment_join_op.cc b/tensorflow/core/kernels/unsorted_segment_join_op.cc
+index 9acfe7fb1e..449db53051 100644
+--- a/tensorflow/core/kernels/unsorted_segment_join_op.cc
++++ b/tensorflow/core/kernels/unsorted_segment_join_op.cc
+@@ -92,6 +92,9 @@ class UnsortedSegmentJoinOp : public OpKernel {
+     const Tensor& num_segments_tensor = context->input(2);
+     OP_REQUIRES(context, num_segments_tensor.NumElements() != 0,
+                 errors::InvalidArgument("Number of segments cannot be empty."));
++    OP_REQUIRES(context,
++                TensorShapeUtils::IsScalar(num_segments_tensor.shape()),
++                errors::InvalidArgument("Number of segments must be a scalar"));
+     auto num_segments = num_segments_tensor.scalar<NUM_SEGMENTS_TYPE>()();
+ 
+     OP_REQUIRES(context, segment_dims != 0,
+
+tokens used
+input: 680
+cache read: 9,728
+cache write: 0
+output: 74
+reasoning output: 13
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/kernels/unsorted_segment_join_op.cc b/tensorflow/core/kernels/unsorted_segment_join_op.cc
+    index 9acfe7fb1e..449db53051 100644
+    --- a/tensorflow/core/kernels/unsorted_segment_join_op.cc
+    +++ b/tensorflow/core/kernels/unsorted_segment_join_op.cc
+    @@ -92,6 +92,9 @@ class UnsortedSegmentJoinOp : public OpKernel {
+         const Tensor& num_segments_tensor = context->input(2);
+         OP_REQUIRES(context, num_segments_tensor.NumElements() != 0,
+                     errors::InvalidArgument("Number of segments cannot be empty."));
+    +    OP_REQUIRES(context,
+    +                TensorShapeUtils::IsScalar(num_segments_tensor.shape()),
+    +                errors::InvalidArgument("Number of segments must be a scalar"));
+         auto num_segments = num_segments_tensor.scalar<NUM_SEGMENTS_TYPE>()();
+     
+         OP_REQUIRES(context, segment_dims != 0,
+  notes: >
+    Added the missing scalar-shape validation for num_segments before scalar access in UnsortedSegmentJoinOp.
+```
+
+tokens used
+input: 1,025
+cache read: 9,728
+cache write: 0
+output: 268
+reasoning output: 0

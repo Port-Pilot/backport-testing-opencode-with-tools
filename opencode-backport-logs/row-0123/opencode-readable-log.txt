@@ -1,0 +1,224 @@
+I’ll inspect the target-side implementation around `ResizeOutput`, compare it with the provided hunk, then apply only the equivalent bounds checks if the location matches.
+
+tool: viewcode
+{
+  "ref": "07317a88b432c93465822c27786bcf31cd61a102",
+  "path": "tensorflow/lite/kernels/arg_min_max.cc",
+  "startline": 1,
+  "endline": 90
+}
+Here are lines 1 through 90.
+
+/* Copyright 2018 The TensorFlow Authors. All Rights Reserved.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+==============================================================================*/
+#include "tensorflow/lite/c/builtin_op_data.h"
+#include "tensorflow/lite/c/c_api_internal.h"
+#include "tensorflow/lite/kernels/internal/optimized/optimized_ops.h"
+#include "tensorflow/lite/kernels/internal/quantization_util.h"
+#include "tensorflow/lite/kernels/internal/tensor.h"
+#include "tensorflow/lite/kernels/kernel_util.h"
+#include "tensorflow/lite/kernels/op_macros.h"
+
+namespace tflite {
+namespace ops {
+namespace builtin {
+namespace arg_min_max {
+
+constexpr int kInputTensor = 0;
+constexpr int kAxis = 1;
+constexpr int kOutputTensor = 0;
+
+TfLiteStatus ResizeOutput(TfLiteContext* context, const TfLiteTensor* input,
+                          const TfLiteTensor* axis, TfLiteTensor* output) {
+  int axis_value = *GetTensorData<int>(axis);
+  if (axis_value < 0) {
+    axis_value += NumDimensions(input);
+  }
+
+  // Copy the input dimensions to output except the axis dimension.
+  TfLiteIntArray* output_dims = TfLiteIntArrayCreate(NumDimensions(input) - 1);
+  int j = 0;
+  for (int i = 0; i < NumDimensions(input); ++i) {
+    if (i != axis_value) {
+      output_dims->data[j] = SizeOfDimension(input, i);
+      ++j;
+    }
+  }
+  return context->ResizeTensor(context, output, output_dims);
+}
+
+TfLiteStatus Prepare(TfLiteContext* context, TfLiteNode* node) {
+  TF_LITE_ENSURE_EQ(context, NumInputs(node), 2);
+  TF_LITE_ENSURE_EQ(context, NumOutputs(node), 1);
+
+  const TfLiteTensor* input = GetInput(context, node, kInputTensor);
+  const TfLiteTensor* axis = GetInput(context, node, kAxis);
+  // Make sure the axis is only 1 dimension.
+  TF_LITE_ENSURE_EQ(context, NumElements(axis), 1);
+  // Make sure the axis is only either int32 or int64.
+  TF_LITE_ENSURE(context,
+                 axis->type == kTfLiteInt32 || axis->type == kTfLiteInt64);
+
+  TfLiteTensor* output = GetOutput(context, node, kOutputTensor);
+
+  auto* params = reinterpret_cast<TfLiteArgMaxParams*>(node->builtin_data);
+  switch (params->output_type) {
+    case kTfLiteInt32:
+      output->type = kTfLiteInt32;
+      break;
+    case kTfLiteInt64:
+      output->type = kTfLiteInt64;
+      break;
+    default:
+      context->ReportError(context, "Unknown index output data type: %d",
+                           params->output_type);
+      return kTfLiteError;
+  }
+
+  // Check conditions for different types.
+  switch (input->type) {
+    case kTfLiteFloat32:
+    case kTfLiteUInt8:
+    case kTfLiteInt8:
+    case kTfLiteInt32:
+      break;
+
+    default:
+      context->ReportError(
+          context,
+          "Unknown input type: %d, only float32 and int types are supported",
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: locate_symbol
+{
+  "ref": "07317a88b432c93465822c27786bcf31cd61a102",
+  "symbol": "ResizeOutput"
+}
+tensorflow/lite/kernels/arg_min_max.cc:32
+tensorflow/lite/kernels/fill.cc:50
+tensorflow/lite/kernels/range.cc:47
+tensorflow/lite/kernels/reshape.cc:36
+tensorflow/lite/kernels/tile.cc:46
+tensorflow/lite/kernels/topk_v2.cc:32
+tensorflow/lite/kernels/arg_min_max.cc:98
+tensorflow/lite/kernels/arg_min_max.cc:120
+tensorflow/lite/kernels/fill.cc:90
+tensorflow/lite/kernels/fill.cc:104
+tensorflow/lite/kernels/range.cc:105
+tensorflow/lite/kernels/range.cc:135
+tensorflow/lite/kernels/reshape.cc:129
+tensorflow/lite/kernels/reshape.cc:145
+tensorflow/lite/kernels/tile.cc:157
+tensorflow/lite/kernels/tile.cc:170
+tensorflow/lite/kernels/topk_v2.cc:202
+tensorflow/lite/kernels/topk_v2.cc:216
+
+tokens used
+input: 3,693
+cache read: 4,608
+cache write: 0
+output: 154
+reasoning output: 0
+
+The target file has the same `ResizeOutput` shape and lacks the axis range checks. I’m adding the two `TF_LITE_ENSURE` bounds checks immediately after negative-axis normalization.
+
+tool: validate
+{
+  "ref": "07317a88b432c93465822c27786bcf31cd61a102",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/lite/kernels/arg_min_max.cc b/tensorflow/lite/kernels/arg_min_max.cc\n--- a/tensorflow/lite/kernels/arg_min_max.cc\n+++ b/tensorflow/lite/kernels/arg_min_max.cc\n@@ -35,6 +35,9 @@ TfLiteStatus ResizeOutput(TfLiteContext* context, const TfLiteTensor* input,\n     axis_value += NumDimensions(input);\n   }\n \n+  TF_LITE_ENSURE(context, axis_value >= 0);\n+  TF_LITE_ENSURE(context, axis_value < NumDimensions(input));\n+\n   // Copy the input dimensions to output except the axis dimension.\n   TfLiteIntArray* output_dims = TfLiteIntArrayCreate(NumDimensions(input) - 1);\n   int j = 0;\n"
+}
+Patch applied successfully
+
+tokens used
+input: 4,906
+cache read: 4,608
+cache write: 0
+output: 280
+reasoning output: 13
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/lite/kernels/arg_min_max.cc\n@@\n   if (axis_value < 0) {\n     axis_value += NumDimensions(input);\n   }\n \n+  TF_LITE_ENSURE(context, axis_value >= 0);\n+  TF_LITE_ENSURE(context, axis_value < NumDimensions(input));\n+\n   // Copy the input dimensions to output except the axis dimension.\n   TfLiteIntArray* output_dims = TfLiteIntArrayCreate(NumDimensions(input) - 1);\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/lite/kernels/arg_min_max.cc
+
+tokens used
+input: 1,116
+cache read: 8,704
+cache write: 0
+output: 144
+reasoning output: 0
+
+The hunk validated cleanly against the target base and has been applied to the current checkout. I’ll inspect the resulting diff to confirm only the intended change is present.
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/lite/kernels/arg_min_max.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0123-07317a88b432",
+  "timeout": 120000
+}
+warning: in the working copy of 'tensorflow/lite/kernels/arg_min_max.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/lite/kernels/arg_min_max.cc b/tensorflow/lite/kernels/arg_min_max.cc
+index 593e604aff..de80be5509 100644
+--- a/tensorflow/lite/kernels/arg_min_max.cc
++++ b/tensorflow/lite/kernels/arg_min_max.cc
+@@ -36,6 +36,9 @@ TfLiteStatus ResizeOutput(TfLiteContext* context, const TfLiteTensor* input,
+     axis_value += NumDimensions(input);
+   }
+ 
++  TF_LITE_ENSURE(context, axis_value >= 0);
++  TF_LITE_ENSURE(context, axis_value < NumDimensions(input));
++
+   // Copy the input dimensions to output except the axis dimension.
+   TfLiteIntArray* output_dims = TfLiteIntArrayCreate(NumDimensions(input) - 1);
+   int j = 0;
+
+tokens used
+input: 265
+cache read: 9,728
+cache write: 0
+output: 117
+reasoning output: 0
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/lite/kernels/arg_min_max.cc b/tensorflow/lite/kernels/arg_min_max.cc
+    index 593e604aff..de80be5509 100644
+    --- a/tensorflow/lite/kernels/arg_min_max.cc
+    +++ b/tensorflow/lite/kernels/arg_min_max.cc
+    @@ -36,6 +36,9 @@ TfLiteStatus ResizeOutput(TfLiteContext* context, const TfLiteTensor* input,
+         axis_value += NumDimensions(input);
+       }
+     
+    +  TF_LITE_ENSURE(context, axis_value >= 0);
+    +  TF_LITE_ENSURE(context, axis_value < NumDimensions(input));
+    +
+       // Copy the input dimensions to output except the axis dimension.
+       TfLiteIntArray* output_dims = TfLiteIntArrayCreate(NumDimensions(input) - 1);
+       int j = 0;
+  notes: >
+    Added axis bounds validation in TFLite ArgMin/ArgMax output resizing to prevent out-of-bounds writes.
+```
+
+tokens used
+input: 619
+cache read: 9,728
+cache write: 0
+output: 251
+reasoning output: 0

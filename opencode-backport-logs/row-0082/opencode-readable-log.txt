@@ -1,0 +1,419 @@
+I’ll inspect the target-side locations for both hunks, compare context against the supplied patch, then apply only the matching security fix and focused regression test.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target count op shape function and bincount test context",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Validate and apply minimal backport hunks",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "content": "Review resulting diff for correctness",
+      "status": "pending",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target count op shape function and bincount test context",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Validate and apply minimal backport hunks",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "content": "Review resulting diff for correctness",
+    "status": "pending",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 3,995
+cache read: 4,608
+cache write: 0
+output: 116
+reasoning output: 0
+
+tool: locate_symbol
+{
+  "ref": "9ce6ba46ac6f29413afdd0dfb6faa803acb2b747",
+  "symbol": "SparseCountSparseOutputShapeFn"
+}
+tensorflow/core/ops/count_ops.cc:43
+tensorflow/core/kernels/count_ops_test.cc:36
+tensorflow/core/ops/count_ops.cc:87
+
+tool: locate_symbol
+{
+  "ref": "9ce6ba46ac6f29413afdd0dfb6faa803acb2b747",
+  "symbol": "test_ragged_input_different_shape_fails"
+}
+tensorflow/python/ops/bincount_ops_test.py:831
+
+tool: locate_symbol
+{
+  "ref": "9ce6ba46ac6f29413afdd0dfb6faa803acb2b747",
+  "symbol": "RawOpsTest"
+}
+tensorflow/python/ops/bincount_ops_test.py:841
+tensorflow/python/ops/raw_ops_test.py:36
+tensorflow/python/ops/sparse_ops_test.py:240
+
+tokens used
+input: 1,151
+cache read: 7,680
+cache write: 0
+output: 159
+reasoning output: 0
+
+tool: viewcode
+{
+  "ref": "9ce6ba46ac6f29413afdd0dfb6faa803acb2b747",
+  "path": "tensorflow/core/ops/count_ops.cc",
+  "startline": 35,
+  "endline": 55
+}
+Here are lines 35 through 55.
+
+  auto rank = c->Rank(output);
+  auto nvals = c->UnknownDim();
+  c->set_output(0, c->Matrix(nvals, rank));  // out.indices
+  c->set_output(1, c->Vector(nvals));        // out.values
+  c->set_output(2, c->Vector(rank));         // out.dense_shape
+  return Status::OK();
+}
+
+Status SparseCountSparseOutputShapeFn(InferenceContext *c) {
+  auto rank = c->Dim(c->input(0), 1);
+  auto nvals = c->UnknownDim();
+  c->set_output(0, c->Matrix(nvals, rank));  // out.indices
+  c->set_output(1, c->Vector(nvals));        // out.values
+  c->set_output(2, c->Vector(rank));         // out.dense_shape
+  return Status::OK();
+}
+
+Status RaggedCountSparseOutputShapeFn(InferenceContext *c) {
+  int32 rank = c->Rank(c->input(1));
+  if (rank != c->kUnknownRank) {
+    ++rank;  // Add the ragged dimension
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: viewcode
+{
+  "ref": "9ce6ba46ac6f29413afdd0dfb6faa803acb2b747",
+  "path": "tensorflow/python/ops/bincount_ops_test.py",
+  "startline": 810,
+  "endline": 855
+}
+Here are lines 810 through 855.
+
+        np.array([[3, 0, 1, 0], [0, 0, 0, 0], [5, 0, 4, 4]], dtype=np.int32))
+    weights = sparse_ops.from_dense(
+        np.array([[3, 0, 1, 0], [0, 0, 0, 0], [5, 0, 4, 4], [0, 0, 0, 0]],
+                 dtype=np.int32))
+    with self.assertRaisesRegex(errors.InvalidArgumentError,
+                                "must have the same dense shape"):
+      self.evaluate(bincount_ops.sparse_bincount(x, weights=weights, axis=-1))
+
+  def test_ragged_input_dense_weights_fails(self):
+    x = ragged_factory_ops.constant([[6, 1, 2], [14], [10, 1, 5, 3]])
+    weights = np.array([[3, 2, 1], [5, 4, 4]], dtype=np.int32)
+    with self.assertRaisesRegex(ValueError, "must be a RaggedTensor"):
+      self.evaluate(bincount_ops.sparse_bincount(x, weights=weights, axis=-1))
+
+  def test_ragged_input_sparse_weights_fails(self):
+    x = ragged_factory_ops.constant([[6, 1, 2], [14], [10, 1, 5, 3]])
+    weights = sparse_ops.from_dense(
+        np.array([[3, 0, 1, 0], [0, 0, 0, 0], [5, 0, 4, 4]], dtype=np.int32))
+    with self.assertRaisesRegex(ValueError, "must be a RaggedTensor"):
+      self.evaluate(bincount_ops.sparse_bincount(x, weights=weights, axis=-1))
+
+  def test_ragged_input_different_shape_fails(self):
+    x = ragged_factory_ops.constant([[6, 1, 2], [14], [10, 1, 5, 3]])
+    weights = ragged_factory_ops.constant([[6, 0.5, 2], [], [10, 0.25, 5, 3]])
+    with self.assertRaisesRegex(errors.InvalidArgumentError,
+                                "must have the same row splits"):
+      self.evaluate(bincount_ops.sparse_bincount(x, weights=weights, axis=-1))
+
+
+@test_util.run_all_in_graph_and_eager_modes
+@test_util.disable_tfrt
+class RawOpsTest(test.TestCase, parameterized.TestCase):
+
+  def testSparseCountSparseOutputBadIndicesShape(self):
+    indices = [[[0], [0]], [[0], [1]], [[1], [0]], [[1], [2]]]
+    values = [1, 1, 1, 10]
+    weights = [1, 2, 4, 6]
+    dense_shape = [2, 3]
+    with self.assertRaisesRegex(errors.InvalidArgumentError,
+                                "Input indices must be a 2-dimensional tensor"):
+      self.evaluate(
+          gen_count_ops.SparseCountSparseOutput(
+              indices=indices,
+              values=values,
+              dense_shape=dense_shape,
+              weights=weights,
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tokens used
+input: 395
+cache read: 8,704
+cache write: 0
+output: 135
+reasoning output: 0
+
+The target files already contain equivalent code and test layout at the same locations, so the newer patch maps directly: add rank validation before reading dimension 1, and add a V1-only raw op regression test before `RawOpsTest`.
+
+tool: validate
+{
+  "ref": "9ce6ba46ac6f29413afdd0dfb6faa803acb2b747",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/ops/count_ops.cc b/tensorflow/core/ops/count_ops.cc\n--- a/tensorflow/core/ops/count_ops.cc\n+++ b/tensorflow/core/ops/count_ops.cc\n@@ -41,6 +41,8 @@ Status DenseCountSparseOutputShapeFn(InferenceContext *c) {\n }\n \n Status SparseCountSparseOutputShapeFn(InferenceContext *c) {\n+  ShapeHandle unused;\n+  TF_RETURN_IF_ERROR(c->WithRank(c->input(0), 2, &unused));\n   auto rank = c->Dim(c->input(0), 1);\n   auto nvals = c->UnknownDim();\n   c->set_output(0, c->Matrix(nvals, rank));  // out.indices\ndiff --git a/tensorflow/python/ops/bincount_ops_test.py b/tensorflow/python/ops/bincount_ops_test.py\n--- a/tensorflow/python/ops/bincount_ops_test.py\n+++ b/tensorflow/python/ops/bincount_ops_test.py\n@@ -831,6 +831,25 @@ def test_ragged_input_different_shape_fails(self):\n       self.evaluate(bincount_ops.sparse_bincount(x, weights=weights, axis=-1))\n \n \n+class RawOpsHeapOobTest(test.TestCase, parameterized.TestCase):\n+\n+  @test_util.run_v1_only(\"Test security error\")\n+  def testSparseCountSparseOutputBadIndicesShapeTooSmall(self):\n+    indices = [1]\n+    values = [[1]]\n+    weights = []\n+    dense_shape = [10]\n+    with self.assertRaisesRegex(ValueError,\n+                                \"Shape must be rank 2 but is rank 1 for\"):\n+      self.evaluate(\n+          gen_count_ops.SparseCountSparseOutput(\n+              indices=indices,\n+              values=values,\n+              dense_shape=dense_shape,\n+              weights=weights,\n+              binary_output=True))\n+\n+\n @test_util.run_all_in_graph_and_eager_modes\n @test_util.disable_tfrt\n class RawOpsTest(test.TestCase, parameterized.TestCase):\n"
+}
+Patch applied successfully
+
+tokens used
+input: 1,561
+cache read: 8,704
+cache write: 0
+output: 601
+reasoning output: 67
+
+The backport hunks validate cleanly against the target base. I’m applying the same minimal changes now.
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/ops/count_ops.cc\n@@\n Status SparseCountSparseOutputShapeFn(InferenceContext *c) {\n+  ShapeHandle unused;\n+  TF_RETURN_IF_ERROR(c->WithRank(c->input(0), 2, &unused));\n   auto rank = c->Dim(c->input(0), 1);\n   auto nvals = c->UnknownDim();\n   c->set_output(0, c->Matrix(nvals, rank));  // out.indices\n*** Update File: tensorflow/python/ops/bincount_ops_test.py\n@@\n   def test_ragged_input_different_shape_fails(self):\n     x = ragged_factory_ops.constant([[6, 1, 2], [14], [10, 1, 5, 3]])\n     weights = ragged_factory_ops.constant([[6, 0.5, 2], [], [10, 0.25, 5, 3]])\n     with self.assertRaisesRegex(errors.InvalidArgumentError,\n                                 \"must have the same row splits\"):\n       self.evaluate(bincount_ops.sparse_bincount(x, weights=weights, axis=-1))\n \n \n+class RawOpsHeapOobTest(test.TestCase, parameterized.TestCase):\n+\n+  @test_util.run_v1_only(\"Test security error\")\n+  def testSparseCountSparseOutputBadIndicesShapeTooSmall(self):\n+    indices = [1]\n+    values = [[1]]\n+    weights = []\n+    dense_shape = [10]\n+    with self.assertRaisesRegex(ValueError,\n+                                \"Shape must be rank 2 but is rank 1 for\"):\n+      self.evaluate(\n+          gen_count_ops.SparseCountSparseOutput(\n+              indices=indices,\n+              values=values,\n+              dense_shape=dense_shape,\n+              weights=weights,\n+              binary_output=True))\n+\n+\n @test_util.run_all_in_graph_and_eager_modes\n @test_util.disable_tfrt\n class RawOpsTest(test.TestCase, parameterized.TestCase):\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/ops/count_ops.cc
+M tensorflow/python/ops/bincount_ops_test.py
+
+tokens used
+input: 1,218
+cache read: 9,728
+cache write: 0
+output: 531
+reasoning output: 0
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target count op shape function and bincount test context",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate and apply minimal backport hunks",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Review resulting diff for correctness",
+      "status": "in_progress",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target count op shape function and bincount test context",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate and apply minimal backport hunks",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Review resulting diff for correctness",
+    "status": "in_progress",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 763
+cache read: 10,752
+cache write: 0
+output: 78
+reasoning output: 0
+
+I’ll review the resulting diff only, without running a full build or full validation per the task constraints.
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/ops/count_ops.cc tensorflow/python/ops/bincount_ops_test.py",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0082-9ce6ba46ac6f",
+  "timeout": 120000
+}
+warning: in the working copy of 'tensorflow/core/ops/count_ops.cc', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'tensorflow/python/ops/bincount_ops_test.py', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/ops/count_ops.cc b/tensorflow/core/ops/count_ops.cc
+index 8de0a2ef95..95e8026fd8 100644
+--- a/tensorflow/core/ops/count_ops.cc
++++ b/tensorflow/core/ops/count_ops.cc
+@@ -41,6 +41,8 @@ Status DenseCountSparseOutputShapeFn(InferenceContext *c) {
+ }
+ 
+ Status SparseCountSparseOutputShapeFn(InferenceContext *c) {
++  ShapeHandle unused;
++  TF_RETURN_IF_ERROR(c->WithRank(c->input(0), 2, &unused));
+   auto rank = c->Dim(c->input(0), 1);
+   auto nvals = c->UnknownDim();
+   c->set_output(0, c->Matrix(nvals, rank));  // out.indices
+diff --git a/tensorflow/python/ops/bincount_ops_test.py b/tensorflow/python/ops/bincount_ops_test.py
+index 5bc9bc1ab7..1ef5e10e66 100644
+--- a/tensorflow/python/ops/bincount_ops_test.py
++++ b/tensorflow/python/ops/bincount_ops_test.py
+@@ -836,6 +836,25 @@ class TestSparseCountFailureModes(test.TestCase):
+       self.evaluate(bincount_ops.sparse_bincount(x, weights=weights, axis=-1))
+ 
+ 
++class RawOpsHeapOobTest(test.TestCase, parameterized.TestCase):
++
++  @test_util.run_v1_only("Test security error")
++  def testSparseCountSparseOutputBadIndicesShapeTooSmall(self):
++    indices = [1]
++    values = [[1]]
++    weights = []
++    dense_shape = [10]
++    with self.assertRaisesRegex(ValueError,
++                                "Shape must be rank 2 but is rank 1 for"):
++      self.evaluate(
++          gen_count_ops.SparseCountSparseOutput(
++              indices=indices,
++              values=values,
++              dense_shape=dense_shape,
++              weights=weights,
++              binary_output=True))
++
++
+ @test_util.run_all_in_graph_and_eager_modes
+ @test_util.disable_tfrt
+ class RawOpsTest(test.TestCase, parameterized.TestCase):
+
+tokens used
+input: 953
+cache read: 10,752
+cache write: 0
+output: 113
+reasoning output: 0
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target count op shape function and bincount test context",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate and apply minimal backport hunks",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Review resulting diff for correctness",
+      "status": "completed",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target count op shape function and bincount test context",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate and apply minimal backport hunks",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Review resulting diff for correctness",
+    "status": "completed",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 1,630
+cache read: 10,752
+cache write: 0
+output: 79
+reasoning output: 56
+
+Applied the minimal security backport to validate `SparseCountSparseOutput` indices rank before reading dimension 1, plus the focused regression test. Hunk validation passed; no full build was run per constraints.
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/ops/count_ops.cc b/tensorflow/core/ops/count_ops.cc
+    index 8de0a2ef95..95e8026fd8 100644
+    --- a/tensorflow/core/ops/count_ops.cc
+    +++ b/tensorflow/core/ops/count_ops.cc
+    @@ -41,6 +41,8 @@ Status DenseCountSparseOutputShapeFn(InferenceContext *c) {
+     }
+     
+     Status SparseCountSparseOutputShapeFn(InferenceContext *c) {
+    +  ShapeHandle unused;
+    +  TF_RETURN_IF_ERROR(c->WithRank(c->input(0), 2, &unused));
+       auto rank = c->Dim(c->input(0), 1);
+       auto nvals = c->UnknownDim();
+       c->set_output(0, c->Matrix(nvals, rank));  // out.indices
+    diff --git a/tensorflow/python/ops/bincount_ops_test.py b/tensorflow/python/ops/bincount_ops_test.py
+    index 5bc9bc1ab7..1ef5e10e66 100644
+    --- a/tensorflow/python/ops/bincount_ops_test.py
+    +++ b/tensorflow/python/ops/bincount_ops_test.py
+    @@ -836,6 +836,25 @@ class TestSparseCountFailureModes(test.TestCase):
+           self.evaluate(bincount_ops.sparse_bincount(x, weights=weights, axis=-1))
+     
+     
+    +class RawOpsHeapOobTest(test.TestCase, parameterized.TestCase):
+    +
+    +  @test_util.run_v1_only("Test security error")
+    +  def testSparseCountSparseOutputBadIndicesShapeTooSmall(self):
+    +    indices = [1]
+    +    values = [[1]]
+    +    weights = []
+    +    dense_shape = [10]
+    +    with self.assertRaisesRegex(ValueError,
+    +                                "Shape must be rank 2 but is rank 1 for"):
+    +      self.evaluate(
+    +          gen_count_ops.SparseCountSparseOutput(
+    +              indices=indices,
+    +              values=values,
+    +              dense_shape=dense_shape,
+    +              weights=weights,
+    +              binary_output=True))
+    +
+    +
+     @test_util.run_all_in_graph_and_eager_modes
+     @test_util.disable_tfrt
+     class RawOpsTest(test.TestCase, parameterized.TestCase):
+  notes: >
+    Added rank-2 shape inference validation for SparseCountSparseOutput indices and the corresponding V1 raw op regression test.
+```
+
+tokens used
+input: 852
+cache read: 11,776
+cache write: 0
+output: 619
+reasoning output: 0

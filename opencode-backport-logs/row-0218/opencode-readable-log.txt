@@ -1,0 +1,736 @@
+I’ll inspect the target-side implementations for the two patched locations, then apply the minimal equivalent guards without using the known backport commit.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target code for maxpooling_op.cc and pooling_ops_common.cc equivalents",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Validate uncertain hunks against target base",
+      "status": "pending",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply minimal backport changes",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "content": "Review resulting diff",
+      "status": "pending",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target code for maxpooling_op.cc and pooling_ops_common.cc equivalents",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Validate uncertain hunks against target base",
+    "status": "pending",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply minimal backport changes",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "content": "Review resulting diff",
+    "status": "pending",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 4,008
+cache read: 4,608
+cache write: 0
+output: 129
+reasoning output: 0
+
+tool: viewcode
+{
+  "ref": "6c1eb9637e0218d2d04c72c8838e17e72ebd00d5",
+  "path": "tensorflow/core/kernels/maxpooling_op.cc",
+  "startline": 50,
+  "endline": 110
+}
+Here are lines 50 through 110.
+
+#endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+
+namespace tensorflow {
+
+typedef Eigen::ThreadPoolDevice CPUDevice;
+typedef Eigen::GpuDevice GPUDevice;
+
+const int kInvalidMaxPoolingIndex = -1;
+
+template <typename Device, typename T>
+static void SpatialMaxPoolWithArgMaxHelper(
+    OpKernelContext* context, Tensor* output, Tensor* output_arg_max,
+    Tensor* input_backprop, const Tensor& tensor_in, const Tensor& out_backprop,
+    const PoolParameters& params, const bool include_batch_in_index) {
+  if (input_backprop != nullptr) {
+    OP_REQUIRES(
+        context, include_batch_in_index,
+        errors::Internal(
+            "SpatialMaxPoolWithArgMaxHelper requires include_batch_in_index "
+            "to be True when when input_backprop != nullptr"));
+  }
+
+  typedef Eigen::Map<const Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic>>
+      ConstEigenMatrixMap;
+  typedef Eigen::Map<Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic>>
+      EigenMatrixMap;
+  typedef Eigen::Map<Eigen::Matrix<int64, Eigen::Dynamic, Eigen::Dynamic>>
+      EigenIndexMatrixMap;
+
+  ConstEigenMatrixMap in_mat(
+      tensor_in.flat<T>().data(), params.depth,
+      params.tensor_in_cols * params.tensor_in_rows * params.tensor_in_batch);
+  EigenMatrixMap out_mat(
+      output->flat<T>().data(), params.depth,
+      params.out_width * params.out_height * params.tensor_in_batch);
+  EigenIndexMatrixMap out_arg_max_mat(
+      output_arg_max->flat<int64>().data(), params.depth,
+      params.out_width * params.out_height * params.tensor_in_batch);
+
+  const DeviceBase::CpuWorkerThreads& worker_threads =
+      *(context->device()->tensorflow_cpu_worker_threads());
+
+  // The following code basically does the following:
+  // 1. Flattens the input and output tensors into two dimensional arrays.
+  //    tensor_in_as_matrix:
+  //      depth by (tensor_in_cols * tensor_in_rows * tensor_in_batch)
+  //    output_as_matrix:
+  //      depth by (out_width * out_height * tensor_in_batch)
+  //
+  // 2. Walks through the set of columns in the flattened tensor_in_as_matrix,
+  //    and updates the corresponding column(s) in output_as_matrix with the
+  //    max value.
+  auto shard = [&params, &in_mat, &out_mat, &out_arg_max_mat, &input_backprop,
+                &output_arg_max, &out_backprop,
+                include_batch_in_index](int64 start, int64 limit) {
+    const int32 depth = params.depth;
+    const int32 in_rows = params.tensor_in_rows;
+    const int32 in_cols = params.tensor_in_cols;
+    const int32 pad_rows = params.pad_rows;
+    const int32 pad_cols = params.pad_cols;
+    const int32 window_rows = params.window_rows;
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: viewcode
+{
+  "ref": "6c1eb9637e0218d2d04c72c8838e17e72ebd00d5",
+  "path": "tensorflow/core/kernels/maxpooling_op.cc",
+  "startline": 900,
+  "endline": 980
+}
+Here are lines 900 through 980.
+
+};
+
+template <typename Device, typename T>
+class MaxPoolingWithArgmaxOp : public OpKernel {
+ public:
+  explicit MaxPoolingWithArgmaxOp(OpKernelConstruction* context)
+      : OpKernel(context) {
+    OP_REQUIRES_OK(context, context->GetAttr("ksize", &ksize_));
+    OP_REQUIRES(context, ksize_.size() == 4,
+                errors::InvalidArgument("Sliding window ksize field must "
+                                        "specify 4 dimensions"));
+    OP_REQUIRES_OK(context, context->GetAttr("strides", &stride_));
+    OP_REQUIRES(context, stride_.size() == 4,
+                errors::InvalidArgument("Sliding window stride field must "
+                                        "specify 4 dimensions"));
+    OP_REQUIRES_OK(context, context->GetAttr("padding", &padding_));
+    OP_REQUIRES(context, ksize_[0] == 1 && stride_[0] == 1,
+                errors::Unimplemented(
+                    "Pooling is not yet supported on the batch dimension."));
+    OP_REQUIRES_OK(context, context->GetAttr("include_batch_in_index",
+                                             &include_batch_in_index_));
+    TF_CHECK_OK(ReadBoolFromEnvVar("TF_ENABLE_MAXPOOL_NANPROP", false,
+                                   &propagate_nans_));
+  }
+
+  void Compute(OpKernelContext* context) override {
+    const Tensor& tensor_in = context->input(0);
+
+    PoolParameters params{context,  ksize_,      stride_,
+                          padding_, FORMAT_NHWC, tensor_in.shape()};
+    if (!context->status().ok()) {
+      return;
+    }
+
+    TensorShape out_shape({params.tensor_in_batch, params.out_height,
+                           params.out_width, params.depth});
+    Tensor* output = nullptr;
+    OP_REQUIRES_OK(context, context->allocate_output(0, out_shape, &output));
+    Tensor* argmax = nullptr;
+    OP_REQUIRES_OK(context, context->allocate_output(1, out_shape, &argmax));
+
+    LaunchMaxPoolingWithArgmax<Device, T>::launch(
+        context, params, tensor_in, output, argmax, propagate_nans_,
+        include_batch_in_index_);
+  }
+
+ private:
+  std::vector<int32> ksize_;
+  std::vector<int32> stride_;
+  Padding padding_;
+  bool propagate_nans_;
+  bool include_batch_in_index_;
+};
+
+template <typename Device, typename T>
+struct LaunchMaxPoolingGradWithArgmax;
+
+template <typename T>
+struct LaunchMaxPoolingGradWithArgmax<CPUDevice, T> {
+  typedef Eigen::Map<Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic>>
+      EigenMatrixMap;
+
+  static void launch(OpKernelContext* context, const PoolParameters& params,
+                     const Tensor& grad_in, const Tensor& argmax,
+                     Tensor* grad_out, const bool include_batch_in_index) {
+    const DeviceBase::CpuWorkerThreads& worker_threads =
+        *(context->device()->tensorflow_cpu_worker_threads());
+
+    auto shard = [&grad_in, &argmax, &grad_out, include_batch_in_index](
+                     int64 start, int64 limit) {
+      const int64 batch_size =
+          GetTensorDim(grad_out->shape(), FORMAT_NHWC, 'N');
+      const int64 output_size_per_batch = grad_out->NumElements() / batch_size;
+      const int64 input_size_per_batch = grad_in.NumElements() / batch_size;
+
+      {
+        auto grad_out_flat = grad_out->flat<T>();
+        auto argmax_flat = argmax.flat<int64>();
+        auto grad_in_flat = grad_in.flat<T>();
+
+        const int64 output_start = start * output_size_per_batch;
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: viewcode
+{
+  "ref": "6c1eb9637e0218d2d04c72c8838e17e72ebd00d5",
+  "path": "tensorflow/core/kernels/pooling_ops_common.cc",
+  "startline": 145,
+  "endline": 190
+}
+Here are lines 145 through 190.
+
+                              bool propagate_nans) {
+  Tensor* tensor_out = nullptr;
+  OP_REQUIRES_OK(context,
+                 context->allocate_output(0, tensor_out_shape, &tensor_out));
+  if (tensor_in.shape().num_elements() == 0) {
+    return;
+  }
+
+  PoolParameters params{context, size,        stride,
+                        padding, data_format, tensor_in.shape()};
+  if (!context->status().ok()) {
+    return;
+  }
+
+  int batch_size = params.tensor_in_batch;
+  int depth = params.depth;
+#if CUDNN_VERSION < 7300
+  /// Earlier versions do not support NHWC format, so we need to convert it
+  /// to NCHW before calling cudnn. We need to get rid of this once it is done
+  Tensor transformed_input;
+  if (data_format == FORMAT_NHWC) {
+    OP_REQUIRES_OK(context, context->allocate_temp(
+                                DataTypeToEnum<T>::value,
+                                ShapeFromFormat(FORMAT_NCHW, tensor_in.shape(),
+                                                data_format),
+                                &transformed_input));
+    functor::NHWCToNCHW<GPUDevice, T, 4>()(context->eigen_device<Device>(),
+                                           tensor_in.tensor<T, 4>(),
+                                           transformed_input.tensor<T, 4>());
+  } else {
+    transformed_input = tensor_in;
+  }
+  Tensor transformed_output;
+  if (data_format == FORMAT_NHWC) {
+    OP_REQUIRES_OK(context, context->allocate_temp(
+                                DataTypeToEnum<T>::value,
+                                ShapeFromFormat(FORMAT_NCHW, tensor_out_shape,
+                                                data_format),
+                                &transformed_output));
+  } else {
+    transformed_output = *tensor_out;
+  }
+  se::dnn::DataLayout data_layout = se::dnn::DataLayout::kBatchDepthYX;
+#else
+  auto& transformed_input = tensor_in;
+  auto& transformed_output = *tensor_out;
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tokens used
+input: 1,207
+cache read: 7,680
+cache write: 0
+output: 206
+reasoning output: 0
+
+tool: locate_symbol
+{
+  "ref": "6c1eb9637e0218d2d04c72c8838e17e72ebd00d5",
+  "symbol": "PoolParameters::PoolParameters"
+}
+tensorflow/core/kernels/pooling_ops_common.cc:54
+
+tool: grep
+{
+  "pattern": "PoolParameters::PoolParameters",
+  "path": "tensorflow/core/kernels",
+  "include": "*.cc"
+}
+Found 1 matches
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0218-6c1eb9637e02\tensorflow\core\kernels\pooling_ops_common.cc:
+  Line 54: PoolParameters::PoolParameters(OpKernelContext* context,
+
+tool: grep
+{
+  "pattern": "depth_window",
+  "path": "tensorflow/core/kernels/pooling_ops_common.cc",
+  "include": "*.cc"
+}
+Found 29 matches
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0218-6c1eb9637e02\tensorflow\core\kernels\avgpooling_op.cc:
+  Line 89:     OP_REQUIRES(context, params.depth_window == 1,
+
+  Line 154:     OP_REQUIRES(context, params.depth_window == 1,
+
+  Line 295:     const int depth_window = ksize_[3];
+
+  Line 303:     // Spatial pooling is when depth_window = 1
+
+  Line 304:     OP_REQUIRES(context, depth_window == 1,
+
+  Line 370:         window_rows * window_cols * depth_window * in_rows * in_rows * in_cols;
+
+  Line 554:       const int depth_window = ksize_[3];
+
+  Line 562:       // Spatial pooling is when depth_window = 1
+
+  Line 563:       OP_REQUIRES(context, depth_window == 1,
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0218-6c1eb9637e02\tensorflow\core\kernels\mkl_pooling_ops_common.cc:
+  Line 385:     depth_window = GetTensorDim(ksize, data_format, 'C');
+
+  Line 395:                 (depth_window == 1 || (window_rows == 1 && window_cols == 1)),
+
+  Line 405:     depth_window = GetTensorDim(ksize, data_format, 'C');
+
+  Line 416:                 (depth_window == 1 ||
+
+  Line 423:   if (depth_window == 1) {  // We are pooling in the D (Pool3D only), H and W.
+
+  Line 459:     // any padding, and expects the depth_window to equal the depth
+
+  Line 461:     OP_REQUIRES(context, depth % depth_window == 0,
+
+  Line 465:     OP_REQUIRES(context, depth_stride == depth_window,
+
+  Line 478:     out_depth = depth / depth_window;
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0218-6c1eb9637e02\tensorflow\core\kernels\pooling_ops_3d.cc:
+  Line 72:   depth_window = GetTensorDim(ksize, data_format, 'C');
+
+  Line 81:       context, depth_window == 1 && depth_stride == 1,
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0218-6c1eb9637e02\tensorflow\core\kernels\pooling_ops_common.cc:
+  Line 76:   depth_window = GetTensorDim(ksize, data_format, 'C');
+
+  Line 84:               (depth_window == 1 || (window_rows == 1 && window_cols == 1)),
+
+  Line 89:   if (depth_window == 1) {
+
+  Line 100:     // any padding, and expects the depth_window to equal the
+
+  Line 103:         context, depth % depth_window == 0,
+
+  Line 107:         context, depth_stride == depth_window,
+
+  Line 120:     out_depth = depth / depth_window;
+
+  Line 125:   if (depth_window == 1) {
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0218-6c1eb9637e02\tensorflow\core\kernels\quantized_pooling_ops.cc:
+  Line 66:     OP_REQUIRES(context, params.depth_window == 1,
+
+tokens used
+input: 2,327
+cache read: 8,704
+cache write: 0
+output: 133
+reasoning output: 9
+
+The target files contain the same affected functions, but `PoolParameters` is older and the depth-pooling branch sits near line 89 rather than the newer patch’s line 171.
+
+tool: viewcode
+{
+  "ref": "6c1eb9637e0218d2d04c72c8838e17e72ebd00d5",
+  "path": "tensorflow/core/kernels/pooling_ops_common.cc",
+  "startline": 45,
+  "endline": 130
+}
+Here are lines 45 through 130.
+
+};
+
+template <>
+struct RawType<qint8> {
+  using type = int8;
+};
+
+}  // namespace
+
+PoolParameters::PoolParameters(OpKernelContext* context,
+                               const std::vector<int32>& ksize,
+                               const std::vector<int32>& stride,
+                               Padding padding, TensorFormat data_format,
+                               const TensorShape& tensor_in_shape) {
+  // For maxpooling, tensor_in should have 2 spatial dimensions.
+  // Note: the total number of dimensions could be 4 for NHWC, NCHW,
+  // or 5 for NCHW_VECT_C.
+  OP_REQUIRES(context,
+              GetTensorSpatialDims(tensor_in_shape.dims(), data_format) == 2,
+              errors::InvalidArgument(
+                  "tensor_in_shape must have 2 spatial dimensions. ",
+                  tensor_in_shape.dims(), " ", data_format));
+
+  this->data_format = data_format;
+  depth = GetTensorDim(tensor_in_shape, data_format, 'C') *
+          (data_format == FORMAT_NCHW_VECT_C ? 4 : 1);
+  tensor_in_cols = GetTensorDim(tensor_in_shape, data_format, 'W');
+  tensor_in_rows = GetTensorDim(tensor_in_shape, data_format, 'H');
+  tensor_in_batch = GetTensorDim(tensor_in_shape, data_format, 'N');
+  window_rows = GetTensorDim(ksize, data_format, 'H');
+  window_cols = GetTensorDim(ksize, data_format, 'W');
+  depth_window = GetTensorDim(ksize, data_format, 'C');
+  row_stride = GetTensorDim(stride, data_format, 'H');
+  col_stride = GetTensorDim(stride, data_format, 'W');
+  depth_stride = GetTensorDim(stride, data_format, 'C');
+
+  // We only support 2D pooling across width/height and depthwise
+  // pooling, not a combination.
+  OP_REQUIRES(context,
+              (depth_window == 1 || (window_rows == 1 && window_cols == 1)),
+              errors::Unimplemented(
+                  "MaxPooling supports exactly one of pooling across depth "
+                  "or pooling across width/height."));
+
+  if (depth_window == 1) {
+    OP_REQUIRES_OK(
+        context, GetWindowedOutputSize(tensor_in_rows, window_rows, row_stride,
+                                       padding, &out_height, &pad_rows));
+    OP_REQUIRES_OK(
+        context, GetWindowedOutputSize(tensor_in_cols, window_cols, col_stride,
+                                       padding, &out_width, &pad_cols));
+    pad_depth = 0;
+    out_depth = depth;
+  } else {
+    // Our current version of depthwise max pooling does not support
+    // any padding, and expects the depth_window to equal the
+    // depth_stride (no overlapping).
+    OP_REQUIRES(
+        context, depth % depth_window == 0,
+        errors::Unimplemented("Depthwise max pooling requires the depth "
+                              "window to evenly divide the input depth"));
+    OP_REQUIRES(
+        context, depth_stride == depth_window,
+        errors::Unimplemented("Depthwise max pooling requires the depth "
+                              "window to equal the depth stride"));
+
+    // The current version of depthwise max is only implemented on CPU.
+    OP_REQUIRES(context,
+                (DeviceType(static_cast<Device*>(context->device())
+                                ->attributes()
+                                .device_type()) == DeviceType(DEVICE_CPU)),
+                errors::Unimplemented("Depthwise max pooling is currently "
+                                      "only implemented for CPU devices."));
+
+    pad_depth = 0;
+    out_depth = depth / depth_window;
+  }
+}
+
+TensorShape PoolParameters::forward_output_shape() {
+  if (depth_window == 1) {
+    // Spatial pooling
+    return ShapeFromFormat(data_format, tensor_in_batch, out_height, out_width,
+                           depth);
+  } else {
+    // Depthwise pooling
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tokens used
+input: 1,398
+cache read: 10,752
+cache write: 0
+output: 110
+reasoning output: 0
+
+I’m going to add the same three guard points: early return for empty helper tensors, input rank/non-empty validation in `MaxPoolingWithArgmaxOp::Compute`, and `depth_window > 0` before modulo/division in depthwise pooling.
+
+tool: validate
+{
+  "ref": "6c1eb9637e0218d2d04c72c8838e17e72ebd00d5",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/maxpooling_op.cc b/tensorflow/core/kernels/maxpooling_op.cc\n--- a/tensorflow/core/kernels/maxpooling_op.cc\n+++ b/tensorflow/core/kernels/maxpooling_op.cc\n@@ -68,6 +68,7 @@ static void SpatialMaxPoolWithArgMaxHelper(\n             \"SpatialMaxPoolWithArgMaxHelper requires include_batch_in_index \"\n             \"to be True when when input_backprop != nullptr\"));\n   }\n+  if (tensor_in.NumElements() == 0 || output->NumElements() == 0) return;\n \n   typedef Eigen::Map<const Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic>>\n       ConstEigenMatrixMap;\n@@ -923,6 +924,10 @@ class MaxPoolingWithArgmaxOp : public OpKernel {\n \n   void Compute(OpKernelContext* context) override {\n     const Tensor& tensor_in = context->input(0);\n+    OP_REQUIRES(context, tensor_in.dims() == 4,\n+                errors::InvalidArgument(\"tensor_in must be 4-dimensional (2)\"));\n+    OP_REQUIRES(context, tensor_in.NumElements() > 0,\n+                errors::InvalidArgument(\"tensor_in must not be empty (2)\"));\n \n     PoolParameters params{context,  ksize_,      stride_,\n                           padding_, FORMAT_NHWC, tensor_in.shape()};\ndiff --git a/tensorflow/core/kernels/pooling_ops_common.cc b/tensorflow/core/kernels/pooling_ops_common.cc\n--- a/tensorflow/core/kernels/pooling_ops_common.cc\n+++ b/tensorflow/core/kernels/pooling_ops_common.cc\n@@ -96,6 +96,8 @@ PoolParameters::PoolParameters(OpKernelContext* context,\n     pad_depth = 0;\n     out_depth = depth;\n   } else {\n+    OP_REQUIRES(context, depth_window > 0,\n+                errors::InvalidArgument(\"depth_window must not be 0\"));\n     // Our current version of depthwise max pooling does not support\n     // any padding, and expects the depth_window to equal the\n     // depth_stride (no overlapping).\n"
+}
+Patch applied successfully
+
+tokens used
+input: 1,359
+cache read: 11,776
+cache write: 0
+output: 608
+reasoning output: 71
+
+The constructed hunks apply cleanly to the target base. I’m applying them to the current checkout now.
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/kernels/maxpooling_op.cc\n@@\n   if (input_backprop != nullptr) {\n     OP_REQUIRES(\n         context, include_batch_in_index,\n         errors::Internal(\n             \"SpatialMaxPoolWithArgMaxHelper requires include_batch_in_index \"\n             \"to be True when when input_backprop != nullptr\"));\n   }\n+  if (tensor_in.NumElements() == 0 || output->NumElements() == 0) return;\n \n   typedef Eigen::Map<const Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic>>\n       ConstEigenMatrixMap;\n@@\n \n   void Compute(OpKernelContext* context) override {\n     const Tensor& tensor_in = context->input(0);\n+    OP_REQUIRES(context, tensor_in.dims() == 4,\n+                errors::InvalidArgument(\"tensor_in must be 4-dimensional (2)\"));\n+    OP_REQUIRES(context, tensor_in.NumElements() > 0,\n+                errors::InvalidArgument(\"tensor_in must not be empty (2)\"));\n \n     PoolParameters params{context,  ksize_,      stride_,\n                           padding_, FORMAT_NHWC, tensor_in.shape()};\n*** Update File: tensorflow/core/kernels/pooling_ops_common.cc\n@@\n     pad_depth = 0;\n     out_depth = depth;\n   } else {\n+    OP_REQUIRES(context, depth_window > 0,\n+                errors::InvalidArgument(\"depth_window must not be 0\"));\n     // Our current version of depthwise max pooling does not support\n     // any padding, and expects the depth_window to equal the\n     // depth_stride (no overlapping).\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/kernels/maxpooling_op.cc
+M tensorflow/core/kernels/pooling_ops_common.cc
+
+tokens used
+input: 9,219
+cache read: 4,608
+cache write: 0
+output: 443
+reasoning output: 0
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target code for maxpooling_op.cc and pooling_ops_common.cc equivalents",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate uncertain hunks against target base",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply minimal backport changes",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Review resulting diff",
+      "status": "in_progress",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target code for maxpooling_op.cc and pooling_ops_common.cc equivalents",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate uncertain hunks against target base",
+    "status": "completed",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply minimal backport changes",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Review resulting diff",
+    "status": "in_progress",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 1,509
+cache read: 12,800
+cache write: 0
+output: 95
+reasoning output: 0
+
+I’ll review the resulting diff to ensure only the intended TensorFlow kernel guards changed.
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/kernels/maxpooling_op.cc tensorflow/core/kernels/pooling_ops_common.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0218-6c1eb9637e02"
+}
+warning: in the working copy of 'tensorflow/core/kernels/maxpooling_op.cc', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'tensorflow/core/kernels/pooling_ops_common.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/kernels/maxpooling_op.cc b/tensorflow/core/kernels/maxpooling_op.cc
+index 7accd1a820..adfde78809 100644
+--- a/tensorflow/core/kernels/maxpooling_op.cc
++++ b/tensorflow/core/kernels/maxpooling_op.cc
+@@ -68,6 +68,7 @@ static void SpatialMaxPoolWithArgMaxHelper(
+             "SpatialMaxPoolWithArgMaxHelper requires include_batch_in_index "
+             "to be True when when input_backprop != nullptr"));
+   }
++  if (tensor_in.NumElements() == 0 || output->NumElements() == 0) return;
+ 
+   typedef Eigen::Map<const Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic>>
+       ConstEigenMatrixMap;
+@@ -924,6 +925,10 @@ class MaxPoolingWithArgmaxOp : public OpKernel {
+ 
+   void Compute(OpKernelContext* context) override {
+     const Tensor& tensor_in = context->input(0);
++    OP_REQUIRES(context, tensor_in.dims() == 4,
++                errors::InvalidArgument("tensor_in must be 4-dimensional (2)"));
++    OP_REQUIRES(context, tensor_in.NumElements() > 0,
++                errors::InvalidArgument("tensor_in must not be empty (2)"));
+ 
+     PoolParameters params{context,  ksize_,      stride_,
+                           padding_, FORMAT_NHWC, tensor_in.shape()};
+diff --git a/tensorflow/core/kernels/pooling_ops_common.cc b/tensorflow/core/kernels/pooling_ops_common.cc
+index 4bd710546f..59fbe88364 100644
+--- a/tensorflow/core/kernels/pooling_ops_common.cc
++++ b/tensorflow/core/kernels/pooling_ops_common.cc
+@@ -96,6 +96,8 @@ PoolParameters::PoolParameters(OpKernelContext* context,
+     pad_depth = 0;
+     out_depth = depth;
+   } else {
++    OP_REQUIRES(context, depth_window > 0,
++                errors::InvalidArgument("depth_window must not be 0"));
+     // Our current version of depthwise max pooling does not support
+     // any padding, and expects the depth_window to equal the
+     // depth_stride (no overlapping).
+
+tokens used
+input: 1,746
+cache read: 12,800
+cache write: 0
+output: 105
+reasoning output: 0
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target code for maxpooling_op.cc and pooling_ops_common.cc equivalents",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate uncertain hunks against target base",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply minimal backport changes",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Review resulting diff",
+      "status": "completed",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target code for maxpooling_op.cc and pooling_ops_common.cc equivalents",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate uncertain hunks against target base",
+    "status": "completed",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply minimal backport changes",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Review resulting diff",
+    "status": "completed",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 1,394
+cache read: 13,824
+cache write: 0
+output: 96
+reasoning output: 13
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/kernels/maxpooling_op.cc b/tensorflow/core/kernels/maxpooling_op.cc
+    index 7accd1a820..adfde78809 100644
+    --- a/tensorflow/core/kernels/maxpooling_op.cc
+    +++ b/tensorflow/core/kernels/maxpooling_op.cc
+    @@ -68,6 +68,7 @@ static void SpatialMaxPoolWithArgMaxHelper(
+                 "SpatialMaxPoolWithArgMaxHelper requires include_batch_in_index "
+                 "to be True when when input_backprop != nullptr"));
+       }
+    +  if (tensor_in.NumElements() == 0 || output->NumElements() == 0) return;
+     
+       typedef Eigen::Map<const Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic>>
+           ConstEigenMatrixMap;
+    @@ -924,6 +925,10 @@ class MaxPoolingWithArgmaxOp : public OpKernel {
+     
+       void Compute(OpKernelContext* context) override {
+         const Tensor& tensor_in = context->input(0);
+    +    OP_REQUIRES(context, tensor_in.dims() == 4,
+    +                errors::InvalidArgument("tensor_in must be 4-dimensional (2)"));
+    +    OP_REQUIRES(context, tensor_in.NumElements() > 0,
+    +                errors::InvalidArgument("tensor_in must not be empty (2)"));
+     
+         PoolParameters params{context,  ksize_,      stride_,
+                               padding_, FORMAT_NHWC, tensor_in.shape()};
+    diff --git a/tensorflow/core/kernels/pooling_ops_common.cc b/tensorflow/core/kernels/pooling_ops_common.cc
+    index 4bd710546f..59fbe88364 100644
+    --- a/tensorflow/core/kernels/pooling_ops_common.cc
+    +++ b/tensorflow/core/kernels/pooling_ops_common.cc
+    @@ -96,6 +96,8 @@ PoolParameters::PoolParameters(OpKernelContext* context,
+         pad_depth = 0;
+         out_depth = depth;
+       } else {
+    +    OP_REQUIRES(context, depth_window > 0,
+    +                errors::InvalidArgument("depth_window must not be 0"));
+         // Our current version of depthwise max pooling does not support
+         // any padding, and expects the depth_window to equal the
+         // depth_stride (no overlapping).
+  notes: >
+    Backported the max pooling empty input/output guards and depth_window zero validation to the TensorFlow 2.3.4 target code.
+```
+
+tokens used
+input: 1,644
+cache read: 13,824
+cache write: 0
+output: 565
+reasoning output: 0

@@ -1,0 +1,528 @@
+I’ll locate the target-side `CTCLossOp` implementation, verify the hunk context against the provided source patch, then apply only the minimal validation guard.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target CTCLossOp context",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Validate equivalent hunk against target base",
+      "status": "pending",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply minimal source change",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "content": "Inspect resulting diff",
+      "status": "pending",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target CTCLossOp context",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Validate equivalent hunk against target base",
+    "status": "pending",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply minimal source change",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "content": "Inspect resulting diff",
+    "status": "pending",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 3,717
+cache read: 4,608
+cache write: 0
+output: 126
+reasoning output: 0
+
+tool: viewcode
+{
+  "ref": "47612cd69a2fdd76156360ca9102816e156f7e5c",
+  "path": "tensorflow/core/kernels/ctc_loss_op.cc",
+  "startline": 80,
+  "endline": 125
+}
+Here are lines 80 through 125.
+
+                                "len(sequence_length):  ", seq_len->dim_size(0),
+                                " batch_size: ", batch_size));
+    auto seq_len_t = seq_len->vec<int32>();
+
+    OP_REQUIRES(ctx, labels_indices->dim_size(0) == labels_values->dim_size(0),
+                errors::InvalidArgument(
+                    "labels_indices and labels_values must contain the "
+                    "same number of rows, but saw shapes: ",
+                    labels_indices->shape().DebugString(), " vs. ",
+                    labels_values->shape().DebugString()));
+
+    OP_REQUIRES(ctx, batch_size != 0,
+                errors::InvalidArgument("batch_size must not be 0"));
+
+    // Figure out the maximum label length to use as sparse tensor dimension.
+    auto labels_indices_t = labels_indices->matrix<int64>();
+    int64 max_label_len = 0;
+    for (int i = 0; i < labels_indices->dim_size(0); i++) {
+      max_label_len = std::max(max_label_len, labels_indices_t(i, 1) + 1);
+    }
+
+    TensorShape labels_shape({batch_size, max_label_len});
+    std::vector<int64> order{0, 1};
+    sparse::SparseTensor labels_sp;
+    OP_REQUIRES_OK(
+        ctx, sparse::SparseTensor::Create(*labels_indices, *labels_values,
+                                          labels_shape, order, &labels_sp));
+
+    Status labels_sp_valid = labels_sp.IndicesValid();
+    OP_REQUIRES(ctx, labels_sp_valid.ok(),
+                errors::InvalidArgument("label SparseTensor is not valid: ",
+                                        labels_sp_valid.error_message()));
+
+    typename ctc::CTCLossCalculator<T>::LabelSequences labels_t(batch_size);
+    for (const auto& g : labels_sp.group({0})) {  // iterate by batch
+      const int64 batch_indices = g.group()[0];
+      OP_REQUIRES(ctx, FastBoundsCheck(batch_indices, batch_size),
+                  errors::InvalidArgument("labels batch index must be between ",
+                                          0, " and ", batch_size,
+                                          " but saw: ", batch_indices));
+
+      auto values = g.values<int32>();
+      std::vector<int>* b_values = &labels_t[batch_indices];
+      b_values->resize(values.size());
+      for (int i = 0; i < values.size(); ++i) (*b_values)[i] = values(i);
+    }
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: locate_symbol
+{
+  "ref": "47612cd69a2fdd76156360ca9102816e156f7e5c",
+  "symbol": "CTCLossOp"
+}
+tensorflow/core/kernels/ctc_loss_op.cc:31
+tensorflow/core/kernels/ctc_loss_op.cc:40
+tensorflow/core/kernels/ctc_loss_op.cc:176
+tensorflow/core/kernels/ctc_loss_op.cc:182
+
+tokens used
+input: 904
+cache read: 7,680
+cache write: 0
+output: 121
+reasoning output: 0
+
+The vulnerable access is present in the target: `labels_indices_t(i, 1)` is used after only checking that `labels_indices` is a matrix. I’m adding the same second-dimension guard before that matrix access.
+
+tool: viewcode
+{
+  "ref": "47612cd69a2fdd76156360ca9102816e156f7e5c",
+  "path": "tensorflow/core/kernels/ctc_loss_op.cc",
+  "startline": 40,
+  "endline": 90
+}
+Here are lines 40 through 90.
+
+  explicit CTCLossOp(OpKernelConstruction* ctx) : OpKernel(ctx) {
+    OP_REQUIRES_OK(ctx, ctx->GetAttr("preprocess_collapse_repeated",
+                                     &preprocess_collapse_repeated_));
+    OP_REQUIRES_OK(ctx,
+                   ctx->GetAttr("ctc_merge_repeated", &ctc_merge_repeated_));
+    OP_REQUIRES_OK(ctx, ctx->GetAttr("ignore_longer_outputs_than_inputs",
+                                     &ignore_longer_outputs_than_inputs_));
+  }
+
+  void Compute(OpKernelContext* ctx) override {
+    const Tensor* inputs;
+    const Tensor* labels_indices;
+    const Tensor* labels_values;
+    const Tensor* seq_len;
+    OP_REQUIRES_OK(ctx, ctx->input("inputs", &inputs));
+    OP_REQUIRES_OK(ctx, ctx->input("labels_indices", &labels_indices));
+    OP_REQUIRES_OK(ctx, ctx->input("labels_values", &labels_values));
+    OP_REQUIRES_OK(ctx, ctx->input("sequence_length", &seq_len));
+
+    OP_REQUIRES(ctx, inputs->shape().dims() == 3,
+                errors::InvalidArgument("inputs is not a 3-Tensor"));
+    OP_REQUIRES(ctx, TensorShapeUtils::IsVector(seq_len->shape()),
+                errors::InvalidArgument("sequence_length is not a vector"));
+    OP_REQUIRES(ctx, TensorShapeUtils::IsMatrix(labels_indices->shape()),
+                errors::InvalidArgument("labels_indices is not a matrix"));
+    OP_REQUIRES(ctx, TensorShapeUtils::IsVector(labels_values->shape()),
+                errors::InvalidArgument("labels_values is not a vector"));
+
+    const TensorShape& inputs_shape = inputs->shape();
+    const int64 max_time = inputs_shape.dim_size(0);
+    const int64 batch_size = inputs_shape.dim_size(1);
+    const int64 num_classes_raw = inputs_shape.dim_size(2);
+    OP_REQUIRES(
+        ctx, FastBoundsCheck(num_classes_raw, std::numeric_limits<int>::max()),
+        errors::InvalidArgument("num_classes cannot exceed max int"));
+    const int num_classes = static_cast<const int>(num_classes_raw);
+
+    OP_REQUIRES(
+        ctx, batch_size == seq_len->dim_size(0),
+        errors::InvalidArgument("len(sequence_length) != batch_size.  ",
+                                "len(sequence_length):  ", seq_len->dim_size(0),
+                                " batch_size: ", batch_size));
+    auto seq_len_t = seq_len->vec<int32>();
+
+    OP_REQUIRES(ctx, labels_indices->dim_size(0) == labels_values->dim_size(0),
+                errors::InvalidArgument(
+                    "labels_indices and labels_values must contain the "
+                    "same number of rows, but saw shapes: ",
+                    labels_indices->shape().DebugString(), " vs. ",
+                    labels_values->shape().DebugString()));
+
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tokens used
+input: 1,634
+cache read: 7,680
+cache write: 0
+output: 117
+reasoning output: 9
+
+The target context matches the provided hunk directly, so the backport is a minimal source edit in `tensorflow/core/kernels/ctc_loss_op.cc`.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target CTCLossOp context",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate equivalent hunk against target base",
+      "status": "in_progress",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply minimal source change",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "content": "Inspect resulting diff",
+      "status": "pending",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target CTCLossOp context",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate equivalent hunk against target base",
+    "status": "in_progress",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply minimal source change",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "content": "Inspect resulting diff",
+    "status": "pending",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 1,387
+cache read: 8,704
+cache write: 0
+output: 125
+reasoning output: 0
+
+tool: validate
+{
+  "ref": "47612cd69a2fdd76156360ca9102816e156f7e5c",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/ctc_loss_op.cc b/tensorflow/core/kernels/ctc_loss_op.cc\n--- a/tensorflow/core/kernels/ctc_loss_op.cc\n+++ b/tensorflow/core/kernels/ctc_loss_op.cc\n@@ -60,6 +60,10 @@ class CTCLossOp : public OpKernel {\n                 errors::InvalidArgument(\"sequence_length is not a vector\"));\n     OP_REQUIRES(ctx, TensorShapeUtils::IsMatrix(labels_indices->shape()),\n                 errors::InvalidArgument(\"labels_indices is not a matrix\"));\n+    OP_REQUIRES(ctx, labels_indices->dim_size(1) > 1,\n+                errors::InvalidArgument(\n+                    \"labels_indices second dimension must be >= 1. Received \",\n+                    labels_indices->dim_size(1)));\n     OP_REQUIRES(ctx, TensorShapeUtils::IsVector(labels_values->shape()),\n                 errors::InvalidArgument(\"labels_values is not a vector\"));\n \n"
+}
+Patch applied successfully
+
+tokens used
+input: 621
+cache read: 9,728
+cache write: 0
+output: 278
+reasoning output: 9
+
+The hunk validates cleanly against the target base. Applying it now.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target CTCLossOp context",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate equivalent hunk against target base",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply minimal source change",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Inspect resulting diff",
+      "status": "pending",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target CTCLossOp context",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate equivalent hunk against target base",
+    "status": "completed",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply minimal source change",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Inspect resulting diff",
+    "status": "pending",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 921
+cache read: 9,728
+cache write: 0
+output: 108
+reasoning output: 0
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/kernels/ctc_loss_op.cc\n@@\n     OP_REQUIRES(ctx, TensorShapeUtils::IsVector(seq_len->shape()),\n                 errors::InvalidArgument(\"sequence_length is not a vector\"));\n     OP_REQUIRES(ctx, TensorShapeUtils::IsMatrix(labels_indices->shape()),\n                 errors::InvalidArgument(\"labels_indices is not a matrix\"));\n+    OP_REQUIRES(ctx, labels_indices->dim_size(1) > 1,\n+                errors::InvalidArgument(\n+                    \"labels_indices second dimension must be >= 1. Received \",\n+                    labels_indices->dim_size(1)));\n     OP_REQUIRES(ctx, TensorShapeUtils::IsVector(labels_values->shape()),\n                 errors::InvalidArgument(\"labels_values is not a vector\"));\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/kernels/ctc_loss_op.cc
+
+tokens used
+input: 6,282
+cache read: 4,608
+cache write: 0
+output: 210
+reasoning output: 0
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target CTCLossOp context",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate equivalent hunk against target base",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply minimal source change",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Inspect resulting diff",
+      "status": "in_progress",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target CTCLossOp context",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate equivalent hunk against target base",
+    "status": "completed",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply minimal source change",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Inspect resulting diff",
+    "status": "in_progress",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 377
+cache read: 10,752
+cache write: 0
+output: 86
+reasoning output: 0
+
+The source edit is applied. I’m checking the final diff to ensure no unrelated files changed.
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/kernels/ctc_loss_op.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0112-47612cd69a2f"
+}
+warning: in the working copy of 'tensorflow/core/kernels/ctc_loss_op.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/kernels/ctc_loss_op.cc b/tensorflow/core/kernels/ctc_loss_op.cc
+index 995d28a158..d31f58d5c1 100644
+--- a/tensorflow/core/kernels/ctc_loss_op.cc
++++ b/tensorflow/core/kernels/ctc_loss_op.cc
+@@ -62,6 +62,10 @@ class CTCLossOp : public OpKernel {
+                 errors::InvalidArgument("sequence_length is not a vector"));
+     OP_REQUIRES(ctx, TensorShapeUtils::IsMatrix(labels_indices->shape()),
+                 errors::InvalidArgument("labels_indices is not a matrix"));
++    OP_REQUIRES(ctx, labels_indices->dim_size(1) > 1,
++                errors::InvalidArgument(
++                    "labels_indices second dimension must be >= 1. Received ",
++                    labels_indices->dim_size(1)));
+     OP_REQUIRES(ctx, TensorShapeUtils::IsVector(labels_values->shape()),
+                 errors::InvalidArgument("labels_values is not a vector"));
+
+tokens used
+input: 596
+cache read: 10,752
+cache write: 0
+output: 98
+reasoning output: 0
+
+tool: bash
+{
+  "command": "git status --short",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0112-47612cd69a2f"
+}
+ M tensorflow/core/kernels/ctc_loss_op.cc
+
+tokens used
+input: 966
+cache read: 10,752
+cache write: 0
+output: 65
+reasoning output: 12
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target CTCLossOp context",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate equivalent hunk against target base",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply minimal source change",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Inspect resulting diff",
+      "status": "completed",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target CTCLossOp context",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate equivalent hunk against target base",
+    "status": "completed",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply minimal source change",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Inspect resulting diff",
+    "status": "completed",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 1,066
+cache read: 10,752
+cache write: 0
+output: 85
+reasoning output: 0
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/kernels/ctc_loss_op.cc b/tensorflow/core/kernels/ctc_loss_op.cc
+    index 995d28a158..d31f58d5c1 100644
+    --- a/tensorflow/core/kernels/ctc_loss_op.cc
+    +++ b/tensorflow/core/kernels/ctc_loss_op.cc
+    @@ -62,6 +62,10 @@ class CTCLossOp : public OpKernel {
+                     errors::InvalidArgument("sequence_length is not a vector"));
+         OP_REQUIRES(ctx, TensorShapeUtils::IsMatrix(labels_indices->shape()),
+                     errors::InvalidArgument("labels_indices is not a matrix"));
+    +    OP_REQUIRES(ctx, labels_indices->dim_size(1) > 1,
+    +                errors::InvalidArgument(
+    +                    "labels_indices second dimension must be >= 1. Received ",
+    +                    labels_indices->dim_size(1)));
+         OP_REQUIRES(ctx, TensorShapeUtils::IsVector(labels_values->shape()),
+                     errors::InvalidArgument("labels_values is not a vector"));
+     
+  notes: >
+    Added the missing labels_indices second-dimension validation before CTCLoss reads column 1; hunk validation succeeded against the target base.
+```
+
+tokens used
+input: 2,307
+cache read: 9,728
+cache write: 0
+output: 291
+reasoning output: 0

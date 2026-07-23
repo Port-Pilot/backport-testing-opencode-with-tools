@@ -1,0 +1,1813 @@
+I’ll map the supplied 2.5.3 patch onto the checked-out 2.5.2 sources, validate any uncertain hunk context, then apply only the corresponding security checks and tests.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target-side bincount kernel, op shape functions, and tests",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Backport scalar-rank checks and tests with minimal target-compatible edits",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "content": "Verify resulting diff and report YAML block",
+      "status": "pending",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target-side bincount kernel, op shape functions, and tests",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Backport scalar-rank checks and tests with minimal target-compatible edits",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "content": "Verify resulting diff and report YAML block",
+    "status": "pending",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 4,973
+cache read: 4,608
+cache write: 0
+output: 135
+reasoning output: 0
+
+tool: viewcode
+{
+  "ref": "8a43a83d7ccbb619f23c65188c8c5b45824d5b7c",
+  "path": "tensorflow/core/ops/math_ops.cc",
+  "startline": 1670,
+  "endline": 1795
+}
+Here are lines 1670 through 1795.
+
+    .Input("input: Tidx")
+    .Input("size: Tidx")
+    .Input("weights: T")
+    .Attr("Tidx: {int32, int64}")
+    .Attr("T: {int32, int64, float32, float64}")
+    .Attr("binary_output: bool = false")
+    .Output("output: T")
+    .SetShapeFn([](InferenceContext* c) {
+      ShapeHandle unused;
+      // The input `input` must be at most matrix.
+      TF_RETURN_IF_ERROR(c->WithRankAtMost(c->input(0), 2, &unused));
+      // The input `size` must be a scalar.
+      TF_RETURN_IF_ERROR(c->WithRank(c->input(1), 0, &unused));
+
+      const Tensor* size_tensor = c->input_tensor(1);
+      if (size_tensor == nullptr) {
+        // Return unknown shape if size is not known.
+        c->set_output(0, c->UnknownShape());
+        return Status::OK();
+      }
+
+      int64 size_val;
+      DataType dtype;
+      TF_RETURN_IF_ERROR(c->GetAttr("Tidx", &dtype));
+      if (dtype == DT_INT32) {
+        size_val = static_cast<int64>(size_tensor->scalar<int32>()());
+      } else if (dtype == DT_INT64) {
+        size_val = size_tensor->scalar<int64>()();
+      } else {
+        return errors::InvalidArgument("size dtype must be int32 or int64");
+      }
+      // Return `[size]` shape if size is known.
+      if (size_val < 0) {
+        return errors::InvalidArgument("size (", size_val,
+                                       ") must be non-negative");
+      }
+      if (c->Rank(c->input(0)) == 1) {
+        c->set_output(0, c->MakeShape({size_val}));
+      } else if (c->Rank(c->input(0)) == 2) {
+        c->set_output(0, c->MakeShape({c->Dim(c->input(0), 0), size_val}));
+      }
+      return Status::OK();
+    });
+
+REGISTER_OP("SparseBincount")
+    .Input("indices: int64")
+    .Input("values: Tidx")
+    .Input("dense_shape: int64")
+    .Input("size: Tidx")
+    .Input("weights: T")
+    .Attr("Tidx: {int32, int64}")
+    .Attr("T: {int32, int64, float32, float64}")
+    .Attr("binary_output: bool = false")
+    .Output("output: T")
+    .SetShapeFn([](InferenceContext* c) {
+      const Tensor* size_tensor = c->input_tensor(3);
+      if (size_tensor == nullptr) {
+        // Return unknown shape if size is not known.
+        c->set_output(0, c->UnknownShape());
+        return Status::OK();
+      }
+
+      int64 size_val;
+      DataType dtype;
+      TF_RETURN_IF_ERROR(c->GetAttr("Tidx", &dtype));
+      if (dtype == DT_INT32) {
+        size_val = static_cast<int64>(size_tensor->scalar<int32>()());
+      } else if (dtype == DT_INT64) {
+        size_val = size_tensor->scalar<int64>()();
+      } else {
+        return errors::InvalidArgument("size dtype must be int32 or int64");
+      }
+      // Return `[size]` shape if size is known.
+      if (size_val < 0) {
+        return errors::InvalidArgument("size (", size_val,
+                                       ") must be non-negative");
+      }
+
+      const Tensor* shape_tensor = c->input_tensor(2);
+      if (shape_tensor == nullptr) {
+        // Return unknown shape if size is not known.
+        c->set_output(0, c->UnknownShape());
+        return Status::OK();
+      }
+      if (shape_tensor->NumElements() == 1) {
+        c->set_output(0, c->MakeShape({size_val}));
+      } else if (shape_tensor->NumElements() == 2) {
+        c->set_output(0,
+                      c->MakeShape({shape_tensor->flat<int64>()(0), size_val}));
+      } else {
+        return errors::InvalidArgument("Input must be less than rank 2");
+      }
+      return Status::OK();
+    });
+
+REGISTER_OP("RaggedBincount")
+    .Input("splits: int64")
+    .Input("values: Tidx")
+    .Input("size: Tidx")
+    .Input("weights: T")
+    .Attr("Tidx: {int32, int64}")
+    .Attr("T: {int32, int64, float32, float64}")
+    .Attr("binary_output: bool = false")
+    .Output("output: T")
+    .SetShapeFn([](InferenceContext* c) {
+      c->set_output(0, c->UnknownShape());
+      return Status::OK();
+    });
+
+REGISTER_OP("Cumsum")
+    .Input("x: T")
+    .Input("axis: Tidx")
+    .Attr("exclusive: bool = false")
+    .Attr("reverse: bool = false")
+    .Output("out: T")
+    .Attr("T: numbertype")
+    .Attr("Tidx: {int32, int64} = DT_INT32")
+    .SetShapeFn(shape_inference::UnchangedShape);
+
+REGISTER_OP("Cumprod")
+    .Input("x: T")
+    .Input("axis: Tidx")
+    .Attr("exclusive: bool = false")
+    .Attr("reverse: bool = false")
+    .Output("out: T")
+    .Attr("T: numbertype")
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: viewcode
+{
+  "ref": "8a43a83d7ccbb619f23c65188c8c5b45824d5b7c",
+  "path": "tensorflow/core/kernels/bincount_op.cc",
+  "startline": 250,
+  "endline": 490
+}
+This file only has 486 lines. Here are lines 250 through 486.
+
+        OP_REQUIRES_OK(
+            ctx, functor::BincountFunctor<Device, Tidx, T, true>::Compute(
+                     ctx, data.flat<Tidx>(), weights.flat<T>(), out, size));
+      } else {
+        OP_REQUIRES_OK(
+            ctx, functor::BincountFunctor<Device, Tidx, T, false>::Compute(
+                     ctx, data.flat<Tidx>(), weights.flat<T>(), out, size));
+      }
+    } else if (data.dims() == 2) {
+      const int64 num_rows = data.dim_size(0);
+      auto weight_matrix =
+          (weights.NumElements() == 0)
+              ? weights.shaped<T, 2>(gtl::InlinedVector<int64, 2>(2, 0))
+              : weights.matrix<T>();
+      OP_REQUIRES_OK(
+          ctx, ctx->allocate_output(0, TensorShape({num_rows, size}), &out_t));
+      auto out = out_t->matrix<T>();
+      fill(ctx->eigen_device<Device>(), out_t->flat<T>());
+      if (binary_output_) {
+        OP_REQUIRES_OK(
+            ctx, functor::BincountReduceFunctor<Device, Tidx, T, true>::Compute(
+                     ctx, data.matrix<Tidx>(), weight_matrix, out, size));
+      } else {
+        OP_REQUIRES_OK(
+            ctx,
+            functor::BincountReduceFunctor<Device, Tidx, T, false>::Compute(
+                ctx, data.matrix<Tidx>(), weight_matrix, out, size));
+      }
+    }
+  }
+
+ private:
+  bool binary_output_;
+};
+
+#define REGISTER_KERNELS(Tidx, T)                            \
+  REGISTER_KERNEL_BUILDER(Name("DenseBincount")              \
+                              .Device(DEVICE_CPU)            \
+                              .TypeConstraint<T>("T")        \
+                              .TypeConstraint<Tidx>("Tidx"), \
+                          DenseBincountOp<CPUDevice, Tidx, T>);
+#define REGISTER_CPU_KERNELS(T) \
+  REGISTER_KERNELS(int32, T);   \
+  REGISTER_KERNELS(int64, T);
+
+TF_CALL_NUMBER_TYPES(REGISTER_CPU_KERNELS);
+#undef REGISTER_CPU_KERNELS
+#undef REGISTER_KERNELS
+
+#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+
+#define REGISTER_KERNELS(Tidx, T)                            \
+  REGISTER_KERNEL_BUILDER(Name("DenseBincount")              \
+                              .Device(DEVICE_GPU)            \
+                              .HostMemory("size")            \
+                              .TypeConstraint<T>("T")        \
+                              .TypeConstraint<Tidx>("Tidx"), \
+                          DenseBincountOp<GPUDevice, Tidx, T>);
+#define REGISTER_GPU_KERNELS(T) \
+  REGISTER_KERNELS(int32, T);   \
+  REGISTER_KERNELS(int64, T);
+
+TF_CALL_int32(REGISTER_GPU_KERNELS);
+TF_CALL_float(REGISTER_GPU_KERNELS);
+#undef REGISTER_GPU_KERNELS
+#undef REGISTER_KERNELS
+
+#endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+
+template <typename Device, typename Tidx, typename T>
+class SparseBincountOp : public OpKernel {
+ public:
+  explicit SparseBincountOp(OpKernelConstruction* ctx) : OpKernel(ctx) {
+    OP_REQUIRES_OK(ctx, ctx->GetAttr("binary_output", &binary_output_));
+  }
+
+  void Compute(OpKernelContext* ctx) override {
+    const Tensor& indices = ctx->input(0);
+    const auto values = ctx->input(1).flat<Tidx>();
+    const Tensor& dense_shape = ctx->input(2);
+    const Tensor& size_t = ctx->input(3);
+    const auto weights = ctx->input(4).flat<T>();
+    const int64 weights_size = weights.size();
+
+    Tidx size = size_t.scalar<Tidx>()();
+    OP_REQUIRES(
+        ctx, size >= 0,
+        errors::InvalidArgument("size (", size, ") must be non-negative"));
+
+    bool is_1d = dense_shape.NumElements() == 1;
+
+    Tensor* out_t;
+    functor::SetZeroFunctor<Device, T> fill;
+    if (is_1d) {
+      OP_REQUIRES_OK(ctx, ctx->allocate_output(0, TensorShape({size}), &out_t));
+      auto out = out_t->flat<T>();
+      fill(ctx->eigen_device<Device>(), out);
+      if (binary_output_) {
+        OP_REQUIRES_OK(ctx,
+                       functor::BincountFunctor<Device, Tidx, T, true>::Compute(
+                           ctx, values, weights, out, size));
+      } else {
+        OP_REQUIRES_OK(
+            ctx, functor::BincountFunctor<Device, Tidx, T, false>::Compute(
+                     ctx, values, weights, out, size));
+      }
+    } else {
+      const auto shape = dense_shape.flat<int64>();
+      const int64 num_rows = shape(0);
+      OP_REQUIRES_OK(
+          ctx, ctx->allocate_output(0, TensorShape({num_rows, size}), &out_t));
+      const auto out = out_t->matrix<T>();
+      fill(ctx->eigen_device<Device>(), out_t->flat<T>());
+      const auto indices_mat = indices.matrix<int64>();
+      for (int64 i = 0; i < indices_mat.dimension(0); ++i) {
+        const int64 batch = indices_mat(i, 0);
+        const Tidx bin = values(i);
+        OP_REQUIRES(
+            ctx, batch < out.dimension(0),
+            errors::InvalidArgument("Index out of bound. `batch` (", batch,
+                                    ") must be less than the dimension size (",
+                                    out.dimension(0), ")."));
+        OP_REQUIRES(
+            ctx, bin < out.dimension(1),
+            errors::InvalidArgument("Index out ouf bound. `bin` (", bin,
+                                    ") must be less then the dimension size (",
+                                    out.dimension(1), ")."));
+        if (bin < size) {
+          if (binary_output_) {
+            out(batch, bin) = T(1);
+          } else {
+            if (weights_size) {
+              out(batch, bin) += weights(i);
+            } else {
+              out(batch, bin) += T(1);
+            }
+          }
+        }
+      }
+    }
+  }
+
+ private:
+  bool binary_output_;
+};
+
+#define REGISTER_KERNELS(Tidx, T)                            \
+  REGISTER_KERNEL_BUILDER(Name("SparseBincount")             \
+                              .Device(DEVICE_CPU)            \
+                              .TypeConstraint<T>("T")        \
+                              .TypeConstraint<Tidx>("Tidx"), \
+                          SparseBincountOp<CPUDevice, Tidx, T>);
+#define REGISTER_CPU_KERNELS(T) \
+  REGISTER_KERNELS(int32, T);   \
+  REGISTER_KERNELS(int64, T);
+
+TF_CALL_NUMBER_TYPES(REGISTER_CPU_KERNELS);
+#undef REGISTER_CPU_KERNELS
+#undef REGISTER_KERNELS
+
+template <typename Device, typename Tidx, typename T>
+class RaggedBincountOp : public OpKernel {
+ public:
+  explicit RaggedBincountOp(OpKernelConstruction* ctx) : OpKernel(ctx) {
+    OP_REQUIRES_OK(ctx, ctx->GetAttr("binary_output", &binary_output_));
+  }
+
+  void Compute(OpKernelContext* ctx) override {
+    const auto splits = ctx->input(0).flat<int64>();
+    const auto values = ctx->input(1).flat<Tidx>();
+    const Tensor& size_t = ctx->input(2);
+    const auto weights = ctx->input(3).flat<T>();
+    const int64 weights_size = weights.size();
+
+    Tidx size = size_t.scalar<Tidx>()();
+    OP_REQUIRES(
+        ctx, size >= 0,
+        errors::InvalidArgument("size (", size, ") must be non-negative"));
+
+    int num_rows = splits.size() - 1;
+    int num_values = values.size();
+    int batch_idx = 0;
+
+    OP_REQUIRES(ctx, splits(0) == 0,
+                errors::InvalidArgument("Splits must start with 0, not with ",
+                                        splits(0)));
+
+    OP_REQUIRES(ctx, splits(num_rows) == num_values,
+                errors::InvalidArgument(
+                    "Splits must end with the number of values, got ",
+                    splits(num_rows), " instead of ", num_values));
+
+    Tensor* out_t;
+    OP_REQUIRES_OK(
+        ctx, ctx->allocate_output(0, TensorShape({num_rows, size}), &out_t));
+    functor::SetZeroFunctor<Device, T> fill;
+    fill(ctx->eigen_device<Device>(), out_t->flat<T>());
+    const auto out = out_t->matrix<T>();
+
+    for (int idx = 0; idx < num_values; ++idx) {
+      while (idx >= splits(batch_idx)) {
+        batch_idx++;
+      }
+      Tidx bin = values(idx);
+      OP_REQUIRES(ctx, bin >= 0,
+                  errors::InvalidArgument("Input must be non-negative"));
+      if (bin < size) {
+        if (binary_output_) {
+          out(batch_idx - 1, bin) = T(1);
+        } else {
+          T value = (weights_size > 0) ? weights(idx) : T(1);
+          out(batch_idx - 1, bin) += value;
+        }
+      }
+    }
+  }
+
+ private:
+  bool binary_output_;
+};
+
+#define REGISTER_KERNELS(Tidx, T)                            \
+  REGISTER_KERNEL_BUILDER(Name("RaggedBincount")             \
+                              .Device(DEVICE_CPU)            \
+                              .TypeConstraint<T>("T")        \
+                              .TypeConstraint<Tidx>("Tidx"), \
+                          RaggedBincountOp<CPUDevice, Tidx, T>);
+#define REGISTER_CPU_KERNELS(T) \
+  REGISTER_KERNELS(int32, T);   \
+  REGISTER_KERNELS(int64, T);
+
+TF_CALL_NUMBER_TYPES(REGISTER_CPU_KERNELS);
+#undef REGISTER_CPU_KERNELS
+#undef REGISTER_KERNELS
+
+}  // end namespace tensorflow
+
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: viewcode
+{
+  "ref": "8a43a83d7ccbb619f23c65188c8c5b45824d5b7c",
+  "path": "tensorflow/python/kernel_tests/math_ops/bincount_op_test.py",
+  "startline": 320,
+  "endline": 690
+}
+This file doesn't exist in this commit.
+
+tokens used
+input: 1,133
+cache read: 8,704
+cache write: 0
+output: 209
+reasoning output: 0
+
+The target kernel and op definitions are present, but the Python test path from 2.5.3 does not exist in this 2.5.2 checkout. I’m locating the equivalent bincount tests before editing.
+
+tool: glob
+{
+  "pattern": "tensorflow/python/**/*bincount*_test.py"
+}
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0059-8a43a83d7ccb\tensorflow\python\ops\bincount_ops_test.py
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0059-8a43a83d7ccb\tensorflow\python\kernel_tests\bincount_op_test.py
+
+tool: viewcode
+{
+  "ref": "8a43a83d7ccbb619f23c65188c8c5b45824d5b7c",
+  "path": "tensorflow/core/kernels/bincount_op.cc",
+  "startline": 170,
+  "endline": 250
+}
+Here are lines 170 through 250.
+
+template <typename Device, typename T>
+class BincountOp : public OpKernel {
+ public:
+  explicit BincountOp(OpKernelConstruction* ctx) : OpKernel(ctx) {}
+
+  void Compute(OpKernelContext* ctx) override {
+    const Tensor& arr_t = ctx->input(0);
+    const Tensor& size_tensor = ctx->input(1);
+    OP_REQUIRES(ctx, size_tensor.dims() == 0,
+                errors::InvalidArgument("Shape must be rank 0 but is rank ",
+                                        size_tensor.dims()));
+    int32 size = size_tensor.scalar<int32>()();
+    OP_REQUIRES(
+        ctx, size >= 0,
+        errors::InvalidArgument("size (", size, ") must be non-negative"));
+
+    const Tensor& weights_t = ctx->input(2);
+    const auto arr = arr_t.flat<int32>();
+    const auto weights = weights_t.flat<T>();
+    Tensor* output_t;
+    OP_REQUIRES_OK(ctx,
+                   ctx->allocate_output(0, TensorShape({size}), &output_t));
+    auto output = output_t->flat<T>();
+    OP_REQUIRES_OK(ctx,
+                   functor::BincountFunctor<Device, int32, T, false>::Compute(
+                       ctx, arr, weights, output, size));
+  }
+};
+
+#define REGISTER_KERNELS(type)                                       \
+  REGISTER_KERNEL_BUILDER(                                           \
+      Name("Bincount").Device(DEVICE_CPU).TypeConstraint<type>("T"), \
+      BincountOp<CPUDevice, type>)
+
+TF_CALL_NUMBER_TYPES(REGISTER_KERNELS);
+#undef REGISTER_KERNELS
+
+#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+
+#define REGISTER_KERNELS(type)                            \
+  REGISTER_KERNEL_BUILDER(Name("Bincount")                \
+                              .Device(DEVICE_GPU)         \
+                              .HostMemory("size")         \
+                              .TypeConstraint<type>("T"), \
+                          BincountOp<GPUDevice, type>)
+
+TF_CALL_int32(REGISTER_KERNELS);
+TF_CALL_float(REGISTER_KERNELS);
+#undef REGISTER_KERNELS
+
+#endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+
+template <typename Device, typename Tidx, typename T>
+class DenseBincountOp : public OpKernel {
+ public:
+  explicit DenseBincountOp(OpKernelConstruction* ctx) : OpKernel(ctx) {
+    OP_REQUIRES_OK(ctx, ctx->GetAttr("binary_output", &binary_output_));
+  }
+
+  void Compute(OpKernelContext* ctx) override {
+    const Tensor& data = ctx->input(0);
+    OP_REQUIRES(ctx, data.dims() <= 2,
+                errors::InvalidArgument(
+                    "Shape must be at most rank 2 but is rank ", data.dims()));
+
+    const Tensor& size_t = ctx->input(1);
+    const Tensor& weights = ctx->input(2);
+
+    Tidx size = size_t.scalar<Tidx>()();
+    OP_REQUIRES(
+        ctx, size >= 0,
+        errors::InvalidArgument("size (", size, ") must be non-negative"));
+
+    Tensor* out_t;
+    functor::SetZeroFunctor<Device, T> fill;
+    if (data.dims() == 1) {
+      OP_REQUIRES_OK(ctx, ctx->allocate_output(0, TensorShape({size}), &out_t));
+      auto out = out_t->flat<T>();
+      fill(ctx->eigen_device<Device>(), out);
+      if (binary_output_) {
+        OP_REQUIRES_OK(
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: grep
+{
+  "pattern": "class .*BincountOpTest|dense_bincount|sparse_bincount|ragged_bincount",
+  "path": "tensorflow/python",
+  "include": "*.py"
+}
+Found 62 matches
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0059-8a43a83d7ccb\tensorflow\python\ops\bincount_ops_test.py:
+  Line 159:     y = bincount_ops.sparse_bincount(
+
+  Line 357:     y = bincount_ops.sparse_bincount(
+
+  Line 504:     y = bincount_ops.sparse_bincount(
+
+  Line 754:       self.evaluate(bincount_ops.sparse_bincount(x, weights=weights, axis=-1))
+
+  Line 760:       self.evaluate(bincount_ops.sparse_bincount(x, weights=weights, axis=-1))
+
+  Line 771:         self.evaluate(bincount_ops.sparse_bincount(x, weights=weights, axis=-1))
+
+  Line 774:         self.evaluate(bincount_ops.sparse_bincount(x, weights=weights, axis=-1))
+
+  Line 781:       self.evaluate(bincount_ops.sparse_bincount(x, weights=weights, axis=-1))
+
+  Line 788:       self.evaluate(bincount_ops.sparse_bincount(x, weights=weights, axis=-1))
+
+  Line 797:       self.evaluate(bincount_ops.sparse_bincount(x, weights=weights, axis=-1))
+
+  Line 805:       self.evaluate(bincount_ops.sparse_bincount(x, weights=weights, axis=-1))
+
+  Line 815:       self.evaluate(bincount_ops.sparse_bincount(x, weights=weights, axis=-1))
+
+  Line 821:       self.evaluate(bincount_ops.sparse_bincount(x, weights=weights, axis=-1))
+
+  Line 828:       self.evaluate(bincount_ops.sparse_bincount(x, weights=weights, axis=-1))
+
+  Line 835:       self.evaluate(bincount_ops.sparse_bincount(x, weights=weights, axis=-1))
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0059-8a43a83d7ccb\tensorflow\python\ops\bincount_ops.py:
+  Line 197:       return gen_math_ops.sparse_bincount(
+
+  Line 206:       return gen_math_ops.ragged_bincount(
+
+  Line 214:       return gen_math_ops.dense_bincount(
+
+  Line 255: def sparse_bincount(values,
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0059-8a43a83d7ccb\tensorflow\python\keras\layers\preprocessing\index_lookup.py:
+  Line 617:       bincounts = category_encoding.sparse_bincount(lookup_result, out_depth,
+
+  Line 620:       bincounts = category_encoding.dense_bincount(lookup_result, out_depth,
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0059-8a43a83d7ccb\tensorflow\python\keras\layers\preprocessing\category_encoding.py:
+  Line 179:       return sparse_bincount(inputs, out_depth, binary_output, count_weights)
+
+  Line 181:       return dense_bincount(inputs, out_depth, binary_output, count_weights)
+
+  Line 184: def sparse_bincount(inputs, out_depth, binary_output, count_weights=None):
+
+  Line 186:   result = bincount_ops.sparse_bincount(
+
+  Line 202: def dense_bincount(inputs, out_depth, binary_output, count_weights=None):
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0059-8a43a83d7ccb\tensorflow\python\kernel_tests\bincount_op_test.py:
+  Line 142: class BincountOpTest(test_util.TensorFlowTestCase, parameterized.TestCase):
+
+  Line 158:               gen_math_ops.dense_bincount(input=inp, weights=[], size=size)))
+
+  Line 175:               gen_math_ops.dense_bincount(
+
+  Line 192:               gen_math_ops.dense_bincount(
+
+  Line 210:               gen_math_ops.dense_bincount(
+
+  Line 224:               gen_math_ops.dense_bincount(input=inp, weights=[], size=size)))
+
+  Line 239:               gen_math_ops.dense_bincount(
+
+  Line 257:               gen_math_ops.dense_bincount(
+
+  Line 263:           gen_math_ops.dense_bincount(
+
+  Line 332:             gen_math_ops.dense_bincount(
+
+  Line 336: class SparseBincountOpTest(test_util.TensorFlowTestCase,
+
+  Line 344:   def test_sparse_bincount_all_count(self, dtype):
+
+  Line 356:             gen_math_ops.sparse_bincount(
+
+  Line 368:   def test_sparse_bincount_all_count_with_weights(self, dtype):
+
+  Line 381:             gen_math_ops.sparse_bincount(
+
+  Line 393:   def test_sparse_bincount_all_binary(self, dtype):
+
+  Line 405:             gen_math_ops.sparse_bincount(
+
+  Line 418:   def test_sparse_bincount_all_binary_weights(self, dtype):
+
+  Line 431:             gen_math_ops.sparse_bincount(
+
+  Line 444:   def test_sparse_bincount_col_reduce_count(self, dtype):
+
+  Line 462:             gen_math_ops.sparse_bincount(
+
+  Line 474:   def test_sparse_bincount_col_reduce_binary(self, dtype):
+
+  Line 494:             gen_math_ops.sparse_bincount(
+
+  Line 503: class RaggedBincountOpTest(test_util.TensorFlowTestCase,
+
+  Line 511:   def test_ragged_bincount_count(self, dtype):
+
+  Line 519:             gen_math_ops.ragged_bincount(
+
+  Line 527:   def test_ragged_bincount_binary(self, dtype):
+
+  Line 535:             gen_math_ops.ragged_bincount(
+
+  Line 547:   def test_ragged_bincount_count_with_weights(self, dtype):
+
+  Line 557:             gen_math_ops.ragged_bincount(
+
+  Line 568:   def test_ragged_bincount_count_np(self, dtype):
+
+  Line 582:             gen_math_ops.ragged_bincount(
+
+  Line 590:   def test_ragged_bincount_count_np_with_weights(self, dtype):
+
+  Line 607:             gen_math_ops.ragged_bincount(
+
+  Line 618:   def test_ragged_bincount_binary_np_with_weights(self, dtype):
+
+  Line 634:             gen_math_ops.ragged_bincount(
+
+tokens used
+input: 3,760
+cache read: 9,728
+cache write: 0
+output: 204
+reasoning output: 11
+
+tool: viewcode
+{
+  "ref": "8a43a83d7ccbb619f23c65188c8c5b45824d5b7c",
+  "path": "tensorflow/core/ops/math_ops.cc",
+  "startline": 1620,
+  "endline": 1675
+}
+Here are lines 1620 through 1675.
+
+          c->WithValue(c->Dim(value_range_shape, 0), 2, &unused));
+      // nbins should be a scalar.
+      ShapeHandle nbins_shape;
+      TF_RETURN_IF_ERROR(c->WithRank(c->input(2), 0, &nbins_shape));
+
+      // If nbins is available, set the shape from nbins.
+      const Tensor* nbins_input = c->input_tensor(2);
+      if (nbins_input != nullptr) {
+        int64 nbins;
+        TF_RETURN_IF_ERROR(c->GetScalarFromTensor(nbins_input, &nbins));
+        // nbins has to be positive.
+        if (nbins <= 0) {
+          return errors::InvalidArgument("Requires nbins > 0: ", nbins);
+        }
+        c->set_output(0, c->Vector(nbins));
+      } else {
+        c->set_output(0, c->UnknownShapeOfRank(1));
+      }
+      return Status::OK();
+    });
+
+REGISTER_OP("Bincount")
+    .Input("arr: int32")
+    .Input("size: int32")
+    .Input("weights: T")
+    .Attr("T: {int32, int64, float32, float64}")
+    .Output("bins: T")
+    .SetShapeFn([](InferenceContext* c) {
+      ShapeHandle unused;
+      // The input `size` must be a scalar.
+      TF_RETURN_IF_ERROR(c->WithRank(c->input(1), 0, &unused));
+
+      const Tensor* size_tensor = c->input_tensor(1);
+      if (size_tensor == nullptr) {
+        // Return unknown shape if size is not known.
+        c->set_output(0, c->UnknownShapeOfRank(1));
+        return Status::OK();
+      }
+
+      // Return `[size]` shape if size is known.
+      int32 size_val = size_tensor->scalar<int32>()();
+      if (size_val < 0) {
+        return errors::InvalidArgument("size (", size_val,
+                                       ") must be non-negative");
+      }
+      c->set_output(0, c->MakeShape({size_val}));
+      return Status::OK();
+    });
+
+REGISTER_OP("DenseBincount")
+    .Input("input: Tidx")
+    .Input("size: Tidx")
+    .Input("weights: T")
+    .Attr("Tidx: {int32, int64}")
+    .Attr("T: {int32, int64, float32, float64}")
+    .Attr("binary_output: bool = false")
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: viewcode
+{
+  "ref": "8a43a83d7ccbb619f23c65188c8c5b45824d5b7c",
+  "path": "tensorflow/python/kernel_tests/bincount_op_test.py",
+  "startline": 1,
+  "endline": 680
+}
+This file only has 644 lines. Here are lines 1 through 644.
+
+# Copyright 2016 The TensorFlow Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+"""Tests for bincount_ops.bincount."""
+from __future__ import absolute_import
+from __future__ import division
+from __future__ import print_function
+
+from absl.testing import parameterized
+import numpy as np
+
+from tensorflow.python.framework import dtypes
+from tensorflow.python.framework import errors
+from tensorflow.python.framework import ops
+from tensorflow.python.framework import test_util
+from tensorflow.python.ops import array_ops
+from tensorflow.python.ops import bincount_ops
+from tensorflow.python.ops import gen_math_ops
+from tensorflow.python.ops import sparse_ops
+from tensorflow.python.ops.ragged import ragged_factory_ops
+from tensorflow.python.ops.ragged import ragged_tensor
+from tensorflow.python.platform import googletest
+
+
+class BincountTest(test_util.TensorFlowTestCase):
+
+  def test_empty(self):
+    with self.session():
+      self.assertAllEqual(
+          self.evaluate(bincount_ops.bincount([], minlength=5)),
+          [0, 0, 0, 0, 0])
+      self.assertAllEqual(
+          self.evaluate(bincount_ops.bincount([], minlength=1)), [0])
+      self.assertAllEqual(
+          self.evaluate(bincount_ops.bincount([], minlength=0)), [])
+      self.assertEqual(
+          self.evaluate(
+              bincount_ops.bincount([], minlength=0, dtype=np.float32)).dtype,
+          np.float32)
+      self.assertEqual(
+          self.evaluate(
+              bincount_ops.bincount([], minlength=3, dtype=np.float64)).dtype,
+          np.float64)
+
+  def test_values(self):
+    with self.session():
+      self.assertAllEqual(
+          self.evaluate(bincount_ops.bincount([1, 1, 1, 2, 2, 3])),
+          [0, 3, 2, 1])
+      arr = [1, 1, 2, 1, 2, 3, 1, 2, 3, 4, 1, 2, 3, 4, 5]
+      self.assertAllEqual(
+          self.evaluate(bincount_ops.bincount(arr)), [0, 5, 4, 3, 2, 1])
+      arr += [0, 0, 0, 0, 0, 0]
+      self.assertAllEqual(
+          self.evaluate(bincount_ops.bincount(arr)), [6, 5, 4, 3, 2, 1])
+
+      self.assertAllEqual(self.evaluate(bincount_ops.bincount([])), [])
+      self.assertAllEqual(self.evaluate(bincount_ops.bincount([0, 0, 0])), [3])
+      self.assertAllEqual(
+          self.evaluate(bincount_ops.bincount([5])), [0, 0, 0, 0, 0, 1])
+      self.assertAllEqual(
+          self.evaluate(bincount_ops.bincount(np.arange(10000))),
+          np.ones(10000))
+
+  def test_maxlength(self):
+    with self.session():
+      self.assertAllEqual(
+          self.evaluate(bincount_ops.bincount([5], maxlength=3)), [0, 0, 0])
+      self.assertAllEqual(
+          self.evaluate(bincount_ops.bincount([1], maxlength=3)), [0, 1])
+      self.assertAllEqual(
+          self.evaluate(bincount_ops.bincount([], maxlength=3)), [])
+
+  def test_random_with_weights(self):
+    num_samples = 10000
+    with self.session():
+      np.random.seed(42)
+      for dtype in [dtypes.int32, dtypes.int64, dtypes.float32, dtypes.float64]:
+        arr = np.random.randint(0, 1000, num_samples)
+        if dtype == dtypes.int32 or dtype == dtypes.int64:
+          weights = np.random.randint(-100, 100, num_samples)
+        else:
+          weights = np.random.random(num_samples)
+        self.assertAllClose(
+            self.evaluate(bincount_ops.bincount(arr, weights)),
+            np.bincount(arr, weights))
+
+  def test_random_without_weights(self):
+    num_samples = 10000
+    with self.session():
+      np.random.seed(42)
+      for dtype in [np.int32, np.float32]:
+        arr = np.random.randint(0, 1000, num_samples)
+        weights = np.ones(num_samples).astype(dtype)
+        self.assertAllClose(
+            self.evaluate(bincount_ops.bincount(arr, None)),
+            np.bincount(arr, weights))
+
+  def test_zero_weights(self):
+    with self.session():
+      self.assertAllEqual(
+          self.evaluate(bincount_ops.bincount(np.arange(1000), np.zeros(1000))),
+          np.zeros(1000))
+
+  def test_negative(self):
+    # unsorted_segment_sum will only report InvalidArgumentError on CPU
+    with self.cached_session(), ops.device("/CPU:0"):
+      with self.assertRaises(errors.InvalidArgumentError):
+        self.evaluate(bincount_ops.bincount([1, 2, 3, -1, 6, 8]))
+
+  def test_shape_function(self):
+    # size must be scalar.
+    with self.assertRaisesRegex(
+        (ValueError, errors.InvalidArgumentError),
+        "Shape must be rank 0 but is rank 1 .*Bincount"):
+      gen_math_ops.bincount([1, 2, 3, 1, 6, 8], [1], [])
+    # size must be positive.
+    with self.assertRaisesRegex((ValueError, errors.InvalidArgumentError),
+                                "must be non-negative"):
+      gen_math_ops.bincount([1, 2, 3, 1, 6, 8], -5, [])
+    # if size is a constant then the shape is known.
+    v1 = gen_math_ops.bincount([1, 2, 3, 1, 6, 8], 5, [])
+    self.assertAllEqual(v1.get_shape().as_list(), [5])
+    # if size is a placeholder then the shape is unknown.
+    with ops.Graph().as_default():
+      s = array_ops.placeholder(dtype=dtypes.int32)
+      v2 = gen_math_ops.bincount([1, 2, 3, 1, 6, 8], s, [])
+      self.assertAllEqual(v2.get_shape().as_list(), [None])
+
+
+class BincountOpTest(test_util.TensorFlowTestCase, parameterized.TestCase):
+
+  @parameterized.parameters([{
+      "dtype": np.int32,
+  }, {
+      "dtype": np.int64,
+  }])
+  def test_bincount_all_count(self, dtype):
+    np.random.seed(42)
+    size = 1000
+    inp = np.random.randint(0, size, (4096), dtype=dtype)
+    np_out = np.bincount(inp, minlength=size)
+    with test_util.use_gpu():
+      self.assertAllEqual(
+          np_out,
+          self.evaluate(
+              gen_math_ops.dense_bincount(input=inp, weights=[], size=size)))
+
+  @parameterized.parameters([{
+      "dtype": np.int32,
+  }, {
+      "dtype": np.int64,
+  }])
+  def test_bincount_all_count_with_weights(self, dtype):
+    np.random.seed(42)
+    size = 1000
+    inp = np.random.randint(0, size, (4096,), dtype=dtype)
+    np_weight = np.random.random((4096,))
+    np_out = np.bincount(inp, minlength=size, weights=np_weight)
+    with test_util.use_gpu():
+      self.assertAllEqual(
+          np_out,
+          self.evaluate(
+              gen_math_ops.dense_bincount(
+                  input=inp, weights=np_weight, size=size)))
+
+  @parameterized.parameters([{
+      "dtype": np.int32,
+  }, {
+      "dtype": np.int64,
+  }])
+  def test_bincount_all_binary(self, dtype):
+    np.random.seed(42)
+    size = 10
+    inp = np.random.randint(0, size, (4096), dtype=dtype)
+    np_out = np.ones((size,))
+    with test_util.use_gpu():
+      self.assertAllEqual(
+          np_out,
+          self.evaluate(
+              gen_math_ops.dense_bincount(
+                  input=inp, weights=[], size=size, binary_output=True)))
+
+  @parameterized.parameters([{
+      "dtype": np.int32,
+  }, {
+      "dtype": np.int64,
+  }])
+  def test_bincount_all_binary_with_weights(self, dtype):
+    np.random.seed(42)
+    size = 10
+    inp = np.random.randint(0, size, (4096,), dtype=dtype)
+    np_weight = np.random.random((4096,))
+    np_out = np.ones((size,))
+    with test_util.use_gpu():
+      self.assertAllEqual(
+          np_out,
+          self.evaluate(
+              gen_math_ops.dense_bincount(
+                  input=inp, weights=np_weight, size=size, binary_output=True)))
+
+  def _test_bincount_col_count(self, num_rows, num_cols, size, dtype):
+    np.random.seed(42)
+    inp = np.random.randint(0, size, (num_rows, num_cols), dtype=dtype)
+    np_out = np.reshape(
+        np.concatenate(
+            [np.bincount(inp[j, :], minlength=size) for j in range(num_rows)],
+            axis=0), (num_rows, size))
+    with test_util.use_gpu():
+      self.assertAllEqual(
+          np_out,
+          self.evaluate(
+              gen_math_ops.dense_bincount(input=inp, weights=[], size=size)))
+
+  def _test_bincount_col_binary(self, num_rows, num_cols, size, dtype):
+    np.random.seed(42)
+    inp = np.random.randint(0, size, (num_rows, num_cols), dtype=dtype)
+    np_out = np.reshape(
+        np.concatenate([
+            np.where(np.bincount(inp[j, :], minlength=size) > 0, 1, 0)
+            for j in range(num_rows)
+        ],
+                       axis=0), (num_rows, size))
+    with test_util.use_gpu():
+      self.assertAllEqual(
+          np_out,
+          self.evaluate(
+              gen_math_ops.dense_bincount(
+                  input=inp, weights=[], size=size, binary_output=True)))
+
+  def _test_bincount_col_count_with_weights(self, num_rows, num_cols, size,
+                                            dtype):
+    np.random.seed(42)
+    inp = np.random.randint(0, size, (num_rows, num_cols), dtype=dtype)
+    np_weight = np.random.random((num_rows, num_cols))
+    np_out = np.reshape(
+        np.concatenate([
+            np.bincount(inp[j, :], weights=np_weight[j, :], minlength=size)
+            for j in range(num_rows)
+        ],
+                       axis=0), (num_rows, size))
+    with test_util.use_gpu():
+      self.assertAllEqual(
+          np_out,
+          self.evaluate(
+              gen_math_ops.dense_bincount(
+                  input=inp, weights=np_weight, size=size)))
+
+  def test_col_reduce_basic(self):
+    with test_util.use_gpu():
+      v = self.evaluate(
+          gen_math_ops.dense_bincount(
+              input=[[1, 2, 3], [0, 3, 2]], weights=[], size=4))
+    expected_out = [[0., 1., 1., 1.], [1., 0., 1., 1.]]
+    self.assertAllEqual(expected_out, v)
+
+  @parameterized.parameters([{
+      "dtype": np.int32,
+  }, {
+      "dtype": np.int64,
+  }])
+  def test_col_reduce_shared_memory(self, dtype):
+    # num_rows * num_bins less than half of max shared memory.
+    num_rows = 128
+    num_cols = 27
+    size = 10
+    self._test_bincount_col_count(num_rows, num_cols, size, dtype)
+
+  @parameterized.parameters([{
+      "dtype": np.int32,
+  }, {
+      "dtype": np.int64,
+  }])
+  def test_col_reduce_global_memory(self, dtype):
+    # num_rows * num_bins more than half of max shared memory.
+    num_rows = 128
+    num_cols = 27
+    size = 1024
+    self._test_bincount_col_count(num_rows, num_cols, size, dtype)
+
+  @parameterized.parameters([{
+      "dtype": np.int32,
+  }, {
+      "dtype": np.int64,
+  }])
+  def test_col_reduce_shared_memory_with_weights(self, dtype):
+    # num_rows * num_bins less than half of max shared memory.
+    num_rows = 128
+    num_cols = 27
+    size = 100
+    self._test_bincount_col_count_with_weights(num_rows, num_cols, size, dtype)
+
+  @parameterized.parameters([{
+      "dtype": np.int32,
+  }, {
+      "dtype": np.int64,
+  }])
+  def test_col_reduce_global_memory_with_weights(self, dtype):
+    # num_rows * num_bins more than half of max shared memory.
+    num_rows = 128
+    num_cols = 27
+    size = 1024
+    self._test_bincount_col_count_with_weights(num_rows, num_cols, size, dtype)
+
+  @parameterized.parameters([{
+      "dtype": np.int32,
+  }, {
+      "dtype": np.int64,
+  }])
+  def test_col_reduce_binary(self, dtype):
+    num_rows = 128
+    num_cols = 7
+    size = 10
+    self._test_bincount_col_binary(num_rows, num_cols, size, dtype)
+
+  def test_invalid_rank(self):
+    with self.assertRaisesRegex((ValueError, errors.InvalidArgumentError),
+                                "at most rank 2"):
+      with test_util.use_gpu():
+        self.evaluate(
+            gen_math_ops.dense_bincount(
+                input=[[[1, 2, 3], [0, 3, 2]]], weights=[], size=10))
+
+
+class SparseBincountOpTest(test_util.TensorFlowTestCase,
+                           parameterized.TestCase):
+
+  @parameterized.parameters([{
+      "dtype": np.int32,
+  }, {
+      "dtype": np.int64,
+  }])
+  def test_sparse_bincount_all_count(self, dtype):
+    np.random.seed(42)
+    num_rows = 128
+    size = 1000
+    n_elems = 4096
+    inp_indices = np.random.randint(0, num_rows, (n_elems,))
+    inp_vals = np.random.randint(0, size, (n_elems,), dtype=dtype)
+
+    np_out = np.bincount(inp_vals, minlength=size)
+    self.assertAllEqual(
+        np_out,
+        self.evaluate(
+            gen_math_ops.sparse_bincount(
+                indices=inp_indices,
+                values=inp_vals,
+                dense_shape=[num_rows],
+                size=size,
+                weights=[])))
+
+  @parameterized.parameters([{
+      "dtype": np.int32,
+  }, {
+      "dtype": np.int64,
+  }])
+  def test_sparse_bincount_all_count_with_weights(self, dtype):
+    np.random.seed(42)
+    num_rows = 128
+    size = 1000
+    n_elems = 4096
+    inp_indices = np.random.randint(0, num_rows, (n_elems,))
+    inp_vals = np.random.randint(0, size, (n_elems,), dtype=dtype)
+    inp_weight = np.random.random((n_elems,))
+
+    np_out = np.bincount(inp_vals, minlength=size, weights=inp_weight)
+    self.assertAllEqual(
+        np_out,
+        self.evaluate(
+            gen_math_ops.sparse_bincount(
+                indices=inp_indices,
+                values=inp_vals,
+                dense_shape=[num_rows],
+                size=size,
+                weights=inp_weight)))
+
+  @parameterized.parameters([{
+      "dtype": np.int32,
+  }, {
+      "dtype": np.int64,
+  }])
+  def test_sparse_bincount_all_binary(self, dtype):
+    np.random.seed(42)
+    num_rows = 128
+    size = 10
+    n_elems = 4096
+    inp_indices = np.random.randint(0, num_rows, (n_elems,))
+    inp_vals = np.random.randint(0, size, (n_elems,), dtype=dtype)
+
+    np_out = np.ones((size,))
+    self.assertAllEqual(
+        np_out,
+        self.evaluate(
+            gen_math_ops.sparse_bincount(
+                indices=inp_indices,
+                values=inp_vals,
+                dense_shape=[num_rows],
+                size=size,
+                weights=[],
+                binary_output=True)))
+
+  @parameterized.parameters([{
+      "dtype": np.int32,
+  }, {
+      "dtype": np.int64,
+  }])
+  def test_sparse_bincount_all_binary_weights(self, dtype):
+    np.random.seed(42)
+    num_rows = 128
+    size = 10
+    n_elems = 4096
+    inp_indices = np.random.randint(0, num_rows, (n_elems,))
+    inp_vals = np.random.randint(0, size, (n_elems,), dtype=dtype)
+    inp_weight = np.random.random((n_elems,))
+
+    np_out = np.ones((size,))
+    self.assertAllEqual(
+        np_out,
+        self.evaluate(
+            gen_math_ops.sparse_bincount(
+                indices=inp_indices,
+                values=inp_vals,
+                dense_shape=[num_rows],
+                size=size,
+                weights=inp_weight,
+                binary_output=True)))
+
+  @parameterized.parameters([{
+      "dtype": np.int32,
+  }, {
+      "dtype": np.int64,
+  }])
+  def test_sparse_bincount_col_reduce_count(self, dtype):
+    num_rows = 128
+    num_cols = 27
+    size = 100
+    np.random.seed(42)
+    inp = np.random.randint(0, size, (num_rows, num_cols), dtype=dtype)
+    np_out = np.reshape(
+        np.concatenate(
+            [np.bincount(inp[j, :], minlength=size) for j in range(num_rows)],
+            axis=0), (num_rows, size))
+    # from_dense will filter out 0s.
+    inp = inp + 1
+    # from_dense will cause OOM in GPU.
+    with ops.device("/CPU:0"):
+      inp_sparse = sparse_ops.from_dense(inp)
+    self.assertAllEqual(
+        np_out,
+        self.evaluate(
+            gen_math_ops.sparse_bincount(
+                indices=inp_sparse.indices,
+                values=inp_sparse.values - 1,
+                dense_shape=inp_sparse.dense_shape,
+                size=size,
+                weights=[])))
+
+  @parameterized.parameters([{
+      "dtype": np.int32,
+  }, {
+      "dtype": np.int64,
+  }])
+  def test_sparse_bincount_col_reduce_binary(self, dtype):
+    num_rows = 128
+    num_cols = 27
+    size = 100
+    np.random.seed(42)
+    inp = np.random.randint(0, size, (num_rows, num_cols), dtype=dtype)
+    np_out = np.reshape(
+        np.concatenate([
+            np.where(np.bincount(inp[j, :], minlength=size) > 0, 1, 0)
+            for j in range(num_rows)
+        ],
+                       axis=0), (num_rows, size))
+    # from_dense will filter out 0s.
+    inp = inp + 1
+    # from_dense will cause OOM in GPU.
+    with ops.device("/CPU:0"):
+      inp_sparse = sparse_ops.from_dense(inp)
+    self.assertAllEqual(
+        np_out,
+        self.evaluate(
+            gen_math_ops.sparse_bincount(
+                indices=inp_sparse.indices,
+                values=inp_sparse.values - 1,
+                dense_shape=inp_sparse.dense_shape,
+                size=size,
+                weights=[],
+                binary_output=True)))
+
+
+class RaggedBincountOpTest(test_util.TensorFlowTestCase,
+                           parameterized.TestCase):
+
+  @parameterized.parameters([{
+      "dtype": np.int32,
+  }, {
+      "dtype": np.int64,
+  }])
+  def test_ragged_bincount_count(self, dtype):
+    x = ragged_factory_ops.constant([[], [], [3, 0, 1], [], [5, 0, 4, 4]])
+    expected_output = [[0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0,
+                                            0], [1, 1, 0, 1, 0, 0],
+                       [0, 0, 0, 0, 0, 0], [1, 0, 0, 0, 2, 1]]
+    self.assertAllEqual(
+        expected_output,
+        self.evaluate(
+            gen_math_ops.ragged_bincount(
+                splits=x.row_splits, values=x.values, weights=[], size=6)))
+
+  @parameterized.parameters([{
+      "dtype": np.int32,
+  }, {
+      "dtype": np.int64,
+  }])
+  def test_ragged_bincount_binary(self, dtype):
+    x = ragged_factory_ops.constant([[], [], [3, 0, 1], [], [5, 0, 4, 4]])
+    expected_output = [[0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0,
+                                            0], [1, 1, 0, 1, 0, 0],
+                       [0, 0, 0, 0, 0, 0], [1, 0, 0, 0, 1, 1]]
+    self.assertAllEqual(
+        expected_output,
+        self.evaluate(
+            gen_math_ops.ragged_bincount(
+                splits=x.row_splits,
+                values=x.values,
+                weights=[],
+                size=6,
+                binary_output=True)))
+
+  @parameterized.parameters([{
+      "dtype": np.int32,
+  }, {
+      "dtype": np.int64,
+  }])
+  def test_ragged_bincount_count_with_weights(self, dtype):
+    x = ragged_factory_ops.constant([[], [], [3, 0, 1], [], [5, 0, 4, 4]])
+    weights = ragged_factory_ops.constant([[], [], [.1, .2, .3], [],
+                                           [.2, .5, .6, .3]])
+    expected_output = [[0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0],
+                       [.2, .3, 0, .1, 0, 0], [0, 0, 0, 0, 0, 0],
+                       [.5, 0, 0, 0, .9, .2]]
+    self.assertAllClose(
+        expected_output,
+        self.evaluate(
+            gen_math_ops.ragged_bincount(
+                splits=x.row_splits,
+                values=x.values,
+                weights=weights.values,
+                size=6)))
+
+  @parameterized.parameters([{
+      "dtype": np.int32,
+  }, {
+      "dtype": np.int64,
+  }])
+  def test_ragged_bincount_count_np(self, dtype):
+    np.random.seed(42)
+    num_rows = 128
+    num_cols = 27
+    size = 1000
+    inp = np.random.randint(0, size, (num_rows, num_cols), dtype=dtype)
+    np_out = np.reshape(
+        np.concatenate(
+            [np.bincount(inp[j, :], minlength=size) for j in range(num_rows)],
+            axis=0), (num_rows, size))
+    x = ragged_tensor.RaggedTensor.from_tensor(inp)
+    self.assertAllEqual(
+        np_out,
+        self.evaluate(
+            gen_math_ops.ragged_bincount(
+                splits=x.row_splits, values=x.values, weights=[], size=size)))
+
+  @parameterized.parameters([{
+      "dtype": np.int32,
+  }, {
+      "dtype": np.int64,
+  }])
+  def test_ragged_bincount_count_np_with_weights(self, dtype):
+    np.random.seed(42)
+    num_rows = 128
+    num_cols = 27
+    size = 1000
+    inp = np.random.randint(0, size, (num_rows, num_cols), dtype=dtype)
+    np_weight = np.random.random((num_rows, num_cols))
+    np_out = np.reshape(
+        np.concatenate([
+            np.bincount(inp[j, :], weights=np_weight[j, :], minlength=size)
+            for j in range(num_rows)
+        ],
+                       axis=0), (num_rows, size))
+    x = ragged_tensor.RaggedTensor.from_tensor(inp)
+    self.assertAllEqual(
+        np_out,
+        self.evaluate(
+            gen_math_ops.ragged_bincount(
+                splits=x.row_splits,
+                values=x.values,
+                weights=np_weight,
+                size=size)))
+
+  @parameterized.parameters([{
+      "dtype": np.int32,
+  }, {
+      "dtype": np.int64,
+  }])
+  def test_ragged_bincount_binary_np_with_weights(self, dtype):
+    np.random.seed(42)
+    num_rows = 128
+    num_cols = 27
+    size = 1000
+    inp = np.random.randint(0, size, (num_rows, num_cols), dtype=dtype)
+    np_out = np.reshape(
+        np.concatenate([
+            np.where(np.bincount(inp[j, :], minlength=size) > 0, 1, 0)
+            for j in range(num_rows)
+        ],
+                       axis=0), (num_rows, size))
+    x = ragged_tensor.RaggedTensor.from_tensor(inp)
+    self.assertAllEqual(
+        np_out,
+        self.evaluate(
+            gen_math_ops.ragged_bincount(
+                splits=x.row_splits,
+                values=x.values,
+                weights=[],
+                size=size,
+                binary_output=True)))
+
+
+if __name__ == "__main__":
+  googletest.main()
+
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tokens used
+input: 3,369
+cache read: 12,800
+cache write: 0
+output: 147
+reasoning output: 22
+
+I found the equivalent tests under `tensorflow/python/kernel_tests/bincount_op_test.py`. The older target already has the original `Bincount` kernel rank check, so I’m applying the new scalar-size validation to `DenseBincount`, `SparseBincount`, and `RaggedBincount`, plus shape-function checks for constant `size` tensors and matching regression tests.
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/kernels/bincount_op.cc\n@@\n     const Tensor& size_t = ctx->input(1);\n     const Tensor& weights = ctx->input(2);\n \n+    OP_REQUIRES(ctx, size_t.dims() == 0,\n+                errors::InvalidArgument(\"Shape must be rank 0 but is rank \",\n+                                        size_t.dims()));\n     Tidx size = size_t.scalar<Tidx>()();\n     OP_REQUIRES(\n         ctx, size >= 0,\n@@\n     const Tensor& size_t = ctx->input(3);\n     const auto weights = ctx->input(4).flat<T>();\n     const int64 weights_size = weights.size();\n \n+    OP_REQUIRES(ctx, size_t.dims() == 0,\n+                errors::InvalidArgument(\"Shape must be rank 0 but is rank \",\n+                                        size_t.dims()));\n     Tidx size = size_t.scalar<Tidx>()();\n     OP_REQUIRES(\n         ctx, size >= 0,\n@@\n     const Tensor& size_t = ctx->input(2);\n     const auto weights = ctx->input(3).flat<T>();\n     const int64 weights_size = weights.size();\n \n+    OP_REQUIRES(ctx, size_t.dims() == 0,\n+                errors::InvalidArgument(\"Shape must be rank 0 but is rank \",\n+                                        size_t.dims()));\n     Tidx size = size_t.scalar<Tidx>()();\n     OP_REQUIRES(\n         ctx, size >= 0,\n*** Update File: tensorflow/core/ops/math_ops.cc\n@@\n       if (size_tensor == nullptr) {\n         // Return unknown shape if size is not known.\n         c->set_output(0, c->UnknownShapeOfRank(1));\n         return Status::OK();\n       }\n \n+      if (size_tensor->dims() != 0) {\n+        return errors::InvalidArgument(\"Shape must be rank 0 but is rank \",\n+                                       size_tensor->dims());\n+      }\n+\n       // Return `[size]` shape if size is known.\n       int32 size_val = size_tensor->scalar<int32>()();\n       if (size_val < 0) {\n@@\n       if (size_tensor == nullptr) {\n         // Return unknown shape if size is not known.\n         c->set_output(0, c->UnknownShape());\n         return Status::OK();\n       }\n+\n+      if (size_tensor->dims() != 0) {\n+        return errors::InvalidArgument(\"Shape must be rank 0 but is rank \",\n+                                       size_tensor->dims());\n+      }\n \n       int64 size_val;\n       DataType dtype;\n@@\n       if (size_tensor == nullptr) {\n         // Return unknown shape if size is not known.\n         c->set_output(0, c->UnknownShape());\n         return Status::OK();\n       }\n+\n+      if (size_tensor->dims() != 0) {\n+        return errors::InvalidArgument(\"Shape must be rank 0 but is rank \",\n+                                       size_tensor->dims());\n+      }\n \n       int64 size_val;\n       DataType dtype;\n*** Update File: tensorflow/python/kernel_tests/bincount_op_test.py\n@@\n   def test_invalid_rank(self):\n     with self.assertRaisesRegex((ValueError, errors.InvalidArgumentError),\n                                 \"at most rank 2\"):\n       with test_util.use_gpu():\n         self.evaluate(\n             gen_math_ops.dense_bincount(\n                 input=[[[1, 2, 3], [0, 3, 2]]], weights=[], size=10))\n \n+  @test_util.run_in_graph_and_eager_modes\n+  def test_size_is_not_scalar(self):  # b/206619828\n+    with self.assertRaisesRegex((ValueError, errors.InvalidArgumentError),\n+                                \"Shape must be rank 0 but is rank 1\"):\n+      self.evaluate(\n+          gen_math_ops.dense_bincount(\n+              input=[0], size=[1, 1], weights=[3], binary_output=False))\n+\n \n class SparseBincountOpTest(test_util.TensorFlowTestCase,\n                            parameterized.TestCase):\n@@\n     self.assertAllEqual(\n         np_out,\n         self.evaluate(\n             gen_math_ops.sparse_bincount(\n                 indices=inp_sparse.indices,\n                 values=inp_sparse.values - 1,\n                 dense_shape=inp_sparse.dense_shape,\n                 size=size,\n                 weights=[],\n                 binary_output=True)))\n \n+  @test_util.run_in_graph_and_eager_modes\n+  def test_size_is_not_scalar(self):  # b/206619828\n+    with self.assertRaisesRegex((ValueError, errors.InvalidArgumentError),\n+                                \"Shape must be rank 0 but is rank 1\"):\n+      self.evaluate(\n+          gen_math_ops.sparse_bincount(\n+              indices=[[0], [1]],\n+              values=[0, 0],\n+              dense_shape=[1, 1],\n+              size=[1, 1],\n+              weights=[0, 0],\n+              binary_output=False))\n+\n \n class RaggedBincountOpTest(test_util.TensorFlowTestCase,\n                            parameterized.TestCase):\n@@\n     self.assertAllEqual(\n         np_out,\n         self.evaluate(\n             gen_math_ops.ragged_bincount(\n                 splits=x.row_splits,\n                 values=x.values,\n                 weights=[],\n                 size=size,\n                 binary_output=True)))\n+\n+  @test_util.run_in_graph_and_eager_modes\n+  def test_size_is_not_scalar(self):  # b/206619828\n+    with self.assertRaisesRegex((ValueError, errors.InvalidArgumentError),\n+                                \"Shape must be rank 0 but is rank 1\"):\n+      self.evaluate(\n+          gen_math_ops.ragged_bincount(\n+              splits=[0, 0, 1],\n+              values=[1],\n+              size=[1, 1],\n+              weights=[0, 0, 0],\n+              binary_output=False,\n+              name=None))\n \n \n if __name__ == \"__main__\":\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/kernels/bincount_op.cc
+M tensorflow/core/ops/math_ops.cc
+M tensorflow/python/kernel_tests/bincount_op_test.py
+
+tokens used
+input: 6,923
+cache read: 15,872
+cache write: 0
+output: 1,608
+reasoning output: 26
+
+The backport edits are applied. I’m checking the final diff and doing lightweight validation only, avoiding full builds as requested.
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/kernels/bincount_op.cc tensorflow/core/ops/math_ops.cc tensorflow/python/kernel_tests/bincount_op_test.py",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0059-8a43a83d7ccb"
+}
+warning: in the working copy of 'tensorflow/core/kernels/bincount_op.cc', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'tensorflow/core/ops/math_ops.cc', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'tensorflow/python/kernel_tests/bincount_op_test.py', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/kernels/bincount_op.cc b/tensorflow/core/kernels/bincount_op.cc
+index 6299ca3e3b..5c2ee797e6 100644
+--- a/tensorflow/core/kernels/bincount_op.cc
++++ b/tensorflow/core/kernels/bincount_op.cc
+@@ -235,6 +235,9 @@ class DenseBincountOp : public OpKernel {
+     const Tensor& size_t = ctx->input(1);
+     const Tensor& weights = ctx->input(2);
+ 
++    OP_REQUIRES(ctx, size_t.dims() == 0,
++                errors::InvalidArgument("Shape must be rank 0 but is rank ",
++                                        size_t.dims()));
+     Tidx size = size_t.scalar<Tidx>()();
+     OP_REQUIRES(
+         ctx, size >= 0,
+@@ -331,6 +334,9 @@ class SparseBincountOp : public OpKernel {
+     const auto weights = ctx->input(4).flat<T>();
+     const int64 weights_size = weights.size();
+ 
++    OP_REQUIRES(ctx, size_t.dims() == 0,
++                errors::InvalidArgument("Shape must be rank 0 but is rank ",
++                                        size_t.dims()));
+     Tidx size = size_t.scalar<Tidx>()();
+     OP_REQUIRES(
+         ctx, size >= 0,
+@@ -421,6 +427,9 @@ class RaggedBincountOp : public OpKernel {
+     const auto weights = ctx->input(3).flat<T>();
+     const int64 weights_size = weights.size();
+ 
++    OP_REQUIRES(ctx, size_t.dims() == 0,
++                errors::InvalidArgument("Shape must be rank 0 but is rank ",
++                                        size_t.dims()));
+     Tidx size = size_t.scalar<Tidx>()();
+     OP_REQUIRES(
+         ctx, size >= 0,
+diff --git a/tensorflow/core/ops/math_ops.cc b/tensorflow/core/ops/math_ops.cc
+index f0d85244b7..aa1eca267c 100644
+--- a/tensorflow/core/ops/math_ops.cc
++++ b/tensorflow/core/ops/math_ops.cc
+@@ -1656,6 +1656,11 @@ REGISTER_OP("Bincount")
+         return Status::OK();
+       }
+ 
++      if (size_tensor->dims() != 0) {
++        return errors::InvalidArgument("Shape must be rank 0 but is rank ",
++                                       size_tensor->dims());
++      }
++
+       // Return `[size]` shape if size is known.
+       int32 size_val = size_tensor->scalar<int32>()();
+       if (size_val < 0) {
+@@ -1688,6 +1693,11 @@ REGISTER_OP("DenseBincount")
+         return Status::OK();
+       }
+ 
++      if (size_tensor->dims() != 0) {
++        return errors::InvalidArgument("Shape must be rank 0 but is rank ",
++                                       size_tensor->dims());
++      }
++
+       int64 size_val;
+       DataType dtype;
+       TF_RETURN_IF_ERROR(c->GetAttr("Tidx", &dtype));
+@@ -1729,6 +1739,11 @@ REGISTER_OP("SparseBincount")
+         return Status::OK();
+       }
+ 
++      if (size_tensor->dims() != 0) {
++        return errors::InvalidArgument("Shape must be rank 0 but is rank ",
++                                       size_tensor->dims());
++      }
++
+       int64 size_val;
+       DataType dtype;
+       TF_RETURN_IF_ERROR(c->GetAttr("Tidx", &dtype));
+diff --git a/tensorflow/python/kernel_tests/bincount_op_test.py b/tensorflow/python/kernel_tests/bincount_op_test.py
+index 4ca81333ab..f08944c865 100644
+--- a/tensorflow/python/kernel_tests/bincount_op_test.py
++++ b/tensorflow/python/kernel_tests/bincount_op_test.py
+@@ -332,6 +332,14 @@ class BincountOpTest(test_util.TensorFlowTestCase, parameterized.TestCase):
+             gen_math_ops.dense_bincount(
+                 input=[[[1, 2, 3], [0, 3, 2]]], weights=[], size=10))
+ 
++  @test_util.run_in_graph_and_eager_modes
++  def test_size_is_not_scalar(self):  # b/206619828
++    with self.assertRaisesRegex((ValueError, errors.InvalidArgumentError),
++                                "Shape must be rank 0 but is rank 1"):
++      self.evaluate(
++          gen_math_ops.dense_bincount(
++              input=[0], size=[1, 1], weights=[3], binary_output=False))
++
+ 
+ class SparseBincountOpTest(test_util.TensorFlowTestCase,
+                            parameterized.TestCase):
+@@ -499,6 +507,19 @@ class SparseBincountOpTest(test_util.TensorFlowTestCase,
+                 weights=[],
+                 binary_output=True)))
+ 
++  @test_util.run_in_graph_and_eager_modes
++  def test_size_is_not_scalar(self):  # b/206619828
++    with self.assertRaisesRegex((ValueError, errors.InvalidArgumentError),
++                                "Shape must be rank 0 but is rank 1"):
++      self.evaluate(
++          gen_math_ops.sparse_bincount(
++              indices=[[0], [1]],
++              values=[0, 0],
++              dense_shape=[1, 1],
++              size=[1, 1],
++              weights=[0, 0],
++              binary_output=False))
++
+ 
+ class RaggedBincountOpTest(test_util.TensorFlowTestCase,
+                            parameterized.TestCase):
+@@ -638,6 +659,19 @@ class RaggedBincountOpTest(test_util.TensorFlowTestCase,
+                 size=size,
+                 binary_output=True)))
+ 
++  @test_util.run_in_graph_and_eager_modes
++  def test_size_is_not_scalar(self):  # b/206619828
++    with self.assertRaisesRegex((ValueError, errors.InvalidArgumentError),
++                                "Shape must be rank 0 but is rank 1"):
++      self.evaluate(
++          gen_math_ops.ragged_bincount(
++              splits=[0, 0, 1],
++              values=[1],
++              size=[1, 1],
++              weights=[0, 0, 0],
++              binary_output=False,
++              name=None))
++
+ 
+ if __name__ == "__main__":
+   googletest.main()
+
+tool: bash
+{
+  "command": "git status --short",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0059-8a43a83d7ccb"
+}
+ M tensorflow/core/kernels/bincount_op.cc
+ M tensorflow/core/ops/math_ops.cc
+ M tensorflow/python/kernel_tests/bincount_op_test.py
+
+tokens used
+input: 2,462
+cache read: 22,016
+cache write: 0
+output: 199
+reasoning output: 46
+
+The final diff is limited to the three expected files. I’m running `git diff --check` for whitespace/patch sanity.
+
+tool: bash
+{
+  "command": "git diff --check",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0059-8a43a83d7ccb"
+}
+warning: in the working copy of 'tensorflow/core/kernels/bincount_op.cc', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'tensorflow/core/ops/math_ops.cc', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'tensorflow/python/kernel_tests/bincount_op_test.py', LF will be replaced by CRLF the next time Git touches it
+
+tokens used
+input: 2,228
+cache read: 24,064
+cache write: 0
+output: 99
+reasoning output: 102
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target-side bincount kernel, op shape functions, and tests",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Backport scalar-rank checks and tests with minimal target-compatible edits",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Verify resulting diff and report YAML block",
+      "status": "completed",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target-side bincount kernel, op shape functions, and tests",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Backport scalar-rank checks and tests with minimal target-compatible edits",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Verify resulting diff and report YAML block",
+    "status": "completed",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 487
+cache read: 26,112
+cache write: 0
+output: 88
+reasoning output: 20
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/kernels/bincount_op.cc b/tensorflow/core/kernels/bincount_op.cc
+    index 6299ca3e3b..5c2ee797e6 100644
+    --- a/tensorflow/core/kernels/bincount_op.cc
+    +++ b/tensorflow/core/kernels/bincount_op.cc
+    @@ -235,6 +235,9 @@ class DenseBincountOp : public OpKernel {
+         const Tensor& size_t = ctx->input(1);
+         const Tensor& weights = ctx->input(2);
+     
+    +    OP_REQUIRES(ctx, size_t.dims() == 0,
+    +                errors::InvalidArgument("Shape must be rank 0 but is rank ",
+    +                                        size_t.dims()));
+         Tidx size = size_t.scalar<Tidx>()();
+         OP_REQUIRES(
+             ctx, size >= 0,
+    @@ -331,6 +334,9 @@ class SparseBincountOp : public OpKernel {
+         const auto weights = ctx->input(4).flat<T>();
+         const int64 weights_size = weights.size();
+     
+    +    OP_REQUIRES(ctx, size_t.dims() == 0,
+    +                errors::InvalidArgument("Shape must be rank 0 but is rank ",
+    +                                        size_t.dims()));
+         Tidx size = size_t.scalar<Tidx>()();
+         OP_REQUIRES(
+             ctx, size >= 0,
+    @@ -421,6 +427,9 @@ class RaggedBincountOp : public OpKernel {
+         const auto weights = ctx->input(3).flat<T>();
+         const int64 weights_size = weights.size();
+     
+    +    OP_REQUIRES(ctx, size_t.dims() == 0,
+    +                errors::InvalidArgument("Shape must be rank 0 but is rank ",
+    +                                        size_t.dims()));
+         Tidx size = size_t.scalar<Tidx>()();
+         OP_REQUIRES(
+             ctx, size >= 0,
+    diff --git a/tensorflow/core/ops/math_ops.cc b/tensorflow/core/ops/math_ops.cc
+    index f0d85244b7..aa1eca267c 100644
+    --- a/tensorflow/core/ops/math_ops.cc
+    +++ b/tensorflow/core/ops/math_ops.cc
+    @@ -1656,6 +1656,11 @@ REGISTER_OP("Bincount")
+             return Status::OK();
+           }
+     
+    +      if (size_tensor->dims() != 0) {
+    +        return errors::InvalidArgument("Shape must be rank 0 but is rank ",
+    +                                       size_tensor->dims());
+    +      }
+    +
+           // Return `[size]` shape if size is known.
+           int32 size_val = size_tensor->scalar<int32>()();
+           if (size_val < 0) {
+    @@ -1688,6 +1693,11 @@ REGISTER_OP("DenseBincount")
+             return Status::OK();
+           }
+     
+    +      if (size_tensor->dims() != 0) {
+    +        return errors::InvalidArgument("Shape must be rank 0 but is rank ",
+    +                                       size_tensor->dims());
+    +      }
+    +
+           int64 size_val;
+           DataType dtype;
+           TF_RETURN_IF_ERROR(c->GetAttr("Tidx", &dtype));
+    @@ -1729,6 +1739,11 @@ REGISTER_OP("SparseBincount")
+             return Status::OK();
+           }
+     
+    +      if (size_tensor->dims() != 0) {
+    +        return errors::InvalidArgument("Shape must be rank 0 but is rank ",
+    +                                       size_tensor->dims());
+    +      }
+    +
+           int64 size_val;
+           DataType dtype;
+           TF_RETURN_IF_ERROR(c->GetAttr("Tidx", &dtype));
+    diff --git a/tensorflow/python/kernel_tests/bincount_op_test.py b/tensorflow/python/kernel_tests/bincount_op_test.py
+    index 4ca81333ab..f08944c865 100644
+    --- a/tensorflow/python/kernel_tests/bincount_op_test.py
+    +++ b/tensorflow/python/kernel_tests/bincount_op_test.py
+    @@ -332,6 +332,14 @@ class BincountOpTest(test_util.TensorFlowTestCase, parameterized.TestCase):
+                 gen_math_ops.dense_bincount(
+                     input=[[[1, 2, 3], [0, 3, 2]]], weights=[], size=10))
+     
+    +  @test_util.run_in_graph_and_eager_modes
+    +  def test_size_is_not_scalar(self):  # b/206619828
+    +    with self.assertRaisesRegex((ValueError, errors.InvalidArgumentError),
+    +                                "Shape must be rank 0 but is rank 1"):
+    +      self.evaluate(
+    +          gen_math_ops.dense_bincount(
+    +              input=[0], size=[1, 1], weights=[3], binary_output=False))
+    +
+     
+     class SparseBincountOpTest(test_util.TensorFlowTestCase,
+                                parameterized.TestCase):
+    @@ -499,6 +507,19 @@ class SparseBincountOpTest(test_util.TensorFlowTestCase,
+                     weights=[],
+                     binary_output=True)))
+     
+    +  @test_util.run_in_graph_and_eager_modes
+    +  def test_size_is_not_scalar(self):  # b/206619828
+    +    with self.assertRaisesRegex((ValueError, errors.InvalidArgumentError),
+    +                                "Shape must be rank 0 but is rank 1"):
+    +      self.evaluate(
+    +          gen_math_ops.sparse_bincount(
+    +              indices=[[0], [1]],
+    +              values=[0, 0],
+    +              dense_shape=[1, 1],
+    +              size=[1, 1],
+    +              weights=[0, 0],
+    +              binary_output=False))
+    +
+     
+     class RaggedBincountOpTest(test_util.TensorFlowTestCase,
+                                parameterized.TestCase):
+    @@ -638,6 +659,19 @@ class RaggedBincountOpTest(test_util.TensorFlowTestCase,
+                     size=size,
+                     binary_output=True)))
+     
+    +  @test_util.run_in_graph_and_eager_modes
+    +  def test_size_is_not_scalar(self):  # b/206619828
+    +    with self.assertRaisesRegex((ValueError, errors.InvalidArgumentError),
+    +                                "Shape must be rank 0 but is rank 1"):
+    +      self.evaluate(
+    +          gen_math_ops.ragged_bincount(
+    +              splits=[0, 0, 1],
+    +              values=[1],
+    +              size=[1, 1],
+    +              weights=[0, 0, 0],
+    +              binary_output=False,
+    +              name=None))
+    +
+     
+     if __name__ == "__main__":
+       googletest.main()
+  notes: >
+    Backported scalar rank validation for bincount size tensors and added matching regression tests; git diff --check passed.
+```
+
+tokens used
+input: 715
+cache read: 26,112
+cache write: 0
+output: 1,557
+reasoning output: 95

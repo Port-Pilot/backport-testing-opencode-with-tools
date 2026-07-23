@@ -1,0 +1,151 @@
+I’ll locate the target-side implementation of `ImmutableExecutorState::Initialize`, verify the hunk context against the 2.5.2 base, then apply the minimal equivalent change only in that file.
+
+tool: viewcode
+{
+  "ref": "b2b3444b71ea99685edafa7731fb7ba57939f437",
+  "path": "tensorflow/core/common_runtime/immutable_executor_state.cc",
+  "startline": 110,
+  "endline": 150
+}
+Here are lines 110 through 150.
+
+      // TODO(mrry): Track whether control flow was present in the
+      // pre-partitioned graph, and enable the caller (e.g.
+      // `DirectSession`) to relax this constraint.
+      string send_device;
+      string recv_device;
+      TF_RETURN_IF_ERROR(GetNodeAttr(n->attrs(), "send_device", &send_device));
+      TF_RETURN_IF_ERROR(GetNodeAttr(n->attrs(), "recv_device", &recv_device));
+      if (send_device != recv_device) {
+        requires_control_flow_ = true;
+      }
+    }
+
+    const int id = n->id();
+    const string& frame_name = cf_info.frame_names[id];
+    FrameInfo* frame_info = EnsureFrameInfo(frame_name);
+
+    NodeItem* item = gview_.node(id);
+    item->node_id = id;
+
+    item->input_start = frame_info->total_inputs;
+    frame_info->total_inputs += n->num_inputs();
+
+    Status s = params_.create_kernel(n->properties(), &item->kernel);
+    if (!s.ok()) {
+      item->kernel = nullptr;
+      s = AttachDef(s, *n);
+      return s;
+    }
+    CHECK(item->kernel);
+    item->kernel_is_async = (item->kernel->AsAsync() != nullptr);
+    item->is_merge = IsMerge(n);
+    item->is_any_consumer_merge_or_control_trigger = false;
+    for (const Node* consumer : n->out_nodes()) {
+      if (IsMerge(consumer) || IsControlTrigger(consumer)) {
+        item->is_any_consumer_merge_or_control_trigger = true;
+        break;
+      }
+    }
+    const Tensor* const_tensor = item->kernel->const_tensor();
+    if (const_tensor) {
+      // Hold onto a shallow copy of the constant tensor in `*this` so that the
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: locate_symbol
+{
+  "ref": "b2b3444b71ea99685edafa7731fb7ba57939f437",
+  "symbol": "ImmutableExecutorState::Initialize"
+}
+tensorflow/core/common_runtime/immutable_executor_state.cc:84
+
+tokens used
+input: 3,649
+cache read: 4,608
+cache write: 0
+output: 167
+reasoning output: 0
+
+The target 2.5.2 code matches the patched region directly: `create_kernel` can leave a non-null partially-created kernel on failure, and the current error path only nulls it. I’m applying the same cleanup call before nulling the pointer.
+
+tool: validate
+{
+  "ref": "b2b3444b71ea99685edafa7731fb7ba57939f437",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/common_runtime/immutable_executor_state.cc b/tensorflow/core/common_runtime/immutable_executor_state.cc\n--- a/tensorflow/core/common_runtime/immutable_executor_state.cc\n+++ b/tensorflow/core/common_runtime/immutable_executor_state.cc\n@@ -131,6 +131,7 @@ Status ImmutableExecutorState::Initialize(const Graph& graph) {\n \n     Status s = params_.create_kernel(n->properties(), &item->kernel);\n     if (!s.ok()) {\n+      params_.delete_kernel(item->kernel);\n       item->kernel = nullptr;\n       s = AttachDef(s, *n);\n       return s;\n"
+}
+Patch applied successfully
+
+tokens used
+input: 1,191
+cache read: 7,680
+cache write: 0
+output: 249
+reasoning output: 14
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/common_runtime/immutable_executor_state.cc\n@@\n     Status s = params_.create_kernel(n->properties(), &item->kernel);\n     if (!s.ok()) {\n+      params_.delete_kernel(item->kernel);\n       item->kernel = nullptr;\n       s = AttachDef(s, *n);\n       return s;\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/common_runtime/immutable_executor_state.cc
+
+tokens used
+input: 443
+cache read: 8,704
+cache write: 0
+output: 103
+reasoning output: 0
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/common_runtime/immutable_executor_state.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0047-b2b3444b71ea"
+}
+warning: in the working copy of 'tensorflow/core/common_runtime/immutable_executor_state.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/common_runtime/immutable_executor_state.cc b/tensorflow/core/common_runtime/immutable_executor_state.cc
+index 3cde56bc85..6af8c5f74c 100644
+--- a/tensorflow/core/common_runtime/immutable_executor_state.cc
++++ b/tensorflow/core/common_runtime/immutable_executor_state.cc
+@@ -131,6 +131,7 @@ Status ImmutableExecutorState::Initialize(const Graph& graph) {
+ 
+     Status s = params_.create_kernel(n->properties(), &item->kernel);
+     if (!s.ok()) {
++      params_.delete_kernel(item->kernel);
+       item->kernel = nullptr;
+       s = AttachDef(s, *n);
+       return s;
+
+tokens used
+input: 574
+cache read: 8,704
+cache write: 0
+output: 73
+reasoning output: 13
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/common_runtime/immutable_executor_state.cc b/tensorflow/core/common_runtime/immutable_executor_state.cc
+    index 3cde56bc85..6af8c5f74c 100644
+    --- a/tensorflow/core/common_runtime/immutable_executor_state.cc
+    +++ b/tensorflow/core/common_runtime/immutable_executor_state.cc
+    @@ -131,6 +131,7 @@ Status ImmutableExecutorState::Initialize(const Graph& graph) {
+     
+         Status s = params_.create_kernel(n->properties(), &item->kernel);
+         if (!s.ok()) {
+    +      params_.delete_kernel(item->kernel);
+           item->kernel = nullptr;
+           s = AttachDef(s, *n);
+           return s;
+  notes: >
+    Backported the kernel cleanup on create_kernel failure in ImmutableExecutorState::Initialize to prevent leaking a partially-created kernel.
+```
+
+tokens used
+input: 858
+cache read: 8,704
+cache write: 0
+output: 211
+reasoning output: 0

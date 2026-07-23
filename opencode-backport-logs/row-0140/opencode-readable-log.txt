@@ -1,0 +1,260 @@
+I’ll inspect the target-side `SparseSplitOp` implementation and the source commit context, then apply only the overflow-prevention change if the same construction pattern exists.
+
+tool: viewcode
+{
+  "ref": "47612cd69a2fdd76156360ca9102816e156f7e5c",
+  "path": "tensorflow/core/kernels/sparse_split_op.cc",
+  "startline": 1,
+  "endline": 130
+}
+This file only has 105 lines. Here are lines 1 through 105.
+
+/* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+==============================================================================*/
+
+#define EIGEN_USE_THREADS
+
+#include <vector>
+#include "tensorflow/core/framework/op_kernel.h"
+#include "tensorflow/core/framework/register_types.h"
+#include "tensorflow/core/util/sparse/sparse_tensor.h"
+
+namespace tensorflow {
+
+template <typename T>
+class SparseSplitOp : public OpKernel {
+ public:
+  explicit SparseSplitOp(OpKernelConstruction* context) : OpKernel(context) {
+    OP_REQUIRES_OK(context, context->GetAttr("num_split", &num_split_));
+  }
+
+  void Compute(OpKernelContext* context) override {
+    const int64 split_dim = context->input(0).scalar<int64>()();
+    const Tensor& input_indices = context->input(1);
+    const Tensor& input_values = context->input(2);
+    const Tensor& input_shape = context->input(3);
+
+    OP_REQUIRES(context, TensorShapeUtils::IsMatrix(input_indices.shape()),
+                errors::InvalidArgument(
+                    "Input indices should be a matrix but received shape ",
+                    input_indices.shape().DebugString()));
+    OP_REQUIRES(context, TensorShapeUtils::IsVector(input_values.shape()),
+                errors::InvalidArgument(
+                    "Input values should be a vector but received shape ",
+                    input_indices.shape().DebugString()));
+    OP_REQUIRES(context, TensorShapeUtils::IsVector(input_shape.shape()),
+                errors::InvalidArgument(
+                    "Input shape should be a vector but received shape ",
+                    input_shape.shape().DebugString()));
+
+    OP_REQUIRES(
+        context,
+        input_shape.dim_size(0) && split_dim < input_shape.vec<int64>().size(),
+        errors::InvalidArgument(
+            "Input split_dim should be between 0 and rank (",
+            input_shape.vec<int64>().size(), "), got ", split_dim));
+
+    OP_REQUIRES(
+        context,
+        num_split_ >= 1 && num_split_ <= input_shape.vec<int64>()(split_dim),
+        errors::InvalidArgument("Input num_split should be between 1 "
+                                "and the splitting dimension size (",
+                                input_shape.vec<int64>()(split_dim), "), got ",
+                                num_split_));
+
+    sparse::SparseTensor sparse_tensor;
+    OP_REQUIRES_OK(context,
+                   sparse::SparseTensor::Create(
+                       input_indices, input_values,
+                       TensorShape(input_shape.vec<int64>()), &sparse_tensor));
+
+    std::vector<sparse::SparseTensor> outputs;
+    OP_REQUIRES_OK(context,
+                   sparse::SparseTensor::Split<T>(sparse_tensor, split_dim,
+                                                  num_split_, &outputs));
+
+    for (int slice_index = 0; slice_index < num_split_; ++slice_index) {
+      context->set_output(slice_index, outputs[slice_index].indices());
+      context->set_output(slice_index + num_split_,
+                          outputs[slice_index].values());
+      Tensor* shape = nullptr;
+      OP_REQUIRES_OK(context, context->allocate_output(
+                                  slice_index + 2 * num_split_,
+                                  {outputs[slice_index].dims()}, &shape));
+      auto output_shape = outputs[slice_index].shape();
+      for (int dim = 0; dim < outputs[slice_index].dims(); ++dim) {
+        shape->vec<int64>()(dim) = output_shape[dim];
+      }
+    }
+  }
+
+ private:
+  int num_split_;
+};
+
+#define REGISTER_KERNELS(type)                                          \
+  REGISTER_KERNEL_BUILDER(                                              \
+      Name("SparseSplit").Device(DEVICE_CPU).TypeConstraint<type>("T"), \
+      SparseSplitOp<type>)
+
+TF_CALL_ALL_TYPES(REGISTER_KERNELS);
+#undef REGISTER_KERNELS
+
+}  // namespace tensorflow
+
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: git_show
+{
+  "ref": "4c0ee937c0f61c4fc5f5d32d9bb4c67428012a60",
+  "context": "sparse::SparseTensor::Create(\n                       input_indices, input_values,\n                       TensorShape(input_shape.vec<int64>()), &sparse_tensor)"
+}
+commit 4c0ee937c0f61c4fc5f5d32d9bb4c67428012a60
+Author: Mihai Maruseac <mihaimaruseac@google.com>
+Date:   Thu May 6 15:55:00 2021 -0700
+
+    Prevent overflow in sparse op
+    
+    PiperOrigin-RevId: 372442006
+    Change-Id: I60fe31cd7e56fb3501e97c63500caf902ddeee96
+
+ tensorflow/core/kernels/sparse_split_op.cc | 13 ++++++++++---
+ 1 file changed, 10 insertions(+), 3 deletions(-)
+This commit shows that there is a high probability that this code is new, so the corresponding code segment cannot be found in the old version.
+You can call `viewcode` and `locate_symbol` to further check the results step by step. For newly introduced code, we consider that this hunk `need not ported`.
+
+tokens used
+input: 3,811
+cache read: 4,608
+cache write: 0
+output: 192
+reasoning output: 0
+
+The target file has the same vulnerable `TensorShape(input_shape.vec<int64>())` construction in `SparseSplitOp::Compute`, so the backport is a direct minimal hunk.
+
+tool: validate
+{
+  "ref": "47612cd69a2fdd76156360ca9102816e156f7e5c",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/sparse_split_op.cc b/tensorflow/core/kernels/sparse_split_op.cc\n--- a/tensorflow/core/kernels/sparse_split_op.cc\n+++ b/tensorflow/core/kernels/sparse_split_op.cc\n@@ -63,11 +63,18 @@ class SparseSplitOp : public OpKernel {\n                                 input_shape.vec<int64>()(split_dim), \"), got \",\n                                 num_split_));\n \n+    // Prevent overflow by constructing the dense shape separately\n+    TensorShape dense_shape;\n+    const auto input_shape_flat = input_shape.flat<int64>();\n+    for (int i = 0; i < input_shape.NumElements(); i++) {\n+      OP_REQUIRES_OK(context,\n+                     dense_shape.AddDimWithStatus(input_shape_flat(i)));\n+    }\n+\n     sparse::SparseTensor sparse_tensor;\n     OP_REQUIRES_OK(context,\n-                   sparse::SparseTensor::Create(\n-                       input_indices, input_values,\n-                       TensorShape(input_shape.vec<int64>()), &sparse_tensor));\n+                   sparse::SparseTensor::Create(input_indices, input_values,\n+                                                dense_shape, &sparse_tensor));\n \n     std::vector<sparse::SparseTensor> outputs;\n     OP_REQUIRES_OK(context,\n"
+}
+Patch applied successfully
+
+tokens used
+input: 2,087
+cache read: 7,680
+cache write: 0
+output: 390
+reasoning output: 33
+
+The hunk applies cleanly against the target base. I’m applying that exact source change now.
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/kernels/sparse_split_op.cc\n@@\n                                 input_shape.vec<int64>()(split_dim), \"), got \",\n                                 num_split_));\n \n+    // Prevent overflow by constructing the dense shape separately\n+    TensorShape dense_shape;\n+    const auto input_shape_flat = input_shape.flat<int64>();\n+    for (int i = 0; i < input_shape.NumElements(); i++) {\n+      OP_REQUIRES_OK(context,\n+                     dense_shape.AddDimWithStatus(input_shape_flat(i)));\n+    }\n+\n     sparse::SparseTensor sparse_tensor;\n     OP_REQUIRES_OK(context,\n-                   sparse::SparseTensor::Create(\n-                       input_indices, input_values,\n-                       TensorShape(input_shape.vec<int64>()), &sparse_tensor));\n+                   sparse::SparseTensor::Create(input_indices, input_values,\n+                                                dense_shape, &sparse_tensor));\n \n     std::vector<sparse::SparseTensor> outputs;\n     OP_REQUIRES_OK(context,\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/kernels/sparse_split_op.cc
+
+tokens used
+input: 1,499
+cache read: 8,704
+cache write: 0
+output: 290
+reasoning output: 0
+
+The source change is applied. I’ll inspect the resulting diff to confirm only the intended file changed.
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/kernels/sparse_split_op.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0140-47612cd69a2f",
+  "timeout": 120000
+}
+warning: in the working copy of 'tensorflow/core/kernels/sparse_split_op.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/kernels/sparse_split_op.cc b/tensorflow/core/kernels/sparse_split_op.cc
+index 3d02be47cb..ca3e77f76a 100644
+--- a/tensorflow/core/kernels/sparse_split_op.cc
++++ b/tensorflow/core/kernels/sparse_split_op.cc
+@@ -63,11 +63,18 @@ class SparseSplitOp : public OpKernel {
+                                 input_shape.vec<int64>()(split_dim), "), got ",
+                                 num_split_));
+ 
++    // Prevent overflow by constructing the dense shape separately
++    TensorShape dense_shape;
++    const auto input_shape_flat = input_shape.flat<int64>();
++    for (int i = 0; i < input_shape.NumElements(); i++) {
++      OP_REQUIRES_OK(context,
++                     dense_shape.AddDimWithStatus(input_shape_flat(i)));
++    }
++
+     sparse::SparseTensor sparse_tensor;
+     OP_REQUIRES_OK(context,
+-                   sparse::SparseTensor::Create(
+-                       input_indices, input_values,
+-                       TensorShape(input_shape.vec<int64>()), &sparse_tensor));
++                   sparse::SparseTensor::Create(input_indices, input_values,
++                                                dense_shape, &sparse_tensor));
+ 
+     std::vector<sparse::SparseTensor> outputs;
+     OP_REQUIRES_OK(context,
+
+tokens used
+input: 793
+cache read: 9,728
+cache write: 0
+output: 105
+reasoning output: 13
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/kernels/sparse_split_op.cc b/tensorflow/core/kernels/sparse_split_op.cc
+    index 3d02be47cb..ca3e77f76a 100644
+    --- a/tensorflow/core/kernels/sparse_split_op.cc
+    +++ b/tensorflow/core/kernels/sparse_split_op.cc
+    @@ -63,11 +63,18 @@ class SparseSplitOp : public OpKernel {
+                                     input_shape.vec<int64>()(split_dim), "), got ",
+                                     num_split_));
+     
+    +    // Prevent overflow by constructing the dense shape separately
+    +    TensorShape dense_shape;
+    +    const auto input_shape_flat = input_shape.flat<int64>();
+    +    for (int i = 0; i < input_shape.NumElements(); i++) {
+    +      OP_REQUIRES_OK(context,
+    +                     dense_shape.AddDimWithStatus(input_shape_flat(i)));
+    +    }
+    +
+         sparse::SparseTensor sparse_tensor;
+         OP_REQUIRES_OK(context,
+    -                   sparse::SparseTensor::Create(
+    -                       input_indices, input_values,
+    -                       TensorShape(input_shape.vec<int64>()), &sparse_tensor));
+    +                   sparse::SparseTensor::Create(input_indices, input_values,
+    +                                                dense_shape, &sparse_tensor));
+     
+         std::vector<sparse::SparseTensor> outputs;
+         OP_REQUIRES_OK(context,
+  notes: >
+    Backported the SparseSplit dense shape construction fix to prevent TensorShape overflow; hunk validation succeeded.
+```
+
+tokens used
+input: 1,241
+cache read: 9,728
+cache write: 0
+output: 354
+reasoning output: 23

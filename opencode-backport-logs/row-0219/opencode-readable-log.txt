@@ -1,0 +1,804 @@
+I’ll inspect the target-side shape functions and map each new patch hunk to the 2.3.4 code before editing.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Locate equivalent Conv2D, Conv3D, and SparseReduce shape code in target TensorFlow 2.3.4",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Validate uncertain hunks against target base",
+      "status": "pending",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply minimal source changes",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "content": "Inspect final diff and report YAML result",
+      "status": "pending",
+      "priority": "high"
+    }
+  ]
+}
+[
+  {
+    "content": "Locate equivalent Conv2D, Conv3D, and SparseReduce shape code in target TensorFlow 2.3.4",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Validate uncertain hunks against target base",
+    "status": "pending",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply minimal source changes",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "content": "Inspect final diff and report YAML result",
+    "status": "pending",
+    "priority": "high"
+  }
+]
+
+tokens used
+input: 4,249
+cache read: 4,608
+cache write: 0
+output: 142
+reasoning output: 0
+
+tool: locate_symbol
+{
+  "ref": "c8f65104ec1bced6eeb476919fdc6965a0f2081f",
+  "symbol": "Conv2DShapeImpl"
+}
+tensorflow/core/framework/common_shape_fns.cc:572
+tensorflow/core/framework/common_shape_fns.cc:724
+tensorflow/core/framework/common_shape_fns.cc:730
+
+tool: locate_symbol
+{
+  "ref": "c8f65104ec1bced6eeb476919fdc6965a0f2081f",
+  "symbol": "Conv3DShape"
+}
+tensorflow/core/framework/common_shape_fns.cc:734
+tensorflow/core/framework/common_shape_fns.h:133
+tensorflow/core/ops/nn_ops.cc:647
+tensorflow/core/ops/nn_ops.cc:2051
+
+tool: locate_symbol
+{
+  "ref": "c8f65104ec1bced6eeb476919fdc6965a0f2081f",
+  "symbol": "SparseReduceShapeFn"
+}
+tensorflow/core/framework/common_shape_fns.cc:2350
+tensorflow/core/framework/common_shape_fns.h:254
+tensorflow/core/ops/sparse_ops.cc:443
+tensorflow/core/ops/sparse_ops.cc:465
+
+tokens used
+input: 450
+cache read: 8,704
+cache write: 0
+output: 156
+reasoning output: 0
+
+tool: viewcode
+{
+  "ref": "c8f65104ec1bced6eeb476919fdc6965a0f2081f",
+  "path": "tensorflow/core/framework/common_shape_fns.cc",
+  "startline": 620,
+  "endline": 790
+}
+Here are lines 620 through 790.
+
+    return errors::InvalidArgument("Conv2D on data format ", data_format_str,
+                                   " requires the stride attribute to contain"
+                                   " 4 values, but got: ",
+                                   strides.size());
+  }
+
+  const int32 stride_rows = GetTensorDim(strides, data_format, 'H');
+  const int32 stride_cols = GetTensorDim(strides, data_format, 'W');
+  const int32 dilation_rows = GetTensorDim(dilations, data_format, 'H');
+  const int32 dilation_cols = GetTensorDim(dilations, data_format, 'W');
+
+  DimensionHandle batch_size_dim;
+  DimensionHandle input_depth_dim;
+  gtl::InlinedVector<DimensionHandle, 2> input_spatial_dims(2);
+  TF_RETURN_IF_ERROR(DimensionsFromShape(
+      conv_input_shape, data_format, &batch_size_dim,
+      absl::MakeSpan(input_spatial_dims), &input_depth_dim, c));
+
+  DimensionHandle output_depth_dim = c->Dim(
+      filter_shape, GetFilterDimIndex<num_spatial_dims>(filter_format, 'O'));
+  DimensionHandle filter_rows_dim = c->Dim(
+      filter_shape, GetFilterDimIndex<num_spatial_dims>(filter_format, 'H'));
+  DimensionHandle filter_cols_dim = c->Dim(
+      filter_shape, GetFilterDimIndex<num_spatial_dims>(filter_format, 'W'));
+  DimensionHandle filter_input_depth_dim;
+  if (filter_format == FORMAT_OIHW_VECT_I) {
+    TF_RETURN_IF_ERROR(c->Multiply(
+        c->Dim(filter_shape,
+               GetFilterDimIndex<num_spatial_dims>(filter_format, 'I')),
+        c->Dim(filter_shape,
+               GetFilterTensorInnerInputChannelsDimIndex(rank, filter_format)),
+        &filter_input_depth_dim));
+  } else {
+    filter_input_depth_dim = c->Dim(
+        filter_shape, GetFilterDimIndex<num_spatial_dims>(filter_format, 'I'));
+  }
+
+  // Check that the input tensor and the filter tensor agree on the channel
+  // count.
+  if (c->ValueKnown(input_depth_dim) && c->ValueKnown(filter_input_depth_dim)) {
+    int64 input_depth_value = c->Value(input_depth_dim),
+          filter_input_depth_value = c->Value(filter_input_depth_dim);
+    if (input_depth_value % filter_input_depth_value != 0)
+      return errors::InvalidArgument(
+          "Depth of input (", input_depth_value,
+          ") is not a multiple of input depth of filter (",
+          filter_input_depth_value, ")");
+    if (input_depth_value != filter_input_depth_value) {
+      int64 num_groups = input_depth_value / filter_input_depth_value;
+      if (c->ValueKnown(output_depth_dim)) {
+        int64 output_depth_value = c->Value(output_depth_dim);
+        if (output_depth_value % num_groups != 0)
+          return errors::InvalidArgument(
+              "Depth of output (", output_depth_value,
+              ") is not a multiple of the number of groups (", num_groups, ")");
+      }
+    }
+  }
+
+  Padding padding;
+  TF_RETURN_IF_ERROR(c->GetAttr("padding", &padding));
+
+  std::vector<int64> explicit_paddings;
+  if (supports_explicit_padding) {
+    Status s = c->GetAttr("explicit_paddings", &explicit_paddings);
+    // Use the default value, which is an empty list, if the attribute is not
+    // found. Otherwise return the error to the caller.
+    if (!s.ok() && !errors::IsNotFound(s)) {
+      return s;
+    }
+    TF_RETURN_IF_ERROR(CheckValidPadding(padding, explicit_paddings,
+                                         /*num_dims=*/4, data_format));
+  } else {
+    CHECK(padding != Padding::EXPLICIT);  // Crash ok.
+  }
+
+  DimensionHandle output_rows, output_cols;
+  int64 pad_rows_before = -1, pad_rows_after = -1;
+  int64 pad_cols_before = -1, pad_cols_after = -1;
+  if (padding == Padding::EXPLICIT) {
+    GetExplicitPaddingForDim(explicit_paddings, data_format, 'H',
+                             &pad_rows_before, &pad_rows_after);
+    GetExplicitPaddingForDim(explicit_paddings, data_format, 'W',
+                             &pad_cols_before, &pad_cols_after);
+  }
+  TF_RETURN_IF_ERROR(GetWindowedOutputSizeFromDimsV2(
+      c, input_spatial_dims[0], filter_rows_dim, dilation_rows, stride_rows,
+      padding, pad_rows_before, pad_rows_after, &output_rows));
+  TF_RETURN_IF_ERROR(GetWindowedOutputSizeFromDimsV2(
+      c, input_spatial_dims[1], filter_cols_dim, dilation_cols, stride_cols,
+      padding, pad_cols_before, pad_cols_after, &output_cols));
+
+  ShapeHandle output_shape;
+  TF_RETURN_IF_ERROR(
+      ShapeFromDimensions(batch_size_dim, {output_rows, output_cols},
+                          output_depth_dim, data_format, c, &output_shape));
+  c->set_output(0, output_shape);
+  return Status::OK();
+}
+
+}  // namespace
+
+// Shape function for Conv2D-like operations that support explicit padding.
+Status Conv2DShapeWithExplicitPadding(shape_inference::InferenceContext* c) {
+  return Conv2DShapeImpl(c, true);
+}
+
+// Shape function for Conv2D-like operations that do not support explicit
+// padding.
+Status Conv2DShape(shape_inference::InferenceContext* c) {
+  return Conv2DShapeImpl(c, false);
+}
+
+// TODO(mjanusz): Unify all conv/pooling shape functions.
+Status Conv3DShape(shape_inference::InferenceContext* c) {
+  ShapeHandle input_shape;
+  TF_RETURN_IF_ERROR(c->WithRank(c->input(0), 5, &input_shape));
+  ShapeHandle filter_shape;
+  TF_RETURN_IF_ERROR(c->WithRank(c->input(1), 5, &filter_shape));
+
+  string data_format;
+  Status s = c->GetAttr("data_format", &data_format);
+
+  std::vector<int32> dilations;
+  TF_RETURN_IF_ERROR(c->GetAttr("dilations", &dilations));
+
+  if (dilations.size() != 5) {
+    return errors::InvalidArgument(
+        "Conv3D requires the dilation attribute to contain 5 values, but got: ",
+        dilations.size());
+  }
+
+  std::vector<int32> strides;
+  TF_RETURN_IF_ERROR(c->GetAttr("strides", &strides));
+  if (strides.size() != 5) {
+    return errors::InvalidArgument(
+        "Conv3D requires the stride attribute to contain 5 values, but got: ",
+        strides.size());
+  }
+
+  int32 stride_planes, stride_rows, stride_cols;
+  int32 dilation_planes, dilation_rows, dilation_cols;
+  if (s.ok() && data_format == "NCDHW") {
+    // Convert input_shape to NDHWC.
+    auto dim = [&](char dimension) {
+      return c->Dim(input_shape, GetTensorDimIndex<3>(FORMAT_NCHW, dimension));
+    };
+    input_shape =
+        c->MakeShape({{dim('N'), dim('0'), dim('1'), dim('2'), dim('C')}});
+    stride_planes = strides[2];
+    stride_rows = strides[3];
+    stride_cols = strides[4];
+    dilation_planes = dilations[2];
+    dilation_cols = dilations[3];
+    dilation_rows = dilations[4];
+  } else {
+    stride_planes = strides[1];
+    stride_rows = strides[2];
+    stride_cols = strides[3];
+    dilation_planes = dilations[1];
+    dilation_cols = dilations[2];
+    dilation_rows = dilations[3];
+  }
+
+  DimensionHandle batch_size_dim = c->Dim(input_shape, 0);
+  DimensionHandle in_planes_dim = c->Dim(input_shape, 1);
+  DimensionHandle in_rows_dim = c->Dim(input_shape, 2);
+  DimensionHandle in_cols_dim = c->Dim(input_shape, 3);
+  DimensionHandle input_depth_dim = c->Dim(input_shape, 4);
+
+  DimensionHandle filter_planes_dim = c->Dim(filter_shape, 0);
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: viewcode
+{
+  "ref": "c8f65104ec1bced6eeb476919fdc6965a0f2081f",
+  "path": "tensorflow/core/framework/common_shape_fns.cc",
+  "startline": 2320,
+  "endline": 2395
+}
+Here are lines 2320 through 2395.
+
+    // This is called for tf.scatter_nd; output is a tensor with this shape.
+    c->set_output(0, input_shape);
+  }
+  return Status::OK();
+}
+
+Status ExplicitShape(InferenceContext* c) {
+  PartialTensorShape shape;
+  TF_RETURN_IF_ERROR(c->GetAttr("shape", &shape));
+  ShapeHandle output_shape;
+  TF_RETURN_IF_ERROR(c->MakeShapeFromPartialTensorShape(shape, &output_shape));
+  c->set_output(0, output_shape);
+  return Status::OK();
+}
+
+Status ExplicitShapes(InferenceContext* c) {
+  std::vector<PartialTensorShape> shapes;
+  TF_RETURN_IF_ERROR(c->GetAttr("shapes", &shapes));
+  if (shapes.empty()) {
+    return errors::Internal("shapes attribute is empty");
+  }
+  for (int i = 0; i < shapes.size(); ++i) {
+    ShapeHandle output_shape;
+    TF_RETURN_IF_ERROR(
+        c->MakeShapeFromPartialTensorShape(shapes[i], &output_shape));
+    c->set_output(i, output_shape);
+  }
+  return Status::OK();
+}
+
+Status SparseReduceShapeFn(InferenceContext* c) {
+  // Input 0: input_indices
+  // Input 1: input_values
+  // Input 2: input_shape
+  // Input 3: reduction_axes
+  // Attr: keep_dims
+  bool keep_dims = false;
+  TF_RETURN_IF_ERROR(c->GetAttr("keep_dims", &keep_dims));
+
+  const Tensor* shape_tensor = c->input_tensor(2);
+  const Tensor* axes_tensor = c->input_tensor(3);
+  if (shape_tensor != nullptr && axes_tensor != nullptr) {
+    auto shape_vec = shape_tensor->flat<int64>();
+    auto axes_vec = axes_tensor->flat<int32>();
+
+    int64 ndims = shape_vec.size();
+    absl::flat_hash_set<int64> axes;
+    for (int i = 0; i < axes_vec.size(); i++) {
+      axes.insert((axes_vec(i) + ndims) % ndims);
+    }
+
+    std::vector<DimensionHandle> dims;
+    if (keep_dims) {
+      dims.reserve(ndims);
+      for (int d = 0; d < ndims; ++d) {
+        if (axes.find(d) == axes.end()) {
+          dims.push_back(c->MakeDim(shape_vec(d)));
+        } else {
+          dims.push_back(c->MakeDim(1));
+        }
+      }
+    } else {
+      for (int d = 0; d < ndims; ++d) {
+        if (axes.find(d) == axes.end()) {
+          dims.push_back(c->MakeDim(shape_vec(d)));
+        }
+      }
+    }
+
+    c->set_output(0, c->MakeShape(dims));
+    return Status::OK();
+  }
+  return UnknownShape(c);
+}
+
+}  // namespace shape_inference
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tokens used
+input: 758
+cache read: 8,704
+cache write: 0
+output: 138
+reasoning output: 0
+
+The equivalent target code is in `tensorflow/core/framework/common_shape_fns.cc`; the Conv2D and SparseReduce contexts match directly, and I’m checking the remaining Conv3D block around the channel/group logic.
+
+tool: viewcode
+{
+  "ref": "c8f65104ec1bced6eeb476919fdc6965a0f2081f",
+  "path": "tensorflow/core/framework/common_shape_fns.cc",
+  "startline": 790,
+  "endline": 875
+}
+Here are lines 790 through 875.
+
+  DimensionHandle filter_planes_dim = c->Dim(filter_shape, 0);
+  DimensionHandle filter_rows_dim = c->Dim(filter_shape, 1);
+  DimensionHandle filter_cols_dim = c->Dim(filter_shape, 2);
+  DimensionHandle filter_input_depth_dim = c->Dim(filter_shape, 3);
+  DimensionHandle output_depth_dim = c->Dim(filter_shape, 4);
+
+  // Check that the input tensor and the filter tensor agree on the channel
+  // count.
+  if (c->ValueKnown(input_depth_dim) && c->ValueKnown(filter_input_depth_dim)) {
+    int64 input_depth_value = c->Value(input_depth_dim),
+          filter_input_depth_value = c->Value(filter_input_depth_dim);
+    if (input_depth_value % filter_input_depth_value != 0)
+      return errors::InvalidArgument(
+          "Depth of input (", input_depth_value,
+          ") is not a multiple of input depth of filter (",
+          filter_input_depth_value, ")");
+    if (input_depth_value != filter_input_depth_value) {
+      int64 num_groups = input_depth_value / filter_input_depth_value;
+      if (c->ValueKnown(output_depth_dim)) {
+        int64 output_depth_value = c->Value(output_depth_dim);
+        if (output_depth_value % num_groups != 0)
+          return errors::InvalidArgument(
+              "Depth of output (", output_depth_value,
+              ") is not a multiple of the number of groups (", num_groups, ")");
+      }
+    }
+  }
+
+  Padding padding;
+  TF_RETURN_IF_ERROR(c->GetAttr("padding", &padding));
+  DimensionHandle output_planes, output_rows, output_cols;
+
+  TF_RETURN_IF_ERROR(GetWindowedOutputSizeFromDimsV2(
+      c, in_planes_dim, filter_planes_dim, dilation_planes, stride_planes,
+      padding, -1, -1, &output_planes));
+  TF_RETURN_IF_ERROR(GetWindowedOutputSizeFromDimsV2(
+      c, in_rows_dim, filter_rows_dim, dilation_rows, stride_rows, padding, -1,
+      -1, &output_rows));
+  TF_RETURN_IF_ERROR(GetWindowedOutputSizeFromDimsV2(
+      c, in_cols_dim, filter_cols_dim, dilation_cols, stride_cols, padding, -1,
+      -1, &output_cols));
+
+  ShapeHandle output_shape;
+  if (data_format == "NCDHW") {
+    output_shape = c->MakeShape({batch_size_dim, output_depth_dim,
+                                 output_planes, output_rows, output_cols});
+  } else {
+    output_shape = c->MakeShape({batch_size_dim, output_planes, output_rows,
+                                 output_cols, output_depth_dim});
+  }
+  c->set_output(0, output_shape);
+  return Status::OK();
+}
+
+Status Conv2DBackpropInputShape(shape_inference::InferenceContext* c) {
+  string data_format_str;
+  if (!c->GetAttr("data_format", &data_format_str).ok()) {
+    data_format_str = "NHWC";
+  }
+  TensorFormat data_format;
+  if (!FormatFromString(data_format_str, &data_format)) {
+    return errors::InvalidArgument("Invalid data format string: ",
+                                   data_format_str);
+  }
+
+  // For the rest of this function, output_grad_* describes out_backprop and
+  // input_grad_* describes in_backprop.
+  ShapeHandle output_grad_shape = c->input(2);
+  TF_RETURN_IF_ERROR(c->WithRank(output_grad_shape, 4, &output_grad_shape));
+  ShapeHandle filter_shape = c->input(1);
+  TF_RETURN_IF_ERROR(c->WithRank(filter_shape, 4, &filter_shape));
+
+  DimensionHandle batch_size_dim;
+  DimensionHandle output_grad_depth_dim;
+  gtl::InlinedVector<DimensionHandle, 2> output_grad_spatial_dims(2);
+  TF_RETURN_IF_ERROR(DimensionsFromShape(
+      output_grad_shape, data_format, &batch_size_dim,
+      absl::MakeSpan(output_grad_spatial_dims), &output_grad_depth_dim, c));
+  DimensionHandle unused;
+  TF_RETURN_IF_ERROR(
+      c->Merge(output_grad_depth_dim, c->Dim(filter_shape, 3), &unused));
+
+  ShapeHandle specified_input_grad_shape;
+  TF_RETURN_IF_ERROR(
+      c->MakeShapeFromShapeTensor(0, &specified_input_grad_shape));
+  if (c->Rank(specified_input_grad_shape) == InferenceContext::kUnknownRank) {
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tokens used
+input: 3,337
+cache read: 8,704
+cache write: 0
+output: 112
+reasoning output: 0
+
+I found all three vulnerable modulo/division sites. I’ll validate a minimal patch with the exact guards adapted to the target’s `int64` spelling, then apply it.
+
+tool: validate
+{
+  "ref": "c8f65104ec1bced6eeb476919fdc6965a0f2081f",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/framework/common_shape_fns.cc b/tensorflow/core/framework/common_shape_fns.cc\n--- a/tensorflow/core/framework/common_shape_fns.cc\n+++ b/tensorflow/core/framework/common_shape_fns.cc\n@@ -652,6 +652,8 @@ Status Conv2DShapeImpl(shape_inference::InferenceContext* c,\n   if (c->ValueKnown(input_depth_dim) && c->ValueKnown(filter_input_depth_dim)) {\n     int64 input_depth_value = c->Value(input_depth_dim),\n           filter_input_depth_value = c->Value(filter_input_depth_dim);\n+    if (filter_input_depth_value == 0)\n+      return errors::InvalidArgument(\"Depth of filter must not be 0\");\n     if (input_depth_value % filter_input_depth_value != 0)\n       return errors::InvalidArgument(\n           \"Depth of input (\", input_depth_value,\n@@ -661,6 +663,8 @@ Status Conv2DShapeImpl(shape_inference::InferenceContext* c,\n       int64 num_groups = input_depth_value / filter_input_depth_value;\n       if (c->ValueKnown(output_depth_dim)) {\n         int64 output_depth_value = c->Value(output_depth_dim);\n+        if (num_groups == 0)\n+          return errors::InvalidArgument(\"Number of groups must not be 0\");\n         if (output_depth_value % num_groups != 0)\n           return errors::InvalidArgument(\n               \"Depth of output (\", output_depth_value,\n@@ -798,6 +802,8 @@ Status Conv3DShape(shape_inference::InferenceContext* c) {\n   if (c->ValueKnown(input_depth_dim) && c->ValueKnown(filter_input_depth_dim)) {\n     int64 input_depth_value = c->Value(input_depth_dim),\n           filter_input_depth_value = c->Value(filter_input_depth_dim);\n+    if (filter_input_depth_value == 0)\n+      return errors::InvalidArgument(\"Depth of filter must not be 0\");\n     if (input_depth_value % filter_input_depth_value != 0)\n       return errors::InvalidArgument(\n           \"Depth of input (\", input_depth_value,\n@@ -807,6 +813,8 @@ Status Conv3DShape(shape_inference::InferenceContext* c) {\n       int64 num_groups = input_depth_value / filter_input_depth_value;\n       if (c->ValueKnown(output_depth_dim)) {\n         int64 output_depth_value = c->Value(output_depth_dim);\n+        if (num_groups == 0)\n+          return errors::InvalidArgument(\"Number of groups must not be 0\");\n         if (output_depth_value % num_groups != 0)\n           return errors::InvalidArgument(\n               \"Depth of output (\", output_depth_value,\n@@ -2362,6 +2370,9 @@ Status SparseReduceShapeFn(InferenceContext* c) {\n \n     int64 ndims = shape_vec.size();\n     absl::flat_hash_set<int64> axes;\n+    if (ndims == 0)\n+      return errors::InvalidArgument(\n+          \"Number of dims in shape tensor must not be 0\");\n     for (int i = 0; i < axes_vec.size(); i++) {\n       axes.insert((axes_vec(i) + ndims) % ndims);\n     }\n"
+}
+Patch applied successfully
+
+tokens used
+input: 1,352
+cache read: 11,776
+cache write: 0
+output: 839
+reasoning output: 14
+
+The hunk applies cleanly to the target base. I’m applying the same minimal source edit now.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Locate equivalent Conv2D, Conv3D, and SparseReduce shape code in target TensorFlow 2.3.4",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate uncertain hunks against target base",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply minimal source changes",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Inspect final diff and report YAML result",
+      "status": "pending",
+      "priority": "high"
+    }
+  ]
+}
+[
+  {
+    "content": "Locate equivalent Conv2D, Conv3D, and SparseReduce shape code in target TensorFlow 2.3.4",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate uncertain hunks against target base",
+    "status": "completed",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply minimal source changes",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Inspect final diff and report YAML result",
+    "status": "pending",
+    "priority": "high"
+  }
+]
+
+tokens used
+input: 1,194
+cache read: 12,800
+cache write: 0
+output: 136
+reasoning output: 0
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/framework/common_shape_fns.cc\n@@\n   if (c->ValueKnown(input_depth_dim) && c->ValueKnown(filter_input_depth_dim)) {\n     int64 input_depth_value = c->Value(input_depth_dim),\n           filter_input_depth_value = c->Value(filter_input_depth_dim);\n+    if (filter_input_depth_value == 0)\n+      return errors::InvalidArgument(\"Depth of filter must not be 0\");\n     if (input_depth_value % filter_input_depth_value != 0)\n       return errors::InvalidArgument(\n           \"Depth of input (\", input_depth_value,\n@@\n       int64 num_groups = input_depth_value / filter_input_depth_value;\n       if (c->ValueKnown(output_depth_dim)) {\n         int64 output_depth_value = c->Value(output_depth_dim);\n+        if (num_groups == 0)\n+          return errors::InvalidArgument(\"Number of groups must not be 0\");\n         if (output_depth_value % num_groups != 0)\n           return errors::InvalidArgument(\n               \"Depth of output (\", output_depth_value,\n@@\n   if (c->ValueKnown(input_depth_dim) && c->ValueKnown(filter_input_depth_dim)) {\n     int64 input_depth_value = c->Value(input_depth_dim),\n           filter_input_depth_value = c->Value(filter_input_depth_dim);\n+    if (filter_input_depth_value == 0)\n+      return errors::InvalidArgument(\"Depth of filter must not be 0\");\n     if (input_depth_value % filter_input_depth_value != 0)\n       return errors::InvalidArgument(\n           \"Depth of input (\", input_depth_value,\n@@\n       int64 num_groups = input_depth_value / filter_input_depth_value;\n       if (c->ValueKnown(output_depth_dim)) {\n         int64 output_depth_value = c->Value(output_depth_dim);\n+        if (num_groups == 0)\n+          return errors::InvalidArgument(\"Number of groups must not be 0\");\n         if (output_depth_value % num_groups != 0)\n           return errors::InvalidArgument(\n               \"Depth of output (\", output_depth_value,\n@@\n \n     int64 ndims = shape_vec.size();\n     absl::flat_hash_set<int64> axes;\n+    if (ndims == 0)\n+      return errors::InvalidArgument(\n+          \"Number of dims in shape tensor must not be 0\");\n     for (int i = 0; i < axes_vec.size(); i++) {\n       axes.insert((axes_vec(i) + ndims) % ndims);\n     }\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/framework/common_shape_fns.cc
+
+tokens used
+input: 461
+cache read: 13,824
+cache write: 0
+output: 621
+reasoning output: 0
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Locate equivalent Conv2D, Conv3D, and SparseReduce shape code in target TensorFlow 2.3.4",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate uncertain hunks against target base",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply minimal source changes",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Inspect final diff and report YAML result",
+      "status": "in_progress",
+      "priority": "high"
+    }
+  ]
+}
+[
+  {
+    "content": "Locate equivalent Conv2D, Conv3D, and SparseReduce shape code in target TensorFlow 2.3.4",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate uncertain hunks against target base",
+    "status": "completed",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply minimal source changes",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Inspect final diff and report YAML result",
+    "status": "in_progress",
+    "priority": "high"
+  }
+]
+
+tokens used
+input: 1,109
+cache read: 13,824
+cache write: 0
+output: 110
+reasoning output: 17
+
+The source change is applied; I’m inspecting the resulting diff to ensure only the intended guards were added.
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/framework/common_shape_fns.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0219-c8f65104ec1b",
+  "timeout": 120000
+}
+warning: in the working copy of 'tensorflow/core/framework/common_shape_fns.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/framework/common_shape_fns.cc b/tensorflow/core/framework/common_shape_fns.cc
+index b9efddf4cd..a81f740038 100644
+--- a/tensorflow/core/framework/common_shape_fns.cc
++++ b/tensorflow/core/framework/common_shape_fns.cc
+@@ -659,6 +659,8 @@ Status Conv2DShapeImpl(shape_inference::InferenceContext* c,
+   if (c->ValueKnown(input_depth_dim) && c->ValueKnown(filter_input_depth_dim)) {
+     int64 input_depth_value = c->Value(input_depth_dim),
+           filter_input_depth_value = c->Value(filter_input_depth_dim);
++    if (filter_input_depth_value == 0)
++      return errors::InvalidArgument("Depth of filter must not be 0");
+     if (input_depth_value % filter_input_depth_value != 0)
+       return errors::InvalidArgument(
+           "Depth of input (", input_depth_value,
+@@ -668,6 +670,8 @@ Status Conv2DShapeImpl(shape_inference::InferenceContext* c,
+       int64 num_groups = input_depth_value / filter_input_depth_value;
+       if (c->ValueKnown(output_depth_dim)) {
+         int64 output_depth_value = c->Value(output_depth_dim);
++        if (num_groups == 0)
++          return errors::InvalidArgument("Number of groups must not be 0");
+         if (output_depth_value % num_groups != 0)
+           return errors::InvalidArgument(
+               "Depth of output (", output_depth_value,
+@@ -798,6 +802,8 @@ Status Conv3DShape(shape_inference::InferenceContext* c) {
+   if (c->ValueKnown(input_depth_dim) && c->ValueKnown(filter_input_depth_dim)) {
+     int64 input_depth_value = c->Value(input_depth_dim),
+           filter_input_depth_value = c->Value(filter_input_depth_dim);
++    if (filter_input_depth_value == 0)
++      return errors::InvalidArgument("Depth of filter must not be 0");
+     if (input_depth_value % filter_input_depth_value != 0)
+       return errors::InvalidArgument(
+           "Depth of input (", input_depth_value,
+@@ -807,6 +813,8 @@ Status Conv3DShape(shape_inference::InferenceContext* c) {
+       int64 num_groups = input_depth_value / filter_input_depth_value;
+       if (c->ValueKnown(output_depth_dim)) {
+         int64 output_depth_value = c->Value(output_depth_dim);
++        if (num_groups == 0)
++          return errors::InvalidArgument("Number of groups must not be 0");
+         if (output_depth_value % num_groups != 0)
+           return errors::InvalidArgument(
+               "Depth of output (", output_depth_value,
+@@ -2364,6 +2372,9 @@ Status SparseReduceShapeFn(InferenceContext* c) {
+ 
+     int64 ndims = shape_vec.size();
+     absl::flat_hash_set<int64> axes;
++    if (ndims == 0)
++      return errors::InvalidArgument(
++          "Number of dims in shape tensor must not be 0");
+     for (int i = 0; i < axes_vec.size(); i++) {
+       axes.insert((axes_vec(i) + ndims) % ndims);
+     }
+
+tokens used
+input: 367
+cache read: 14,848
+cache write: 0
+output: 103
+reasoning output: 0
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Locate equivalent Conv2D, Conv3D, and SparseReduce shape code in target TensorFlow 2.3.4",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate uncertain hunks against target base",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply minimal source changes",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Inspect final diff and report YAML result",
+      "status": "completed",
+      "priority": "high"
+    }
+  ]
+}
+[
+  {
+    "content": "Locate equivalent Conv2D, Conv3D, and SparseReduce shape code in target TensorFlow 2.3.4",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate uncertain hunks against target base",
+    "status": "completed",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply minimal source changes",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Inspect final diff and report YAML result",
+    "status": "completed",
+    "priority": "high"
+  }
+]
+
+tokens used
+input: 1,220
+cache read: 14,848
+cache write: 0
+output: 109
+reasoning output: 15
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/framework/common_shape_fns.cc b/tensorflow/core/framework/common_shape_fns.cc
+    index b9efddf4cd..a81f740038 100644
+    --- a/tensorflow/core/framework/common_shape_fns.cc
+    +++ b/tensorflow/core/framework/common_shape_fns.cc
+    @@ -659,6 +659,8 @@ Status Conv2DShapeImpl(shape_inference::InferenceContext* c,
+       if (c->ValueKnown(input_depth_dim) && c->ValueKnown(filter_input_depth_dim)) {
+         int64 input_depth_value = c->Value(input_depth_dim),
+               filter_input_depth_value = c->Value(filter_input_depth_dim);
+    +    if (filter_input_depth_value == 0)
+    +      return errors::InvalidArgument("Depth of filter must not be 0");
+         if (input_depth_value % filter_input_depth_value != 0)
+           return errors::InvalidArgument(
+               "Depth of input (", input_depth_value,
+    @@ -668,6 +670,8 @@ Status Conv2DShapeImpl(shape_inference::InferenceContext* c,
+           int64 num_groups = input_depth_value / filter_input_depth_value;
+           if (c->ValueKnown(output_depth_dim)) {
+             int64 output_depth_value = c->Value(output_depth_dim);
+    +        if (num_groups == 0)
+    +          return errors::InvalidArgument("Number of groups must not be 0");
+             if (output_depth_value % num_groups != 0)
+               return errors::InvalidArgument(
+                   "Depth of output (", output_depth_value,
+    @@ -798,6 +802,8 @@ Status Conv3DShape(shape_inference::InferenceContext* c) {
+       if (c->ValueKnown(input_depth_dim) && c->ValueKnown(filter_input_depth_dim)) {
+         int64 input_depth_value = c->Value(input_depth_dim),
+               filter_input_depth_value = c->Value(filter_input_depth_dim);
+    +    if (filter_input_depth_value == 0)
+    +      return errors::InvalidArgument("Depth of filter must not be 0");
+         if (input_depth_value % filter_input_depth_value != 0)
+           return errors::InvalidArgument(
+               "Depth of input (", input_depth_value,
+    @@ -807,6 +813,8 @@ Status Conv3DShape(shape_inference::InferenceContext* c) {
+           int64 num_groups = input_depth_value / filter_input_depth_value;
+           if (c->ValueKnown(output_depth_dim)) {
+             int64 output_depth_value = c->Value(output_depth_dim);
+    +        if (num_groups == 0)
+    +          return errors::InvalidArgument("Number of groups must not be 0");
+             if (output_depth_value % num_groups != 0)
+               return errors::InvalidArgument(
+                   "Depth of output (", output_depth_value,
+    @@ -2364,6 +2372,9 @@ Status SparseReduceShapeFn(InferenceContext* c) {
+     
+         int64 ndims = shape_vec.size();
+         absl::flat_hash_set<int64> axes;
+    +    if (ndims == 0)
+    +      return errors::InvalidArgument(
+    +          "Number of dims in shape tensor must not be 0");
+         for (int i = 0; i < axes_vec.size(); i++) {
+           axes.insert((axes_vec(i) + ndims) % ndims);
+         }
+  notes: >
+    Added zero-value guards in Conv2D, Conv3D, and SparseReduce shape inference to prevent division or modulo by zero.
+```
+
+tokens used
+input: 474
+cache read: 15,872
+cache write: 0
+output: 781
+reasoning output: 0

@@ -1,0 +1,1513 @@
+I’ll inspect the target-side files around the patched functions/tests, then apply the smallest matching changes and validate uncertain hunks against the specified base.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target TensorFlow files for equivalent sparse add kernel and tests",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Backport source and test changes minimally",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "content": "Validate/apply hunks and capture final diff",
+      "status": "pending",
+      "priority": "high"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target TensorFlow files for equivalent sparse add kernel and tests",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Backport source and test changes minimally",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "content": "Validate/apply hunks and capture final diff",
+    "status": "pending",
+    "priority": "high"
+  }
+]
+
+tokens used
+input: 5,177
+cache read: 4,608
+cache write: 0
+output: 118
+reasoning output: 0
+
+tool: viewcode
+{
+  "ref": "e3f0d077b3fcda32e25f8973779b6717f3a107d6",
+  "path": "tensorflow/python/kernel_tests/sparse_ops/sparse_ops_test.py",
+  "startline": 640,
+  "endline": 690
+}
+This file doesn't exist in this commit.
+
+tool: viewcode
+{
+  "ref": "e3f0d077b3fcda32e25f8973779b6717f3a107d6",
+  "path": "tensorflow/python/kernel_tests/sparse_ops/sparse_add_op_test.py",
+  "startline": 160,
+  "endline": 260
+}
+This file doesn't exist in this commit.
+
+tool: viewcode
+{
+  "ref": "e3f0d077b3fcda32e25f8973779b6717f3a107d6",
+  "path": "tensorflow/core/kernels/sparse_tensor_dense_add_op.cc",
+  "startline": 1,
+  "endline": 120
+}
+Here are lines 1 through 120.
+
+/* Copyright 2016 The TensorFlow Authors. All Rights Reserved.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+==============================================================================*/
+
+#define EIGEN_USE_THREADS
+
+#include "tensorflow/core/kernels/sparse_tensor_dense_add_op.h"
+
+#include "tensorflow/core/framework/op_kernel.h"
+#include "tensorflow/core/framework/register_types.h"
+#include "tensorflow/core/framework/tensor.h"
+#include "tensorflow/core/framework/tensor_util.h"
+#include "tensorflow/core/framework/types.h"
+#include "tensorflow/core/util/sparse/sparse_tensor.h"
+
+namespace tensorflow {
+
+typedef Eigen::ThreadPoolDevice CPUDevice;
+// NOTE: does not support GPU yet.
+
+namespace {
+
+template <typename Index>
+Status ValidateInputs(const Tensor *a_indices, const Tensor *a_values,
+                      const Tensor *a_shape, const Tensor *b) {
+  if (!TensorShapeUtils::IsMatrix(a_indices->shape())) {
+    return errors::InvalidArgument(
+        "Input a_indices should be a matrix but received shape: ",
+        a_indices->shape().DebugString());
+  }
+  if (!TensorShapeUtils::IsVector(a_values->shape()) ||
+      !TensorShapeUtils::IsVector(a_shape->shape())) {
+    return errors::InvalidArgument(
+        "Inputs a_values and a_shape should be vectors "
+        "but received shapes: ",
+        a_values->shape().DebugString(), " and ",
+        a_shape->shape().DebugString());
+  }
+  if (a_shape->NumElements() != b->dims()) {
+    return errors::InvalidArgument(
+        "Two operands have different ranks; received: ", a_shape->NumElements(),
+        " and ", b->dims());
+  }
+  const auto a_shape_flat = a_shape->flat<Index>();
+  for (int i = 0; i < b->dims(); ++i) {
+    if (a_shape_flat(i) != b->dim_size(i)) {
+      return errors::InvalidArgument(
+          "Dimension ", i,
+          " does not equal (no broadcasting is supported): sparse side ",
+          a_shape_flat(i), " vs dense side ", b->dim_size(i));
+    }
+  }
+  return Status::OK();
+}
+
+}  // namespace
+
+template <typename Device, typename T, typename Index>
+class SparseTensorDenseAddOp : public OpKernel {
+ public:
+  explicit SparseTensorDenseAddOp(OpKernelConstruction *ctx) : OpKernel(ctx) {}
+
+  void Compute(OpKernelContext *ctx) override {
+    const Tensor *a_indices_t, *a_values_t, *a_shape_t, *b;
+    OP_REQUIRES_OK(ctx, ctx->input("a_indices", &a_indices_t));
+    OP_REQUIRES_OK(ctx, ctx->input("a_values", &a_values_t));
+    OP_REQUIRES_OK(ctx, ctx->input("a_shape", &a_shape_t));
+    OP_REQUIRES_OK(ctx, ctx->input("b", &b));
+    OP_REQUIRES_OK(
+        ctx, ValidateInputs<Index>(a_indices_t, a_values_t, a_shape_t, b));
+
+    Tensor *out_t;
+    OP_REQUIRES_OK(ctx, ctx->allocate_output(0, b->shape(), &out_t));
+
+    const int ndims = static_cast<int>(a_indices_t->dim_size(1));
+    const auto a_indices_mat = a_indices_t->flat_inner_dims<Index>();
+    const auto a_values_flat = a_values_t->flat<T>();
+
+    switch (ndims) {
+#define NDIMS_CASE(N)                                                     \
+  case N: {                                                               \
+    auto out_tensor = out_t->tensor<T, N>();                              \
+    out_tensor.device(ctx->eigen_device<Device>()) = b->tensor<T, N>();   \
+    const Index result =                                                  \
+        functor::ScatterNdFunctor<Device, T, Index, N,                    \
+                                  scatter_op::UpdateOp::ADD>()(           \
+            ctx->eigen_device<Device>(), a_indices_mat, a_values_flat,    \
+            out_tensor);                                                  \
+    OP_REQUIRES(                                                          \
+        ctx, result == -1,                                                \
+        errors::InvalidArgument(                                          \
+            "Sparse tensor has some invalid index on dimension ", result, \
+            "; dense tensor shape: ", b->shape().DebugString()));         \
+  } break;
+
+      NDIMS_CASE(1);
+      NDIMS_CASE(2);
+      NDIMS_CASE(3);
+      NDIMS_CASE(4);
+      NDIMS_CASE(5);
+      default:
+        OP_REQUIRES(
+            ctx, false,
+            errors::InvalidArgument("Only tensors with ranks between 1 and 5 "
+                                    "are currently supported.  Tensor rank: ",
+                                    ndims));
+#undef NDIMS_CASE
+    }
+  }
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tokens used
+input: 1,315
+cache read: 8,704
+cache write: 0
+output: 212
+reasoning output: 0
+
+The C++ kernel is in the same location and lacks the new validation. The newer test paths do not exist in 2.6.4, so I’m locating the equivalent older test files before editing.
+
+tool: glob
+{
+  "pattern": "tensorflow/python/kernel_tests/**/sparse*add*test.py"
+}
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0265-e3f0d077b3fc\tensorflow\python\kernel_tests\sparse_add_op_test.py
+
+tool: glob
+{
+  "pattern": "tensorflow/python/kernel_tests/**/sparse_ops_test.py"
+}
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0265-e3f0d077b3fc\tensorflow\python\kernel_tests\sparse_ops_test.py
+
+tool: grep
+{
+  "pattern": "testInvalidSparseTensor|testValuesInVariable|SparseAddTest",
+  "path": "tensorflow/python/kernel_tests",
+  "include": "*.py"
+}
+Found 4 matches
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0265-e3f0d077b3fc\tensorflow\python\kernel_tests\sparse_add_op_test.py:
+  Line 51: class SparseAddTest(test.TestCase):
+
+  Line 197:   def testInvalidSparseTensor(self):
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0265-e3f0d077b3fc\tensorflow\python\kernel_tests\sparse_ops_test.py:
+  Line 669: class SparseAddTest(test_util.TensorFlowTestCase):
+
+  Line 671:   def testValuesInVariable(self):
+
+tokens used
+input: 1,652
+cache read: 9,728
+cache write: 0
+output: 157
+reasoning output: 27
+
+tool: read
+{
+  "filePath": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0265-e3f0d077b3fc\\tensorflow\\python\\kernel_tests\\sparse_add_op_test.py",
+  "offset": 1,
+  "limit": 260
+}
+<path>C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0265-e3f0d077b3fc\tensorflow\python\kernel_tests\sparse_add_op_test.py</path>
+<type>file</type>
+<content>
+1: # Copyright 2016 The TensorFlow Authors. All Rights Reserved.
+2: #
+3: # Licensed under the Apache License, Version 2.0 (the "License");
+4: # you may not use this file except in compliance with the License.
+5: # You may obtain a copy of the License at
+6: #
+7: #     http://www.apache.org/licenses/LICENSE-2.0
+8: #
+9: # Unless required by applicable law or agreed to in writing, software
+10: # distributed under the License is distributed on an "AS IS" BASIS,
+11: # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+12: # See the License for the specific language governing permissions and
+13: # limitations under the License.
+14: # ==============================================================================
+15: """Tests for SparseAdd."""
+16: 
+17: from __future__ import absolute_import
+18: from __future__ import division
+19: from __future__ import print_function
+20: 
+21: import timeit
+22: 
+23: import numpy as np
+24: 
+25: from tensorflow.python.client import session
+26: from tensorflow.python.framework import constant_op
+27: from tensorflow.python.framework import dtypes
+28: from tensorflow.python.framework import errors_impl
+29: from tensorflow.python.framework import ops
+30: from tensorflow.python.framework import sparse_tensor
+31: from tensorflow.python.framework import test_util
+32: from tensorflow.python.ops import gradient_checker
+33: from tensorflow.python.ops import math_ops
+34: from tensorflow.python.ops import sparse_ops
+35: import tensorflow.python.ops.sparse_grad  # pylint: disable=unused-import
+36: from tensorflow.python.platform import test
+37: 
+38: 
+39: def _sparsify(x, thresh=0.5, index_dtype=np.int64):
+40:   x[x < thresh] = 0
+41: 
+42:   non_zero = np.where(x)
+43:   x_indices = np.vstack(non_zero).astype(index_dtype).T
+44:   x_values = x[non_zero]
+45:   x_shape = x.shape
+46: 
+47:   return sparse_tensor.SparseTensor(
+48:       indices=x_indices, values=x_values, dense_shape=x_shape), len(x_values)
+49: 
+50: 
+51: class SparseAddTest(test.TestCase):
+52: 
+53:   def _randomTensor(self, size, np_dtype, sparse=True):
+54:     n, m = size
+55:     x = np.random.randn(n, m).astype(np_dtype)
+56:     return _sparsify(x) if sparse else x
+57: 
+58:   def _SparseTensorValue_3x3(self, negate=False):
+59:     # [    1]
+60:     # [2    ]
+61:     # [3   4]
+62:     # ...or its cwise negation, if `negate`
+63:     ind = np.array([[0, 1], [1, 0], [2, 0], [2, 1]])
+64:     val = np.array([1, 2, 3, 4])
+65:     if negate:
+66:       val = -np.array([1, 2, 3, 4])
+67:     shape = np.array([3, 3])
+68:     return sparse_tensor.SparseTensorValue(
+69:         np.array(ind, np.int64),
+70:         np.array(val, np.float32), np.array(shape, np.int64))
+71: 
+72:   def _SparseTensor_3x3(self, negate=False):
+73:     return sparse_tensor.SparseTensor.from_value(
+74:         self._SparseTensorValue_3x3(negate))
+75: 
+76:   def _SparseTensor_3x3_v2(self):
+77:     # [           1]
+78:     # [-1.9        ]
+79:     # [   3    -4.2]
+80:     ind = np.array([[0, 1], [1, 0], [2, 0], [2, 1]])
+81:     val = np.array([1, -1.9, 3, -4.2])
+82:     shape = np.array([3, 3])
+83:     return sparse_tensor.SparseTensor(
+84:         constant_op.constant(ind, dtypes.int64),
+85:         constant_op.constant(val, dtypes.float32),
+86:         constant_op.constant(shape, dtypes.int64))
+87: 
+88:   def testAddSelf(self):
+89:     with test_util.force_cpu():
+90:       for sp_a in (self._SparseTensorValue_3x3(), self._SparseTensor_3x3()):
+91:         for sp_b in (self._SparseTensorValue_3x3(), self._SparseTensor_3x3()):
+92:           sp_sum = sparse_ops.sparse_add(sp_a, sp_b)
+93:           self.assertAllEqual((3, 3), sp_sum.get_shape())
+94: 
+95:           sum_out = self.evaluate(sp_sum)
+96: 
+97:           self.assertEqual(sp_sum.dense_shape.get_shape(), [2])
+98:           self.assertAllEqual(sum_out.indices, [[0, 1], [1, 0], [2, 0], [2, 1]])
+99:           self.assertAllEqual(sum_out.values, [2, 4, 6, 8])
+100:           self.assertAllEqual(sum_out.dense_shape, [3, 3])
+101: 
+102:   def testAddSelfAndNegation(self):
+103:     with test_util.force_cpu():
+104:       sp_a = self._SparseTensor_3x3()
+105:       sp_b = self._SparseTensor_3x3(negate=True)
+106: 
+107:       sp_sum = sparse_ops.sparse_add(sp_a, sp_b, 0.1)
+108:       sum_out = self.evaluate(sp_sum)
+109: 
+110:       self.assertEqual(sp_sum.dense_shape.get_shape(), [2])
+111:       self.assertAllEqual(sum_out.indices, np.empty([0, 2]))
+112:       self.assertAllEqual(sum_out.values, [])
+113:       self.assertAllEqual(sum_out.dense_shape, [3, 3])
+114: 
+115:   def testSmallValuesShouldVanish(self):
+116:     with test_util.force_cpu():
+117:       sp_a = self._SparseTensor_3x3()
+118:       sp_b = self._SparseTensor_3x3_v2()
+119: 
+120:       # sum:
+121:       # [       2]
+122:       # [.1      ]
+123:       # [ 6   -.2]
+124: 
+125:       # two values should vanish: |.1| < .21, and |-.2| < .21
+126:       sp_sum = sparse_ops.sparse_add(sp_a, sp_b, thresh=0.21)
+127:       sum_out = self.evaluate(sp_sum)
+128: 
+129:       self.assertEqual(sp_sum.dense_shape.get_shape(), [2])
+130:       self.assertAllEqual(sum_out.indices, [[0, 1], [2, 0]])
+131:       self.assertAllEqual(sum_out.values, [2, 6])
+132:       self.assertAllEqual(sum_out.dense_shape, [3, 3])
+133: 
+134:       # only .1 vanishes
+135:       sp_sum = sparse_ops.sparse_add(sp_a, sp_b, thresh=0.11)
+136:       sum_out = self.evaluate(sp_sum)
+137: 
+138:       self.assertEqual(sp_sum.dense_shape.get_shape(), [2])
+139:       self.assertAllEqual(sum_out.indices, [[0, 1], [2, 0], [2, 1]])
+140:       self.assertAllClose(sum_out.values, [2, 6, -.2])
+141:       self.assertAllEqual(sum_out.dense_shape, [3, 3])
+142: 
+143:   @test_util.run_deprecated_v1
+144:   def testGradients(self):
+145:     np.random.seed(1618)  # Make it reproducible.
+146:     with self.session(use_gpu=False):
+147:       for n in [10, 31]:
+148:         for m in [4, 17]:
+149:           sp_a, nnz_a = self._randomTensor([n, m], np.float32)
+150:           sp_b, nnz_b = self._randomTensor([n, m], np.float32)
+151:           sp_sum = sparse_ops.sparse_add(sp_a, sp_b)
+152:           nnz_sum = len(self.evaluate(sp_sum.values))
+153: 
+154:           err = gradient_checker.compute_gradient_error(
+155:               [sp_a.values, sp_b.values], [(nnz_a,), (nnz_b,)], sp_sum.values,
+156:               (nnz_sum,))
+157:           self.assertLess(err, 1e-3)
+158: 
+159:   def testAddSparseDense(self):
+160:     np.random.seed(1618)  # Make it reproducible.
+161:     n, m = np.random.randint(30, size=2)
+162:     for dtype in [np.float32, np.float64, np.int64, np.complex64]:
+163:       for index_dtype in [np.int32, np.int64]:
+164:         rand_vals_np = np.random.randn(n, m).astype(dtype)
+165:         dense_np = np.random.randn(n, m).astype(dtype)
+166: 
+167:         with test_util.force_cpu():
+168:           sparse, unused_nnz = _sparsify(rand_vals_np, index_dtype=index_dtype)
+169:           s = self.evaluate(
+170:               sparse_ops.sparse_add(sparse, constant_op.constant(dense_np)))
+171:           self.assertAllEqual(dense_np + rand_vals_np, s)
+172:           self.assertTrue(s.dtype == dtype)
+173: 
+174:           # check commutativity
+175:           s = self.evaluate(
+176:               sparse_ops.sparse_add(constant_op.constant(dense_np), sparse))
+177:           self.assertAllEqual(dense_np + rand_vals_np, s)
+178:           self.assertTrue(s.dtype == dtype)
+179: 
+180:   @test_util.run_deprecated_v1
+181:   def testSparseTensorDenseAddGradients(self):
+182:     np.random.seed(1618)  # Make it reproducible.
+183:     n, m = np.random.randint(30, size=2)
+184:     rand_vals_np = np.random.randn(n, m).astype(np.float32)
+185:     dense_np = np.random.randn(n, m).astype(np.float32)
+186: 
+187:     with self.session(use_gpu=False):
+188:       sparse, nnz = _sparsify(rand_vals_np)
+189:       dense = constant_op.constant(dense_np, dtype=dtypes.float32)
+190:       s = sparse_ops.sparse_add(sparse, dense)
+191: 
+192:       err = gradient_checker.compute_gradient_error([sparse.values, dense],
+193:                                                     [(nnz,), (n, m)], s, (n, m))
+194:       self.assertLess(err, 1e-3)
+195: 
+196:   @test_util.run_deprecated_v1
+197:   def testInvalidSparseTensor(self):
+198:     with test_util.force_cpu():
+199:       shape = [2, 2]
+200:       val = [0]
+201:       dense = constant_op.constant(np.zeros(shape, dtype=np.int32))
+202: 
+203:       for bad_idx in [
+204:           [[-1, 0]],  # -1 is invalid.
+205:           [[1, 3]],  # ...so is 3.
+206:       ]:
+207:         sparse = sparse_tensor.SparseTensorValue(bad_idx, val, shape)
+208:         s = sparse_ops.sparse_add(sparse, dense)
+209: 
+210:         with self.assertRaisesRegex(errors_impl.InvalidArgumentError,
+211:                                     "invalid index"):
+212:           self.evaluate(s)
+213: 
+214: ######################## Benchmarking code
+215: 
+216: 
+217: def _s2d_add_vs_sparse_add(sparsity, n, m, num_iters=50):
+218:   np.random.seed(1618)
+219: 
+220:   with session.Session(graph=ops.Graph()) as sess:
+221:     sp_vals = np.random.rand(n, m).astype(np.float32)
+222:     sp_t, unused_nnz = _sparsify(sp_vals, thresh=sparsity, index_dtype=np.int32)
+223:     vals = np.random.rand(n, m).astype(np.float32)
+224: 
+225:     s2d = math_ops.add(
+226:         sparse_ops.sparse_tensor_to_dense(sp_t), constant_op.constant(vals))
+227:     sa = sparse_ops.sparse_add(sp_t, constant_op.constant(vals))
+228: 
+229:     timeit.timeit(lambda: sess.run(s2d), number=3)
+230:     timeit.timeit(lambda: sess.run(sa), number=3)
+231: 
+232:     s2d_total = timeit.timeit(lambda: sess.run(s2d), number=num_iters)
+233:     sa_total = timeit.timeit(lambda: sess.run(sa), number=num_iters)
+234: 
+235:   # per-iter latency; secs to millis
+236:   return s2d_total * 1e3 / num_iters, sa_total * 1e3 / num_iters
+237: 
+238: 
+239: class SparseAddBenchmark(test.Benchmark):
+240: 
+241:   def benchmarkSparseAddDense(self):
+242: 
+243:     print("SparseAddDense: add with sparse_to_dense vs. sparse_add")
+244:     print("%nnz \t n \t m \t millis(s2d) \t millis(sparse_add) \t speedup")
+245: 
+246:     for sparsity in [0.99, 0.5, 0.01]:
+247:       for n in [1, 256, 50000]:
+248:         for m in [100, 1000]:
+249:           s2d_dt, sa_dt = _s2d_add_vs_sparse_add(sparsity, n, m)
+250:           print("%.2f \t %d \t %d \t %.4f \t %.4f \t %.2f" % (sparsity, n, m,
+251:                                                               s2d_dt, sa_dt,
+252:                                                               s2d_dt / sa_dt))
+253: 
+254: 
+255: if __name__ == "__main__":
+256:   test.main()
+
+(End of file - total 256 lines)
+</content>
+
+tool: read
+{
+  "filePath": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0265-e3f0d077b3fc\\tensorflow\\python\\kernel_tests\\sparse_ops_test.py",
+  "offset": 650,
+  "limit": 50
+}
+<path>C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0265-e3f0d077b3fc\tensorflow\python\kernel_tests\sparse_ops_test.py</path>
+<type>file</type>
+<content>
+650:           [sp_output, empty_row_indicator])
+651: 
+652:       self.assertAllEqual(output.indices, np.ones([0, 2]))
+653:       self.assertAllEqual(output.values, np.ones([0]))
+654:       self.assertAllEqual(output.dense_shape, [0, 3])
+655:       self.assertAllEqual(empty_row_indicator_out, [])
+656: 
+657:   def testInvalidIndices(self):
+658:     with test_util.use_gpu():
+659:       sp_input = sparse_tensor.SparseTensor(
+660:           indices=np.array([[1, 2], [1, 3], [99, 1], [99, 3]]),
+661:           values=np.array([1, 3, 2, 4]),
+662:           dense_shape=np.array([2, 5]))
+663: 
+664:       with self.assertRaisesRegex(errors.InvalidArgumentError,
+665:                                   r"indices\(2, 0\) is invalid"):
+666:         self.evaluate(sparse_ops.sparse_fill_empty_rows(sp_input, -1))
+667: 
+668: 
+669: class SparseAddTest(test_util.TensorFlowTestCase):
+670: 
+671:   def testValuesInVariable(self):
+672:     indices = constant_op.constant([[1]], dtype=dtypes.int64)
+673:     values = variables.Variable([1], trainable=False, dtype=dtypes.float32)
+674:     shape = constant_op.constant([1], dtype=dtypes.int64)
+675: 
+676:     sp_input = sparse_tensor.SparseTensor(indices, values, shape)
+677:     sp_output = sparse_ops.sparse_add(sp_input, sp_input)
+678: 
+679:     with test_util.force_cpu():
+680:       self.evaluate(variables.global_variables_initializer())
+681:       output = self.evaluate(sp_output)
+682:       self.assertAllEqual(output.values, [2])
+683: 
+684: 
+685: class SparseReduceTest(test_util.TensorFlowTestCase):
+686: 
+687:   # [[1, ?, 2]
+688:   #  [?, 3, ?]]
+689:   # where ? is implicitly-zero.
+690:   ind = np.array([[0, 0], [0, 2], [1, 1]]).astype(np.int64)
+691:   vals = np.array([1, 1, 1]).astype(np.int32)
+692:   dense_shape = np.array([2, 3]).astype(np.int64)
+693: 
+694:   def _compare(self, sp_t, reduction_axes, ndims, keep_dims, do_sum):
+695:     densified = self.evaluate(sparse_ops.sparse_tensor_to_dense(sp_t))
+696: 
+697:     np_ans = densified
+698:     if reduction_axes is None:
+699:       if do_sum:
+
+(Showing lines 650-699 of 1180. Use offset=700 to continue.)
+</content>
+
+tool: read
+{
+  "filePath": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0265-e3f0d077b3fc\\tensorflow\\core\\kernels\\sparse_tensor_dense_add_op.cc",
+  "offset": 1,
+  "limit": 130
+}
+<path>C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0265-e3f0d077b3fc\tensorflow\core\kernels\sparse_tensor_dense_add_op.cc</path>
+<type>file</type>
+<content>
+1: /* Copyright 2016 The TensorFlow Authors. All Rights Reserved.
+2: 
+3: Licensed under the Apache License, Version 2.0 (the "License");
+4: you may not use this file except in compliance with the License.
+5: You may obtain a copy of the License at
+6: 
+7:     http://www.apache.org/licenses/LICENSE-2.0
+8: 
+9: Unless required by applicable law or agreed to in writing, software
+10: distributed under the License is distributed on an "AS IS" BASIS,
+11: WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+12: See the License for the specific language governing permissions and
+13: limitations under the License.
+14: ==============================================================================*/
+15: 
+16: #define EIGEN_USE_THREADS
+17: 
+18: #include "tensorflow/core/kernels/sparse_tensor_dense_add_op.h"
+19: 
+20: #include "tensorflow/core/framework/op_kernel.h"
+21: #include "tensorflow/core/framework/register_types.h"
+22: #include "tensorflow/core/framework/tensor.h"
+23: #include "tensorflow/core/framework/tensor_util.h"
+24: #include "tensorflow/core/framework/types.h"
+25: #include "tensorflow/core/util/sparse/sparse_tensor.h"
+26: 
+27: namespace tensorflow {
+28: 
+29: typedef Eigen::ThreadPoolDevice CPUDevice;
+30: // NOTE: does not support GPU yet.
+31: 
+32: namespace {
+33: 
+34: template <typename Index>
+35: Status ValidateInputs(const Tensor *a_indices, const Tensor *a_values,
+36:                       const Tensor *a_shape, const Tensor *b) {
+37:   if (!TensorShapeUtils::IsMatrix(a_indices->shape())) {
+38:     return errors::InvalidArgument(
+39:         "Input a_indices should be a matrix but received shape: ",
+40:         a_indices->shape().DebugString());
+41:   }
+42:   if (!TensorShapeUtils::IsVector(a_values->shape()) ||
+43:       !TensorShapeUtils::IsVector(a_shape->shape())) {
+44:     return errors::InvalidArgument(
+45:         "Inputs a_values and a_shape should be vectors "
+46:         "but received shapes: ",
+47:         a_values->shape().DebugString(), " and ",
+48:         a_shape->shape().DebugString());
+49:   }
+50:   if (a_shape->NumElements() != b->dims()) {
+51:     return errors::InvalidArgument(
+52:         "Two operands have different ranks; received: ", a_shape->NumElements(),
+53:         " and ", b->dims());
+54:   }
+55:   const auto a_shape_flat = a_shape->flat<Index>();
+56:   for (int i = 0; i < b->dims(); ++i) {
+57:     if (a_shape_flat(i) != b->dim_size(i)) {
+58:       return errors::InvalidArgument(
+59:           "Dimension ", i,
+60:           " does not equal (no broadcasting is supported): sparse side ",
+61:           a_shape_flat(i), " vs dense side ", b->dim_size(i));
+62:     }
+63:   }
+64:   return Status::OK();
+65: }
+66: 
+67: }  // namespace
+68: 
+69: template <typename Device, typename T, typename Index>
+70: class SparseTensorDenseAddOp : public OpKernel {
+71:  public:
+72:   explicit SparseTensorDenseAddOp(OpKernelConstruction *ctx) : OpKernel(ctx) {}
+73: 
+74:   void Compute(OpKernelContext *ctx) override {
+75:     const Tensor *a_indices_t, *a_values_t, *a_shape_t, *b;
+76:     OP_REQUIRES_OK(ctx, ctx->input("a_indices", &a_indices_t));
+77:     OP_REQUIRES_OK(ctx, ctx->input("a_values", &a_values_t));
+78:     OP_REQUIRES_OK(ctx, ctx->input("a_shape", &a_shape_t));
+79:     OP_REQUIRES_OK(ctx, ctx->input("b", &b));
+80:     OP_REQUIRES_OK(
+81:         ctx, ValidateInputs<Index>(a_indices_t, a_values_t, a_shape_t, b));
+82: 
+83:     Tensor *out_t;
+84:     OP_REQUIRES_OK(ctx, ctx->allocate_output(0, b->shape(), &out_t));
+85: 
+86:     const int ndims = static_cast<int>(a_indices_t->dim_size(1));
+87:     const auto a_indices_mat = a_indices_t->flat_inner_dims<Index>();
+88:     const auto a_values_flat = a_values_t->flat<T>();
+89: 
+90:     switch (ndims) {
+91: #define NDIMS_CASE(N)                                                     \
+92:   case N: {                                                               \
+93:     auto out_tensor = out_t->tensor<T, N>();                              \
+94:     out_tensor.device(ctx->eigen_device<Device>()) = b->tensor<T, N>();   \
+95:     const Index result =                                                  \
+96:         functor::ScatterNdFunctor<Device, T, Index, N,                    \
+97:                                   scatter_op::UpdateOp::ADD>()(           \
+98:             ctx->eigen_device<Device>(), a_indices_mat, a_values_flat,    \
+99:             out_tensor);                                                  \
+100:     OP_REQUIRES(                                                          \
+101:         ctx, result == -1,                                                \
+102:         errors::InvalidArgument(                                          \
+103:             "Sparse tensor has some invalid index on dimension ", result, \
+104:             "; dense tensor shape: ", b->shape().DebugString()));         \
+105:   } break;
+106: 
+107:       NDIMS_CASE(1);
+108:       NDIMS_CASE(2);
+109:       NDIMS_CASE(3);
+110:       NDIMS_CASE(4);
+111:       NDIMS_CASE(5);
+112:       default:
+113:         OP_REQUIRES(
+114:             ctx, false,
+115:             errors::InvalidArgument("Only tensors with ranks between 1 and 5 "
+116:                                     "are currently supported.  Tensor rank: ",
+117:                                     ndims));
+118: #undef NDIMS_CASE
+119:     }
+120:   }
+121: };
+122: 
+123: namespace functor {
+124: template <typename T, typename Index, int NDIMS>
+125: struct ScatterNdFunctor<CPUDevice, T, Index, NDIMS, scatter_op::UpdateOp::ADD> {
+126:   Index operator()(const CPUDevice &d,
+127:                    typename TTypes<Index>::ConstMatrix indices,
+128:                    typename TTypes<T>::ConstFlat updates,
+129:                    typename TTypes<T, NDIMS>::Tensor out) {
+130:     Eigen::array<Eigen::DenseIndex, NDIMS> idx;
+
+(Showing lines 1-130 of 160. Use offset=131 to continue.)
+</content>
+
+tokens used
+input: 1,115
+cache read: 10,752
+cache write: 0
+output: 242
+reasoning output: 0
+
+tool: grep
+{
+  "pattern": "gen_sparse_ops",
+  "path": "tensorflow/python/ops/sparse_ops.py",
+  "include": "*.py"
+}
+Found 56 matches
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0265-e3f0d077b3fc\tensorflow\python\ops\math_ops.py:
+  Line 93: from tensorflow.python.ops import gen_sparse_ops
+
+  Line 1462:     return gen_sparse_ops.sparse_dense_cwise_div(
+
+  Line 1706:     new_vals = gen_sparse_ops.sparse_dense_cwise_mul(y.indices, y.values,
+
+  Line 1716: _OverrideBinaryOperatorHelper(gen_sparse_ops.sparse_dense_cwise_div, "div",
+
+  Line 1720: _OverrideBinaryOperatorHelper(gen_sparse_ops.sparse_dense_cwise_mul, "mul",
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0265-e3f0d077b3fc\tensorflow\python\ops\nn_impl.py:
+  Line 34: from tensorflow.python.ops import gen_sparse_ops
+
+  Line 1961:       sampled_logits += gen_sparse_ops.sparse_to_dense(
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0265-e3f0d077b3fc\tensorflow\python\ops\parallel_for\pfor.py:
+  Line 56: from tensorflow.python.ops import gen_sparse_ops
+
+  Line 1375:       res = gen_sparse_ops.serialize_sparse(
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0265-e3f0d077b3fc\tensorflow\python\ops\sparse_grad.py:
+  Line 25: from tensorflow.python.ops import gen_sparse_ops
+
+  Line 91:   a_val_grad, b_val_grad = gen_sparse_ops.sparse_add_grad(
+
+  Line 141:   val_grad = gen_sparse_ops.sparse_slice_grad(
+
+  Line 176:   b_grad = gen_sparse_ops.sparse_tensor_dense_mat_mul(
+
+  Line 341:   d_values, d_default_value = gen_sparse_ops.sparse_fill_empty_rows_grad(
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0265-e3f0d077b3fc\tensorflow\python\ops\sparse_ops.py:
+  Line 39: from tensorflow.python.ops import gen_sparse_ops
+
+  Line 44: from tensorflow.python.ops.gen_sparse_ops import *
+
+  Line 419:       gen_sparse_ops.sparse_concat(inds, vals, shapes, axis, name=name))
+
+  Line 583:         gen_sparse_ops.sparse_add(a.indices, a.values, a.dense_shape,
+
+  Line 599:     return gen_sparse_ops.sparse_tensor_dense_add(a.indices, a.values,
+
+  Line 648:   indices_out, values_out, shape_out = gen_sparse_ops.sparse_cross_v2(
+
+  Line 714:   """See gen_sparse_ops.sparse_cross_v2."""
+
+  Line 744:   """See gen_sparse_ops.sparse_cross."""
+
+  Line 774:   indices_out, values_out, shape_out = gen_sparse_ops.sparse_cross(
+
+  Line 809:   result = gen_sparse_ops.sparse_dense_cwise_add(sp_t.indices, sp_t.values,
+
+  Line 854:       gen_sparse_ops.sparse_reorder(
+
+  Line 919:     reshaped_ind, reshaped_shape = gen_sparse_ops.sparse_reshape(
+
+  Line 1040:       gen_sparse_ops.sparse_split(
+
+  Line 1161:     output_indices, output_values, output_shape = gen_sparse_ops.sparse_slice(
+
+  Line 1224:   return gen_sparse_ops.sparse_to_dense(
+
+  Line 1309:         gen_sparse_ops.sparse_reduce_max_sparse(
+
+  Line 1319:   return gen_sparse_ops.sparse_reduce_max(
+
+  Line 1409:   return gen_sparse_ops.sparse_reduce_max(
+
+  Line 1460:       gen_sparse_ops.sparse_reduce_max_sparse(
+
+  Line 1528:         gen_sparse_ops.sparse_reduce_sum_sparse(
+
+  Line 1537:   return gen_sparse_ops.sparse_reduce_sum(
+
+  Line 1610:   return gen_sparse_ops.sparse_reduce_sum(
+
+  Line 1661:       gen_sparse_ops.sparse_reduce_sum_sparse(
+
+  Line 1715:   return gen_sparse_ops.sparse_to_dense(
+
+  Line 2151:      unused_reverse_index_map) = gen_sparse_ops.sparse_fill_empty_rows(
+
+  Line 2202:   return gen_sparse_ops.serialize_sparse(
+
+  Line 2268:   return gen_sparse_ops.serialize_many_sparse(
+
+  Line 2333:       gen_sparse_ops.deserialize_sparse(serialized_sparse, dtype, name=name))
+
+  Line 2406:       gen_sparse_ops.deserialize_many_sparse(
+
+  Line 2648:       return gen_sparse_ops.sparse_tensor_dense_mat_mul(
+
+  Line 2707:     out_vals = gen_sparse_ops.sparse_softmax(sp_input.indices, sp_input.values,
+
+  Line 2748:     out_indices, out_values = gen_sparse_ops.sparse_sparse_maximum(
+
+  Line 2792:     out_indices, out_values = gen_sparse_ops.sparse_sparse_minimum(
+
+  Line 3001:   return gen_sparse_ops.add_sparse_to_tensors_map(
+
+  Line 3041:   return gen_sparse_ops.add_many_sparse_to_tensors_map(
+
+  Line 3122:         gen_sparse_ops.take_many_sparse_from_tensors_map(
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0265-e3f0d077b3fc\tensorflow\python\ops\sparse_ops_test.py:
+  Line 34: from tensorflow.python.ops import gen_sparse_ops
+
+  Line 246:         gen_sparse_ops.SparseFillEmptyRowsGrad(
+
+  Line 258:           gen_sparse_ops.SparseFillEmptyRowsGrad(
+
+  Line 268:           gen_sparse_ops.SparseFillEmptyRowsGrad(
+
+  Line 281:             gen_sparse_ops.SparseFillEmptyRowsGrad(
+
+  Line 287:             gen_sparse_ops.SparseFillEmptyRowsGrad(
+
+tokens used
+input: 5,831
+cache read: 11,776
+cache write: 0
+output: 38
+reasoning output: 208
+
+The older tests are flat under `tensorflow/python/kernel_tests/`. I’m applying the same validation logic and adapting only file paths/context, keeping the public and direct-kernel test coverage.
+
+tool: validate
+{
+  "ref": "e3f0d077b3fcda32e25f8973779b6717f3a107d6",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/sparse_tensor_dense_add_op.cc b/tensorflow/core/kernels/sparse_tensor_dense_add_op.cc\n--- a/tensorflow/core/kernels/sparse_tensor_dense_add_op.cc\n+++ b/tensorflow/core/kernels/sparse_tensor_dense_add_op.cc\n@@ -18,6 +18,7 @@ limitations under the License.\n #include \"tensorflow/core/kernels/sparse_tensor_dense_add_op.h\"\n \n #include \"tensorflow/core/framework/op_kernel.h\"\n+#include \"tensorflow/core/framework/op_requires.h\"\n #include \"tensorflow/core/framework/register_types.h\"\n #include \"tensorflow/core/framework/tensor.h\"\n #include \"tensorflow/core/framework/tensor_util.h\"\n@@ -47,6 +48,17 @@ Status ValidateInputs(const Tensor *a_indices, const Tensor *a_values,\n         a_values->shape().DebugString(), \" and \",\n         a_shape->shape().DebugString());\n   }\n+  int64_t nnz = a_indices->dim_size(0);\n+  int64_t ndims = a_indices->dim_size(1);\n+  if (a_values->dim_size(0) != nnz) {\n+    return errors::InvalidArgument(\"Dimensions \", nnz, \" and \",\n+                                   a_values->dim_size(0),\n+                                   \" are not compatible\");\n+  }\n+  if (a_shape->dim_size(0) != ndims) {\n+    return errors::InvalidArgument(\"Dimensions \", ndims, \" and \",\n+                                   a_shape->dim_size(0), \" are not compatible\");\n+  }\n   if (a_shape->NumElements() != b->dims()) {\n     return errors::InvalidArgument(\n         \"Two operands have different ranks; received: \", a_shape->NumElements(),\n@@ -61,6 +73,24 @@ Status ValidateInputs(const Tensor *a_indices, const Tensor *a_values,\n           a_shape_flat(i), \" vs dense side \", b->dim_size(i));\n     }\n   }\n+\n+  // Check for invalid indices.\n+  const auto a_indices_mat = a_indices->flat_inner_dims<Index>();\n+\n+  for (int64_t zidx = 0; zidx < nnz; ++zidx) {\n+    for (int64_t didx = 0; didx < ndims; ++didx) {\n+      const Index idx = a_indices_mat(zidx, didx);\n+      if (idx < 0 || idx >= a_shape_flat(didx)) {\n+        return errors::InvalidArgument(\n+            \"Sparse tensor has an invalid index on dimension \", didx,\n+            \": \"\n+            \"a_indices(\",\n+            zidx, \",\", didx, \") = \", idx,\n+            \", dense tensor shape: \", a_shape_flat);\n+      }\n+    }\n+  }\n+\n   return Status::OK();\n }\n"
+}
+This patch does not apply to the target TensorFlow ref.
+Git apply output:
+error: corrupt patch at line 54
+Touched files:
+- tensorflow/core/kernels/sparse_tensor_dense_add_op.cc
+Fix the patch context against the older TensorFlow version, then run validate again in hunk mode.
+
+tokens used
+input: 2,352
+cache read: 16,896
+cache write: 0
+output: 776
+reasoning output: 27
+
+The initial validation patch was malformed because the manual hunk count did not match the added context. I’m applying the edits directly with targeted context and will inspect the resulting diff.
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/kernels/sparse_tensor_dense_add_op.cc\n@@\n #include \"tensorflow/core/kernels/sparse_tensor_dense_add_op.h\"\n \n #include \"tensorflow/core/framework/op_kernel.h\"\n+#include \"tensorflow/core/framework/op_requires.h\"\n #include \"tensorflow/core/framework/register_types.h\"\n #include \"tensorflow/core/framework/tensor.h\"\n #include \"tensorflow/core/framework/tensor_util.h\"\n@@\n         a_values->shape().DebugString(), \" and \",\n         a_shape->shape().DebugString());\n   }\n+  int64_t nnz = a_indices->dim_size(0);\n+  int64_t ndims = a_indices->dim_size(1);\n+  if (a_values->dim_size(0) != nnz) {\n+    return errors::InvalidArgument(\"Dimensions \", nnz, \" and \",\n+                                   a_values->dim_size(0),\n+                                   \" are not compatible\");\n+  }\n+  if (a_shape->dim_size(0) != ndims) {\n+    return errors::InvalidArgument(\"Dimensions \", ndims, \" and \",\n+                                   a_shape->dim_size(0), \" are not compatible\");\n+  }\n   if (a_shape->NumElements() != b->dims()) {\n     return errors::InvalidArgument(\n         \"Two operands have different ranks; received: \", a_shape->NumElements(),\n@@\n           a_shape_flat(i), \" vs dense side \", b->dim_size(i));\n     }\n   }\n+\n+  // Check for invalid indices.\n+  const auto a_indices_mat = a_indices->flat_inner_dims<Index>();\n+\n+  for (int64_t zidx = 0; zidx < nnz; ++zidx) {\n+    for (int64_t didx = 0; didx < ndims; ++didx) {\n+      const Index idx = a_indices_mat(zidx, didx);\n+      if (idx < 0 || idx >= a_shape_flat(didx)) {\n+        return errors::InvalidArgument(\n+            \"Sparse tensor has an invalid index on dimension \", didx,\n+            \": \"\n+            \"a_indices(\",\n+            zidx, \",\", didx, \") = \", idx,\n+            \", dense tensor shape: \", a_shape_flat);\n+      }\n+    }\n+  }\n+\n   return Status::OK();\n }\n*** Update File: tensorflow/python/kernel_tests/sparse_add_op_test.py\n@@\n-  @test_util.run_deprecated_v1\n   def testInvalidSparseTensor(self):\n     with test_util.force_cpu():\n       shape = [2, 2]\n@@\n       ]:\n         sparse = sparse_tensor.SparseTensorValue(bad_idx, val, shape)\n-        s = sparse_ops.sparse_add(sparse, dense)\n-\n-        with self.assertRaisesRegex(errors_impl.InvalidArgumentError,\n-                                    \"invalid index\"):\n+        with self.assertRaisesRegex(\n+            (ValueError, errors_impl.InvalidArgumentError), \"invalid index\"):\n+          s = sparse_ops.sparse_add(sparse, dense)\n           self.evaluate(s)\n+\n+  def _testSparseDenseInvalidInputs(self,\n+                                    a_indices,\n+                                    a_values,\n+                                    a_shape,\n+                                    b,\n+                                    expected_error=\"\"):\n+    # Public API call to sparse-dense add.\n+    with self.assertRaisesRegex((ValueError, errors_impl.InvalidArgumentError),\n+                                expected_error):\n+      a = sparse_tensor.SparseTensor(a_indices, a_values, a_shape)\n+      self.evaluate(sparse_ops.sparse_add(a, b))\n+    # Directly call generated kernel, by-passing SparseTensor validation.\n+    with self.assertRaisesRegex((ValueError, errors_impl.InvalidArgumentError),\n+                                expected_error):\n+      self.evaluate(\n+          sparse_ops.gen_sparse_ops.sparse_tensor_dense_add(\n+              a_indices, a_values, a_shape, b))\n+\n+  def testSparseDenseInvalidInputs(self):\n+    self._testSparseDenseInvalidInputs(\n+        a_indices=constant_op.constant(0, shape=[17, 2], dtype=dtypes.int64),\n+        a_values=constant_op.constant(0, shape=[5], dtype=dtypes.float32),\n+        a_shape=constant_op.constant([3, 4], dtype=dtypes.int64),\n+        b=constant_op.constant(1, shape=[3, 4], dtype=dtypes.float32),\n+        expected_error=\"Dimensions 17 and 5 are not compatible\")\n+    self._testSparseDenseInvalidInputs(\n+        a_indices=constant_op.constant(0, shape=[17, 4], dtype=dtypes.int64),\n+        a_values=constant_op.constant(0, shape=[17], dtype=dtypes.float32),\n+        a_shape=constant_op.constant([3, 4], dtype=dtypes.int64),\n+        b=constant_op.constant(1, shape=[3, 4], dtype=dtypes.float32),\n+        expected_error=\"Dimensions 4 and 2 are not compatible\")\n+    self._testSparseDenseInvalidInputs(\n+        a_indices=constant_op.constant(7, shape=[17, 2], dtype=dtypes.int64),\n+        a_values=constant_op.constant(0, shape=[17], dtype=dtypes.float32),\n+        a_shape=constant_op.constant([3, 4], dtype=dtypes.int64),\n+        b=constant_op.constant(1, shape=[3, 4], dtype=dtypes.float32),\n+        expected_error=\"invalid index\")\n \n ######################## Benchmarking code\n*** Update File: tensorflow/python/kernel_tests/sparse_ops_test.py\n@@\n   def testValuesInVariable(self):\n-    indices = constant_op.constant([[1]], dtype=dtypes.int64)\n+    indices = constant_op.constant([[0]], dtype=dtypes.int64)\n     values = variables.Variable([1], trainable=False, dtype=dtypes.float32)\n     shape = constant_op.constant([1], dtype=dtypes.int64)\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/kernels/sparse_tensor_dense_add_op.cc
+M tensorflow/python/kernel_tests/sparse_add_op_test.py
+M tensorflow/python/kernel_tests/sparse_ops_test.py
+
+tokens used
+input: 1,178
+cache read: 18,944
+cache write: 0
+output: 1,492
+reasoning output: 82
+
+The source and equivalent older test files are updated. I’m checking the diff and doing lightweight targeted validation rather than a full build.
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/kernels/sparse_tensor_dense_add_op.cc tensorflow/python/kernel_tests/sparse_add_op_test.py tensorflow/python/kernel_tests/sparse_ops_test.py",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0265-e3f0d077b3fc"
+}
+warning: in the working copy of 'tensorflow/core/kernels/sparse_tensor_dense_add_op.cc', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'tensorflow/python/kernel_tests/sparse_add_op_test.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'tensorflow/python/kernel_tests/sparse_ops_test.py', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/kernels/sparse_tensor_dense_add_op.cc b/tensorflow/core/kernels/sparse_tensor_dense_add_op.cc
+index 0b664fc357..7a11698be4 100644
+--- a/tensorflow/core/kernels/sparse_tensor_dense_add_op.cc
++++ b/tensorflow/core/kernels/sparse_tensor_dense_add_op.cc
+@@ -18,6 +18,7 @@ limitations under the License.
+ #include "tensorflow/core/kernels/sparse_tensor_dense_add_op.h"
+ 
+ #include "tensorflow/core/framework/op_kernel.h"
++#include "tensorflow/core/framework/op_requires.h"
+ #include "tensorflow/core/framework/register_types.h"
+ #include "tensorflow/core/framework/tensor.h"
+ #include "tensorflow/core/framework/tensor_util.h"
+@@ -47,6 +48,17 @@ Status ValidateInputs(const Tensor *a_indices, const Tensor *a_values,
+         a_values->shape().DebugString(), " and ",
+         a_shape->shape().DebugString());
+   }
++  int64_t nnz = a_indices->dim_size(0);
++  int64_t ndims = a_indices->dim_size(1);
++  if (a_values->dim_size(0) != nnz) {
++    return errors::InvalidArgument("Dimensions ", nnz, " and ",
++                                   a_values->dim_size(0),
++                                   " are not compatible");
++  }
++  if (a_shape->dim_size(0) != ndims) {
++    return errors::InvalidArgument("Dimensions ", ndims, " and ",
++                                   a_shape->dim_size(0), " are not compatible");
++  }
+   if (a_shape->NumElements() != b->dims()) {
+     return errors::InvalidArgument(
+         "Two operands have different ranks; received: ", a_shape->NumElements(),
+@@ -61,6 +73,24 @@ Status ValidateInputs(const Tensor *a_indices, const Tensor *a_values,
+           a_shape_flat(i), " vs dense side ", b->dim_size(i));
+     }
+   }
++
++  // Check for invalid indices.
++  const auto a_indices_mat = a_indices->flat_inner_dims<Index>();
++
++  for (int64_t zidx = 0; zidx < nnz; ++zidx) {
++    for (int64_t didx = 0; didx < ndims; ++didx) {
++      const Index idx = a_indices_mat(zidx, didx);
++      if (idx < 0 || idx >= a_shape_flat(didx)) {
++        return errors::InvalidArgument(
++            "Sparse tensor has an invalid index on dimension ", didx,
++            ": "
++            "a_indices(",
++            zidx, ",", didx, ") = ", idx,
++            ", dense tensor shape: ", a_shape_flat);
++      }
++    }
++  }
++
+   return Status::OK();
+ }
+ 
+diff --git a/tensorflow/python/kernel_tests/sparse_add_op_test.py b/tensorflow/python/kernel_tests/sparse_add_op_test.py
+index 1a43564fec..31eb9d2b2b 100644
+--- a/tensorflow/python/kernel_tests/sparse_add_op_test.py
++++ b/tensorflow/python/kernel_tests/sparse_add_op_test.py
+@@ -193,7 +193,6 @@ class SparseAddTest(test.TestCase):
+                                                     [(nnz,), (n, m)], s, (n, m))
+       self.assertLess(err, 1e-3)
+ 
+-  @test_util.run_deprecated_v1
+   def testInvalidSparseTensor(self):
+     with test_util.force_cpu():
+       shape = [2, 2]
+@@ -205,12 +204,49 @@ class SparseAddTest(test.TestCase):
+           [[1, 3]],  # ...so is 3.
+       ]:
+         sparse = sparse_tensor.SparseTensorValue(bad_idx, val, shape)
+-        s = sparse_ops.sparse_add(sparse, dense)
+-
+-        with self.assertRaisesRegex(errors_impl.InvalidArgumentError,
+-                                    "invalid index"):
++        with self.assertRaisesRegex(
++            (ValueError, errors_impl.InvalidArgumentError), "invalid index"):
++          s = sparse_ops.sparse_add(sparse, dense)
+           self.evaluate(s)
+ 
++  def _testSparseDenseInvalidInputs(self,
++                                    a_indices,
++                                    a_values,
++                                    a_shape,
++                                    b,
++                                    expected_error=""):
++    # Public API call to sparse-dense add.
++    with self.assertRaisesRegex((ValueError, errors_impl.InvalidArgumentError),
++                                expected_error):
++      a = sparse_tensor.SparseTensor(a_indices, a_values, a_shape)
++      self.evaluate(sparse_ops.sparse_add(a, b))
++    # Directly call generated kernel, by-passing SparseTensor validation.
++    with self.assertRaisesRegex((ValueError, errors_impl.InvalidArgumentError),
++                                expected_error):
++      self.evaluate(
++          sparse_ops.gen_sparse_ops.sparse_tensor_dense_add(
++              a_indices, a_values, a_shape, b))
++
++  def testSparseDenseInvalidInputs(self):
++    self._testSparseDenseInvalidInputs(
++        a_indices=constant_op.constant(0, shape=[17, 2], dtype=dtypes.int64),
++        a_values=constant_op.constant(0, shape=[5], dtype=dtypes.float32),
++        a_shape=constant_op.constant([3, 4], dtype=dtypes.int64),
++        b=constant_op.constant(1, shape=[3, 4], dtype=dtypes.float32),
++        expected_error="Dimensions 17 and 5 are not compatible")
++    self._testSparseDenseInvalidInputs(
++        a_indices=constant_op.constant(0, shape=[17, 4], dtype=dtypes.int64),
++        a_values=constant_op.constant(0, shape=[17], dtype=dtypes.float32),
++        a_shape=constant_op.constant([3, 4], dtype=dtypes.int64),
++        b=constant_op.constant(1, shape=[3, 4], dtype=dtypes.float32),
++        expected_error="Dimensions 4 and 2 are not compatible")
++    self._testSparseDenseInvalidInputs(
++        a_indices=constant_op.constant(7, shape=[17, 2], dtype=dtypes.int64),
++        a_values=constant_op.constant(0, shape=[17], dtype=dtypes.float32),
++        a_shape=constant_op.constant([3, 4], dtype=dtypes.int64),
++        b=constant_op.constant(1, shape=[3, 4], dtype=dtypes.float32),
++        expected_error="invalid index")
++
+ ######################## Benchmarking code
+ 
+ 
+diff --git a/tensorflow/python/kernel_tests/sparse_ops_test.py b/tensorflow/python/kernel_tests/sparse_ops_test.py
+index 2a2899e3c9..24e5d200e7 100644
+--- a/tensorflow/python/kernel_tests/sparse_ops_test.py
++++ b/tensorflow/python/kernel_tests/sparse_ops_test.py
+@@ -669,7 +669,7 @@ class SparseFillEmptyRowsTest(test_util.TensorFlowTestCase):
+ class SparseAddTest(test_util.TensorFlowTestCase):
+ 
+   def testValuesInVariable(self):
+-    indices = constant_op.constant([[1]], dtype=dtypes.int64)
++    indices = constant_op.constant([[0]], dtype=dtypes.int64)
+     values = variables.Variable([1], trainable=False, dtype=dtypes.float32)
+     shape = constant_op.constant([1], dtype=dtypes.int64)
+
+tool: bash
+{
+  "command": "git status --short",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0265-e3f0d077b3fc"
+}
+ M tensorflow/core/kernels/sparse_tensor_dense_add_op.cc
+ M tensorflow/python/kernel_tests/sparse_add_op_test.py
+ M tensorflow/python/kernel_tests/sparse_ops_test.py
+
+tokens used
+input: 1,781
+cache read: 19,968
+cache write: 0
+output: 202
+reasoning output: 0
+
+The resulting diff matches the new-release intent with older file paths. I’m running hunk validation of the applied diff against the target base now.
+
+tool: validate
+{
+  "ref": "e3f0d077b3fcda32e25f8973779b6717f3a107d6",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/sparse_tensor_dense_add_op.cc b/tensorflow/core/kernels/sparse_tensor_dense_add_op.cc\nindex 0b664fc357..7a11698be4 100644\n--- a/tensorflow/core/kernels/sparse_tensor_dense_add_op.cc\n+++ b/tensorflow/core/kernels/sparse_tensor_dense_add_op.cc\n@@ -18,6 +18,7 @@ limitations under the License.\n #include \"tensorflow/core/kernels/sparse_tensor_dense_add_op.h\"\n \n #include \"tensorflow/core/framework/op_kernel.h\"\n+#include \"tensorflow/core/framework/op_requires.h\"\n #include \"tensorflow/core/framework/register_types.h\"\n #include \"tensorflow/core/framework/tensor.h\"\n #include \"tensorflow/core/framework/tensor_util.h\"\n@@ -47,6 +48,17 @@ Status ValidateInputs(const Tensor *a_indices, const Tensor *a_values,\n         a_values->shape().DebugString(), \" and \",\n         a_shape->shape().DebugString());\n   }\n+  int64_t nnz = a_indices->dim_size(0);\n+  int64_t ndims = a_indices->dim_size(1);\n+  if (a_values->dim_size(0) != nnz) {\n+    return errors::InvalidArgument(\"Dimensions \", nnz, \" and \",\n+                                   a_values->dim_size(0),\n+                                   \" are not compatible\");\n+  }\n+  if (a_shape->dim_size(0) != ndims) {\n+    return errors::InvalidArgument(\"Dimensions \", ndims, \" and \",\n+                                   a_shape->dim_size(0), \" are not compatible\");\n+  }\n   if (a_shape->NumElements() != b->dims()) {\n     return errors::InvalidArgument(\n         \"Two operands have different ranks; received: \", a_shape->NumElements(),\n@@ -61,6 +73,24 @@ Status ValidateInputs(const Tensor *a_indices, const Tensor *a_values,\n           a_shape_flat(i), \" vs dense side \", b->dim_size(i));\n     }\n   }\n+\n+  // Check for invalid indices.\n+  const auto a_indices_mat = a_indices->flat_inner_dims<Index>();\n+\n+  for (int64_t zidx = 0; zidx < nnz; ++zidx) {\n+    for (int64_t didx = 0; didx < ndims; ++didx) {\n+      const Index idx = a_indices_mat(zidx, didx);\n+      if (idx < 0 || idx >= a_shape_flat(didx)) {\n+        return errors::InvalidArgument(\n+            \"Sparse tensor has an invalid index on dimension \", didx,\n+            \": \"\n+            \"a_indices(\",\n+            zidx, \",\", didx, \") = \", idx,\n+            \", dense tensor shape: \", a_shape_flat);\n+      }\n+    }\n+  }\n+\n   return Status::OK();\n }\n \ndiff --git a/tensorflow/python/kernel_tests/sparse_add_op_test.py b/tensorflow/python/kernel_tests/sparse_add_op_test.py\nindex 1a43564fec..31eb9d2b2b 100644\n--- a/tensorflow/python/kernel_tests/sparse_add_op_test.py\n+++ b/tensorflow/python/kernel_tests/sparse_add_op_test.py\n@@ -193,7 +193,6 @@ class SparseAddTest(test.TestCase):\n                                                     [(nnz,), (n, m)], s, (n, m))\n       self.assertLess(err, 1e-3)\n \n-  @test_util.run_deprecated_v1\n   def testInvalidSparseTensor(self):\n     with test_util.force_cpu():\n       shape = [2, 2]\n@@ -205,12 +204,49 @@ class SparseAddTest(test.TestCase):\n           [[1, 3]],  # ...so is 3.\n       ]:\n         sparse = sparse_tensor.SparseTensorValue(bad_idx, val, shape)\n-        s = sparse_ops.sparse_add(sparse, dense)\n-\n-        with self.assertRaisesRegex(errors_impl.InvalidArgumentError,\n-                                    \"invalid index\"):\n+        with self.assertRaisesRegex(\n+            (ValueError, errors_impl.InvalidArgumentError), \"invalid index\"):\n+          s = sparse_ops.sparse_add(sparse, dense)\n           self.evaluate(s)\n \n+  def _testSparseDenseInvalidInputs(self,\n+                                    a_indices,\n+                                    a_values,\n+                                    a_shape,\n+                                    b,\n+                                    expected_error=\"\"):\n+    # Public API call to sparse-dense add.\n+    with self.assertRaisesRegex((ValueError, errors_impl.InvalidArgumentError),\n+                                expected_error):\n+      a = sparse_tensor.SparseTensor(a_indices, a_values, a_shape)\n+      self.evaluate(sparse_ops.sparse_add(a, b))\n+    # Directly call generated kernel, by-passing SparseTensor validation.\n+    with self.assertRaisesRegex((ValueError, errors_impl.InvalidArgumentError),\n+                                expected_error):\n+      self.evaluate(\n+          sparse_ops.gen_sparse_ops.sparse_tensor_dense_add(\n+              a_indices, a_values, a_shape, b))\n+\n+  def testSparseDenseInvalidInputs(self):\n+    self._testSparseDenseInvalidInputs(\n+        a_indices=constant_op.constant(0, shape=[17, 2], dtype=dtypes.int64),\n+        a_values=constant_op.constant(0, shape=[5], dtype=dtypes.float32),\n+        a_shape=constant_op.constant([3, 4], dtype=dtypes.int64),\n+        b=constant_op.constant(1, shape=[3, 4], dtype=dtypes.float32),\n+        expected_error=\"Dimensions 17 and 5 are not compatible\")\n+    self._testSparseDenseInvalidInputs(\n+        a_indices=constant_op.constant(0, shape=[17, 4], dtype=dtypes.int64),\n+        a_values=constant_op.constant(0, shape=[17], dtype=dtypes.float32),\n+        a_shape=constant_op.constant([3, 4], dtype=dtypes.int64),\n+        b=constant_op.constant(1, shape=[3, 4], dtype=dtypes.float32),\n+        expected_error=\"Dimensions 4 and 2 are not compatible\")\n+    self._testSparseDenseInvalidInputs(\n+        a_indices=constant_op.constant(7, shape=[17, 2], dtype=dtypes.int64),\n+        a_values=constant_op.constant(0, shape=[17], dtype=dtypes.float32),\n+        a_shape=constant_op.constant([3, 4], dtype=dtypes.int64),\n+        b=constant_op.constant(1, shape=[3, 4], dtype=dtypes.float32),\n+        expected_error=\"invalid index\")\n+\n ######################## Benchmarking code\n \n \ndiff --git a/tensorflow/python/kernel_tests/sparse_ops_test.py b/tensorflow/python/kernel_tests/sparse_ops_test.py\nindex 2a2899e3c9..24e5d200e7 100644\n--- a/tensorflow/python/kernel_tests/sparse_ops_test.py\n+++ b/tensorflow/python/kernel_tests/sparse_ops_test.py\n@@ -669,7 +669,7 @@ class SparseFillEmptyRowsTest(test_util.TensorFlowTestCase):\n class SparseAddTest(test_util.TensorFlowTestCase):\n \n   def testValuesInVariable(self):\n-    indices = constant_op.constant([[1]], dtype=dtypes.int64)\n+    indices = constant_op.constant([[0]], dtype=dtypes.int64)\n     values = variables.Variable([1], trainable=False, dtype=dtypes.float32)\n     shape = constant_op.constant([1], dtype=dtypes.int64)\n"
+}
+This patch does not apply to the target TensorFlow ref.
+Git apply output:
+error: corrupt patch at line 134
+Touched files:
+- tensorflow/core/kernels/sparse_tensor_dense_add_op.cc
+- tensorflow/python/kernel_tests/sparse_add_op_test.py
+- tensorflow/python/kernel_tests/sparse_ops_test.py
+Fix the patch context against the older TensorFlow version, then run validate again in hunk mode.
+
+tokens used
+input: 2,737
+cache read: 20,992
+cache write: 0
+output: 1,892
+reasoning output: 73
+
+The validation failure is from my hand-copied diff missing a context line in the last hunk, not from the repository changes. I’m revalidating with corrected hunk context.
+
+tool: validate
+{
+  "ref": "e3f0d077b3fcda32e25f8973779b6717f3a107d6",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/python/kernel_tests/sparse_ops_test.py b/tensorflow/python/kernel_tests/sparse_ops_test.py\nindex 2a2899e3c9..24e5d200e7 100644\n--- a/tensorflow/python/kernel_tests/sparse_ops_test.py\n+++ b/tensorflow/python/kernel_tests/sparse_ops_test.py\n@@ -669,7 +669,7 @@ class SparseFillEmptyRowsTest(test_util.TensorFlowTestCase):\n class SparseAddTest(test_util.TensorFlowTestCase):\n \n   def testValuesInVariable(self):\n-    indices = constant_op.constant([[1]], dtype=dtypes.int64)\n+    indices = constant_op.constant([[0]], dtype=dtypes.int64)\n     values = variables.Variable([1], trainable=False, dtype=dtypes.float32)\n     shape = constant_op.constant([1], dtype=dtypes.int64)\n \n"
+}
+Patch applied successfully
+
+tokens used
+input: 2,748
+cache read: 23,040
+cache write: 0
+output: 296
+reasoning output: 289
+
+tool: validate
+{
+  "ref": "e3f0d077b3fcda32e25f8973779b6717f3a107d6",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/sparse_tensor_dense_add_op.cc b/tensorflow/core/kernels/sparse_tensor_dense_add_op.cc\nindex 0b664fc357..7a11698be4 100644\n--- a/tensorflow/core/kernels/sparse_tensor_dense_add_op.cc\n+++ b/tensorflow/core/kernels/sparse_tensor_dense_add_op.cc\n@@ -18,6 +18,7 @@ limitations under the License.\n #include \"tensorflow/core/kernels/sparse_tensor_dense_add_op.h\"\n \n #include \"tensorflow/core/framework/op_kernel.h\"\n+#include \"tensorflow/core/framework/op_requires.h\"\n #include \"tensorflow/core/framework/register_types.h\"\n #include \"tensorflow/core/framework/tensor.h\"\n #include \"tensorflow/core/framework/tensor_util.h\"\n@@ -47,6 +48,17 @@ Status ValidateInputs(const Tensor *a_indices, const Tensor *a_values,\n         a_values->shape().DebugString(), \" and \",\n         a_shape->shape().DebugString());\n   }\n+  int64_t nnz = a_indices->dim_size(0);\n+  int64_t ndims = a_indices->dim_size(1);\n+  if (a_values->dim_size(0) != nnz) {\n+    return errors::InvalidArgument(\"Dimensions \", nnz, \" and \",\n+                                   a_values->dim_size(0),\n+                                   \" are not compatible\");\n+  }\n+  if (a_shape->dim_size(0) != ndims) {\n+    return errors::InvalidArgument(\"Dimensions \", ndims, \" and \",\n+                                   a_shape->dim_size(0), \" are not compatible\");\n+  }\n   if (a_shape->NumElements() != b->dims()) {\n     return errors::InvalidArgument(\n         \"Two operands have different ranks; received: \", a_shape->NumElements(),\n@@ -61,6 +73,24 @@ Status ValidateInputs(const Tensor *a_indices, const Tensor *a_values,\n           a_shape_flat(i), \" vs dense side \", b->dim_size(i));\n     }\n   }\n+\n+  // Check for invalid indices.\n+  const auto a_indices_mat = a_indices->flat_inner_dims<Index>();\n+\n+  for (int64_t zidx = 0; zidx < nnz; ++zidx) {\n+    for (int64_t didx = 0; didx < ndims; ++didx) {\n+      const Index idx = a_indices_mat(zidx, didx);\n+      if (idx < 0 || idx >= a_shape_flat(didx)) {\n+        return errors::InvalidArgument(\n+            \"Sparse tensor has an invalid index on dimension \", didx,\n+            \": \"\n+            \"a_indices(\",\n+            zidx, \",\", didx, \") = \", idx,\n+            \", dense tensor shape: \", a_shape_flat);\n+      }\n+    }\n+  }\n+\n   return Status::OK();\n }\n \n"
+}
+Patch applied successfully
+
+tool: validate
+{
+  "ref": "e3f0d077b3fcda32e25f8973779b6717f3a107d6",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/python/kernel_tests/sparse_add_op_test.py b/tensorflow/python/kernel_tests/sparse_add_op_test.py\nindex 1a43564fec..31eb9d2b2b 100644\n--- a/tensorflow/python/kernel_tests/sparse_add_op_test.py\n+++ b/tensorflow/python/kernel_tests/sparse_add_op_test.py\n@@ -193,7 +193,6 @@ class SparseAddTest(test.TestCase):\n                                                     [(nnz,), (n, m)], s, (n, m))\n       self.assertLess(err, 1e-3)\n \n-  @test_util.run_deprecated_v1\n   def testInvalidSparseTensor(self):\n     with test_util.force_cpu():\n       shape = [2, 2]\n@@ -205,12 +204,49 @@ class SparseAddTest(test.TestCase):\n           [[1, 3]],  # ...so is 3.\n       ]:\n         sparse = sparse_tensor.SparseTensorValue(bad_idx, val, shape)\n-        s = sparse_ops.sparse_add(sparse, dense)\n-\n-        with self.assertRaisesRegex(errors_impl.InvalidArgumentError,\n-                                    \"invalid index\"):\n+        with self.assertRaisesRegex(\n+            (ValueError, errors_impl.InvalidArgumentError), \"invalid index\"):\n+          s = sparse_ops.sparse_add(sparse, dense)\n           self.evaluate(s)\n \n+  def _testSparseDenseInvalidInputs(self,\n+                                    a_indices,\n+                                    a_values,\n+                                    a_shape,\n+                                    b,\n+                                    expected_error=\"\"):\n+    # Public API call to sparse-dense add.\n+    with self.assertRaisesRegex((ValueError, errors_impl.InvalidArgumentError),\n+                                expected_error):\n+      a = sparse_tensor.SparseTensor(a_indices, a_values, a_shape)\n+      self.evaluate(sparse_ops.sparse_add(a, b))\n+    # Directly call generated kernel, by-passing SparseTensor validation.\n+    with self.assertRaisesRegex((ValueError, errors_impl.InvalidArgumentError),\n+                                expected_error):\n+      self.evaluate(\n+          sparse_ops.gen_sparse_ops.sparse_tensor_dense_add(\n+              a_indices, a_values, a_shape, b))\n+\n+  def testSparseDenseInvalidInputs(self):\n+    self._testSparseDenseInvalidInputs(\n+        a_indices=constant_op.constant(0, shape=[17, 2], dtype=dtypes.int64),\n+        a_values=constant_op.constant(0, shape=[5], dtype=dtypes.float32),\n+        a_shape=constant_op.constant([3, 4], dtype=dtypes.int64),\n+        b=constant_op.constant(1, shape=[3, 4], dtype=dtypes.float32),\n+        expected_error=\"Dimensions 17 and 5 are not compatible\")\n+    self._testSparseDenseInvalidInputs(\n+        a_indices=constant_op.constant(0, shape=[17, 4], dtype=dtypes.int64),\n+        a_values=constant_op.constant(0, shape=[17], dtype=dtypes.float32),\n+        a_shape=constant_op.constant([3, 4], dtype=dtypes.int64),\n+        b=constant_op.constant(1, shape=[3, 4], dtype=dtypes.float32),\n+        expected_error=\"Dimensions 4 and 2 are not compatible\")\n+    self._testSparseDenseInvalidInputs(\n+        a_indices=constant_op.constant(7, shape=[17, 2], dtype=dtypes.int64),\n+        a_values=constant_op.constant(0, shape=[17], dtype=dtypes.float32),\n+        a_shape=constant_op.constant([3, 4], dtype=dtypes.int64),\n+        b=constant_op.constant(1, shape=[3, 4], dtype=dtypes.float32),\n+        expected_error=\"invalid index\")\n+\n ######################## Benchmarking code\n \n \n"
+}
+Patch applied successfully
+
+tokens used
+input: 1,298
+cache read: 25,088
+cache write: 0
+output: 1,721
+reasoning output: 9
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target TensorFlow files for equivalent sparse add kernel and tests",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Backport source and test changes minimally",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate/apply hunks and capture final diff",
+      "status": "in_progress",
+      "priority": "high"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target TensorFlow files for equivalent sparse add kernel and tests",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Backport source and test changes minimally",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate/apply hunks and capture final diff",
+    "status": "in_progress",
+    "priority": "high"
+  }
+]
+
+tokens used
+input: 2,028
+cache read: 26,112
+cache write: 0
+output: 84
+reasoning output: 11
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/kernels/sparse_tensor_dense_add_op.cc tensorflow/python/kernel_tests/sparse_add_op_test.py tensorflow/python/kernel_tests/sparse_ops_test.py",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0265-e3f0d077b3fc"
+}
+warning: in the working copy of 'tensorflow/core/kernels/sparse_tensor_dense_add_op.cc', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'tensorflow/python/kernel_tests/sparse_add_op_test.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'tensorflow/python/kernel_tests/sparse_ops_test.py', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/kernels/sparse_tensor_dense_add_op.cc b/tensorflow/core/kernels/sparse_tensor_dense_add_op.cc
+index 0b664fc357..7a11698be4 100644
+--- a/tensorflow/core/kernels/sparse_tensor_dense_add_op.cc
++++ b/tensorflow/core/kernels/sparse_tensor_dense_add_op.cc
+@@ -18,6 +18,7 @@ limitations under the License.
+ #include "tensorflow/core/kernels/sparse_tensor_dense_add_op.h"
+ 
+ #include "tensorflow/core/framework/op_kernel.h"
++#include "tensorflow/core/framework/op_requires.h"
+ #include "tensorflow/core/framework/register_types.h"
+ #include "tensorflow/core/framework/tensor.h"
+ #include "tensorflow/core/framework/tensor_util.h"
+@@ -47,6 +48,17 @@ Status ValidateInputs(const Tensor *a_indices, const Tensor *a_values,
+         a_values->shape().DebugString(), " and ",
+         a_shape->shape().DebugString());
+   }
++  int64_t nnz = a_indices->dim_size(0);
++  int64_t ndims = a_indices->dim_size(1);
++  if (a_values->dim_size(0) != nnz) {
++    return errors::InvalidArgument("Dimensions ", nnz, " and ",
++                                   a_values->dim_size(0),
++                                   " are not compatible");
++  }
++  if (a_shape->dim_size(0) != ndims) {
++    return errors::InvalidArgument("Dimensions ", ndims, " and ",
++                                   a_shape->dim_size(0), " are not compatible");
++  }
+   if (a_shape->NumElements() != b->dims()) {
+     return errors::InvalidArgument(
+         "Two operands have different ranks; received: ", a_shape->NumElements(),
+@@ -61,6 +73,24 @@ Status ValidateInputs(const Tensor *a_indices, const Tensor *a_values,
+           a_shape_flat(i), " vs dense side ", b->dim_size(i));
+     }
+   }
++
++  // Check for invalid indices.
++  const auto a_indices_mat = a_indices->flat_inner_dims<Index>();
++
++  for (int64_t zidx = 0; zidx < nnz; ++zidx) {
++    for (int64_t didx = 0; didx < ndims; ++didx) {
++      const Index idx = a_indices_mat(zidx, didx);
++      if (idx < 0 || idx >= a_shape_flat(didx)) {
++        return errors::InvalidArgument(
++            "Sparse tensor has an invalid index on dimension ", didx,
++            ": "
++            "a_indices(",
++            zidx, ",", didx, ") = ", idx,
++            ", dense tensor shape: ", a_shape_flat);
++      }
++    }
++  }
++
+   return Status::OK();
+ }
+ 
+diff --git a/tensorflow/python/kernel_tests/sparse_add_op_test.py b/tensorflow/python/kernel_tests/sparse_add_op_test.py
+index 1a43564fec..31eb9d2b2b 100644
+--- a/tensorflow/python/kernel_tests/sparse_add_op_test.py
++++ b/tensorflow/python/kernel_tests/sparse_add_op_test.py
+@@ -193,7 +193,6 @@ class SparseAddTest(test.TestCase):
+                                                     [(nnz,), (n, m)], s, (n, m))
+       self.assertLess(err, 1e-3)
+ 
+-  @test_util.run_deprecated_v1
+   def testInvalidSparseTensor(self):
+     with test_util.force_cpu():
+       shape = [2, 2]
+@@ -205,12 +204,49 @@ class SparseAddTest(test.TestCase):
+           [[1, 3]],  # ...so is 3.
+       ]:
+         sparse = sparse_tensor.SparseTensorValue(bad_idx, val, shape)
+-        s = sparse_ops.sparse_add(sparse, dense)
+-
+-        with self.assertRaisesRegex(errors_impl.InvalidArgumentError,
+-                                    "invalid index"):
++        with self.assertRaisesRegex(
++            (ValueError, errors_impl.InvalidArgumentError), "invalid index"):
++          s = sparse_ops.sparse_add(sparse, dense)
+           self.evaluate(s)
+ 
++  def _testSparseDenseInvalidInputs(self,
++                                    a_indices,
++                                    a_values,
++                                    a_shape,
++                                    b,
++                                    expected_error=""):
++    # Public API call to sparse-dense add.
++    with self.assertRaisesRegex((ValueError, errors_impl.InvalidArgumentError),
++                                expected_error):
++      a = sparse_tensor.SparseTensor(a_indices, a_values, a_shape)
++      self.evaluate(sparse_ops.sparse_add(a, b))
++    # Directly call generated kernel, by-passing SparseTensor validation.
++    with self.assertRaisesRegex((ValueError, errors_impl.InvalidArgumentError),
++                                expected_error):
++      self.evaluate(
++          sparse_ops.gen_sparse_ops.sparse_tensor_dense_add(
++              a_indices, a_values, a_shape, b))
++
++  def testSparseDenseInvalidInputs(self):
++    self._testSparseDenseInvalidInputs(
++        a_indices=constant_op.constant(0, shape=[17, 2], dtype=dtypes.int64),
++        a_values=constant_op.constant(0, shape=[5], dtype=dtypes.float32),
++        a_shape=constant_op.constant([3, 4], dtype=dtypes.int64),
++        b=constant_op.constant(1, shape=[3, 4], dtype=dtypes.float32),
++        expected_error="Dimensions 17 and 5 are not compatible")
++    self._testSparseDenseInvalidInputs(
++        a_indices=constant_op.constant(0, shape=[17, 4], dtype=dtypes.int64),
++        a_values=constant_op.constant(0, shape=[17], dtype=dtypes.float32),
++        a_shape=constant_op.constant([3, 4], dtype=dtypes.int64),
++        b=constant_op.constant(1, shape=[3, 4], dtype=dtypes.float32),
++        expected_error="Dimensions 4 and 2 are not compatible")
++    self._testSparseDenseInvalidInputs(
++        a_indices=constant_op.constant(7, shape=[17, 2], dtype=dtypes.int64),
++        a_values=constant_op.constant(0, shape=[17], dtype=dtypes.float32),
++        a_shape=constant_op.constant([3, 4], dtype=dtypes.int64),
++        b=constant_op.constant(1, shape=[3, 4], dtype=dtypes.float32),
++        expected_error="invalid index")
++
+ ######################## Benchmarking code
+ 
+ 
+diff --git a/tensorflow/python/kernel_tests/sparse_ops_test.py b/tensorflow/python/kernel_tests/sparse_ops_test.py
+index 2a2899e3c9..24e5d200e7 100644
+--- a/tensorflow/python/kernel_tests/sparse_ops_test.py
++++ b/tensorflow/python/kernel_tests/sparse_ops_test.py
+@@ -669,7 +669,7 @@ class SparseFillEmptyRowsTest(test_util.TensorFlowTestCase):
+ class SparseAddTest(test_util.TensorFlowTestCase):
+ 
+   def testValuesInVariable(self):
+-    indices = constant_op.constant([[1]], dtype=dtypes.int64)
++    indices = constant_op.constant([[0]], dtype=dtypes.int64)
+     values = variables.Variable([1], trainable=False, dtype=dtypes.float32)
+     shape = constant_op.constant([1], dtype=dtypes.int64)
+
+tokens used
+input: 1,215
+cache read: 27,136
+cache write: 0
+output: 93
+reasoning output: 0
+
+All three hunks validated in hunk mode against the target base. No full build or full validation was run.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target TensorFlow files for equivalent sparse add kernel and tests",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Backport source and test changes minimally",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate/apply hunks and capture final diff",
+      "status": "completed",
+      "priority": "high"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target TensorFlow files for equivalent sparse add kernel and tests",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Backport source and test changes minimally",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate/apply hunks and capture final diff",
+    "status": "completed",
+    "priority": "high"
+  }
+]
+
+tokens used
+input: 2,017
+cache read: 28,160
+cache write: 0
+output: 113
+reasoning output: 16
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/kernels/sparse_tensor_dense_add_op.cc b/tensorflow/core/kernels/sparse_tensor_dense_add_op.cc
+    index 0b664fc357..7a11698be4 100644
+    --- a/tensorflow/core/kernels/sparse_tensor_dense_add_op.cc
+    +++ b/tensorflow/core/kernels/sparse_tensor_dense_add_op.cc
+    @@ -18,6 +18,7 @@ limitations under the License.
+     #include "tensorflow/core/kernels/sparse_tensor_dense_add_op.h"
+     
+     #include "tensorflow/core/framework/op_kernel.h"
+    +#include "tensorflow/core/framework/op_requires.h"
+     #include "tensorflow/core/framework/register_types.h"
+     #include "tensorflow/core/framework/tensor.h"
+     #include "tensorflow/core/framework/tensor_util.h"
+    @@ -47,6 +48,17 @@ Status ValidateInputs(const Tensor *a_indices, const Tensor *a_values,
+             a_values->shape().DebugString(), " and ",
+             a_shape->shape().DebugString());
+       }
+    +  int64_t nnz = a_indices->dim_size(0);
+    +  int64_t ndims = a_indices->dim_size(1);
+    +  if (a_values->dim_size(0) != nnz) {
+    +    return errors::InvalidArgument("Dimensions ", nnz, " and ",
+    +                                   a_values->dim_size(0),
+    +                                   " are not compatible");
+    +  }
+    +  if (a_shape->dim_size(0) != ndims) {
+    +    return errors::InvalidArgument("Dimensions ", ndims, " and ",
+    +                                   a_shape->dim_size(0), " are not compatible");
+    +  }
+       if (a_shape->NumElements() != b->dims()) {
+         return errors::InvalidArgument(
+             "Two operands have different ranks; received: ", a_shape->NumElements(),
+    @@ -61,6 +73,24 @@ Status ValidateInputs(const Tensor *a_indices, const Tensor *a_values,
+               a_shape_flat(i), " vs dense side ", b->dim_size(i));
+         }
+       }
+    +
+    +  // Check for invalid indices.
+    +  const auto a_indices_mat = a_indices->flat_inner_dims<Index>();
+    +
+    +  for (int64_t zidx = 0; zidx < nnz; ++zidx) {
+    +    for (int64_t didx = 0; didx < ndims; ++didx) {
+    +      const Index idx = a_indices_mat(zidx, didx);
+    +      if (idx < 0 || idx >= a_shape_flat(didx)) {
+    +        return errors::InvalidArgument(
+    +            "Sparse tensor has an invalid index on dimension ", didx,
+    +            ": "
+    +            "a_indices(",
+    +            zidx, ",", didx, ") = ", idx,
+    +            ", dense tensor shape: ", a_shape_flat);
+    +      }
+    +    }
+    +  }
+    +
+       return Status::OK();
+     }
+     
+    diff --git a/tensorflow/python/kernel_tests/sparse_add_op_test.py b/tensorflow/python/kernel_tests/sparse_add_op_test.py
+    index 1a43564fec..31eb9d2b2b 100644
+    --- a/tensorflow/python/kernel_tests/sparse_add_op_test.py
+    +++ b/tensorflow/python/kernel_tests/sparse_add_op_test.py
+    @@ -193,7 +193,6 @@ class SparseAddTest(test.TestCase):
+                                                         [(nnz,), (n, m)], s, (n, m))
+           self.assertLess(err, 1e-3)
+     
+    -  @test_util.run_deprecated_v1
+       def testInvalidSparseTensor(self):
+         with test_util.force_cpu():
+           shape = [2, 2]
+    @@ -205,12 +204,49 @@ class SparseAddTest(test.TestCase):
+               [[1, 3]],  # ...so is 3.
+           ]:
+             sparse = sparse_tensor.SparseTensorValue(bad_idx, val, shape)
+    -        s = sparse_ops.sparse_add(sparse, dense)
+    -
+    -        with self.assertRaisesRegex(errors_impl.InvalidArgumentError,
+    -                                    "invalid index"):
+    +        with self.assertRaisesRegex(
+    +            (ValueError, errors_impl.InvalidArgumentError), "invalid index"):
+    +          s = sparse_ops.sparse_add(sparse, dense)
+               self.evaluate(s)
+     
+    +  def _testSparseDenseInvalidInputs(self,
+    +                                    a_indices,
+    +                                    a_values,
+    +                                    a_shape,
+    +                                    b,
+    +                                    expected_error=""):
+    +    # Public API call to sparse-dense add.
+    +    with self.assertRaisesRegex((ValueError, errors_impl.InvalidArgumentError),
+    +                                expected_error):
+    +      a = sparse_tensor.SparseTensor(a_indices, a_values, a_shape)
+    +      self.evaluate(sparse_ops.sparse_add(a, b))
+    +    # Directly call generated kernel, by-passing SparseTensor validation.
+    +    with self.assertRaisesRegex((ValueError, errors_impl.InvalidArgumentError),
+    +                                expected_error):
+    +      self.evaluate(
+    +          sparse_ops.gen_sparse_ops.sparse_tensor_dense_add(
+    +              a_indices, a_values, a_shape, b))
+    +
+    +  def testSparseDenseInvalidInputs(self):
+    +    self._testSparseDenseInvalidInputs(
+    +        a_indices=constant_op.constant(0, shape=[17, 2], dtype=dtypes.int64),
+    +        a_values=constant_op.constant(0, shape=[5], dtype=dtypes.float32),
+    +        a_shape=constant_op.constant([3, 4], dtype=dtypes.int64),
+    +        b=constant_op.constant(1, shape=[3, 4], dtype=dtypes.float32),
+    +        expected_error="Dimensions 17 and 5 are not compatible")
+    +    self._testSparseDenseInvalidInputs(
+    +        a_indices=constant_op.constant(0, shape=[17, 4], dtype=dtypes.int64),
+    +        a_values=constant_op.constant(0, shape=[17], dtype=dtypes.float32),
+    +        a_shape=constant_op.constant([3, 4], dtype=dtypes.int64),
+    +        b=constant_op.constant(1, shape=[3, 4], dtype=dtypes.float32),
+    +        expected_error="Dimensions 4 and 2 are not compatible")
+    +    self._testSparseDenseInvalidInputs(
+    +        a_indices=constant_op.constant(7, shape=[17, 2], dtype=dtypes.int64),
+    +        a_values=constant_op.constant(0, shape=[17], dtype=dtypes.float32),
+    +        a_shape=constant_op.constant([3, 4], dtype=dtypes.int64),
+    +        b=constant_op.constant(1, shape=[3, 4], dtype=dtypes.float32),
+    +        expected_error="invalid index")
+    +
+     ######################## Benchmarking code
+     
+     
+    diff --git a/tensorflow/python/kernel_tests/sparse_ops_test.py b/tensorflow/python/kernel_tests/sparse_ops_test.py
+    index 2a2899e3c9..24e5d200e7 100644
+    --- a/tensorflow/python/kernel_tests/sparse_ops_test.py
+    +++ b/tensorflow/python/kernel_tests/sparse_ops_test.py
+    @@ -669,7 +669,7 @@ class SparseFillEmptyRowsTest(test_util.TensorFlowTestCase):
+     class SparseAddTest(test_util.TensorFlowTestCase):
+     
+       def testValuesInVariable(self):
+    -    indices = constant_op.constant([[1]], dtype=dtypes.int64)
+    +    indices = constant_op.constant([[0]], dtype=dtypes.int64)
+         values = variables.Variable([1], trainable=False, dtype=dtypes.float32)
+         shape = constant_op.constant([1], dtype=dtypes.int64)
+  notes: >
+    Backported SparseTensorDenseAdd input shape and index validation plus equivalent 2.6.4 test updates; hunks were validated against the target base.
+```
+
+tokens used
+input: 1,237
+cache read: 29,184
+cache write: 0
+output: 1,788
+reasoning output: 0

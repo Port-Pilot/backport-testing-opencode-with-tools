@@ -1,0 +1,1243 @@
+I’ll locate the target-side implementation and test context, compare it to the provided patch only, then apply the minimal equivalent changes in-place.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target code locations for provided hunks",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Validate uncertain hunks against target base",
+      "status": "pending",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply minimal backport changes",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "content": "Inspect resulting diff",
+      "status": "pending",
+      "priority": "high"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target code locations for provided hunks",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Validate uncertain hunks against target base",
+    "status": "pending",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply minimal backport changes",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "content": "Inspect resulting diff",
+    "status": "pending",
+    "priority": "high"
+  }
+]
+
+tokens used
+input: 4,125
+cache read: 4,608
+cache write: 0
+output: 123
+reasoning output: 0
+
+tool: viewcode
+{
+  "ref": "8e297ba5e2557c1c35644aa3b91f27b3526fbaaa",
+  "path": "tensorflow/python/kernel_tests/array_ops/stack_op_test.py",
+  "startline": 1,
+  "endline": 105
+}
+This file doesn't exist in this commit.
+
+tool: viewcode
+{
+  "ref": "8e297ba5e2557c1c35644aa3b91f27b3526fbaaa",
+  "path": "tensorflow/core/kernels/inplace_ops.cc",
+  "startline": 50,
+  "endline": 120
+}
+Here are lines 50 through 120.
+
+    TF_CALL_POD_TYPES(CASE);
+    TF_CALL_tstring(CASE);
+    TF_CALL_variant(CASE);
+#undef CASE
+    default:
+      return errors::InvalidArgument("Unsupported data type: ",
+                                     DataTypeString(value.dtype()));
+  }
+}
+
+
+}  // end namespace functor
+
+namespace {
+
+template <typename Device>
+class ParallelConcatUpdate : public OpKernel {
+ public:
+  explicit ParallelConcatUpdate(OpKernelConstruction* ctx) : OpKernel(ctx) {
+    OP_REQUIRES_OK(ctx, ctx->GetAttr("loc", &loc_));
+  }
+
+  void Compute(OpKernelContext* ctx) override {
+    auto value = ctx->input(0);
+    auto update = ctx->input(1);
+
+    OP_REQUIRES(
+        ctx, value.dims() == update.dims(),
+        errors::InvalidArgument("value and update shape doesn't match: ",
+                                value.shape().DebugString(), " vs. ",
+                                update.shape().DebugString()));
+    for (int i = 1; i < value.dims(); ++i) {
+      OP_REQUIRES(
+          ctx, value.dim_size(i) == update.dim_size(i),
+          errors::InvalidArgument("value and update shape doesn't match ",
+                                  value.shape().DebugString(), " vs. ",
+                                  update.shape().DebugString()));
+    }
+    OP_REQUIRES(ctx, 1 == update.dim_size(0),
+                errors::InvalidArgument("update shape doesn't match: ",
+                                        update.shape().DebugString()));
+
+    Tensor output = value;  // This creates an alias intentionally.
+    const auto& d = ctx->eigen_device<Device>();
+    OP_REQUIRES_OK(
+        ctx, ::tensorflow::functor::DoParallelConcat(d, update, loc_, &output));
+    ctx->set_output(0, output);
+  }
+
+ private:
+  int32 loc_;
+};
+
+template <typename Device, typename T>
+class ParallelConcatStart : public OpKernel {
+ public:
+  explicit ParallelConcatStart(OpKernelConstruction* ctx) : OpKernel(ctx) {
+    OP_REQUIRES_OK(ctx, ctx->GetAttr("shape", &shape_));
+  }
+
+  void Compute(OpKernelContext* ctx) override {
+    Tensor* out = nullptr;
+    // We do not know whether the output will be used on GPU. Setting it to be
+    // gpu-compatible for now.
+    AllocatorAttributes attr;
+    attr.set_gpu_compatible(true);
+    OP_REQUIRES_OK(ctx, ctx->allocate_output(0, shape_, &out, attr));
+  }
+
+ private:
+  TensorShape shape_;
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tokens used
+input: 1,311
+cache read: 7,680
+cache write: 0
+output: 142
+reasoning output: 0
+
+tool: glob
+{
+  "pattern": "**/stack_op_test.py"
+}
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0083-8e297ba5e255\tensorflow\python\kernel_tests\stack_op_test.py
+
+tool: locate_symbol
+{
+  "ref": "8e297ba5e2557c1c35644aa3b91f27b3526fbaaa",
+  "symbol": "StackOpTest"
+}
+tensorflow/compiler/tests/stack_ops_test.py:32
+tensorflow/python/kernel_tests/stack_op_test.py:43
+tensorflow/python/kernel_tests/stack_ops_test.py:34
+
+tool: locate_symbol
+{
+  "ref": "8e297ba5e2557c1c35644aa3b91f27b3526fbaaa",
+  "symbol": "testSimpleParallelCPU"
+}
+tensorflow/python/kernel_tests/stack_op_test.py:68
+
+tokens used
+input: 1,018
+cache read: 8,704
+cache write: 0
+output: 131
+reasoning output: 17
+
+The kernel code matches the source hunk directly. The test file is in the older `tensorflow/python/kernel_tests/stack_op_test.py` location rather than the newer `array_ops/` subdirectory, so I’m porting the test to that equivalent file.
+
+tool: viewcode
+{
+  "ref": "8e297ba5e2557c1c35644aa3b91f27b3526fbaaa",
+  "path": "tensorflow/python/kernel_tests/stack_op_test.py",
+  "startline": 1,
+  "endline": 110
+}
+Here are lines 1 through 110.
+
+# Copyright 2015 The TensorFlow Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+"""Functional tests for Stack and ParallelStack Ops."""
+
+from __future__ import absolute_import
+from __future__ import division
+from __future__ import print_function
+
+import numpy as np
+
+from tensorflow.python.framework import constant_op
+from tensorflow.python.framework import dtypes
+from tensorflow.python.framework import errors_impl
+from tensorflow.python.framework import ops
+from tensorflow.python.framework import test_util
+from tensorflow.python.ops import array_ops
+from tensorflow.python.ops import gradient_checker
+from tensorflow.python.ops import variables
+from tensorflow.python.platform import test
+
+
+def np_split_squeeze(array, axis):
+  axis_len = array.shape[axis]
+  return [
+      np.squeeze(
+          arr, axis=(axis,)) for arr in np.split(
+              array, axis_len, axis=axis)
+  ]
+
+
+class StackOpTest(test.TestCase):
+
+  def randn(self, shape, dtype):
+    data = np.random.randn(*shape)
+    if dtype == np.bool:
+      return data < 0  # Naive casting yields True with P(1)!
+    else:
+      return data.astype(dtype)
+
+  @test_util.run_deprecated_v1
+  def testSimple(self):
+    np.random.seed(7)
+    with self.session(use_gpu=True):
+      for shape in (2,), (3,), (2, 3), (3, 2), (8, 2, 10):
+        rank = len(shape)
+        for axis in range(-rank, rank):
+          for dtype in [np.bool, np.float32, np.int32, np.int64]:
+            data = self.randn(shape, dtype)
+            xs = np_split_squeeze(data, axis)
+            # Stack back into a single tensorflow tensor
+            with self.subTest(shape=shape, axis=axis, dtype=dtype):
+              c = array_ops.stack(xs, axis=axis)
+              self.assertAllEqual(c, data)
+
+  @test_util.run_deprecated_v1
+  def testSimpleParallelCPU(self):
+    np.random.seed(7)
+    with self.session(use_gpu=False):
+      for shape in (2,), (3,), (2, 3), (3, 2), (4, 3, 2), (100, 24, 24, 3):
+        with self.subTest(shape=shape):
+          data = self.randn(shape, np.float32)
+          xs = list(map(constant_op.constant, data))
+          c = array_ops.parallel_stack(xs)
+          self.assertAllEqual(c, data)
+
+  @test_util.run_deprecated_v1
+  def testSimpleParallelGPU(self):
+    np.random.seed(7)
+    with self.session(use_gpu=True):
+      for shape in (2,), (3,), (2, 3), (3, 2), (4, 3, 2), (100, 24, 24, 3):
+        with self.subTest(shape=shape):
+          data = self.randn(shape, np.float32)
+          xs = list(map(constant_op.constant, data))
+          c = array_ops.parallel_stack(xs)
+          self.assertAllEqual(c, data)
+
+  @test_util.run_deprecated_v1
+  def testConst(self):
+    np.random.seed(7)
+    with self.session(use_gpu=True):
+      # Verify that shape induction works with shapes produced via const stack
+      a = constant_op.constant([1, 2, 3, 4, 5, 6])
+      b = array_ops.reshape(a, array_ops.stack([2, 3]))
+      self.assertAllEqual(b.get_shape(), [2, 3])
+
+      # Check on a variety of shapes and types
+      for shape in (2,), (3,), (2, 3), (3, 2), (4, 3, 2), (8, 2, 10):
+        for dtype in [np.bool, np.float32, np.int16, np.int32, np.int64]:
+          with self.subTest(shape=shape, dtype=dtype):
+            data = self.randn(shape, dtype)
+            # Stack back into a single tensorflow tensor directly using np array
+            c = array_ops.stack(data)
+            # This is implemented via a Const:
+            self.assertEqual(c.op.type, "Const")
+            self.assertAllEqual(c, data)
+
+            # Python lists also work for 1-D case:
+            if len(shape) == 1:
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: grep
+{
+  "pattern": "from tensorflow.python import tf2|def_function|gen_array_ops|errors",
+  "path": "tensorflow/python/kernel_tests/stack_op_test.py"
+}
+Found 100 matches (more matches available)
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0083-8e297ba5e255\tensorflow\python\kernel_tests\array_ops_test.py:
+  Line 31: from tensorflow.python.eager import def_function
+
+  Line 34: from tensorflow.python.framework import errors
+
+  Line 35: from tensorflow.python.framework import errors_impl
+
+  Line 43: from tensorflow.python.ops import gen_array_ops
+
+  Line 92:     @def_function.function(input_signature=[
+
+  Line 111:     @def_function.function(input_signature=[
+
+  Line 296:     @def_function.function(autograph=False)
+
+  Line 306:     @def_function.function(
+
+  Line 426:       with self.assertRaisesRegex(errors_impl.InvalidArgumentError,
+
+  Line 429:       with self.assertRaisesRegex(errors_impl.InvalidArgumentError,
+
+  Line 433:           errors_impl.InvalidArgumentError,
+
+  Line 1207:         errors.FailedPreconditionError,
+
+  Line 1241:     @def_function.function
+
+  Line 1244:       return gen_array_ops.tensor_strided_slice_update(y, [0], [1], [1], [0])
+
+  Line 1255:     z = gen_array_ops.tensor_strided_slice_update(y, [0], [1], [1], [0.4])
+
+  Line 1265:       updated = gen_array_ops.tensor_strided_slice_update(
+
+  Line 1283:         return gen_array_ops.tensor_strided_slice_update(
+
+  Line 1445:     with self.assertRaises(errors.AlreadyExistsError):
+
+  Line 1530:         with self.assertRaisesRegex(errors.InvalidArgumentError,
+
+  Line 1568:       with self.assertRaisesWithPredicateMatch(errors.InvalidArgumentError,
+
+  Line 1581:           y = gen_array_ops.snapshot(x)
+
+  Line 1637:     error = errors.InvalidArgumentError if context.executing_eagerly(
+
+  Line 1943:         gather_nd_result = gen_array_ops.gather_nd(params, indices)
+
+  Line 1996:     return gen_array_ops.gather_nd(elems[0], elems[1])
+
+  Line 2115:     @def_function.function(
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0083-8e297ba5e255\tensorflow\python\kernel_tests\array_ops\BUILD:
+  Line 31:         "//tensorflow/python:errors",
+
+  Line 46:         "//tensorflow/python:errors",
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0083-8e297ba5e255\tensorflow\python\kernel_tests\array_ops\gather_op_test.py:
+  Line 28: from tensorflow.python.framework import errors
+
+  Line 286:         (TypeError, errors.InvalidArgumentError),
+
+  Line 321:             (ValueError, errors.InvalidArgumentError),
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0083-8e297ba5e255\tensorflow\python\kernel_tests\array_ops\scatter_nd_ops_test.py:
+  Line 27: from tensorflow.python.eager import def_function
+
+  Line 30: from tensorflow.python.framework import errors
+
+  Line 293:         # Test some out of range errors.
+
+  Line 342:         (errors.InvalidArgumentError, ValueError),
+
+  Line 352:         (errors.InvalidArgumentError, ValueError),
+
+  Line 497:     # TODO(apassos) figure out how to unify these errors
+
+  Line 498:     with self.assertRaises(errors.InvalidArgumentError
+
+  Line 586:         (errors.InvalidArgumentError, ValueError),
+
+  Line 619:         (errors.InvalidArgumentError, ValueError),
+
+  Line 628:         (errors.InvalidArgumentError, ValueError),
+
+  Line 886:       @def_function.function
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0083-8e297ba5e255\tensorflow\python\kernel_tests\array_ops\slice_op_test.py:
+  Line 25: from tensorflow.python.eager import def_function
+
+  Line 28: from tensorflow.python.framework import errors_impl
+
+  Line 188:         (ValueError, errors_impl.InvalidArgumentError), "out of range"):
+
+  Line 192:     @def_function.function
+
+  Line 204:         (ValueError, errors_impl.InvalidArgumentError), "out of range"):
+
+  Line 208:     @def_function.function
+
+  Line 456:       with self.assertRaisesRegex(errors_impl.OperatorNotAllowedInGraphError,
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0083-8e297ba5e255\tensorflow\python\kernel_tests\banded_triangular_solve_op_test.py:
+  Line 218:   @test_util.disable_xla("XLA cannot throw assertion errors during a kernel.")
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0083-8e297ba5e255\tensorflow\python\kernel_tests\barrier_ops_test.py:
+  Line 26: from tensorflow.python.framework import errors_impl
+
+  Line 544:         except errors_impl.OutOfRangeError:
+
+  Line 550:         except errors_impl.CancelledError:
+
+  Line 632:           except errors_impl.OutOfRangeError:
+
+  Line 648:           except errors_impl.CancelledError:
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0083-8e297ba5e255\tensorflow\python\kernel_tests\base64_ops_test.py:
+  Line 27: from tensorflow.python.framework import errors
+
+  Line 110:       with self.assertRaisesRegex(errors.InvalidArgumentError, "1 modulo 4"):
+
+  Line 117:         with self.assertRaises(errors.InvalidArgumentError):
+
+  Line 119:         with self.assertRaises(errors.InvalidArgumentError):
+
+  Line 121:         with self.assertRaises(errors.InvalidArgumentError):
+
+  Line 123:         with self.assertRaises(errors.InvalidArgumentError):
+
+  Line 129:       with self.assertRaises(errors.InvalidArgumentError):
+
+  Line 136:       with self.assertRaises(errors.InvalidArgumentError):
+
+  Line 138:       with self.assertRaises(errors.InvalidArgumentError):
+
+  Line 140:       with self.assertRaises(errors.InvalidArgumentError):
+
+  Line 148:         with self.assertRaises(errors.InvalidArgumentError):
+
+  Line 151:         with self.assertRaises(errors.InvalidArgumentError):
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0083-8e297ba5e255\tensorflow\python\kernel_tests\basic_gpu_test.py:
+  Line 36: from tensorflow.python.ops.gen_array_ops import broadcast_gradient_args
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0083-8e297ba5e255\tensorflow\python\kernel_tests\batchtospace_op_test.py:
+  Line 32: from tensorflow.python.ops import gen_array_ops
+
+  Line 48:     return gen_array_ops.batch_to_space(*args, **kwargs)
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0083-8e297ba5e255\tensorflow\python\kernel_tests\batch_matmul_op_test.py:
+  Line 23: from tensorflow.python import tf2
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0083-8e297ba5e255\tensorflow\python\kernel_tests\batch_scatter_ops_test.py:
+  Line 112:     # Test some out of range errors.
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0083-8e297ba5e255\tensorflow\python\kernel_tests\bcast_ops_test.py:
+  Line 23: from tensorflow.python.ops.gen_array_ops import broadcast_args
+
+  Line 24: from tensorflow.python.ops.gen_array_ops import broadcast_gradient_args
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0083-8e297ba5e255\tensorflow\python\kernel_tests\bias_op_base.py:
+  Line 27: from tensorflow.python.framework import errors_impl
+
+  Line 98:       return errors_impl.InvalidArgumentError
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0083-8e297ba5e255\tensorflow\python\kernel_tests\bincount_op_test.py:
+  Line 24: from tensorflow.python.framework import errors
+
+  Line 119:       with self.assertRaises(errors.InvalidArgumentError):
+
+  Line 125:         (ValueError, errors.InvalidArgumentError),
+
+  Line 129:     with self.assertRaisesRegex((ValueError, errors.InvalidArgumentError),
+
+  Line 328:     with self.assertRaisesRegex((ValueError, errors.InvalidArgumentError),
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0083-8e297ba5e255\tensorflow\python\kernel_tests\bitcast_op_test.py:
+  Line 24: from tensorflow.python.framework import errors
+
+  Line 68:     with self.assertRaisesRegex((ValueError, errors.InvalidArgumentError),
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0083-8e297ba5e255\tensorflow\python\kernel_tests\broadcast_to_ops_test.py:
+  Line 25: from tensorflow.python.framework import errors
+
+  Line 124:       with self.assertRaisesRegex(errors.InvalidArgumentError,
+
+  Line 197:     with self.assertRaisesRegex((ValueError, errors.InvalidArgumentError),
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0083-8e297ba5e255\tensorflow\python\kernel_tests\bucketize_op_test.py:
+  Line 25: from tensorflow.python.framework import errors_impl
+
+  Line 70:       with self.assertRaisesRegex(errors_impl.InvalidArgumentError,
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0083-8e297ba5e255\tensorflow\python\kernel_tests\BUILD:
+  Line 61:         "//tensorflow/python:errors",
+
+  Line 76:         "//tensorflow/python:errors",
+
+  Line 93:         "//tensorflow/python:errors",
+
+  Line 134:         "//tensorflow/python/eager:def_function",
+
+  Line 160:         "//tensorflow/python/eager:def_function",
+
+  Line 237:         "//tensorflow/python:errors",
+
+  Line 298:         "//tensorflow/python:errors",
+
+  Line 306:         "//tensorflow/python/eager:def_function",
+
+  Line 325:         "//tensorflow/python:errors",
+
+  Line 345:         "//tensorflow/python:errors",
+
+  Line 424:         "//tensorflow/python:errors",
+
+  Line 439:         "//tensorflow/python:errors",
+
+  Line 496:         "//tensorflow/python:errors",
+
+
+(Results truncated. Consider using a more specific path or pattern.)
+
+tokens used
+input: 1,292
+cache read: 8,704
+cache write: 0
+output: 180
+reasoning output: 0
+
+tool: grep
+{
+  "pattern": "stack_op_test|stack_ops_test",
+  "path": "tensorflow/python/kernel_tests/BUILD",
+  "include": "BUILD"
+}
+Found 6 matches
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0083-8e297ba5e255\tensorflow\python\kernel_tests\BUILD:
+  Line 2388:     name = "stack_op_test",
+
+  Line 2390:     srcs = ["stack_op_test.py"],
+
+  Line 2807:     name = "stack_ops_test",
+
+  Line 2809:     srcs = ["stack_ops_test.py"],
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0083-8e297ba5e255\tensorflow\python\kernel_tests\array_ops\BUILD:
+  Line 24:     name = "unstack_op_test",
+
+  Line 26:     srcs = ["unstack_op_test.py"],
+
+tool: grep
+{
+  "pattern": "tf2\\.enabled|from tensorflow.python import tf2",
+  "path": "tensorflow/python/kernel_tests",
+  "include": "*.py"
+}
+Found 12 matches
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0083-8e297ba5e255\tensorflow\python\kernel_tests\batch_matmul_op_test.py:
+  Line 23: from tensorflow.python import tf2
+
+  Line 275:         for use_static_shape_ in set([True, tf2.enabled()]):
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0083-8e297ba5e255\tensorflow\python\kernel_tests\control_flow_ops_py_test.py:
+  Line 34: from tensorflow.python import tf2
+
+  Line 157:   if tf2.enabled():
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0083-8e297ba5e255\tensorflow\python\kernel_tests\lookup_ops_test.py:
+  Line 26: from tensorflow.python import tf2
+
+  Line 64:     if tf2.enabled():
+
+  Line 70:     if tf2.enabled():
+
+  Line 76:     if not tf2.enabled():
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0083-8e297ba5e255\tensorflow\python\kernel_tests\matmul_op_test.py:
+  Line 25: from tensorflow.python import tf2
+
+  Line 235:   for use_static_shape in set([True, tf2.enabled()]):
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0083-8e297ba5e255\tensorflow\python\kernel_tests\relu_op_test.py:
+  Line 24: from tensorflow.python import tf2
+
+  Line 149:     if not tf2.enabled():
+
+tool: grep
+{
+  "pattern": "parallel_concat\\(",
+  "path": "tensorflow/python/kernel_tests",
+  "include": "*.py"
+}
+No files found
+
+tokens used
+input: 4,196
+cache read: 9,728
+cache write: 0
+output: 119
+reasoning output: 76
+
+tool: read
+{
+  "filePath": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0083-8e297ba5e255\\tensorflow\\python\\kernel_tests\\BUILD",
+  "offset": 2380,
+  "limit": 45
+}
+<path>C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0083-8e297ba5e255\tensorflow\python\kernel_tests\BUILD</path>
+<type>file</type>
+<content>
+2380:         "//tensorflow/python:array_ops",
+2381:         "//tensorflow/python:client_testlib",
+2382:         "//tensorflow/python:framework_for_generated_wrappers",
+2383:         "//third_party/py/numpy",
+2384:     ],
+2385: )
+2386: 
+2387: cuda_py_test(
+2388:     name = "stack_op_test",
+2389:     size = "small",
+2390:     srcs = ["stack_op_test.py"],
+2391:     tfrt_enabled = True,
+2392:     deps = [
+2393:         "//tensorflow/python:array_ops",
+2394:         "//tensorflow/python:client_testlib",
+2395:         "//tensorflow/python:errors",
+2396:         "//tensorflow/python:framework_for_generated_wrappers",
+2397:         "//tensorflow/python:variables",
+2398:         "//third_party/py/numpy",
+2399:     ],
+2400: )
+2401: 
+2402: cuda_py_test(
+2403:     name = "map_fn_test",
+2404:     size = "small",
+2405:     srcs = ["map_fn_test.py"],
+2406:     grpc_enabled = True,
+2407:     shard_count = 2,
+2408:     tags = ["no_windows"],
+2409:     deps = [
+2410:         "//tensorflow/python:array_ops",
+2411:         "//tensorflow/python:client_testlib",
+2412:         "//tensorflow/python:framework",
+2413:         "//tensorflow/python:gradients",
+2414:         "//tensorflow/python:init_ops",
+2415:         "//tensorflow/python:map_fn",
+2416:         "//tensorflow/python:math_ops",
+2417:         "//tensorflow/python:tensor_array_grad",
+2418:         "//tensorflow/python:variable_scope",
+2419:         "//tensorflow/python:variables",
+2420:         "//third_party/py/numpy",
+2421:     ],
+2422: )
+2423: 
+2424: cuda_py_test(
+
+(Showing lines 2380-2424 of 3973. Use offset=2425 to continue.)
+</content>
+
+tokens used
+input: 967
+cache read: 13,824
+cache write: 0
+output: 75
+reasoning output: 10
+
+I found the older test target already depends on `//tensorflow/python:errors`, but adding the new imports may require explicit Bazel deps in this older monolithic BUILD. I’m checking existing targets before deciding whether a BUILD change is necessary.
+
+tool: read
+{
+  "filePath": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0083-8e297ba5e255\\tensorflow\\python\\kernel_tests\\array_ops_test.py",
+  "offset": 20,
+  "limit": 30
+}
+<path>C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0083-8e297ba5e255\tensorflow\python\kernel_tests\array_ops_test.py</path>
+<type>file</type>
+<content>
+20: import re
+21: import time
+22: import unittest
+23: 
+24: from absl.testing import parameterized
+25: import numpy as np
+26: 
+27: from tensorflow.core.protobuf import config_pb2
+28: from tensorflow.python.client import session
+29: from tensorflow.python.eager import backprop
+30: from tensorflow.python.eager import context
+31: from tensorflow.python.eager import def_function
+32: from tensorflow.python.framework import constant_op
+33: from tensorflow.python.framework import dtypes
+34: from tensorflow.python.framework import errors
+35: from tensorflow.python.framework import errors_impl
+36: from tensorflow.python.framework import ops
+37: from tensorflow.python.framework import sparse_tensor
+38: from tensorflow.python.framework import tensor_shape
+39: from tensorflow.python.framework import tensor_spec
+40: from tensorflow.python.framework import test_ops
+41: from tensorflow.python.framework import test_util
+42: from tensorflow.python.ops import array_ops
+43: from tensorflow.python.ops import gen_array_ops
+44: from tensorflow.python.ops import gradient_checker_v2
+45: from tensorflow.python.ops import gradients_impl
+46: from tensorflow.python.ops import init_ops
+47: from tensorflow.python.ops import list_ops
+48: from tensorflow.python.ops import map_fn
+49: from tensorflow.python.ops import math_ops
+
+(Showing lines 20-49 of 2156. Use offset=50 to continue.)
+</content>
+
+tool: read
+{
+  "filePath": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0083-8e297ba5e255\\tensorflow\\python\\kernel_tests\\array_ops\\BUILD",
+  "offset": 1,
+  "limit": 70
+}
+<path>C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0083-8e297ba5e255\tensorflow\python\kernel_tests\array_ops\BUILD</path>
+<type>file</type>
+<content>
+1: # Tests of TensorFlow array ops kernels written using the Python API.
+2: 
+3: load("//tensorflow:tensorflow.bzl", "cuda_py_test")
+4: 
+5: package(
+6:     default_visibility = ["//tensorflow:internal"],
+7:     licenses = ["notice"],  # Apache 2.0
+8: )
+9: 
+10: cuda_py_test(
+11:     name = "batch_gather_op_test",
+12:     srcs = ["batch_gather_op_test.py"],
+13:     tfrt_enabled = True,
+14:     deps = [
+15:         "//tensorflow/python:array_ops",
+16:         "//tensorflow/python:client_testlib",
+17:         "//tensorflow/python:constant_op",
+18:         "//tensorflow/python:dtypes",
+19:         "@absl_py//absl/testing:parameterized",
+20:     ],
+21: )
+22: 
+23: cuda_py_test(
+24:     name = "unstack_op_test",
+25:     size = "small",
+26:     srcs = ["unstack_op_test.py"],
+27:     tfrt_enabled = True,
+28:     deps = [
+29:         "//tensorflow/python:array_ops",
+30:         "//tensorflow/python:client_testlib",
+31:         "//tensorflow/python:errors",
+32:         "//tensorflow/python:framework_for_generated_wrappers",
+33:         "//tensorflow/python:gradients",
+34:         "//third_party/py/numpy",
+35:     ],
+36: )
+37: 
+38: cuda_py_test(
+39:     name = "slice_op_test",
+40:     size = "medium",
+41:     srcs = ["slice_op_test.py"],
+42:     tfrt_enabled = True,
+43:     deps = [
+44:         "//tensorflow/python:array_ops",
+45:         "//tensorflow/python:client_testlib",
+46:         "//tensorflow/python:errors",
+47:         "//tensorflow/python:framework_for_generated_wrappers",
+48:         "//tensorflow/python:gradients",
+49:         "//third_party/py/numpy",
+50:     ],
+51: )
+52: 
+53: cuda_py_test(
+54:     name = "gather_op_test",
+55:     size = "medium",
+56:     srcs = ["gather_op_test.py"],
+57:     deps = [
+58:         "//tensorflow/python:array_ops",
+59:         "//tensorflow/python:client_testlib",
+60:         "//tensorflow/python:framework_for_generated_wrappers",
+61:         "//tensorflow/python:gradients",
+62:         "//third_party/py/numpy",
+63:         "@absl_py//absl/testing:parameterized",
+64:     ],
+65: )
+66: 
+67: cuda_py_test(
+68:     name = "scatter_nd_ops_test",
+69:     size = "medium",
+70:     srcs = ["scatter_nd_ops_test.py"],
+
+(Showing lines 1-70 of 84. Use offset=71 to continue.)
+</content>
+
+tool: read
+{
+  "filePath": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0083-8e297ba5e255\\tensorflow\\python\\kernel_tests\\BUILD",
+  "offset": 120,
+  "limit": 50
+}
+<path>C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0083-8e297ba5e255\tensorflow\python\kernel_tests\BUILD</path>
+<type>file</type>
+<content>
+120:     tags = [
+121:         "noasan",  # TODO(b/155406705): flaky
+122:     ],
+123:     deps = [
+124:         "//tensorflow/core:protos_all_py",
+125:         "//tensorflow/python:array_ops",
+126:         "//tensorflow/python:client_testlib",
+127:         "//tensorflow/python:framework_for_generated_wrappers",
+128:         "//tensorflow/python:framework_test_lib",
+129:         "//tensorflow/python:gradients_impl",
+130:         "//tensorflow/python:list_ops",
+131:         "//tensorflow/python:math_ops",
+132:         "//tensorflow/python:tensor_shape",
+133:         "//tensorflow/python/eager:context",
+134:         "//tensorflow/python/eager:def_function",
+135:         "//third_party/py/numpy",
+136:         "@absl_py//absl/testing:parameterized",
+137:     ],
+138: )
+139: 
+140: # TODO(kattian): add GPU capability and change to cuda_py_test
+141: tf_py_test(
+142:     name = "map_ops_test",
+143:     size = "small",
+144:     srcs = ["map_ops_test.py"],
+145:     grpc_enabled = True,
+146:     tags = [
+147:         "noasan",  # TODO(b/164696004)
+148:         "notsan",  # TODO(b/164696004)
+149:     ],
+150:     deps = [
+151:         "//tensorflow/python:array_ops",
+152:         "//tensorflow/python:client_testlib",
+153:         "//tensorflow/python:framework_for_generated_wrappers",
+154:         "//tensorflow/python:framework_test_lib",
+155:         "//tensorflow/python:gradients_impl",
+156:         "//tensorflow/python:map_ops",
+157:         "//tensorflow/python:math_ops",
+158:         "//tensorflow/python:tensor_shape",
+159:         "//tensorflow/python/eager:context",
+160:         "//tensorflow/python/eager:def_function",
+161:         "//third_party/py/numpy",
+162:         "@absl_py//absl/testing:parameterized",
+163:     ],
+164: )
+165: 
+166: cuda_py_test(
+167:     name = "benchmark_test",
+168:     size = "small",
+169:     srcs = ["benchmark_test.py"],
+
+(Showing lines 120-169 of 3973. Use offset=170 to continue.)
+</content>
+
+tokens used
+input: 1,567
+cache read: 13,824
+cache write: 0
+output: 287
+reasoning output: 215
+
+The source hunk itself doesn’t change BUILD files. In this target, `stack_op_test` lacks `//tensorflow/python/eager:def_function`; since the new test directly imports `def_function`, I’ll add that one dependency so the test target remains buildable under Bazel strict deps.
+
+I’m validating the adjusted target hunks against the specified base before applying them.
+
+tool: validate
+{
+  "ref": "8e297ba5e2557c1c35644aa3b91f27b3526fbaaa",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/inplace_ops.cc b/tensorflow/core/kernels/inplace_ops.cc\n--- a/tensorflow/core/kernels/inplace_ops.cc\n+++ b/tensorflow/core/kernels/inplace_ops.cc\n@@ -71,6 +71,15 @@ class ParallelConcatUpdate : public OpKernel {\n \n   void Compute(OpKernelContext* ctx) override {\n     auto value = ctx->input(0);\n+    // Value should be at least rank 1. Also the 0th dimension should be\n+    // at least loc_.\n+    OP_REQUIRES(ctx, value.dims() >= 1,\n+                errors::InvalidArgument(\"value should be at least rank 1.\"));\n+    OP_REQUIRES(\n+        ctx, value.dim_size(0) > loc_,\n+        errors::InvalidArgument(\"0th dimension of value = \", value.dim_size(0),\n+                                \" is less than loc_=\", loc_));\n+\n     auto update = ctx->input(1);\n \n     OP_REQUIRES(\ndiff --git a/tensorflow/python/kernel_tests/stack_op_test.py b/tensorflow/python/kernel_tests/stack_op_test.py\n--- a/tensorflow/python/kernel_tests/stack_op_test.py\n+++ b/tensorflow/python/kernel_tests/stack_op_test.py\n@@ -20,12 +20,15 @@ from __future__ import print_function\n \n import numpy as np\n \n+from tensorflow.python import tf2\n+from tensorflow.python.eager import def_function\n from tensorflow.python.framework import constant_op\n from tensorflow.python.framework import dtypes\n from tensorflow.python.framework import errors_impl\n from tensorflow.python.framework import ops\n from tensorflow.python.framework import test_util\n from tensorflow.python.ops import array_ops\n+from tensorflow.python.ops import gen_array_ops\n from tensorflow.python.ops import gradient_checker\n from tensorflow.python.ops import variables\n from tensorflow.python.platform import test\n@@ -75,6 +78,19 @@ class StackOpTest(test.TestCase):\n           c = array_ops.parallel_stack(xs)\n           self.assertAllEqual(c, data)\n \n+  def testParallelConcatShapeZero(self):\n+    if not tf2.enabled():\n+      self.skipTest(\"only fails in TF2\")\n+\n+    @def_function.function\n+    def f():\n+      y = gen_array_ops.parallel_concat(values=[[\"tf\"]], shape=0)\n+      return y\n+\n+    with self.assertRaisesRegex(errors_impl.InvalidArgumentError,\n+                                r\"0th dimension of value .* is less than\"):\n+      f()\n+\n   @test_util.run_deprecated_v1\n   def testSimpleParallelGPU(self):\n     np.random.seed(7)\ndiff --git a/tensorflow/python/kernel_tests/BUILD b/tensorflow/python/kernel_tests/BUILD\n--- a/tensorflow/python/kernel_tests/BUILD\n+++ b/tensorflow/python/kernel_tests/BUILD\n@@ -2394,6 +2394,7 @@ cuda_py_test(\n         \"//tensorflow/python:client_testlib\",\n         \"//tensorflow/python:errors\",\n         \"//tensorflow/python:framework_for_generated_wrappers\",\n+        \"//tensorflow/python/eager:def_function\",\n         \"//tensorflow/python:variables\",\n         \"//third_party/py/numpy\",\n     ],\n"
+}
+Patch applied successfully
+
+tokens used
+input: 2,687
+cache read: 14,848
+cache write: 0
+output: 880
+reasoning output: 262
+
+The hunks apply cleanly. I’m making the source, test, and required BUILD dependency changes now.
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/kernels/inplace_ops.cc\n@@\n   void Compute(OpKernelContext* ctx) override {\n     auto value = ctx->input(0);\n+    // Value should be at least rank 1. Also the 0th dimension should be\n+    // at least loc_.\n+    OP_REQUIRES(ctx, value.dims() >= 1,\n+                errors::InvalidArgument(\"value should be at least rank 1.\"));\n+    OP_REQUIRES(\n+        ctx, value.dim_size(0) > loc_,\n+        errors::InvalidArgument(\"0th dimension of value = \", value.dim_size(0),\n+                                \" is less than loc_=\", loc_));\n+\n     auto update = ctx->input(1);\n \n     OP_REQUIRES(\n*** Update File: tensorflow/python/kernel_tests/stack_op_test.py\n@@\n import numpy as np\n \n+from tensorflow.python import tf2\n+from tensorflow.python.eager import def_function\n from tensorflow.python.framework import constant_op\n from tensorflow.python.framework import dtypes\n from tensorflow.python.framework import errors_impl\n from tensorflow.python.framework import ops\n from tensorflow.python.framework import test_util\n from tensorflow.python.ops import array_ops\n+from tensorflow.python.ops import gen_array_ops\n from tensorflow.python.ops import gradient_checker\n from tensorflow.python.ops import variables\n from tensorflow.python.platform import test\n@@\n           c = array_ops.parallel_stack(xs)\n           self.assertAllEqual(c, data)\n \n+  def testParallelConcatShapeZero(self):\n+    if not tf2.enabled():\n+      self.skipTest(\"only fails in TF2\")\n+\n+    @def_function.function\n+    def f():\n+      y = gen_array_ops.parallel_concat(values=[[\"tf\"]], shape=0)\n+      return y\n+\n+    with self.assertRaisesRegex(errors_impl.InvalidArgumentError,\n+                                r\"0th dimension of value .* is less than\"):\n+      f()\n+\n   @test_util.run_deprecated_v1\n   def testSimpleParallelGPU(self):\n     np.random.seed(7)\n*** Update File: tensorflow/python/kernel_tests/BUILD\n@@\n         \"//tensorflow/python:client_testlib\",\n         \"//tensorflow/python:errors\",\n         \"//tensorflow/python:framework_for_generated_wrappers\",\n+        \"//tensorflow/python/eager:def_function\",\n         \"//tensorflow/python:variables\",\n         \"//third_party/py/numpy\",\n     ],\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/kernels/inplace_ops.cc
+M tensorflow/python/kernel_tests/stack_op_test.py
+M tensorflow/python/kernel_tests/BUILD
+
+tokens used
+input: 1,794
+cache read: 16,896
+cache write: 0
+output: 615
+reasoning output: 7
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target code locations for provided hunks",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate uncertain hunks against target base",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply minimal backport changes",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Inspect resulting diff",
+      "status": "in_progress",
+      "priority": "high"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target code locations for provided hunks",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate uncertain hunks against target base",
+    "status": "completed",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply minimal backport changes",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Inspect resulting diff",
+    "status": "in_progress",
+    "priority": "high"
+  }
+]
+
+tokens used
+input: 1,438
+cache read: 17,920
+cache write: 0
+output: 88
+reasoning output: 0
+
+I’m inspecting the final diff to confirm only the intended backport changes are present.
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/kernels/inplace_ops.cc tensorflow/python/kernel_tests/stack_op_test.py tensorflow/python/kernel_tests/BUILD",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0083-8e297ba5e255",
+  "timeout": 120000
+}
+warning: in the working copy of 'tensorflow/core/kernels/inplace_ops.cc', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'tensorflow/python/kernel_tests/BUILD', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'tensorflow/python/kernel_tests/stack_op_test.py', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/kernels/inplace_ops.cc b/tensorflow/core/kernels/inplace_ops.cc
+index 8e5174cb17..e72732e99b 100644
+--- a/tensorflow/core/kernels/inplace_ops.cc
++++ b/tensorflow/core/kernels/inplace_ops.cc
+@@ -71,6 +71,15 @@ class ParallelConcatUpdate : public OpKernel {
+ 
+   void Compute(OpKernelContext* ctx) override {
+     auto value = ctx->input(0);
++    // Value should be at least rank 1. Also the 0th dimension should be
++    // at least loc_.
++    OP_REQUIRES(ctx, value.dims() >= 1,
++                errors::InvalidArgument("value should be at least rank 1."));
++    OP_REQUIRES(
++        ctx, value.dim_size(0) > loc_,
++        errors::InvalidArgument("0th dimension of value = ", value.dim_size(0),
++                                " is less than loc_=", loc_));
++
+     auto update = ctx->input(1);
+ 
+     OP_REQUIRES(
+diff --git a/tensorflow/python/kernel_tests/BUILD b/tensorflow/python/kernel_tests/BUILD
+index 43f19c2663..b79b137849 100644
+--- a/tensorflow/python/kernel_tests/BUILD
++++ b/tensorflow/python/kernel_tests/BUILD
+@@ -2394,6 +2394,7 @@ cuda_py_test(
+         "//tensorflow/python:client_testlib",
+         "//tensorflow/python:errors",
+         "//tensorflow/python:framework_for_generated_wrappers",
++        "//tensorflow/python/eager:def_function",
+         "//tensorflow/python:variables",
+         "//third_party/py/numpy",
+     ],
+diff --git a/tensorflow/python/kernel_tests/stack_op_test.py b/tensorflow/python/kernel_tests/stack_op_test.py
+index 8237ce228a..84f60a6607 100644
+--- a/tensorflow/python/kernel_tests/stack_op_test.py
++++ b/tensorflow/python/kernel_tests/stack_op_test.py
+@@ -20,12 +20,15 @@ from __future__ import print_function
+ 
+ import numpy as np
+ 
++from tensorflow.python import tf2
++from tensorflow.python.eager import def_function
+ from tensorflow.python.framework import constant_op
+ from tensorflow.python.framework import dtypes
+ from tensorflow.python.framework import errors_impl
+ from tensorflow.python.framework import ops
+ from tensorflow.python.framework import test_util
+ from tensorflow.python.ops import array_ops
++from tensorflow.python.ops import gen_array_ops
+ from tensorflow.python.ops import gradient_checker
+ from tensorflow.python.ops import variables
+ from tensorflow.python.platform import test
+@@ -75,6 +78,19 @@ class StackOpTest(test.TestCase):
+           c = array_ops.parallel_stack(xs)
+           self.assertAllEqual(c, data)
+ 
++  def testParallelConcatShapeZero(self):
++    if not tf2.enabled():
++      self.skipTest("only fails in TF2")
++
++    @def_function.function
++    def f():
++      y = gen_array_ops.parallel_concat(values=[["tf"]], shape=0)
++      return y
++
++    with self.assertRaisesRegex(errors_impl.InvalidArgumentError,
++                                r"0th dimension of value .* is less than"):
++      f()
++
+   @test_util.run_deprecated_v1
+   def testSimpleParallelGPU(self):
+     np.random.seed(7)
+
+tokens used
+input: 637
+cache read: 18,944
+cache write: 0
+output: 114
+reasoning output: 0
+
+The final diff is limited to the kernel bounds check, the regression test in the older test file location, and one Bazel test dependency.
+
+tool: bash
+{
+  "command": "git status --short",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0083-8e297ba5e255",
+  "timeout": 120000
+}
+ M tensorflow/core/kernels/inplace_ops.cc
+ M tensorflow/python/kernel_tests/BUILD
+ M tensorflow/python/kernel_tests/stack_op_test.py
+
+tokens used
+input: 1,584
+cache read: 18,944
+cache write: 0
+output: 105
+reasoning output: 10
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target code locations for provided hunks",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate uncertain hunks against target base",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply minimal backport changes",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Inspect resulting diff",
+      "status": "completed",
+      "priority": "high"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target code locations for provided hunks",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate uncertain hunks against target base",
+    "status": "completed",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply minimal backport changes",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Inspect resulting diff",
+    "status": "completed",
+    "priority": "high"
+  }
+]
+
+tokens used
+input: 715
+cache read: 19,968
+cache write: 0
+output: 89
+reasoning output: 32
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/kernels/inplace_ops.cc b/tensorflow/core/kernels/inplace_ops.cc
+    index 8e5174cb17..e72732e99b 100644
+    --- a/tensorflow/core/kernels/inplace_ops.cc
+    +++ b/tensorflow/core/kernels/inplace_ops.cc
+    @@ -71,6 +71,15 @@ class ParallelConcatUpdate : public OpKernel {
+     
+       void Compute(OpKernelContext* ctx) override {
+         auto value = ctx->input(0);
+    +    // Value should be at least rank 1. Also the 0th dimension should be
+    +    // at least loc_.
+    +    OP_REQUIRES(ctx, value.dims() >= 1,
+    +                errors::InvalidArgument("value should be at least rank 1."));
+    +    OP_REQUIRES(
+    +        ctx, value.dim_size(0) > loc_,
+    +        errors::InvalidArgument("0th dimension of value = ", value.dim_size(0),
+    +                                " is less than loc_=", loc_));
+    +
+         auto update = ctx->input(1);
+     
+         OP_REQUIRES(
+    diff --git a/tensorflow/python/kernel_tests/BUILD b/tensorflow/python/kernel_tests/BUILD
+    index 43f19c2663..b79b137849 100644
+    --- a/tensorflow/python/kernel_tests/BUILD
+    +++ b/tensorflow/python/kernel_tests/BUILD
+    @@ -2394,6 +2394,7 @@ cuda_py_test(
+             "//tensorflow/python:client_testlib",
+             "//tensorflow/python:errors",
+             "//tensorflow/python:framework_for_generated_wrappers",
+    +        "//tensorflow/python/eager:def_function",
+             "//tensorflow/python:variables",
+             "//third_party/py/numpy",
+         ],
+    diff --git a/tensorflow/python/kernel_tests/stack_op_test.py b/tensorflow/python/kernel_tests/stack_op_test.py
+    index 8237ce228a..84f60a6607 100644
+    --- a/tensorflow/python/kernel_tests/stack_op_test.py
+    +++ b/tensorflow/python/kernel_tests/stack_op_test.py
+    @@ -20,12 +20,15 @@ from __future__ import print_function
+     
+     import numpy as np
+     
+    +from tensorflow.python import tf2
+    +from tensorflow.python.eager import def_function
+     from tensorflow.python.framework import constant_op
+     from tensorflow.python.framework import dtypes
+     from tensorflow.python.framework import errors_impl
+     from tensorflow.python.framework import ops
+     from tensorflow.python.framework import test_util
+     from tensorflow.python.ops import array_ops
+    +from tensorflow.python.ops import gen_array_ops
+     from tensorflow.python.ops import gradient_checker
+     from tensorflow.python.ops import variables
+     from tensorflow.python.platform import test
+    @@ -75,6 +78,19 @@ class StackOpTest(test.TestCase):
+               c = array_ops.parallel_stack(xs)
+               self.assertAllEqual(c, data)
+     
+    +  def testParallelConcatShapeZero(self):
+    +    if not tf2.enabled():
+    +      self.skipTest("only fails in TF2")
+    +
+    +    @def_function.function
+    +    def f():
+    +      y = gen_array_ops.parallel_concat(values=[["tf"]], shape=0)
+    +      return y
+    +
+    +    with self.assertRaisesRegex(errors_impl.InvalidArgumentError,
+    +                                r"0th dimension of value .* is less than"):
+    +      f()
+    +
+       @test_util.run_deprecated_v1
+       def testSimpleParallelGPU(self):
+         np.random.seed(7)
+  notes: >
+    Added rank and loc bounds validation to ParallelConcatUpdate, ported the regression test to the older stack_op_test.py location, and added the needed def_function test dependency.
+```
+
+tokens used
+input: 970
+cache read: 19,968
+cache write: 0
+output: 847
+reasoning output: 0

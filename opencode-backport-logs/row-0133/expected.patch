@@ -1,0 +1,152 @@
+diff --git a/tensorflow/lite/BUILD b/tensorflow/lite/BUILD
+index 05c83b3001e544..b9f1994d502e52 100644
+--- a/tensorflow/lite/BUILD
++++ b/tensorflow/lite/BUILD
+@@ -320,6 +320,7 @@ cc_test(
+         "testdata/test_min_runtime.bin",
+         "testdata/test_model.bin",
+         "testdata/test_model_broken.bin",
++        "testdata/unsupported_recursion.bin",
+     ],
+     tags = [
+         "tflite_not_portable",
+diff --git a/tensorflow/lite/core/subgraph.cc b/tensorflow/lite/core/subgraph.cc
+index 4f4394243aef92..48b1a51f26e75a 100644
+--- a/tensorflow/lite/core/subgraph.cc
++++ b/tensorflow/lite/core/subgraph.cc
+@@ -117,6 +117,42 @@ TfLiteQuantizationParams GetLegacyQuantization(
+   return legacy_quantization;
+ }
+ 
++// An utility test to detect if the subgraph is abused:
++// 1. Detects if recursion exists in the graph (recursion is not currently
++//    supported.
++// 2. Detects if the interpreter / subgraph is used in multiple subgraphs.
++//    Note: It's clearly documented that the interpreter / subgraph are not
++//    thread-safe. This serves as a check with possible false negatives
++//    unless we switch to atomic boolean flags.
++class SubgraphGuard {
++ public:
++  SubgraphGuard(TfLiteContext* context, bool* is_subgraph_in_use)
++      : is_subgraph_in_use_(is_subgraph_in_use) {
++    if (*is_subgraph_in_use_) {
++      TF_LITE_KERNEL_LOG(
++          context,
++          "Subgraph is already in use. Using an interpreter or a subgraph in "
++          "multiple threads is not supported. Recursion in the graph is not "
++          "supported.");
++      status_ = kTfLiteError;
++    } else {
++      *is_subgraph_in_use_ = true;
++    }
++  }
++  ~SubgraphGuard() {
++    // If tht original status was OK, recover the boolean flag.
++    if (status_ == kTfLiteOk) {
++      *is_subgraph_in_use_ = false;
++    }
++  }
++
++  TfLiteStatus status() const { return status_; }
++
++ private:
++  TfLiteStatus status_ = kTfLiteOk;
++  bool* is_subgraph_in_use_;
++};
++
+ }  // namespace
+ 
+ // A trivial implementation of GraphInfo around the Interpreter.
+@@ -508,6 +544,7 @@ TfLiteStatus Subgraph::BytesRequired(TfLiteType type, const int* dims,
+ 
+ TfLiteStatus Subgraph::AllocateTensors() {
+   TFLITE_SCOPED_TAGGED_DEFAULT_PROFILE(profiler_.get(), "AllocateTensors");
++
+   if (!consistent_) {
+     ReportError("AllocateTensors() called on inconsistent model.");
+     return kTfLiteError;
+@@ -524,6 +561,12 @@ TfLiteStatus Subgraph::AllocateTensors() {
+     return kTfLiteOk;
+   }
+ 
++  // Note `AllocateTensors` sometimes calls itself recursively above
++  // for delegates. Therefore only the logic below need to be guarded
++  // by `SubgraphGuard`.
++  SubgraphGuard guard(&context_, &is_subgraph_in_use_);
++  TF_LITE_ENSURE_OK(&context_, guard.status());
++
+   next_execution_plan_index_to_prepare_ = 0;
+   next_execution_plan_index_to_plan_allocation_ = 0;
+   if (memory_planner_) {
+@@ -744,6 +787,9 @@ TfLiteStatus Subgraph::PrepareOpsAndTensors() {
+ }
+ 
+ TfLiteStatus Subgraph::Invoke() {
++  SubgraphGuard guard(&context_, &is_subgraph_in_use_);
++  TF_LITE_ENSURE_OK(&context_, guard.status());
++
+   if (!consistent_) {
+     ReportError("Invoke called on model that is not consistent.");
+     return kTfLiteError;
+diff --git a/tensorflow/lite/core/subgraph.h b/tensorflow/lite/core/subgraph.h
+index 91e098b7059d1e..54ee2ba5200f82 100644
+--- a/tensorflow/lite/core/subgraph.h
++++ b/tensorflow/lite/core/subgraph.h
+@@ -642,6 +642,10 @@ class Subgraph {
+   // A map of resource variables. Owned by interpreter and shared by multiple
+   // subgraphs.
+   ResourceVariableMap* resource_variables_ = nullptr;
++
++// Whether the subgraph is currently in use (e.g. running the `Invoke`
++  // or `AllocateTensors` functions).
++  bool is_subgraph_in_use_ = false;
+ };
+ 
+ }  // namespace tflite
+diff --git a/tensorflow/lite/kernels/while.cc b/tensorflow/lite/kernels/while.cc
+index b5902706d7cc3f..8951647bf43bd7 100644
+--- a/tensorflow/lite/kernels/while.cc
++++ b/tensorflow/lite/kernels/while.cc
+@@ -132,8 +132,6 @@ TfLiteStatus Prepare(TfLiteContext* context, TfLiteNode* node) {
+   auto* subgraphs = this_subgraph->GetSubgraphs();
+   TF_LITE_ENSURE(context, op_data->cond_subgraph_index < subgraphs->size());
+   TF_LITE_ENSURE(context, op_data->body_subgraph_index < subgraphs->size());
+-  TF_LITE_ENSURE(context,
+-                 op_data->cond_subgraph_index != op_data->body_subgraph_index);
+ 
+   Subgraph* cond_subgraph = (*subgraphs)[op_data->cond_subgraph_index].get();
+   Subgraph* body_subgraph = (*subgraphs)[op_data->body_subgraph_index].get();
+diff --git a/tensorflow/lite/model_test.cc b/tensorflow/lite/model_test.cc
+index 7dc582b886289d..698055a8acfbe6 100644
+--- a/tensorflow/lite/model_test.cc
++++ b/tensorflow/lite/model_test.cc
+@@ -331,6 +331,25 @@ TEST(BasicFlatBufferModel, TestReadRuntimeVersionFromModel) {
+   ASSERT_EQ(model2->GetMinimumRuntime(), "1.10.0");
+ }
+ 
++// Recursion & reentrant are not supported in TFLite.
++// The test ensures it fails gracefullly instead of crashing with
++// a stack overflow.
++TEST(BasicFlatBufferModel, TestUnsupportedRecursion) {
++  const auto model_path =
++      "third_party/tensorflow/lite/testdata/unsupported_recursion.bin";
++
++  std::unique_ptr<tflite::FlatBufferModel> model =
++      FlatBufferModel::BuildFromFile(model_path);
++  ASSERT_NE(model, nullptr);
++
++  tflite::ops::builtin::BuiltinOpResolver resolver;
++  InterpreterBuilder builder(*model, resolver);
++  std::unique_ptr<Interpreter> interpreter;
++  ASSERT_EQ(builder(&interpreter), kTfLiteOk);
++  ASSERT_NE(interpreter, nullptr);
++  ASSERT_NE(interpreter->AllocateTensors(), kTfLiteOk);
++}
++
+ // TODO(aselle): Add tests for serialization of builtin op data types.
+ // These tests will occur with the evaluation tests of individual operators,
+ // not here.
+diff --git a/tensorflow/lite/testdata/unsupported_recursion.bin b/tensorflow/lite/testdata/unsupported_recursion.bin
+new file mode 100644
+index 00000000000000..525c5383ab4ef6
+Binary files /dev/null and b/tensorflow/lite/testdata/unsupported_recursion.bin differ

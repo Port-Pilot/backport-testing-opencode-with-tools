@@ -1,0 +1,72 @@
+diff --git a/tensorflow/core/kernels/inplace_ops.cc b/tensorflow/core/kernels/inplace_ops.cc
+index 8e5174cb17..e72732e99b 100644
+--- a/tensorflow/core/kernels/inplace_ops.cc
++++ b/tensorflow/core/kernels/inplace_ops.cc
+@@ -71,6 +71,15 @@ class ParallelConcatUpdate : public OpKernel {
+ 
+   void Compute(OpKernelContext* ctx) override {
+     auto value = ctx->input(0);
++    // Value should be at least rank 1. Also the 0th dimension should be
++    // at least loc_.
++    OP_REQUIRES(ctx, value.dims() >= 1,
++                errors::InvalidArgument("value should be at least rank 1."));
++    OP_REQUIRES(
++        ctx, value.dim_size(0) > loc_,
++        errors::InvalidArgument("0th dimension of value = ", value.dim_size(0),
++                                " is less than loc_=", loc_));
++
+     auto update = ctx->input(1);
+ 
+     OP_REQUIRES(
+diff --git a/tensorflow/python/kernel_tests/BUILD b/tensorflow/python/kernel_tests/BUILD
+index 43f19c2663..b79b137849 100644
+--- a/tensorflow/python/kernel_tests/BUILD
++++ b/tensorflow/python/kernel_tests/BUILD
+@@ -2394,6 +2394,7 @@ cuda_py_test(
+         "//tensorflow/python:client_testlib",
+         "//tensorflow/python:errors",
+         "//tensorflow/python:framework_for_generated_wrappers",
++        "//tensorflow/python/eager:def_function",
+         "//tensorflow/python:variables",
+         "//third_party/py/numpy",
+     ],
+diff --git a/tensorflow/python/kernel_tests/stack_op_test.py b/tensorflow/python/kernel_tests/stack_op_test.py
+index 8237ce228a..84f60a6607 100644
+--- a/tensorflow/python/kernel_tests/stack_op_test.py
++++ b/tensorflow/python/kernel_tests/stack_op_test.py
+@@ -20,12 +20,15 @@ from __future__ import print_function
+ 
+ import numpy as np
+ 
++from tensorflow.python import tf2
++from tensorflow.python.eager import def_function
+ from tensorflow.python.framework import constant_op
+ from tensorflow.python.framework import dtypes
+ from tensorflow.python.framework import errors_impl
+ from tensorflow.python.framework import ops
+ from tensorflow.python.framework import test_util
+ from tensorflow.python.ops import array_ops
++from tensorflow.python.ops import gen_array_ops
+ from tensorflow.python.ops import gradient_checker
+ from tensorflow.python.ops import variables
+ from tensorflow.python.platform import test
+@@ -75,6 +78,19 @@ class StackOpTest(test.TestCase):
+           c = array_ops.parallel_stack(xs)
+           self.assertAllEqual(c, data)
+ 
++  def testParallelConcatShapeZero(self):
++    if not tf2.enabled():
++      self.skipTest("only fails in TF2")
++
++    @def_function.function
++    def f():
++      y = gen_array_ops.parallel_concat(values=[["tf"]], shape=0)
++      return y
++
++    with self.assertRaisesRegex(errors_impl.InvalidArgumentError,
++                                r"0th dimension of value .* is less than"):
++      f()
++
+   @test_util.run_deprecated_v1
+   def testSimpleParallelGPU(self):
+     np.random.seed(7)

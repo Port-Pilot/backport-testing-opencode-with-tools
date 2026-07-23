@@ -1,0 +1,725 @@
+I’ll inspect the target-side files and symbols around the supplied hunks, then apply only the minimal equivalent changes in the current checkout.
+
+tool: viewcode
+{
+  "ref": "eb6740150f67d60748042234fdd0f96905a0a4e8",
+  "path": "tensorflow/core/util/tensor_slice_reader.cc",
+  "startline": 140,
+  "endline": 190
+}
+Here are lines 140 through 190.
+
+
+void TensorSliceReader::LoadShard(int shard) const {
+  CHECK_LT(shard, sss_.size());
+  if (sss_[shard] || !status_.ok()) {
+    return;  // Already loaded, or invalid.
+  }
+  string value;
+  SavedTensorSlices sts;
+  const string fname = fnames_[shard];
+  VLOG(1) << "Reading meta data from file " << fname << "...";
+  Table* table;
+  Status s = open_function_(fname, &table);
+  if (!s.ok()) {
+    status_ = errors::DataLoss("Unable to open table file ", fname, ": ",
+                               s.ToString());
+    return;
+  }
+  sss_[shard].reset(table);
+  if (!(table->Get(kSavedTensorSlicesKey, &value) &&
+        ParseProtoUnlimited(&sts, value))) {
+    status_ = errors::Internal(
+        "Failed to find the saved tensor slices at the beginning of the "
+        "checkpoint file: ",
+        fname);
+    return;
+  }
+  status_ = CheckVersions(sts.meta().versions(), TF_CHECKPOINT_VERSION,
+                          TF_CHECKPOINT_VERSION_MIN_PRODUCER, "Checkpoint",
+                          "checkpoint");
+  if (!status_.ok()) return;
+  for (const SavedSliceMeta& ssm : sts.meta().tensor()) {
+    TensorShape ssm_shape(ssm.shape());
+    for (const TensorSliceProto& tsp : ssm.slice()) {
+      TensorSlice ss_slice(tsp);
+      status_ = RegisterTensorSlice(ssm.name(), ssm_shape, ssm.type(), fname,
+                                    ss_slice, &tensors_);
+      if (!status_.ok()) return;
+    }
+  }
+}
+
+void TensorSliceReader::LoadAllShards() const {
+  VLOG(1) << "Loading all shards for " << filepattern_;
+  for (size_t i = 0; i < fnames_.size() && status_.ok(); ++i) {
+    LoadShard(i);
+  }
+  all_shards_loaded_ = true;
+}
+
+const TensorSliceSet* TensorSliceReader::FindTensorSlice(
+    const string& name, const TensorSlice& slice,
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: viewcode
+{
+  "ref": "eb6740150f67d60748042234fdd0f96905a0a4e8",
+  "path": "tensorflow/core/util/tensor_slice_reader_test.cc",
+  "startline": 1,
+  "endline": 450
+}
+Here are lines 1 through 450.
+
+/* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+==============================================================================*/
+
+#include "tensorflow/core/util/tensor_slice_reader.h"
+
+#include <utility>
+#include <vector>
+
+#include "tensorflow/core/framework/types.h"
+#include "tensorflow/core/framework/versions.pb.h"
+#include "tensorflow/core/lib/core/status_test_util.h"
+#include "tensorflow/core/lib/core/stringpiece.h"
+#include "tensorflow/core/lib/io/iterator.h"
+#include "tensorflow/core/lib/io/path.h"
+#include "tensorflow/core/lib/io/table.h"
+#include "tensorflow/core/lib/io/table_builder.h"
+#include "tensorflow/core/lib/strings/str_util.h"
+#include "tensorflow/core/lib/strings/strcat.h"
+#include "tensorflow/core/platform/env.h"
+#include "tensorflow/core/platform/logging.h"
+#include "tensorflow/core/platform/protobuf.h"
+#include "tensorflow/core/platform/test.h"
+#include "tensorflow/core/platform/types.h"
+#include "tensorflow/core/public/version.h"
+#include "tensorflow/core/util/saved_tensor_slice.pb.h"
+#include "tensorflow/core/util/saved_tensor_slice_util.h"
+#include "tensorflow/core/util/tensor_slice_reader_cache.h"
+#include "tensorflow/core/util/tensor_slice_writer.h"
+
+namespace tensorflow {
+
+namespace checkpoint {
+
+namespace {
+
+// A simple test where we write a few tensor slices with a number of tensor
+// slice writers and then read them back from a tensor slice reader.
+//
+// We have a 2-d tensor of shape 4 X 5 that looks like this:
+//
+//   0   1   2   3   4
+//   5   6   7   8   9
+//  10  11  12  13  14
+//  15  16  17  18  19
+//
+// We assume this is a row-major matrix.
+
+void SimpleFloatHelper(
+    const TensorSliceWriter::CreateBuilderFunction& create_function,
+    TensorSliceReader::OpenTableFunction open_function) {
+  const string fname_base = io::JoinPath(testing::TmpDir(), "float_checkpoint");
+
+  TensorShape shape({4, 5});
+
+  // File #0 contains a slice that is the top two rows:
+  //
+  //   0   1   2   3   4
+  //   5   6   7   8   9
+  //   .   .   .   .   .
+  //   .   .   .   .   .
+  {
+    const string fname = strings::StrCat(fname_base, "_0");
+    TensorSliceWriter writer(fname, create_function);
+    const float data[] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9};
+    TensorSlice slice = TensorSlice::ParseOrDie("0,2:-");
+    TF_CHECK_OK(writer.Add("test", shape, slice, data));
+    TF_CHECK_OK(writer.Finish());
+  }
+
+  // File #1 contains two slices:
+  //
+  // slice #0 is the bottom left corner
+  //   .   .   .   .   .
+  //   .   .   .   .   .
+  //  10  11  12   .   .
+  //  15  16  17   .   .
+  //
+  // slice #1 is the bottom right corner
+  //   .   .   .   .   .
+  //   .   .   .   .   .
+  //   .   .   .   .   .
+  //   .   .   .  18  19
+  {
+    const string fname = strings::StrCat(fname_base, "_1");
+    TensorSliceWriter writer(fname, create_function);
+    // slice #0
+    {
+      const float data[] = {10, 11, 12, 15, 16, 17};
+      TensorSlice slice = TensorSlice::ParseOrDie("2,2:0,3");
+      TF_CHECK_OK(writer.Add("test", shape, slice, data));
+    }
+    // slice #1
+    {
+      const float data[] = {18, 19};
+      TensorSlice slice = TensorSlice::ParseOrDie("3,1:3,2");
+      TF_CHECK_OK(writer.Add("test", shape, slice, data));
+    }
+    TF_CHECK_OK(writer.Finish());
+  }
+
+  // Notice that we leave a hole in the tensor
+  //   .   .   .   .   .
+  //   .   .   .   .   .
+  //   .   .   . (13) (14)
+  //   .   .   .   .   .
+
+  // Now we need to read the tensor slices
+  const string filepattern = strings::StrCat(fname_base, "_*");
+  TensorSliceReader reader(filepattern, std::move(open_function));
+  TF_EXPECT_OK(reader.status());
+  EXPECT_EQ(2, reader.num_files());
+
+  // We query some of the tensors
+  {
+    TensorShape shape;
+    DataType type;
+    EXPECT_TRUE(reader.HasTensor("test", &shape, &type));
+    EXPECT_EQ("[4,5]", shape.DebugString());
+    EXPECT_EQ(DT_FLOAT, type);
+    EXPECT_FALSE(reader.HasTensor("don't exist", nullptr, nullptr));
+  }
+
+  // Now we query some slices
+  //
+  // Slice #1 is an exact match
+  //   0   1   2   3   4
+  //   5   6   7   8   9
+  //   .   .   .   .   .
+  //   .   .   .   .   .
+  {
+    TensorSlice s = TensorSlice::ParseOrDie("0,2:-");
+    float expected[] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9};
+    float results[10];
+    EXPECT_TRUE(reader.CopySliceData("test", s, results));
+    for (int i = 0; i < 10; ++i) {
+      EXPECT_EQ(expected[i], results[i]);
+    }
+  }
+
+  // Slice #2 is a subset match
+  //   .   .   .   .   .
+  //   5   6   7   8   9
+  //   .   .   .   .   .
+  //   .   .   .   .   .
+  {
+    TensorSlice s = TensorSlice::ParseOrDie("1,1:-");
+    float expected[] = {5, 6, 7, 8, 9};
+    float results[5];
+    EXPECT_TRUE(reader.CopySliceData("test", s, results));
+    for (int i = 0; i < 5; ++i) {
+      EXPECT_EQ(expected[i], results[i]);
+    }
+  }
+
+  // Slice #4 includes the hole and so there is no match
+  //   .   .   .   .   .
+  //   .   .   7   8   9
+  //   .   .  12  13  14
+  //   .   .   .   .   .
+  {
+    TensorSlice s = TensorSlice::ParseOrDie("1,2:2,3");
+    float results[6];
+    EXPECT_FALSE(reader.CopySliceData("test", s, results));
+  }
+}
+
+TEST(TensorSliceReaderTest, SimpleFloat) {
+  SimpleFloatHelper(CreateTableTensorSliceBuilder, OpenTableTensorSliceReader);
+}
+
+template <typename T, typename U>
+void SimpleIntXHelper(
+    const TensorSliceWriter::CreateBuilderFunction& create_function,
+    TensorSliceReader::OpenTableFunction open_function,
+    const string& checkpoint_file) {
+  const string fname_base = io::JoinPath(testing::TmpDir(), checkpoint_file);
+
+  TensorShape shape({4, 5});
+
+  // File #0 contains a slice that is the top two rows:
+  //
+  //   0   1   2   3   4
+  //   5   6   7   8   9
+  //   .   .   .   .   .
+  //   .   .   .   .   .
+  {
+    const string fname = strings::StrCat(fname_base, "_0");
+    TensorSliceWriter writer(fname, create_function);
+    const T data[] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9};
+    TensorSlice slice = TensorSlice::ParseOrDie("0,2:-");
+    TF_CHECK_OK(writer.Add("test", shape, slice, data));
+    TF_CHECK_OK(writer.Finish());
+  }
+
+  // File #1 contains two slices:
+  //
+  // slice #0 is the bottom left corner
+  //   .   .   .   .   .
+  //   .   .   .   .   .
+  //  10  11  12   .   .
+  //  15  16  17   .   .
+  //
+  // slice #1 is the bottom right corner
+  //   .   .   .   .   .
+  //   .   .   .   .   .
+  //   .   .   .   .   .
+  //   .   .   .  18  19
+  {
+    const string fname = strings::StrCat(fname_base, "_1");
+    TensorSliceWriter writer(fname, create_function);
+    // slice #0
+    {
+      const T data[] = {10, 11, 12, 15, 16, 17};
+      TensorSlice slice = TensorSlice::ParseOrDie("2,2:0,3");
+      TF_CHECK_OK(writer.Add("test", shape, slice, data));
+    }
+    // slice #1
+    {
+      const T data[] = {18, 19};
+      TensorSlice slice = TensorSlice::ParseOrDie("3,1:3,2");
+      TF_CHECK_OK(writer.Add("test", shape, slice, data));
+    }
+    TF_CHECK_OK(writer.Finish());
+  }
+
+  // Notice that we leave a hole in the tensor
+  //   .   .   .   .   .
+  //   .   .   .   .   .
+  //   .   .   . (13) (14)
+  //   .   .   .   .   .
+
+  // Now we need to read the tensor slices
+  const string filepattern = strings::StrCat(fname_base, "_*");
+  TensorSliceReader reader(filepattern, std::move(open_function));
+  TF_EXPECT_OK(reader.status());
+  EXPECT_EQ(2, reader.num_files());
+
+  // We query some of the tensors
+  {
+    TensorShape shape;
+    DataType type;
+    EXPECT_TRUE(reader.HasTensor("test", &shape, &type));
+    EXPECT_EQ("[4,5]", shape.DebugString());
+    EXPECT_EQ(DataTypeToEnum<T>::v(), type);
+    EXPECT_FALSE(reader.HasTensor("don't exist", nullptr, nullptr));
+  }
+
+  // Now we query some slices
+  //
+  // Slice #1 is an exact match
+  //   0   1   2   3   4
+  //   5   6   7   8   9
+  //   .   .   .   .   .
+  //   .   .   .   .   .
+  {
+    TensorSlice s = TensorSlice::ParseOrDie("0,2:-");
+    T expected[] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9};
+    U results[10];
+    EXPECT_TRUE(reader.CopySliceData("test", s, results));
+    for (int i = 0; i < 10; ++i) {
+      EXPECT_EQ(expected[i], results[i]);
+    }
+  }
+
+  // Slice #2 is a subset match
+  //   .   .   .   .   .
+  //   5   6   7   8   9
+  //   .   .   .   .   .
+  //   .   .   .   .   .
+  {
+    TensorSlice s = TensorSlice::ParseOrDie("1,1:-");
+    T expected[] = {5, 6, 7, 8, 9};
+    U results[5];
+    EXPECT_TRUE(reader.CopySliceData("test", s, results));
+    for (int i = 0; i < 5; ++i) {
+      EXPECT_EQ(expected[i], results[i]);
+    }
+  }
+
+  // Slice #4 includes the hole and so there is no match
+  //   .   .   .   .   .
+  //   .   .   7   8   9
+  //   .   .  12  13  14
+  //   .   .   .   .   .
+  {
+    TensorSlice s = TensorSlice::ParseOrDie("1,2:2,3");
+    U results[6];
+    EXPECT_FALSE(reader.CopySliceData("test", s, results));
+  }
+}
+
+#define TEST_SIMPLE_INT(TYPE, SAVED_TYPE)                             \
+  TEST(TensorSliceReaderTest, Simple##TYPE) {                         \
+    SimpleIntXHelper<TYPE, SAVED_TYPE>(CreateTableTensorSliceBuilder, \
+                                       OpenTableTensorSliceReader,    \
+                                       #TYPE "_checkpoint");          \
+  }
+
+TEST_SIMPLE_INT(int32, int32)
+TEST_SIMPLE_INT(int64, int64)
+TEST_SIMPLE_INT(int16, int32)
+TEST_SIMPLE_INT(int8, int32)
+TEST_SIMPLE_INT(uint8, int32)
+
+// Modifies the SavedTensorSlices messages in a checkpoint to allow creating
+// malformed or unsupported checkpoints.
+void MutateSavedTensorSlices(
+    const std::string& fname,
+    const std::function<std::string(SavedTensorSlices)>& mutator) {
+  table::Options options;
+  options.compression = table::kNoCompression;
+
+  // Read all entres from the table.
+  std::vector<std::pair<std::string, std::string>> entries;
+  {
+    std::unique_ptr<RandomAccessFile> file;
+    TF_CHECK_OK(Env::Default()->NewRandomAccessFile(fname, &file));
+    uint64 file_size;
+    TF_CHECK_OK(Env::Default()->GetFileSize(fname, &file_size));
+    table::Table* t;
+    TF_CHECK_OK(table::Table::Open(options, file.get(), file_size, &t));
+    std::unique_ptr<table::Table> table(t);
+    std::unique_ptr<table::Iterator> it(table->NewIterator());
+    for (it->Seek(""); it->Valid(); it->Next()) {
+      entries.emplace_back(it->key(), it->value());
+    }
+    TF_CHECK_OK(it->status());
+  }
+
+  // Rewrite the table, mutating each value.
+  {
+    std::unique_ptr<WritableFile> file;
+    TF_CHECK_OK(Env::Default()->NewWritableFile(fname, &file));
+    table::TableBuilder builder(options, file.get());
+    for (const auto& entry : entries) {
+      SavedTensorSlices sts;
+      CHECK(sts.ParseFromString(entry.second));
+      builder.Add(entry.first, mutator(std::move(sts)));
+    }
+    TF_CHECK_OK(builder.Finish());
+    TF_CHECK_OK(file->Close());
+  }
+}
+
+TEST(TensorSliceReaderTest, MissingTensorType) {
+  const string fname = io::JoinPath(testing::TmpDir(), "invalid_checkpoint");
+  TensorSliceWriter writer(fname, CreateTableTensorSliceBuilder);
+  const int32 data[] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9};
+  TensorShape shape({4, 5});
+  TensorSlice slice = TensorSlice::ParseOrDie("0,2:-");
+  TF_CHECK_OK(writer.Add("test", shape, slice, data));
+  TF_CHECK_OK(writer.Finish());
+
+  MutateSavedTensorSlices(fname, [](SavedTensorSlices sts) {
+    if (sts.has_meta()) {
+      for (auto& tensor : *sts.mutable_meta()->mutable_tensor()) {
+        tensor.clear_type();
+      }
+    }
+    return sts.SerializeAsString();
+  });
+
+  TensorSliceReader reader(fname, OpenTableTensorSliceReader);
+  TF_CHECK_OK(reader.status());
+
+  // The tensor should be present, but loading it should fail due to the
+  // unset (invalid) type.
+  EXPECT_TRUE(reader.HasTensor("test", nullptr, nullptr));
+  std::unique_ptr<Tensor> tensor;
+  EXPECT_FALSE(reader.GetTensor("test", &tensor).ok());
+}
+
+TEST(TensorSliceReaderTest, UnsupportedTensorType) {
+  const string fname = io::JoinPath(testing::TmpDir(), "int32_ref_checkpoint");
+  TensorSliceWriter writer(fname, CreateTableTensorSliceBuilder);
+  const int32 data[] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9};
+  TensorShape shape({4, 5});
+  TensorSlice slice = TensorSlice::ParseOrDie("0,2:-");
+  TF_CHECK_OK(writer.Add("test", shape, slice, data));
+  TF_CHECK_OK(writer.Finish());
+
+  MutateSavedTensorSlices(fname, [](SavedTensorSlices sts) {
+    if (sts.has_meta()) {
+      for (auto& tensor : *sts.mutable_meta()->mutable_tensor()) {
+        tensor.set_type(DT_INT32_REF);
+      }
+    }
+    return sts.SerializeAsString();
+  });
+
+  TensorSliceReader reader(fname, OpenTableTensorSliceReader);
+  TF_CHECK_OK(reader.status());
+
+  // The tensor should be present, but loading it should fail due to the
+  // unsupported type.
+  EXPECT_TRUE(reader.HasTensor("test", nullptr, nullptr));
+  std::unique_ptr<Tensor> tensor;
+  EXPECT_FALSE(reader.GetTensor("test", &tensor).ok());
+}
+
+void CachedTensorSliceReaderTesterHelper(
+    const TensorSliceWriter::CreateBuilderFunction& create_function,
+    const TensorSliceReader::OpenTableFunction& open_function) {
+  const string fname_base = io::JoinPath(testing::TmpDir(), "float_checkpoint");
+
+  TensorShape shape({4, 5});
+
+  // File #0 contains a slice that is the top two rows:
+  //
+  //   0   1   2   3   4
+  //   5   6   7   8   9
+  //   .   .   .   .   .
+  //   .   .   .   .   .
+  {
+    const string fname = strings::StrCat(fname_base, "_0");
+    TensorSliceWriter writer(fname, create_function);
+    const float data[] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9};
+    TensorSlice slice = TensorSlice::ParseOrDie("0,2:-");
+    TF_CHECK_OK(writer.Add("test", shape, slice, data));
+    TF_CHECK_OK(writer.Finish());
+  }
+
+  // File #1 contains two slices:
+  //
+  // slice #0 is the bottom left corner
+  //   .   .   .   .   .
+  //   .   .   .   .   .
+  //  10  11  12   .   .
+  //  15  16  17   .   .
+  //
+  // slice #1 is the bottom right corner
+  //   .   .   .   .   .
+  //   .   .   .   .   .
+  //   .   .   .   .   .
+  //   .   .   .  18  19
+  {
+    const string fname = strings::StrCat(fname_base, "_1");
+    TensorSliceWriter writer(fname, create_function);
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: locate_symbol
+{
+  "ref": "eb6740150f67d60748042234fdd0f96905a0a4e8",
+  "symbol": "MutateSavedTensorSlices"
+}
+tensorflow/core/util/tensor_slice_reader_test.cc:319
+tensorflow/core/util/tensor_slice_reader_test.cc:366
+tensorflow/core/util/tensor_slice_reader_test.cc:394
+
+tokens used
+input: 4,202
+cache read: 4,608
+cache write: 0
+output: 214
+reasoning output: 0
+
+The target code matches the supplied patch context directly, including the test helper used to mutate checkpoint protos. I’m applying the two-source-file change unchanged except for target-local line positions.
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/util/tensor_slice_reader.cc\n@@\n-  for (const SavedSliceMeta& ssm : sts.meta().tensor()) {\n-    TensorShape ssm_shape(ssm.shape());\n+  for (const SavedSliceMeta& ssm : sts.meta().tensor()) {\n+    TensorShape ssm_shape;\n+    status_ = TensorShape::BuildTensorShapeBase(ssm.shape(), &ssm_shape);\n+    if (!status_.ok()) return;\n     for (const TensorSliceProto& tsp : ssm.slice()) {\n       TensorSlice ss_slice(tsp);\n       status_ = RegisterTensorSlice(ssm.name(), ssm_shape, ssm.type(), fname,\n*** Update File: tensorflow/core/util/tensor_slice_reader_test.cc\n@@\n #include <utility>\n #include <vector>\n \n+#include \"tensorflow/core/framework/tensor_shape.pb.h\"\n #include \"tensorflow/core/framework/types.h\"\n #include \"tensorflow/core/framework/versions.pb.h\"\n #include \"tensorflow/core/lib/core/status_test_util.h\"\n@@\n TEST(TensorSliceReaderTest, UnsupportedTensorType) {\n   const string fname = io::JoinPath(testing::TmpDir(), \"int32_ref_checkpoint\");\n   TensorSliceWriter writer(fname, CreateTableTensorSliceBuilder);\n@@\n   std::unique_ptr<Tensor> tensor;\n   EXPECT_FALSE(reader.GetTensor(\"test\", &tensor).ok());\n }\n \n+TEST(TensorSliceReaderTest, NegativeTensorShapeDimension) {\n+  const string fname =\n+      io::JoinPath(testing::TmpDir(), \"negative_dim_checkpoint\");\n+  TensorSliceWriter writer(fname, CreateTableTensorSliceBuilder);\n+  const int32 data[] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9};\n+  TF_CHECK_OK(writer.Add(\"test\", TensorShape({4, 5}),\n+                         TensorSlice::ParseOrDie(\"0,2:-\"), data));\n+  TF_CHECK_OK(writer.Finish());\n+\n+  MutateSavedTensorSlices(fname, [](SavedTensorSlices sts) {\n+    if (sts.has_meta()) {\n+      for (auto& tensor : *sts.mutable_meta()->mutable_tensor()) {\n+        for (auto& dim : *tensor.mutable_shape()->mutable_dim()) {\n+          dim.set_size(-dim.size());\n+        }\n+      }\n+    }\n+    return sts.SerializeAsString();\n+  });\n+\n+  TensorSliceReader reader(fname, OpenTableTensorSliceReader);\n+  // The negative dimension should cause loading to fail.\n+  EXPECT_FALSE(reader.status().ok());\n+}\n+\n void CachedTensorSliceReaderTesterHelper(\n     const TensorSliceWriter::CreateBuilderFunction& create_function,\n     const TensorSliceReader::OpenTableFunction& open_function) {\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/util/tensor_slice_reader.cc
+M tensorflow/core/util/tensor_slice_reader_test.cc
+
+tokens used
+input: 5,294
+cache read: 8,704
+cache write: 0
+output: 729
+reasoning output: 62
+
+The patch is applied. I’ll verify the resulting diff and use hunk validation against the specified base commit.
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/util/tensor_slice_reader.cc tensorflow/core/util/tensor_slice_reader_test.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0086-eb6740150f67",
+  "timeout": 120000
+}
+warning: in the working copy of 'tensorflow/core/util/tensor_slice_reader.cc', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'tensorflow/core/util/tensor_slice_reader_test.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/util/tensor_slice_reader.cc b/tensorflow/core/util/tensor_slice_reader.cc
+index 00911b13f3..da5ac17ee0 100644
+--- a/tensorflow/core/util/tensor_slice_reader.cc
++++ b/tensorflow/core/util/tensor_slice_reader.cc
+@@ -168,7 +168,9 @@ void TensorSliceReader::LoadShard(int shard) const {
+                           "checkpoint");
+   if (!status_.ok()) return;
+   for (const SavedSliceMeta& ssm : sts.meta().tensor()) {
+-    TensorShape ssm_shape(ssm.shape());
++    TensorShape ssm_shape;
++    status_ = TensorShape::BuildTensorShapeBase(ssm.shape(), &ssm_shape);
++    if (!status_.ok()) return;
+     for (const TensorSliceProto& tsp : ssm.slice()) {
+       TensorSlice ss_slice(tsp);
+       status_ = RegisterTensorSlice(ssm.name(), ssm_shape, ssm.type(), fname,
+diff --git a/tensorflow/core/util/tensor_slice_reader_test.cc b/tensorflow/core/util/tensor_slice_reader_test.cc
+index 6b120a4d35..55ab961183 100644
+--- a/tensorflow/core/util/tensor_slice_reader_test.cc
++++ b/tensorflow/core/util/tensor_slice_reader_test.cc
+@@ -18,6 +18,7 @@ limitations under the License.
+ #include <utility>
+ #include <vector>
+ 
++#include "tensorflow/core/framework/tensor_shape.pb.h"
+ #include "tensorflow/core/framework/types.h"
+ #include "tensorflow/core/framework/versions.pb.h"
+ #include "tensorflow/core/lib/core/status_test_util.h"
+@@ -410,6 +411,31 @@ TEST(TensorSliceReaderTest, UnsupportedTensorType) {
+   EXPECT_FALSE(reader.GetTensor("test", &tensor).ok());
+ }
+ 
++TEST(TensorSliceReaderTest, NegativeTensorShapeDimension) {
++  const string fname =
++      io::JoinPath(testing::TmpDir(), "negative_dim_checkpoint");
++  TensorSliceWriter writer(fname, CreateTableTensorSliceBuilder);
++  const int32 data[] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9};
++  TF_CHECK_OK(writer.Add("test", TensorShape({4, 5}),
++                         TensorSlice::ParseOrDie("0,2:-"), data));
++  TF_CHECK_OK(writer.Finish());
++
++  MutateSavedTensorSlices(fname, [](SavedTensorSlices sts) {
++    if (sts.has_meta()) {
++      for (auto& tensor : *sts.mutable_meta()->mutable_tensor()) {
++        for (auto& dim : *tensor.mutable_shape()->mutable_dim()) {
++          dim.set_size(-dim.size());
++        }
++      }
++    }
++    return sts.SerializeAsString();
++  });
++
++  TensorSliceReader reader(fname, OpenTableTensorSliceReader);
++  // The negative dimension should cause loading to fail.
++  EXPECT_FALSE(reader.status().ok());
++}
++
+ void CachedTensorSliceReaderTesterHelper(
+     const TensorSliceWriter::CreateBuilderFunction& create_function,
+     const TensorSliceReader::OpenTableFunction& open_function) {
+
+tokens used
+input: 1,003
+cache read: 13,824
+cache write: 0
+output: 113
+reasoning output: 51
+
+tool: validate
+{
+  "ref": "eb6740150f67d60748042234fdd0f96905a0a4e8",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/util/tensor_slice_reader.cc b/tensorflow/core/util/tensor_slice_reader.cc\nindex 00911b13f3..da5ac17ee0 100644\n--- a/tensorflow/core/util/tensor_slice_reader.cc\n+++ b/tensorflow/core/util/tensor_slice_reader.cc\n@@ -168,7 +168,9 @@ void TensorSliceReader::LoadShard(int shard) const {\n                           \"checkpoint\");\n   if (!status_.ok()) return;\n   for (const SavedSliceMeta& ssm : sts.meta().tensor()) {\n-    TensorShape ssm_shape(ssm.shape());\n+    TensorShape ssm_shape;\n+    status_ = TensorShape::BuildTensorShapeBase(ssm.shape(), &ssm_shape);\n+    if (!status_.ok()) return;\n     for (const TensorSliceProto& tsp : ssm.slice()) {\n       TensorSlice ss_slice(tsp);\n       status_ = RegisterTensorSlice(ssm.name(), ssm_shape, ssm.type(), fname,\ndiff --git a/tensorflow/core/util/tensor_slice_reader_test.cc b/tensorflow/core/util/tensor_slice_reader_test.cc\nindex 6b120a4d35..55ab961183 100644\n--- a/tensorflow/core/util/tensor_slice_reader_test.cc\n+++ b/tensorflow/core/util/tensor_slice_reader_test.cc\n@@ -18,6 +18,7 @@ limitations under the License.\n #include <utility>\n #include <vector>\n \n+#include \"tensorflow/core/framework/tensor_shape.pb.h\"\n #include \"tensorflow/core/framework/types.h\"\n #include \"tensorflow/core/framework/versions.pb.h\"\n #include \"tensorflow/core/lib/core/status_test_util.h\"\n@@ -410,6 +411,31 @@ TEST(TensorSliceReaderTest, UnsupportedTensorType) {\n   EXPECT_FALSE(reader.GetTensor(\"test\", &tensor).ok());\n }\n \n+TEST(TensorSliceReaderTest, NegativeTensorShapeDimension) {\n+  const string fname =\n+      io::JoinPath(testing::TmpDir(), \"negative_dim_checkpoint\");\n+  TensorSliceWriter writer(fname, CreateTableTensorSliceBuilder);\n+  const int32 data[] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9};\n+  TF_CHECK_OK(writer.Add(\"test\", TensorShape({4, 5}),\n+                         TensorSlice::ParseOrDie(\"0,2:-\"), data));\n+  TF_CHECK_OK(writer.Finish());\n+\n+  MutateSavedTensorSlices(fname, [](SavedTensorSlices sts) {\n+    if (sts.has_meta()) {\n+      for (auto& tensor : *sts.mutable_meta()->mutable_tensor()) {\n+        for (auto& dim : *tensor.mutable_shape()->mutable_dim()) {\n+          dim.set_size(-dim.size());\n+        }\n+      }\n+    }\n+    return sts.SerializeAsString();\n+  });\n+\n+  TensorSliceReader reader(fname, OpenTableTensorSliceReader);\n+  // The negative dimension should cause loading to fail.\n+  EXPECT_FALSE(reader.status().ok());\n+}\n+\n void CachedTensorSliceReaderTesterHelper(\n     const TensorSliceWriter::CreateBuilderFunction& create_function,\n     const TensorSliceReader::OpenTableFunction& open_function) {\n"
+}
+Patch applied successfully
+
+tokens used
+input: 1,935
+cache read: 13,824
+cache write: 0
+output: 810
+reasoning output: 7
+
+Applied the TensorSliceReader validation fix and added the regression test for negative tensor shape dimensions. Hunk validation against `eb6740150f67d60748042234fdd0f96905a0a4e8` succeeded.
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/util/tensor_slice_reader.cc b/tensorflow/core/util/tensor_slice_reader.cc
+    index 00911b13f3..da5ac17ee0 100644
+    --- a/tensorflow/core/util/tensor_slice_reader.cc
+    +++ b/tensorflow/core/util/tensor_slice_reader.cc
+    @@ -168,7 +168,9 @@ void TensorSliceReader::LoadShard(int shard) const {
+                               "checkpoint");
+       if (!status_.ok()) return;
+       for (const SavedSliceMeta& ssm : sts.meta().tensor()) {
+    -    TensorShape ssm_shape(ssm.shape());
+    +    TensorShape ssm_shape;
+    +    status_ = TensorShape::BuildTensorShapeBase(ssm.shape(), &ssm_shape);
+    +    if (!status_.ok()) return;
+         for (const TensorSliceProto& tsp : ssm.slice()) {
+           TensorSlice ss_slice(tsp);
+           status_ = RegisterTensorSlice(ssm.name(), ssm_shape, ssm.type(), fname,
+    diff --git a/tensorflow/core/util/tensor_slice_reader_test.cc b/tensorflow/core/util/tensor_slice_reader_test.cc
+    index 6b120a4d35..55ab961183 100644
+    --- a/tensorflow/core/util/tensor_slice_reader_test.cc
+    +++ b/tensorflow/core/util/tensor_slice_reader_test.cc
+    @@ -18,6 +18,7 @@ limitations under the License.
+     #include <utility>
+     #include <vector>
+     
+    +#include "tensorflow/core/framework/tensor_shape.pb.h"
+     #include "tensorflow/core/framework/types.h"
+     #include "tensorflow/core/framework/versions.pb.h"
+     #include "tensorflow/core/lib/core/status_test_util.h"
+    @@ -410,6 +411,31 @@ TEST(TensorSliceReaderTest, UnsupportedTensorType) {
+       EXPECT_FALSE(reader.GetTensor("test", &tensor).ok());
+     }
+     
+    +TEST(TensorSliceReaderTest, NegativeTensorShapeDimension) {
+    +  const string fname =
+    +      io::JoinPath(testing::TmpDir(), "negative_dim_checkpoint");
+    +  TensorSliceWriter writer(fname, CreateTableTensorSliceBuilder);
+    +  const int32 data[] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9};
+    +  TF_CHECK_OK(writer.Add("test", TensorShape({4, 5}),
+    +                         TensorSlice::ParseOrDie("0,2:-"), data));
+    +  TF_CHECK_OK(writer.Finish());
+    +
+    +  MutateSavedTensorSlices(fname, [](SavedTensorSlices sts) {
+    +    if (sts.has_meta()) {
+    +      for (auto& tensor : *sts.mutable_meta()->mutable_tensor()) {
+    +        for (auto& dim : *tensor.mutable_shape()->mutable_dim()) {
+    +          dim.set_size(-dim.size());
+    +        }
+    +      }
+    +    }
+    +    return sts.SerializeAsString();
+    +  });
+    +
+    +  TensorSliceReader reader(fname, OpenTableTensorSliceReader);
+    +  // The negative dimension should cause loading to fail.
+    +  EXPECT_FALSE(reader.status().ok());
+    +}
+    +
+     void CachedTensorSliceReaderTesterHelper(
+         const TensorSliceWriter::CreateBuilderFunction& create_function,
+         const TensorSliceReader::OpenTableFunction& open_function) {
+  notes: >
+    Backported TensorShape proto validation during checkpoint slice loading and added the negative-dimension regression test.
+```
+
+tokens used
+input: 1,741
+cache read: 14,848
+cache write: 0
+output: 841
+reasoning output: 20

@@ -1,0 +1,231 @@
+I’ll locate the target `Prepare` implementation in the checked-out 2.5.3 tree, compare the surrounding context against the provided hunk only, then apply the minimal equivalent guard.
+
+tool: grep
+{
+  "pattern": "TfLiteStatus Prepare\\(TfLiteContext\\* context, TfLiteNode\\* node\\)",
+  "path": "tensorflow/lite/kernels",
+  "include": "depthwise_conv.cc"
+}
+Found 1 matches
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0239-a9c250a31bbb\tensorflow\lite\kernels\depthwise_conv.cc:
+  Line 96: TfLiteStatus Prepare(TfLiteContext* context, TfLiteNode* node) {
+
+tool: viewcode
+{
+  "ref": "a9c250a31bbb98efae2b5a7959228e2f6b4735f4",
+  "path": "tensorflow/lite/kernels/depthwise_conv.cc",
+  "startline": 90,
+  "endline": 140
+}
+Here are lines 90 through 140.
+
+}
+
+void Free(TfLiteContext* context, void* buffer) {
+  delete reinterpret_cast<OpData*>(buffer);
+}
+
+TfLiteStatus Prepare(TfLiteContext* context, TfLiteNode* node) {
+  auto* params =
+      reinterpret_cast<TfLiteDepthwiseConvParams*>(node->builtin_data);
+  OpData* data = reinterpret_cast<OpData*>(node->user_data);
+
+  bool hasBias = NumInputs(node) == 3;
+
+  TF_LITE_ENSURE(context, hasBias || NumInputs(node) == 2);
+  const TfLiteTensor* input;
+  TF_LITE_ENSURE_OK(context, GetInputSafe(context, node, kInputTensor, &input));
+  const TfLiteTensor* filter;
+  TF_LITE_ENSURE_OK(context,
+                    GetInputSafe(context, node, kFilterTensor, &filter));
+  const TfLiteTensor* bias = nullptr;
+
+  TF_LITE_ENSURE_EQ(context, NumOutputs(node), 1);
+  TfLiteTensor* output;
+  TF_LITE_ENSURE_OK(context,
+                    GetOutputSafe(context, node, kOutputTensor, &output));
+
+  TF_LITE_ENSURE_EQ(context, NumDimensions(input), 4);
+  TF_LITE_ENSURE_EQ(context, NumDimensions(filter), 4);
+
+  const TfLiteType data_type = input->type;
+
+  const TfLiteType filter_type = filter->type;
+  const bool is_hybrid =
+      data_type == kTfLiteFloat32 && filter_type == kTfLiteInt8;
+  TF_LITE_ENSURE(context,
+                 data_type == kTfLiteFloat32 || data_type == kTfLiteUInt8 ||
+                     data_type == kTfLiteInt8 || data_type == kTfLiteInt16);
+  TF_LITE_ENSURE_TYPES_EQ(context, output->type, data_type);
+  if (!is_hybrid) {
+    TF_LITE_ENSURE(context,
+                   filter->type == data_type || data_type == kTfLiteInt16);
+  }
+
+  if (data_type == kTfLiteInt16) {
+    TF_LITE_ENSURE_EQ(context, input->params.zero_point, 0);
+    TF_LITE_ENSURE_EQ(context, output->params.zero_point, 0);
+  }
+
+  // Filter in DepthwiseConv is expected to be [1, H, W, O].
+  TF_LITE_ENSURE_EQ(context, SizeOfDimension(filter, 0), 1);
+
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tokens used
+input: 3,741
+cache read: 4,608
+cache write: 0
+output: 177
+reasoning output: 0
+
+The target function matches the newer hunk location directly: after validating input and filter ranks, it has the same gap before `data_type`. I’m applying the two positive dilation checks there.
+
+tool: validate
+{
+  "ref": "a9c250a31bbb98efae2b5a7959228e2f6b4735f4",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/lite/kernels/depthwise_conv.cc b/tensorflow/lite/kernels/depthwise_conv.cc\n--- a/tensorflow/lite/kernels/depthwise_conv.cc\n+++ b/tensorflow/lite/kernels/depthwise_conv.cc\n@@ -113,6 +113,8 @@ TfLiteStatus Prepare(TfLiteContext* context, TfLiteNode* node) {\n \n   TF_LITE_ENSURE_EQ(context, NumDimensions(input), 4);\n   TF_LITE_ENSURE_EQ(context, NumDimensions(filter), 4);\n+  TF_LITE_ENSURE(context, params->dilation_height_factor > 0);\n+  TF_LITE_ENSURE(context, params->dilation_width_factor > 0);\n \n   const TfLiteType data_type = input->type;\n"
+}
+This patch does not apply to the target TensorFlow ref.
+Git apply output:
+error: corrupt patch at line 12
+Touched files:
+- tensorflow/lite/kernels/depthwise_conv.cc
+Fix the patch context against the older TensorFlow version, then run validate again in hunk mode.
+
+tokens used
+input: 1,498
+cache read: 7,680
+cache write: 0
+output: 281
+reasoning output: 16
+
+The first validation failed due to malformed hunk metadata, not a context mismatch. I’m correcting the hunk header and rechecking before editing.
+
+tool: validate
+{
+  "ref": "a9c250a31bbb98efae2b5a7959228e2f6b4735f4",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/lite/kernels/depthwise_conv.cc b/tensorflow/lite/kernels/depthwise_conv.cc\n--- a/tensorflow/lite/kernels/depthwise_conv.cc\n+++ b/tensorflow/lite/kernels/depthwise_conv.cc\n@@ -113,7 +113,9 @@ TfLiteStatus Prepare(TfLiteContext* context, TfLiteNode* node) {\n \n   TF_LITE_ENSURE_EQ(context, NumDimensions(input), 4);\n   TF_LITE_ENSURE_EQ(context, NumDimensions(filter), 4);\n+  TF_LITE_ENSURE(context, params->dilation_height_factor > 0);\n+  TF_LITE_ENSURE(context, params->dilation_width_factor > 0);\n \n   const TfLiteType data_type = input->type;\n \n"
+}
+This patch does not apply to the target TensorFlow ref.
+Git apply output:
+error: corrupt patch at line 13
+Touched files:
+- tensorflow/lite/kernels/depthwise_conv.cc
+Fix the patch context against the older TensorFlow version, then run validate again in hunk mode.
+
+tokens used
+input: 841
+cache read: 8,704
+cache write: 0
+output: 274
+reasoning output: 42
+
+tool: validate
+{
+  "ref": "a9c250a31bbb98efae2b5a7959228e2f6b4735f4",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/lite/kernels/depthwise_conv.cc b/tensorflow/lite/kernels/depthwise_conv.cc\nindex 0000000..0000000 100644\n--- a/tensorflow/lite/kernels/depthwise_conv.cc\n+++ b/tensorflow/lite/kernels/depthwise_conv.cc\n@@ -113,6 +113,8 @@\n \n   TF_LITE_ENSURE_EQ(context, NumDimensions(input), 4);\n   TF_LITE_ENSURE_EQ(context, NumDimensions(filter), 4);\n+  TF_LITE_ENSURE(context, params->dilation_height_factor > 0);\n+  TF_LITE_ENSURE(context, params->dilation_width_factor > 0);\n \n   const TfLiteType data_type = input->type;\n"
+}
+This patch does not apply to the target TensorFlow ref.
+Git apply output:
+error: corrupt patch at line 13
+Touched files:
+- tensorflow/lite/kernels/depthwise_conv.cc
+Fix the patch context against the older TensorFlow version, then run validate again in hunk mode.
+
+tokens used
+input: 1,227
+cache read: 8,704
+cache write: 0
+output: 232
+reasoning output: 108
+
+tool: validate
+{
+  "ref": "a9c250a31bbb98efae2b5a7959228e2f6b4735f4",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/lite/kernels/depthwise_conv.cc b/tensorflow/lite/kernels/depthwise_conv.cc\n--- a/tensorflow/lite/kernels/depthwise_conv.cc\n+++ b/tensorflow/lite/kernels/depthwise_conv.cc\n@@ -113,5 +113,7 @@\n \n   TF_LITE_ENSURE_EQ(context, NumDimensions(input), 4);\n   TF_LITE_ENSURE_EQ(context, NumDimensions(filter), 4);\n+  TF_LITE_ENSURE(context, params->dilation_height_factor > 0);\n+  TF_LITE_ENSURE(context, params->dilation_width_factor > 0);\n \n   const TfLiteType data_type = input->type;\n"
+}
+Patch applied successfully
+
+tokens used
+input: 613
+cache read: 9,728
+cache write: 0
+output: 219
+reasoning output: 41
+
+The corrected hunk validates against the target base. I’m applying that exact source change now.
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/lite/kernels/depthwise_conv.cc\n@@\n   TF_LITE_ENSURE_EQ(context, NumDimensions(input), 4);\n   TF_LITE_ENSURE_EQ(context, NumDimensions(filter), 4);\n+  TF_LITE_ENSURE(context, params->dilation_height_factor > 0);\n+  TF_LITE_ENSURE(context, params->dilation_width_factor > 0);\n \n   const TfLiteType data_type = input->type;\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/lite/kernels/depthwise_conv.cc
+
+tokens used
+input: 886
+cache read: 9,728
+cache write: 0
+output: 162
+reasoning output: 0
+
+The source change is applied. I’m checking the resulting diff to ensure only the intended file and lines changed.
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/lite/kernels/depthwise_conv.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0239-a9c250a31bbb"
+}
+warning: in the working copy of 'tensorflow/lite/kernels/depthwise_conv.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/lite/kernels/depthwise_conv.cc b/tensorflow/lite/kernels/depthwise_conv.cc
+index e2e344169a..f277477bc2 100644
+--- a/tensorflow/lite/kernels/depthwise_conv.cc
++++ b/tensorflow/lite/kernels/depthwise_conv.cc
+@@ -115,6 +115,8 @@ TfLiteStatus Prepare(TfLiteContext* context, TfLiteNode* node) {
+ 
+   TF_LITE_ENSURE_EQ(context, NumDimensions(input), 4);
+   TF_LITE_ENSURE_EQ(context, NumDimensions(filter), 4);
++  TF_LITE_ENSURE(context, params->dilation_height_factor > 0);
++  TF_LITE_ENSURE(context, params->dilation_width_factor > 0);
+ 
+   const TfLiteType data_type = input->type;
+
+tokens used
+input: 1,077
+cache read: 9,728
+cache write: 0
+output: 102
+reasoning output: 14
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/lite/kernels/depthwise_conv.cc b/tensorflow/lite/kernels/depthwise_conv.cc
+    index e2e344169a..f277477bc2 100644
+    --- a/tensorflow/lite/kernels/depthwise_conv.cc
+    +++ b/tensorflow/lite/kernels/depthwise_conv.cc
+    @@ -115,6 +115,8 @@ TfLiteStatus Prepare(TfLiteContext* context, TfLiteNode* node) {
+     
+       TF_LITE_ENSURE_EQ(context, NumDimensions(input), 4);
+       TF_LITE_ENSURE_EQ(context, NumDimensions(filter), 4);
+    +  TF_LITE_ENSURE(context, params->dilation_height_factor > 0);
+    +  TF_LITE_ENSURE(context, params->dilation_width_factor > 0);
+     
+       const TfLiteType data_type = input->type;
+     
+  notes: >
+    Added positive dilation factor validation to TFLite depthwise convolution Prepare to prevent division by zero.
+```
+
+tokens used
+input: 1,431
+cache read: 9,728
+cache write: 0
+output: 249
+reasoning output: 12

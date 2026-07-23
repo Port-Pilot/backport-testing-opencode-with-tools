@@ -1,0 +1,380 @@
+I’ll inspect the target-side files around both hunks, then apply the minimal equivalent guard and regression test without looking at the held-out backport commit.
+
+tool: viewcode
+{
+  "ref": "442c3ee13365a9f3bef3116852e2758fa5977f8c",
+  "path": "tensorflow/python/kernel_tests/data_structures/list_ops_test.py",
+  "startline": 1480,
+  "endline": 1545
+}
+Here are lines 1480 through 1545.
+
+    l = list_ops.tensor_list_set_item(l, 1, [[2., 3.], [4., 5.], [6., 7.]])
+    t, _ = gen_list_ops.tensor_list_concat_v2(
+        l,
+        element_dtype=dtypes.float32,
+        element_shape=list_ops._build_element_shape((None, 2)),
+        leading_dims=[2, 3, 4])
+    self.assertAllEqual([[0., 0.], [0., 0.], [2., 3.], [4., 5.], [6., 7.],
+                         [0., 0.], [0., 0.], [0., 0.], [0., 0.]], t)
+
+  def testConcatWithUninitializedTensorsInferShapeFromElements(self):
+    l = list_ops.tensor_list_reserve(
+        element_dtype=dtypes.float32, element_shape=None, num_elements=3)
+    l = list_ops.tensor_list_set_item(l, 1, [[2., 3.], [4., 5.], [6., 7.]])
+    t = list_ops.tensor_list_concat(l, element_dtype=dtypes.float32)
+    self.assertAllEqual([[0., 0.], [0., 0.], [0., 0.], [2., 3.], [4., 5.],
+                         [6., 7.], [0., 0.], [0., 0.], [0., 0.]], t)
+
+  def testConcatWithUninitializedTensorsFailsIfNoElementShape(self):
+    l = list_ops.tensor_list_reserve(
+        element_dtype=dtypes.float32, element_shape=None, num_elements=3)
+    with self.assertRaisesRegex(
+        errors.InvalidArgumentError,
+        r"Trying to concat list with only uninitialized tensors "
+        r"but element_shape_except_first_dim is not fully defined"):
+      t = list_ops.tensor_list_concat(l, element_dtype=dtypes.float32)
+      self.evaluate(t)
+
+  def testConcatWithUninitializedTensorsFailsIfNoInputLengths(self):
+    l = list_ops.tensor_list_reserve(
+        element_dtype=dtypes.float32, element_shape=[None, 3], num_elements=3)
+    with self.assertRaisesRegex(
+        errors.InvalidArgumentError,
+        r"List contains uninitialized tensor at index 0"
+        r" but leading_dims has only 0 elements."):
+      t = list_ops.tensor_list_concat(l, element_dtype=dtypes.float32)
+      self.evaluate(t)
+
+  def testEmptyTensorListInvalidShape(self):
+    with self.assertRaisesRegex((ValueError, errors.InvalidArgumentError),
+                                r"Shape must be at most rank 1 but is rank 2"):
+      t = gen_list_ops.EmptyTensorList(
+          element_shape=array_ops.ones(dtype=dtypes.int32, shape=[1, 0]),
+          max_num_elements=constant_op.constant(1),
+          element_dtype=dtypes.int32)
+      self.evaluate(t)
+
+  def testEvenSplit(self):
+
+    def RunTest(input_tensor, lengths, expected_stacked_output):
+      l = list_ops.tensor_list_split(
+          input_tensor, element_shape=None, lengths=lengths)
+      self.assertAllEqual(
+          list_ops.tensor_list_stack(l, element_dtype=dtypes.float32),
+          expected_stacked_output)
+
+    RunTest([1., 2., 3.], [1, 1, 1], [[1.], [2.], [3.]])
+    RunTest([1., 2., 3., 4.], [2, 2], [[1., 2.], [3., 4.]])
+    RunTest([[1., 2.], [3., 4.]], [1, 1], [[[1., 2.]], [[3., 4.]]])
+
+  def testUnevenSplit(self):
+    l = list_ops.tensor_list_split([1., 2., 3., 4., 5],
+                                   element_shape=None,
+                                   lengths=[3, 2])
+    self.assertAllEqual(list_ops.tensor_list_length(l), 2)
+    self.assertAllEqual(
+        list_ops.tensor_list_get_item(l, 0, element_dtype=dtypes.float32),
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: viewcode
+{
+  "ref": "442c3ee13365a9f3bef3116852e2758fa5977f8c",
+  "path": "tensorflow/core/kernels/list_kernels.h",
+  "startline": 360,
+  "endline": 430
+}
+Here are lines 360 through 430.
+
+          errors::InvalidArgument("Trying to read an uninitialized tensor but ",
+                                  "element_shape is not fully defined.",
+                                  partial_element_shape.DebugString()));
+      Tensor* result;
+      AllocatorAttributes attr;
+      if (element_dtype_ == DT_VARIANT) {
+        attr.set_on_host(true);
+      }
+      OP_REQUIRES_OK(c, c->allocate_output(1, element_shape, &result, attr));
+      SetZero<Device, T>(c, *result);
+    }
+
+    TensorList* output_list = nullptr;
+    OP_REQUIRES_OK(c, ForwardInputOrCreateNewList(c, 0, 0, *l, &output_list));
+    output_list->tensors().pop_back();
+  }
+
+ private:
+  DataType element_dtype_;
+};
+
+template <typename Device, typename T>
+class TensorListConcat : public OpKernel {
+ public:
+  using ConstMatrixVector =
+      std::vector<std::unique_ptr<typename TTypes<T, 2>::ConstMatrix>>;
+  explicit TensorListConcat(OpKernelConstruction* c) : OpKernel(c) {
+    OP_REQUIRES_OK(c, c->GetAttr("element_dtype", &element_dtype_));
+    if (c->HasAttr("element_shape")) {
+      OP_REQUIRES_OK(c, c->GetAttr("element_shape", &element_shape_));
+    }
+  }
+
+  void Compute(OpKernelContext* c) override {
+    PartialTensorShape element_shape_except_first_dim;
+    if (!element_shape_.unknown_rank()) {
+      element_shape_except_first_dim = PartialTensorShape(
+          gtl::ArraySlice<int64_t>(element_shape_.dim_sizes()).subspan(1));
+    }
+    // Check that the input Variant tensor is indeed a TensorList and has the
+    // correct element type.
+    const TensorList* tensor_list = nullptr;
+    OP_REQUIRES_OK(c, GetInputList(c, 0, &tensor_list));
+    OP_REQUIRES(
+        c, element_dtype_ == tensor_list->element_dtype,
+        errors::InvalidArgument(
+            "Invalid data types; op elements ", DataTypeString(element_dtype_),
+            " but list elements ", DataTypeString(tensor_list->element_dtype)));
+    // The leading dimension of all list elements if they are all the same.
+    // This is used as the leading dim of uninitialized tensors in the list
+    // if leading_dims is not provided.
+    int64_t first_dim = -1;
+    if (c->num_inputs() > 1) {
+      // TensorListConcatV2
+      PartialTensorShape element_shape;
+      OP_REQUIRES_OK(
+          c, GetElementShapeFromInput(c, *tensor_list, 1, &element_shape));
+      OP_REQUIRES(c, element_shape.unknown_rank() || element_shape.dims() >= 1,
+                  errors::InvalidArgument(
+                      "Concat requires elements to be at least vectors, ",
+                      "found scalars instead."));
+      // Split `element_shape` into `first_dim` and
+      // `element_shape_except_first_dim`.
+      first_dim = element_shape.dim_size(0);
+      element_shape_except_first_dim = element_shape;
+      element_shape_except_first_dim.RemoveDim(0);
+    }
+    // If the TensorList is empty, element_shape_except_first_dim must be fully
+    // defined.
+    OP_REQUIRES(c,
+                !tensor_list->tensors().empty() ||
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: git_show
+{
+  "ref": "fc33f3dc4c14051a83eec6535b608abe1d355fde"
+}
+commit fc33f3dc4c14051a83eec6535b608abe1d355fde
+Author: Alan Liu <liualan@google.com>
+Date:   Wed Sep 28 13:54:50 2022 -0700
+
+    Fix tf.raw_ops.TensorListConcat vulnerability (segfault).
+    
+    Check that the element_shape input is valid.
+    Add graph/eager unit tests.
+    
+    Note: This fix will have to be cherry picked in r2.10, r2.9, and r2.8.
+    PiperOrigin-RevId: 477544091
+
+ tensorflow/core/kernels/list_kernels.h                          | 7 +++++--
+ tensorflow/python/kernel_tests/data_structures/list_ops_test.py | 9 +++++++++
+ 2 files changed, 14 insertions(+), 2 deletions(-)
+
+--- Commit Details ---
+commit fc33f3dc4c14051a83eec6535b608abe1d355fde
+Author: Alan Liu <liualan@google.com>
+Date:   Wed Sep 28 13:54:50 2022 -0700
+
+    Fix tf.raw_ops.TensorListConcat vulnerability (segfault).
+    
+    Check that the element_shape input is valid.
+    Add graph/eager unit tests.
+    
+    Note: This fix will have to be cherry picked in r2.10, r2.9, and r2.8.
+    PiperOrigin-RevId: 477544091
+
+diff --git a/tensorflow/core/kernels/list_kernels.h b/tensorflow/core/kernels/list_kernels.h
+index 9a0782b830..19fb3d48bc 100644
+--- a/tensorflow/core/kernels/list_kernels.h
++++ b/tensorflow/core/kernels/list_kernels.h
+@@ -395,8 +395,11 @@ class TensorListConcat : public OpKernel {
+   void Compute(OpKernelContext* c) override {
+     PartialTensorShape element_shape_except_first_dim;
+     if (!element_shape_.unknown_rank()) {
+-      element_shape_except_first_dim = PartialTensorShape(
+-          gtl::ArraySlice<int64_t>(element_shape_.dim_sizes()).subspan(1));
++      auto dim_sizes = element_shape_.dim_sizes();
++      OP_REQUIRES(c, !dim_sizes.empty(),
++                  errors::InvalidArgument("element_shape must not be empty"));
++      element_shape_except_first_dim =
++          PartialTensorShape(gtl::ArraySlice<int64_t>(dim_sizes).subspan(1));
+     }
+     // Check that the input Variant tensor is indeed a TensorList and has the
+     // correct element type.
+diff --git a/tensorflow/python/kernel_tests/data_structures/list_ops_test.py b/tensorflow/python/kernel_tests/data_structures/list_ops_test.py
+index b966b31300..c95c27eadc 100644
+--- a/tensorflow/python/kernel_tests/data_structures/list_ops_test.py
++++ b/tensorflow/python/kernel_tests/data_structures/list_ops_test.py
+@@ -1514,6 +1514,15 @@ class ListOpsTest(test_util.TensorFlowTestCase, parameterized.TestCase):
+       t = list_ops.tensor_list_concat(l, element_dtype=dtypes.float32)
+       self.evaluate(t)
+ 
++  @test_util.run_in_graph_and_eager_modes
++  def testConcatWithInvalidElementShape(self):
++    l = list_ops.tensor_list_reserve(
++        element_dtype=dtypes.float32, element_shape=[], num_elements=0)
++    with self.assertRaisesRegex((ValueError, errors.InvalidArgumentError),
++                                r"element_shape must not be empty"):
++      self.evaluate(gen_list_ops.tensor_list_concat(
++          input_handle=l, element_dtype=dtypes.float32, element_shape=[]))
++
+   def testEmptyTensorListInvalidShape(self):
+     with self.assertRaisesRegex((ValueError, errors.InvalidArgumentError),
+                                 r"Shape must be at most rank 1 but is rank 2"):
+
+tokens used
+input: 4,037
+cache read: 4,608
+cache write: 0
+output: 212
+reasoning output: 0
+
+The target code matches the source patch locations directly, so I’m applying the same minimal guard and test.
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/kernels/list_kernels.h\n@@\n   void Compute(OpKernelContext* c) override {\n     PartialTensorShape element_shape_except_first_dim;\n     if (!element_shape_.unknown_rank()) {\n-      element_shape_except_first_dim = PartialTensorShape(\n-          gtl::ArraySlice<int64_t>(element_shape_.dim_sizes()).subspan(1));\n+      auto dim_sizes = element_shape_.dim_sizes();\n+      OP_REQUIRES(c, !dim_sizes.empty(),\n+                  errors::InvalidArgument(\"element_shape must not be empty\"));\n+      element_shape_except_first_dim =\n+          PartialTensorShape(gtl::ArraySlice<int64_t>(dim_sizes).subspan(1));\n     }\n*** Update File: tensorflow/python/kernel_tests/data_structures/list_ops_test.py\n@@\n   def testConcatWithUninitializedTensorsFailsIfNoInputLengths(self):\n     l = list_ops.tensor_list_reserve(\n         element_dtype=dtypes.float32, element_shape=[None, 3], num_elements=3)\n     with self.assertRaisesRegex(\n         errors.InvalidArgumentError,\n@@\n       t = list_ops.tensor_list_concat(l, element_dtype=dtypes.float32)\n       self.evaluate(t)\n \n+  @test_util.run_in_graph_and_eager_modes\n+  def testConcatWithInvalidElementShape(self):\n+    l = list_ops.tensor_list_reserve(\n+        element_dtype=dtypes.float32, element_shape=[], num_elements=0)\n+    with self.assertRaisesRegex((ValueError, errors.InvalidArgumentError),\n+                                r\"element_shape must not be empty\"):\n+      self.evaluate(gen_list_ops.tensor_list_concat(\n+          input_handle=l, element_dtype=dtypes.float32, element_shape=[]))\n+\n   def testEmptyTensorListInvalidShape(self):\n     with self.assertRaisesRegex((ValueError, errors.InvalidArgumentError),\n                                 r\"Shape must be at most rank 1 but is rank 2\"):\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/kernels/list_kernels.h
+M tensorflow/python/kernel_tests/data_structures/list_ops_test.py
+
+tokens used
+input: 3,728
+cache read: 7,680
+cache write: 0
+output: 507
+reasoning output: 23
+
+Changes are applied. I’ll inspect the resulting diff and do a lightweight targeted validation of the patch shape.
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/kernels/list_kernels.h tensorflow/python/kernel_tests/data_structures/list_ops_test.py",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0035-442c3ee13365",
+  "timeout": 120000
+}
+warning: in the working copy of 'tensorflow/core/kernels/list_kernels.h', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'tensorflow/python/kernel_tests/data_structures/list_ops_test.py', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/kernels/list_kernels.h b/tensorflow/core/kernels/list_kernels.h
+index 2287308885..bab17b4934 100644
+--- a/tensorflow/core/kernels/list_kernels.h
++++ b/tensorflow/core/kernels/list_kernels.h
+@@ -393,8 +393,11 @@ class TensorListConcat : public OpKernel {
+   void Compute(OpKernelContext* c) override {
+     PartialTensorShape element_shape_except_first_dim;
+     if (!element_shape_.unknown_rank()) {
+-      element_shape_except_first_dim = PartialTensorShape(
+-          gtl::ArraySlice<int64_t>(element_shape_.dim_sizes()).subspan(1));
++      auto dim_sizes = element_shape_.dim_sizes();
++      OP_REQUIRES(c, !dim_sizes.empty(),
++                  errors::InvalidArgument("element_shape must not be empty"));
++      element_shape_except_first_dim =
++          PartialTensorShape(gtl::ArraySlice<int64_t>(dim_sizes).subspan(1));
+     }
+     // Check that the input Variant tensor is indeed a TensorList and has the
+     // correct element type.
+diff --git a/tensorflow/python/kernel_tests/data_structures/list_ops_test.py b/tensorflow/python/kernel_tests/data_structures/list_ops_test.py
+index b966b31300..c95c27eadc 100644
+--- a/tensorflow/python/kernel_tests/data_structures/list_ops_test.py
++++ b/tensorflow/python/kernel_tests/data_structures/list_ops_test.py
+@@ -1514,6 +1514,15 @@ class ListOpsTest(test_util.TensorFlowTestCase, parameterized.TestCase):
+       t = list_ops.tensor_list_concat(l, element_dtype=dtypes.float32)
+       self.evaluate(t)
+ 
++  @test_util.run_in_graph_and_eager_modes
++  def testConcatWithInvalidElementShape(self):
++    l = list_ops.tensor_list_reserve(
++        element_dtype=dtypes.float32, element_shape=[], num_elements=0)
++    with self.assertRaisesRegex((ValueError, errors.InvalidArgumentError),
++                                r"element_shape must not be empty"):
++      self.evaluate(gen_list_ops.tensor_list_concat(
++          input_handle=l, element_dtype=dtypes.float32, element_shape=[]))
++
+   def testEmptyTensorListInvalidShape(self):
+     with self.assertRaisesRegex((ValueError, errors.InvalidArgumentError),
+                                 r"Shape must be at most rank 1 but is rank 2"):
+
+tokens used
+input: 1,226
+cache read: 10,752
+cache write: 0
+output: 115
+reasoning output: 48
+
+tool: validate
+{
+  "ref": "442c3ee13365a9f3bef3116852e2758fa5977f8c",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/list_kernels.h b/tensorflow/core/kernels/list_kernels.h\nindex 2287308885..bab17b4934 100644\n--- a/tensorflow/core/kernels/list_kernels.h\n+++ b/tensorflow/core/kernels/list_kernels.h\n@@ -393,8 +393,11 @@ class TensorListConcat : public OpKernel {\n   void Compute(OpKernelContext* c) override {\n     PartialTensorShape element_shape_except_first_dim;\n     if (!element_shape_.unknown_rank()) {\n-      element_shape_except_first_dim = PartialTensorShape(\n-          gtl::ArraySlice<int64_t>(element_shape_.dim_sizes()).subspan(1));\n+      auto dim_sizes = element_shape_.dim_sizes();\n+      OP_REQUIRES(c, !dim_sizes.empty(),\n+                  errors::InvalidArgument(\"element_shape must not be empty\"));\n+      element_shape_except_first_dim =\n+          PartialTensorShape(gtl::ArraySlice<int64_t>(dim_sizes).subspan(1));\n     }\n     // Check that the input Variant tensor is indeed a TensorList and has the\n     // correct element type.\ndiff --git a/tensorflow/python/kernel_tests/data_structures/list_ops_test.py b/tensorflow/python/kernel_tests/data_structures/list_ops_test.py\nindex b966b31300..c95c27eadc 100644\n--- a/tensorflow/python/kernel_tests/data_structures/list_ops_test.py\n+++ b/tensorflow/python/kernel_tests/data_structures/list_ops_test.py\n@@ -1514,6 +1514,15 @@ class ListOpsTest(test_util.TensorFlowTestCase, parameterized.TestCase):\n       t = list_ops.tensor_list_concat(l, element_dtype=dtypes.float32)\n       self.evaluate(t)\n \n+  @test_util.run_in_graph_and_eager_modes\n+  def testConcatWithInvalidElementShape(self):\n+    l = list_ops.tensor_list_reserve(\n+        element_dtype=dtypes.float32, element_shape=[], num_elements=0)\n+    with self.assertRaisesRegex((ValueError, errors.InvalidArgumentError),\n+                                r\"element_shape must not be empty\"):\n+      self.evaluate(gen_list_ops.tensor_list_concat(\n+          input_handle=l, element_dtype=dtypes.float32, element_shape=[]))\n+\n   def testEmptyTensorListInvalidShape(self):\n     with self.assertRaisesRegex((ValueError, errors.InvalidArgumentError),\n                                 r\"Shape must be at most rank 1 but is rank 2\"):\n"
+}
+Patch applied successfully
+
+tokens used
+input: 969
+cache read: 11,776
+cache write: 0
+output: 620
+reasoning output: 11
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/kernels/list_kernels.h b/tensorflow/core/kernels/list_kernels.h
+    index 2287308885..bab17b4934 100644
+    --- a/tensorflow/core/kernels/list_kernels.h
+    +++ b/tensorflow/core/kernels/list_kernels.h
+    @@ -393,8 +393,11 @@ class TensorListConcat : public OpKernel {
+       void Compute(OpKernelContext* c) override {
+         PartialTensorShape element_shape_except_first_dim;
+         if (!element_shape_.unknown_rank()) {
+    -      element_shape_except_first_dim = PartialTensorShape(
+    -          gtl::ArraySlice<int64_t>(element_shape_.dim_sizes()).subspan(1));
+    +      auto dim_sizes = element_shape_.dim_sizes();
+    +      OP_REQUIRES(c, !dim_sizes.empty(),
+    +                  errors::InvalidArgument("element_shape must not be empty"));
+    +      element_shape_except_first_dim =
+    +          PartialTensorShape(gtl::ArraySlice<int64_t>(dim_sizes).subspan(1));
+         }
+         // Check that the input Variant tensor is indeed a TensorList and has the
+         // correct element type.
+    diff --git a/tensorflow/python/kernel_tests/data_structures/list_ops_test.py b/tensorflow/python/kernel_tests/data_structures/list_ops_test.py
+    index b966b31300..c95c27eadc 100644
+    --- a/tensorflow/python/kernel_tests/data_structures/list_ops_test.py
+    +++ b/tensorflow/python/kernel_tests/data_structures/list_ops_test.py
+    @@ -1514,6 +1514,15 @@ class ListOpsTest(test_util.TensorFlowTestCase, parameterized.TestCase):
+           t = list_ops.tensor_list_concat(l, element_dtype=dtypes.float32)
+           self.evaluate(t)
+     
+    +  @test_util.run_in_graph_and_eager_modes
+    +  def testConcatWithInvalidElementShape(self):
+    +    l = list_ops.tensor_list_reserve(
+    +        element_dtype=dtypes.float32, element_shape=[], num_elements=0)
+    +    with self.assertRaisesRegex((ValueError, errors.InvalidArgumentError),
+    +                                r"element_shape must not be empty"):
+    +      self.evaluate(gen_list_ops.tensor_list_concat(
+    +          input_handle=l, element_dtype=dtypes.float32, element_shape=[]))
+    +
+       def testEmptyTensorListInvalidShape(self):
+         with self.assertRaisesRegex((ValueError, errors.InvalidArgumentError),
+                                     r"Shape must be at most rank 1 but is rank 2"):
+  notes: >
+    Added the TensorListConcat empty element_shape guard and matching graph/eager regression test; hunk validation against the target base succeeded.
+```
+
+tokens used
+input: 1,613
+cache read: 11,776
+cache write: 0
+output: 610
+reasoning output: 11

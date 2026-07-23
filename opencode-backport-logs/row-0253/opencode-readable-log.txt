@@ -1,0 +1,700 @@
+I’ll locate the target 2.7.1 equivalents for the changed source and regression test, then apply the smallest matching fix without inspecting the held-out backport commit.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target-side source context for simplifyBroadcast and regression test layout",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Validate patch hunks against target base where needed",
+      "status": "pending",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply minimal source and test changes",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "content": "Inspect final diff for correctness",
+      "status": "pending",
+      "priority": "high"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target-side source context for simplifyBroadcast and regression test layout",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Validate patch hunks against target base where needed",
+    "status": "pending",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply minimal source and test changes",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "content": "Inspect final diff for correctness",
+    "status": "pending",
+    "priority": "high"
+  }
+]
+
+tokens used
+input: 4,199
+cache read: 4,608
+cache write: 0
+output: 139
+reasoning output: 0
+
+tool: glob
+{
+  "pattern": "tensorflow/compiler/mlir/tfrt/python_tests/regression_tests/*.mlir"
+}
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0253-69db6c4226c7\tensorflow\compiler\mlir\tfrt\python_tests\regression_tests\transpose_of_asinh.mlir
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0253-69db6c4226c7\tensorflow\compiler\mlir\tfrt\python_tests\regression_tests\squeeze_of_sum.disabled.mlir
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0253-69db6c4226c7\tensorflow\compiler\mlir\tfrt\python_tests\regression_tests\squeeze_of_broadcast_to_with_constant_shape.mlir
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0253-69db6c4226c7\tensorflow\compiler\mlir\tfrt\python_tests\regression_tests\squeeze_of_broadcast_to.mlir
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0253-69db6c4226c7\tensorflow\compiler\mlir\tfrt\python_tests\regression_tests\square_with_scalar_type.mlir
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0253-69db6c4226c7\tensorflow\compiler\mlir\tfrt\python_tests\regression_tests\select_of_sum.mlir
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0253-69db6c4226c7\tensorflow\compiler\mlir\tfrt\python_tests\regression_tests\select_of_squeeze.disabled.mlir
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0253-69db6c4226c7\tensorflow\compiler\mlir\tfrt\python_tests\regression_tests\select_of_reduction.mlir
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0253-69db6c4226c7\tensorflow\compiler\mlir\tfrt\python_tests\regression_tests\reshape_to_scalar.mlir
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0253-69db6c4226c7\tensorflow\compiler\mlir\tfrt\python_tests\regression_tests\reshape_of_broadcast.mlir
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0253-69db6c4226c7\tensorflow\compiler\mlir\tfrt\python_tests\regression_tests\reduction_of_reduction.mlir
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0253-69db6c4226c7\tensorflow\compiler\mlir\tfrt\python_tests\regression_tests\reduction_of_broadcast.mlir
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0253-69db6c4226c7\tensorflow\compiler\mlir\tfrt\python_tests\regression_tests\mod.mlir
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0253-69db6c4226c7\tensorflow\compiler\mlir\tfrt\python_tests\regression_tests\mean_of_select_of_min.mlir
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0253-69db6c4226c7\tensorflow\compiler\mlir\tfrt\python_tests\regression_tests\incompatible_shape_error.mlir
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0253-69db6c4226c7\tensorflow\compiler\mlir\tfrt\python_tests\regression_tests\fuse_add_with_select.disabled.mlir
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0253-69db6c4226c7\tensorflow\compiler\mlir\tfrt\python_tests\regression_tests\floor_mod_implicit_broadcast.mlir
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0253-69db6c4226c7\tensorflow\compiler\mlir\tfrt\python_tests\regression_tests\floor_mod_between_binary.mlir
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0253-69db6c4226c7\tensorflow\compiler\mlir\tfrt\python_tests\regression_tests\floor_div_of_prod_and_oneslike.mlir
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0253-69db6c4226c7\tensorflow\compiler\mlir\tfrt\python_tests\regression_tests\floor_div_of_broadcast_to_with_constant_shape.disabled.mlir
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0253-69db6c4226c7\tensorflow\compiler\mlir\tfrt\python_tests\regression_tests\dynamic_and_static_mixed.mlir
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0253-69db6c4226c7\tensorflow\compiler\mlir\tfrt\python_tests\regression_tests\constant_select_of_reduction.disabled.mlir
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0253-69db6c4226c7\tensorflow\compiler\mlir\tfrt\python_tests\regression_tests\clip_by_value_of_min.mlir
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0253-69db6c4226c7\tensorflow\compiler\mlir\tfrt\python_tests\regression_tests\broadcast_of_reduction_of_reduction.mlir
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0253-69db6c4226c7\tensorflow\compiler\mlir\tfrt\python_tests\regression_tests\broadcasting_9.mlir
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0253-69db6c4226c7\tensorflow\compiler\mlir\tfrt\python_tests\regression_tests\broadcasting_8.disabled.mlir
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0253-69db6c4226c7\tensorflow\compiler\mlir\tfrt\python_tests\regression_tests\broadcasting_7.disabled.mlir
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0253-69db6c4226c7\tensorflow\compiler\mlir\tfrt\python_tests\regression_tests\broadcasting_6.mlir
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0253-69db6c4226c7\tensorflow\compiler\mlir\tfrt\python_tests\regression_tests\broadcasting_5.mlir
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0253-69db6c4226c7\tensorflow\compiler\mlir\tfrt\python_tests\regression_tests\broadcasting_4.mlir
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0253-69db6c4226c7\tensorflow\compiler\mlir\tfrt\python_tests\regression_tests\broadcasting_3.mlir
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0253-69db6c4226c7\tensorflow\compiler\mlir\tfrt\python_tests\regression_tests\broadcasting_23.mlir
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0253-69db6c4226c7\tensorflow\compiler\mlir\tfrt\python_tests\regression_tests\broadcasting_22.mlir
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0253-69db6c4226c7\tensorflow\compiler\mlir\tfrt\python_tests\regression_tests\broadcasting_21.mlir
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0253-69db6c4226c7\tensorflow\compiler\mlir\tfrt\python_tests\regression_tests\broadcasting_20.disabled.mlir
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0253-69db6c4226c7\tensorflow\compiler\mlir\tfrt\python_tests\regression_tests\broadcasting_2.disabled.mlir
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0253-69db6c4226c7\tensorflow\compiler\mlir\tfrt\python_tests\regression_tests\broadcasting_19.mlir
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0253-69db6c4226c7\tensorflow\compiler\mlir\tfrt\python_tests\regression_tests\broadcasting_18.mlir
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0253-69db6c4226c7\tensorflow\compiler\mlir\tfrt\python_tests\regression_tests\broadcasting_17.mlir
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0253-69db6c4226c7\tensorflow\compiler\mlir\tfrt\python_tests\regression_tests\broadcasting_16.disabled.mlir
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0253-69db6c4226c7\tensorflow\compiler\mlir\tfrt\python_tests\regression_tests\broadcasting_15.mlir
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0253-69db6c4226c7\tensorflow\compiler\mlir\tfrt\python_tests\regression_tests\broadcasting_14.disabled.mlir
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0253-69db6c4226c7\tensorflow\compiler\mlir\tfrt\python_tests\regression_tests\broadcasting_13.disabled.mlir
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0253-69db6c4226c7\tensorflow\compiler\mlir\tfrt\python_tests\regression_tests\broadcasting_12.mlir
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0253-69db6c4226c7\tensorflow\compiler\mlir\tfrt\python_tests\regression_tests\broadcasting_11.mlir
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0253-69db6c4226c7\tensorflow\compiler\mlir\tfrt\python_tests\regression_tests\broadcasting_10.mlir
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0253-69db6c4226c7\tensorflow\compiler\mlir\tfrt\python_tests\regression_tests\broadcasting_1.mlir
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0253-69db6c4226c7\tensorflow\compiler\mlir\tfrt\python_tests\regression_tests\broadcasting_0.mlir
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0253-69db6c4226c7\tensorflow\compiler\mlir\tfrt\python_tests\regression_tests\broadcast.mlir
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0253-69db6c4226c7\tensorflow\compiler\mlir\tfrt\python_tests\regression_tests\binary_with_indirect_usage_of_same_param.mlir
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0253-69db6c4226c7\tensorflow\compiler\mlir\tfrt\python_tests\regression_tests\bias_add_of_reduction_ops.mlir
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0253-69db6c4226c7\tensorflow\compiler\mlir\tfrt\python_tests\regression_tests\any_of_zeros_like.disabled.mlir
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0253-69db6c4226c7\tensorflow\compiler\mlir\tfrt\python_tests\regression_tests\all_of_approximate_equal_true.mlir
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0253-69db6c4226c7\tensorflow\compiler\mlir\tfrt\python_tests\regression_tests\add.mlir
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0253-69db6c4226c7\tensorflow\compiler\mlir\tfrt\python_tests\regression_tests\acos.mlir
+
+tool: grep
+{
+  "pattern": "llvm::Optional<Value> simplifyBroadcast",
+  "path": "tensorflow/compiler/mlir/tfrt",
+  "include": "*.cc"
+}
+Found 1 matches
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0253-69db6c4226c7\tensorflow\compiler\mlir\tfrt\jit\transforms\tf_cpurt_symbolic_shape_optimization.cc:
+  Line 148: llvm::Optional<Value> simplifyBroadcast(ShapeComponentAnalysis& analysis,
+
+tool: locate_symbol
+{
+  "ref": "69db6c4226c706bb6394010133d9c46c9485cae5",
+  "symbol": "simplifyBroadcast"
+}
+tensorflow/compiler/mlir/tfrt/jit/transforms/tf_cpurt_symbolic_shape_optimization.cc:148
+tensorflow/compiler/mlir/tfrt/jit/transforms/tf_cpurt_symbolic_shape_optimization.cc:209
+
+tokens used
+input: 386
+cache read: 8,704
+cache write: 0
+output: 125
+reasoning output: 0
+
+The target file and function are present at the same path, and the regression test directory already exists. I’m checking exact local context now so the hunk matches 2.7.1 APIs and includes.
+
+tool: read
+{
+  "filePath": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0253-69db6c4226c7\\tensorflow\\compiler\\mlir\\tfrt\\jit\\transforms\\tf_cpurt_symbolic_shape_optimization.cc",
+  "offset": 130,
+  "limit": 70
+}
+<path>C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0253-69db6c4226c7\tensorflow\compiler\mlir\tfrt\jit\transforms\tf_cpurt_symbolic_shape_optimization.cc</path>
+<type>file</type>
+<content>
+130:   // Replace constraint with a true witness.
+131:   rewriter.replaceOpWithNewOp<shape::ConstWitnessOp>(op, true);
+132: 
+133:   return success();
+134: }
+135: 
+136: // Replace shape.broadcast with a shape if it's statically known.
+137: class BroadcastOpLowering final
+138:     : public mlir::OpRewritePattern<shape::BroadcastOp> {
+139:  public:
+140:   explicit BroadcastOpLowering(MLIRContext* ctx) : OpRewritePattern(ctx) {}
+141: 
+142:   LogicalResult matchAndRewrite(shape::BroadcastOp op,
+143:                                 mlir::PatternRewriter& rewriter) const override;
+144: };
+145: 
+146: // Returns a shape tensor if the shapes can be broadcasted to a known shape.
+147: // Will either return one of the shapes or a generated mix of the shapes.
+148: llvm::Optional<Value> simplifyBroadcast(ShapeComponentAnalysis& analysis,
+149:                                         ValueRange shapes, Location loc,
+150:                                         OpBuilder* builder) {
+151:   // First find the input shape with the largest rank.
+152:   SmallVector<ArrayRef<ShapeComponentAnalysis::SymbolicExpr>> shapes_found;
+153:   size_t maxRank = 0;
+154:   for (const auto &shape : llvm::enumerate(shapes)) {
+155:     auto found_shape = analysis.GetValueInfo(shape.value());
+156:     if (!found_shape) return {};
+157:     shapes_found.push_back(*found_shape);
+158:     maxRank = std::max(maxRank, found_shape->size());
+159:   }
+160: 
+161:   SmallVector<const ShapeComponentAnalysis::SymbolicExpr*> joined_dimensions(
+162:       maxRank);
+163:   SmallVector<std::pair<Value, int64_t>> shape_and_rank_for_dim(maxRank);
+164:   for (const auto &shape : llvm::enumerate(shapes_found)) {
+165:     for (const auto &dim : llvm::enumerate(llvm::reverse(shape.value()))) {
+166:       // 1 dimensions don't contribute to the final result.
+167:       if (dim.value().isConstant(1)) continue;
+168:       // If it's not a 1 dimension it will be present in the result. Remember
+169:       // where it came from.
+170:       auto index = maxRank - dim.index() - 1;
+171:       if (!joined_dimensions[index]) {
+172:         joined_dimensions[index] = &dim.value();
+173:         shape_and_rank_for_dim[index] =
+174:             std::make_pair(shapes[shape.index()], shape.value().size());
+175:         continue;
+176:       }
+177:       // Bail if the dimensions are neither equal nor 1.
+178:       if (*joined_dimensions[index] != dim.value()) return {};
+179:     }
+180:   }
+181:   // If the output is the same as one of the inputs just return that.
+182:   if (llvm::is_splat(shape_and_rank_for_dim) &&
+183:       shape_and_rank_for_dim[0].first) {
+184:     return shape_and_rank_for_dim[0].first;
+185:   }
+186:   // Otherwise rematerialize the shape from the pieces we have.
+187:   SmallVector<Value> elements;
+188:   for (int i = 0; i != maxRank; ++i) {
+189:     // 1 dimensions are filtered above, recreate the constant.
+190:     if (!shape_and_rank_for_dim[i].first) {
+191:       auto one = builder->getIntegerAttr(
+192:           shapes[0].getType().cast<RankedTensorType>().getElementType(), 1);
+193:       elements.push_back(builder->create<ConstantOp>(loc, one));
+194:       continue;
+195:     }
+196:     // Extract from one of the shapes, accounting for the reverse indexing
+197:     // performed by broadcast.
+198:     Value index = builder->create<ConstantIndexOp>(
+199:         loc, i - maxRank + shape_and_rank_for_dim[i].second);
+
+(Showing lines 130-199 of 379. Use offset=200 to continue.)
+</content>
+
+tool: read
+{
+  "filePath": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0253-69db6c4226c7\\tensorflow\\compiler\\mlir\\tfrt\\python_tests\\regression_tests\\broadcast.mlir",
+  "limit": 30
+}
+<path>C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0253-69db6c4226c7\tensorflow\compiler\mlir\tfrt\python_tests\regression_tests\broadcast.mlir</path>
+<type>file</type>
+<content>
+1: builtin.func @test(%V__0: tensor<?xf32> { python_test_attrs.static_type = tensor<10xf32> }, %V__1: tensor<2xi32> { python_test_attrs.shape_value = dense<[5,10]> : tensor<2xi32> }) -> tensor<?x?xf32> {
+2:   %0 = "tf.BroadcastTo"(%V__0, %V__1) : (tensor<?xf32>, tensor<2xi32>) -> tensor<?x?xf32>
+3:   return %0 : tensor<?x?xf32>
+4: }
+
+(End of file - total 4 lines)
+</content>
+
+tool: viewcode
+{
+  "ref": "69db6c4226c706bb6394010133d9c46c9485cae5",
+  "path": "tensorflow/compiler/mlir/tfrt/jit/transforms/tf_cpurt_symbolic_shape_optimization.cc",
+  "startline": 130,
+  "endline": 190
+}
+Here are lines 130 through 190.
+
+  // Replace constraint with a true witness.
+  rewriter.replaceOpWithNewOp<shape::ConstWitnessOp>(op, true);
+
+  return success();
+}
+
+// Replace shape.broadcast with a shape if it's statically known.
+class BroadcastOpLowering final
+    : public mlir::OpRewritePattern<shape::BroadcastOp> {
+ public:
+  explicit BroadcastOpLowering(MLIRContext* ctx) : OpRewritePattern(ctx) {}
+
+  LogicalResult matchAndRewrite(shape::BroadcastOp op,
+                                mlir::PatternRewriter& rewriter) const override;
+};
+
+// Returns a shape tensor if the shapes can be broadcasted to a known shape.
+// Will either return one of the shapes or a generated mix of the shapes.
+llvm::Optional<Value> simplifyBroadcast(ShapeComponentAnalysis& analysis,
+                                        ValueRange shapes, Location loc,
+                                        OpBuilder* builder) {
+  // First find the input shape with the largest rank.
+  SmallVector<ArrayRef<ShapeComponentAnalysis::SymbolicExpr>> shapes_found;
+  size_t maxRank = 0;
+  for (const auto &shape : llvm::enumerate(shapes)) {
+    auto found_shape = analysis.GetValueInfo(shape.value());
+    if (!found_shape) return {};
+    shapes_found.push_back(*found_shape);
+    maxRank = std::max(maxRank, found_shape->size());
+  }
+
+  SmallVector<const ShapeComponentAnalysis::SymbolicExpr*> joined_dimensions(
+      maxRank);
+  SmallVector<std::pair<Value, int64_t>> shape_and_rank_for_dim(maxRank);
+  for (const auto &shape : llvm::enumerate(shapes_found)) {
+    for (const auto &dim : llvm::enumerate(llvm::reverse(shape.value()))) {
+      // 1 dimensions don't contribute to the final result.
+      if (dim.value().isConstant(1)) continue;
+      // If it's not a 1 dimension it will be present in the result. Remember
+      // where it came from.
+      auto index = maxRank - dim.index() - 1;
+      if (!joined_dimensions[index]) {
+        joined_dimensions[index] = &dim.value();
+        shape_and_rank_for_dim[index] =
+            std::make_pair(shapes[shape.index()], shape.value().size());
+        continue;
+      }
+      // Bail if the dimensions are neither equal nor 1.
+      if (*joined_dimensions[index] != dim.value()) return {};
+    }
+  }
+  // If the output is the same as one of the inputs just return that.
+  if (llvm::is_splat(shape_and_rank_for_dim) &&
+      shape_and_rank_for_dim[0].first) {
+    return shape_and_rank_for_dim[0].first;
+  }
+  // Otherwise rematerialize the shape from the pieces we have.
+  SmallVector<Value> elements;
+  for (int i = 0; i != maxRank; ++i) {
+    // 1 dimensions are filtered above, recreate the constant.
+    if (!shape_and_rank_for_dim[i].first) {
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tokens used
+input: 4,284
+cache read: 8,704
+cache write: 0
+output: 303
+reasoning output: 0
+
+tool: read
+{
+  "filePath": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0253-69db6c4226c7\\tensorflow\\compiler\\mlir\\tfrt\\jit\\transforms\\tf_cpurt_symbolic_shape_optimization.cc",
+  "limit": 60
+}
+<path>C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0253-69db6c4226c7\tensorflow\compiler\mlir\tfrt\jit\transforms\tf_cpurt_symbolic_shape_optimization.cc</path>
+<type>file</type>
+<content>
+1: /* Copyright 2021 The TensorFlow Authors. All Rights Reserved.
+2: 
+3: Licensed under the Apache License, Version 2.0 (the "License");
+4: you may not use this file except in compliance with the License.
+5: You may obtain a copy of the License at
+6: 
+7:     http://www.apache.org/licenses/LICENSE-2.0
+8: 
+9: Unless required by applicable law or agreed to in writing, software
+10: distributed under the License is distributed on an "AS IS" BASIS,
+11: WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+12: See the License for the specific language governing permissions and
+13: limitations under the License.
+14: ==============================================================================*/
+15: 
+16: #include <sys/types.h>
+17: 
+18: #include <string>
+19: 
+20: #include "mlir/Dialect/StandardOps/IR/Ops.h"
+21: #include "mlir/IR/AffineMap.h"
+22: #include "mlir/IR/BuiltinOps.h"
+23: #include "mlir/IR/BuiltinTypes.h"
+24: #include "mlir/IR/MLIRContext.h"
+25: #include "mlir/IR/Operation.h"
+26: #include "mlir/IR/OperationSupport.h"
+27: #include "mlir/IR/TypeRange.h"
+28: #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
+29: #include "llvm/ADT/DenseMap.h"
+30: #include "llvm/ADT/DenseSet.h"
+31: #include "llvm/ADT/STLExtras.h"
+32: #include "llvm/ADT/StringExtras.h"
+33: #include "llvm/ADT/iterator_range.h"
+34: #include "llvm/Support/Alignment.h"
+35: #include "llvm/Support/Casting.h"
+36: #include "llvm/Support/ErrorOr.h"
+37: #include "tensorflow/compiler/mlir/hlo/include/mlir-hlo/Analysis/shape_component_analysis.h"
+38: #include "tensorflow/compiler/mlir/hlo/include/mlir-hlo/Dialect/mhlo/IR/hlo_ops.h"
+39: #include "tensorflow/compiler/mlir/tfrt/jit/transforms/tf_cpurt_passes.h"
+40: 
+41: namespace tensorflow {
+42: namespace {
+43: 
+44: using llvm::ArrayRef;
+45: using llvm::SmallVector;
+46: 
+47: using mlir::AffineExpr;
+48: using mlir::AffineMap;
+49: using mlir::failure;
+50: using mlir::FuncOp;
+51: using mlir::FunctionPass;
+52: using mlir::Location;
+53: using mlir::LogicalResult;
+54: using mlir::MLIRContext;
+55: using mlir::OpBuilder;
+56: using mlir::RankedTensorType;
+57: using mlir::ShapeComponentAnalysis;
+58: using mlir::success;
+59: using mlir::TypeRange;
+60: using mlir::Value;
+
+(Showing lines 1-60 of 379. Use offset=61 to continue.)
+</content>
+
+tool: read
+{
+  "filePath": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0253-69db6c4226c7\\tensorflow\\compiler\\mlir\\tfrt\\python_tests\\regression_tests\\select_of_sum.mlir",
+  "limit": 20
+}
+<path>C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0253-69db6c4226c7\tensorflow\compiler\mlir\tfrt\python_tests\regression_tests\select_of_sum.mlir</path>
+<type>file</type>
+<content>
+1: builtin.func @test(%V__0 : tensor<i1> { python_test_attrs.static_type = tensor<i1> }, %V__1 : tensor<?x?xi32> { python_test_attrs.static_type = tensor<1x81xi32> }, %V__2 : tensor<?x?xi32> { python_test_attrs.static_type = tensor<1x1xi32> }) -> tensor<?x?xi32> {
+2:   %0 = "tf.Sub"(%V__1, %V__1) : (tensor<?x?xi32>, tensor<?x?xi32>) -> tensor<?x?xi32>
+3:   %dims1 = "tf.Const"() { value = dense<[1]> : tensor<1xi32> } : () -> tensor<1xi32>
+4:   %1 = "tf.Sum"(%0, %dims1) { keep_dims = true } : (tensor<?x?xi32>, tensor<1xi32>) -> tensor<?x?xi32>
+5:   %2 = "tf.Select"(%V__0, %1, %V__2) : (tensor<i1>, tensor<?x?xi32>, tensor<?x?xi32>) -> tensor<?x?xi32>
+6:   return %2 : tensor<?x?xi32>
+7: }
+
+(End of file - total 7 lines)
+</content>
+
+tool: grep
+{
+  "pattern": "tensor::FromElementsOp",
+  "path": "tensorflow/compiler/mlir/tfrt/jit/transforms/tf_cpurt_symbolic_shape_optimization.cc"
+}
+Found 3 matches
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0253-69db6c4226c7\tensorflow\compiler\mlir\tfrt\jit\transforms\detensorize_linalg.cc:
+  Line 49: using mlir::tensor::FromElementsOp;
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0253-69db6c4226c7\tensorflow\compiler\mlir\tfrt\jit\transforms\tf_cpurt_detensorize_linalg.cc:
+  Line 49: using mlir::tensor::FromElementsOp;
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0253-69db6c4226c7\tensorflow\compiler\mlir\tfrt\jit\transforms\tf_cpurt_symbolic_shape_optimization.cc:
+  Line 203:   return Value(builder->create<tensor::FromElementsOp>(loc, elements));
+
+tokens used
+input: 2,362
+cache read: 12,800
+cache write: 0
+output: 226
+reasoning output: 27
+
+The same `tensor::FromElementsOp` construction is already used later in the function, so the source fix can be applied verbatim at the scalar-rank fast path. I’ll validate the adapted hunk against the target base before editing.
+
+tool: validate
+{
+  "ref": "69db6c4226c706bb6394010133d9c46c9485cae5",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/compiler/mlir/tfrt/jit/transforms/tf_cpurt_symbolic_shape_optimization.cc b/tensorflow/compiler/mlir/tfrt/jit/transforms/tf_cpurt_symbolic_shape_optimization.cc\n--- a/tensorflow/compiler/mlir/tfrt/jit/transforms/tf_cpurt_symbolic_shape_optimization.cc\n+++ b/tensorflow/compiler/mlir/tfrt/jit/transforms/tf_cpurt_symbolic_shape_optimization.cc\n@@ -157,6 +157,10 @@ llvm::Optional<Value> simplifyBroadcast(ShapeComponentAnalysis& analysis,\n     shapes_found.push_back(*found_shape);\n     maxRank = std::max(maxRank, found_shape->size());\n   }\n+  if (maxRank == 0) {\n+    return Value(builder->create<tensor::FromElementsOp>(\n+        loc, shapes[0].getType(), SmallVector<Value>()));\n+  }\n \n   SmallVector<const ShapeComponentAnalysis::SymbolicExpr*> joined_dimensions(\n       maxRank);\n"
+}
+Patch applied successfully
+
+tokens used
+input: 1,979
+cache read: 14,848
+cache write: 0
+output: 337
+reasoning output: 25
+
+The source hunk applies cleanly. I’m adding that guard plus the focused MLIR regression file from the security patch.
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/compiler/mlir/tfrt/jit/transforms/tf_cpurt_symbolic_shape_optimization.cc\n@@\n     shapes_found.push_back(*found_shape);\n     maxRank = std::max(maxRank, found_shape->size());\n   }\n+  if (maxRank == 0) {\n+    return Value(builder->create<tensor::FromElementsOp>(\n+        loc, shapes[0].getType(), SmallVector<Value>()));\n+  }\n \n   SmallVector<const ShapeComponentAnalysis::SymbolicExpr*> joined_dimensions(\n       maxRank);\n*** Add File: tensorflow/compiler/mlir/tfrt/python_tests/regression_tests/scalar_broadcast.mlir\n+builtin.func @test(%V__0 : tensor<i1> { python_test_attrs.static_type = tensor<i1> }, %V__1 : tensor<f32> { python_test_attrs.static_type = tensor<f32> }, %V__2 : tensor<f32> { python_test_attrs.static_type = tensor<f32> }) -> tensor<f32> {\n+  %0 = \"tf.Cast\"(%V__0) : (tensor<i1>) -> tensor<i1>\n+  %1 = \"tf.Selu\"(%V__2) : (tensor<f32>) -> tensor<f32>\n+  %2 = \"tf.NextAfter\"(%1, %V__2) : (tensor<f32>, tensor<f32>) -> tensor<f32>\n+  %3 = \"tf.Elu\"(%2) : (tensor<f32>) -> tensor<f32>\n+  %4 = \"tf.Cosh\"(%3) : (tensor<f32>) -> tensor<f32>\n+  %5 = \"tf.Elu\"(%4) : (tensor<f32>) -> tensor<f32>\n+  %6 = \"tf.Div\"(%V__1, %5) : (tensor<f32>, tensor<f32>) -> tensor<f32>\n+  %7 = \"tf.Select\"(%0, %6, %V__1) : (tensor<i1>, tensor<f32>, tensor<f32>) -> tensor<f32>\n+  return %7 : tensor<f32>\n+}\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/compiler/mlir/tfrt/jit/transforms/tf_cpurt_symbolic_shape_optimization.cc
+A tensorflow/compiler/mlir/tfrt/python_tests/regression_tests/scalar_broadcast.mlir
+
+tokens used
+input: 12,594
+cache read: 4,608
+cache write: 0
+output: 536
+reasoning output: 0
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target-side source context for simplifyBroadcast and regression test layout",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate patch hunks against target base where needed",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply minimal source and test changes",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Inspect final diff for correctness",
+      "status": "in_progress",
+      "priority": "high"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target-side source context for simplifyBroadcast and regression test layout",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate patch hunks against target base where needed",
+    "status": "completed",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply minimal source and test changes",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Inspect final diff for correctness",
+    "status": "in_progress",
+    "priority": "high"
+  }
+]
+
+tokens used
+input: 1,926
+cache read: 15,872
+cache write: 0
+output: 97
+reasoning output: 0
+
+The changes are applied. I’m inspecting the final diff only, not running a full build per the task constraints.
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/compiler/mlir/tfrt/jit/transforms/tf_cpurt_symbolic_shape_optimization.cc tensorflow/compiler/mlir/tfrt/python_tests/regression_tests/scalar_broadcast.mlir",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0253-69db6c4226c7"
+}
+warning: in the working copy of 'tensorflow/compiler/mlir/tfrt/jit/transforms/tf_cpurt_symbolic_shape_optimization.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/compiler/mlir/tfrt/jit/transforms/tf_cpurt_symbolic_shape_optimization.cc b/tensorflow/compiler/mlir/tfrt/jit/transforms/tf_cpurt_symbolic_shape_optimization.cc
+index 628141a6cd..0a8fc42e80 100644
+--- a/tensorflow/compiler/mlir/tfrt/jit/transforms/tf_cpurt_symbolic_shape_optimization.cc
++++ b/tensorflow/compiler/mlir/tfrt/jit/transforms/tf_cpurt_symbolic_shape_optimization.cc
+@@ -157,6 +157,10 @@ llvm::Optional<Value> simplifyBroadcast(ShapeComponentAnalysis& analysis,
+     shapes_found.push_back(*found_shape);
+     maxRank = std::max(maxRank, found_shape->size());
+   }
++  if (maxRank == 0) {
++    return Value(builder->create<tensor::FromElementsOp>(
++        loc, shapes[0].getType(), SmallVector<Value>()));
++  }
+ 
+   SmallVector<const ShapeComponentAnalysis::SymbolicExpr*> joined_dimensions(
+       maxRank);
+
+tool: bash
+{
+  "command": "git status --short -- tensorflow/compiler/mlir/tfrt/jit/transforms/tf_cpurt_symbolic_shape_optimization.cc tensorflow/compiler/mlir/tfrt/python_tests/regression_tests/scalar_broadcast.mlir",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0253-69db6c4226c7"
+}
+ M tensorflow/compiler/mlir/tfrt/jit/transforms/tf_cpurt_symbolic_shape_optimization.cc
+?? tensorflow/compiler/mlir/tfrt/python_tests/regression_tests/scalar_broadcast.mlir
+
+tokens used
+input: 1,143
+cache read: 16,896
+cache write: 0
+output: 248
+reasoning output: 0
+
+`git diff` confirms the source hunk matches the intended change; the new regression file is untracked as expected. I’ll collect its unified diff representation for the final YAML.
+
+tool: bash
+{
+  "command": "git diff --no-index -- /dev/null \"tensorflow/compiler/mlir/tfrt/python_tests/regression_tests/scalar_broadcast.mlir\"",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0253-69db6c4226c7",
+  "timeout": 120000
+}
+warning: in the working copy of 'tensorflow/compiler/mlir/tfrt/python_tests/regression_tests/scalar_broadcast.mlir', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/compiler/mlir/tfrt/python_tests/regression_tests/scalar_broadcast.mlir b/tensorflow/compiler/mlir/tfrt/python_tests/regression_tests/scalar_broadcast.mlir
+new file mode 100644
+index 0000000000..f4062d2132
+--- /dev/null
++++ b/tensorflow/compiler/mlir/tfrt/python_tests/regression_tests/scalar_broadcast.mlir
+@@ -0,0 +1,11 @@
++builtin.func @test(%V__0 : tensor<i1> { python_test_attrs.static_type = tensor<i1> }, %V__1 : tensor<f32> { python_test_attrs.static_type = tensor<f32> }, %V__2 : tensor<f32> { python_test_attrs.static_type = tensor<f32> }) -> tensor<f32> {
++  %0 = "tf.Cast"(%V__0) : (tensor<i1>) -> tensor<i1>
++  %1 = "tf.Selu"(%V__2) : (tensor<f32>) -> tensor<f32>
++  %2 = "tf.NextAfter"(%1, %V__2) : (tensor<f32>, tensor<f32>) -> tensor<f32>
++  %3 = "tf.Elu"(%2) : (tensor<f32>) -> tensor<f32>
++  %4 = "tf.Cosh"(%3) : (tensor<f32>) -> tensor<f32>
++  %5 = "tf.Elu"(%4) : (tensor<f32>) -> tensor<f32>
++  %6 = "tf.Div"(%V__1, %5) : (tensor<f32>, tensor<f32>) -> tensor<f32>
++  %7 = "tf.Select"(%0, %6, %V__1) : (tensor<i1>, tensor<f32>, tensor<f32>) -> tensor<f32>
++  return %7 : tensor<f32>
++}
+
+tokens used
+input: 711
+cache read: 17,920
+cache write: 0
+output: 139
+reasoning output: 144
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target-side source context for simplifyBroadcast and regression test layout",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate patch hunks against target base where needed",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply minimal source and test changes",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Inspect final diff for correctness",
+      "status": "completed",
+      "priority": "high"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target-side source context for simplifyBroadcast and regression test layout",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate patch hunks against target base where needed",
+    "status": "completed",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply minimal source and test changes",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Inspect final diff for correctness",
+    "status": "completed",
+    "priority": "high"
+  }
+]
+
+tokens used
+input: 1,465
+cache read: 17,920
+cache write: 0
+output: 98
+reasoning output: 342
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/compiler/mlir/tfrt/jit/transforms/tf_cpurt_symbolic_shape_optimization.cc b/tensorflow/compiler/mlir/tfrt/jit/transforms/tf_cpurt_symbolic_shape_optimization.cc
+    index 628141a6cd..0a8fc42e80 100644
+    --- a/tensorflow/compiler/mlir/tfrt/jit/transforms/tf_cpurt_symbolic_shape_optimization.cc
+    +++ b/tensorflow/compiler/mlir/tfrt/jit/transforms/tf_cpurt_symbolic_shape_optimization.cc
+    @@ -157,6 +157,10 @@ llvm::Optional<Value> simplifyBroadcast(ShapeComponentAnalysis& analysis,
+         shapes_found.push_back(*found_shape);
+         maxRank = std::max(maxRank, found_shape->size());
+       }
+    +  if (maxRank == 0) {
+    +    return Value(builder->create<tensor::FromElementsOp>(
+    +        loc, shapes[0].getType(), SmallVector<Value>()));
+    +  }
+     
+       SmallVector<const ShapeComponentAnalysis::SymbolicExpr*> joined_dimensions(
+           maxRank);
+    diff --git a/tensorflow/compiler/mlir/tfrt/python_tests/regression_tests/scalar_broadcast.mlir b/tensorflow/compiler/mlir/tfrt/python_tests/regression_tests/scalar_broadcast.mlir
+    new file mode 100644
+    index 0000000000..f4062d2132
+    --- /dev/null
+    +++ b/tensorflow/compiler/mlir/tfrt/python_tests/regression_tests/scalar_broadcast.mlir
+    @@ -0,0 +1,11 @@
+    +builtin.func @test(%V__0 : tensor<i1> { python_test_attrs.static_type = tensor<i1> }, %V__1 : tensor<f32> { python_test_attrs.static_type = tensor<f32> }, %V__2 : tensor<f32> { python_test_attrs.static_type = tensor<f32> }) -> tensor<f32> {
+    +  %0 = "tf.Cast"(%V__0) : (tensor<i1>) -> tensor<i1>
+    +  %1 = "tf.Selu"(%V__2) : (tensor<f32>) -> tensor<f32>
+    +  %2 = "tf.NextAfter"(%1, %V__2) : (tensor<f32>, tensor<f32>) -> tensor<f32>
+    +  %3 = "tf.Elu"(%2) : (tensor<f32>) -> tensor<f32>
+    +  %4 = "tf.Cosh"(%3) : (tensor<f32>) -> tensor<f32>
+    +  %5 = "tf.Elu"(%4) : (tensor<f32>) -> tensor<f32>
+    +  %6 = "tf.Div"(%V__1, %5) : (tensor<f32>, tensor<f32>) -> tensor<f32>
+    +  %7 = "tf.Select"(%0, %6, %V__1) : (tensor<i1>, tensor<f32>, tensor<f32>) -> tensor<f32>
+    +  return %7 : tensor<f32>
+    +}
+  notes: >
+    Added the scalar-rank broadcast fast path and regression MLIR test; validated the source hunk in hunk mode against the target base.
+```
+
+tokens used
+input: 3,072
+cache read: 16,896
+cache write: 0
+output: 738
+reasoning output: 0

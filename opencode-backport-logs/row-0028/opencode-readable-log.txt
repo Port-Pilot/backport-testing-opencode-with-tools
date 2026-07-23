@@ -1,0 +1,311 @@
+I’ll locate the target implementation of `L2NormalizeReduceAxis`, compare the surrounding code against the provided source hunk, then apply only the null/empty-axis guard if it is still needed.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target code around L2NormalizeReduceAxis",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Validate the minimal backport hunk against target base",
+      "status": "pending",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply source change and capture final diff",
+      "status": "pending",
+      "priority": "high"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target code around L2NormalizeReduceAxis",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Validate the minimal backport hunk against target base",
+    "status": "pending",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply source change and capture final diff",
+    "status": "pending",
+    "priority": "high"
+  }
+]
+
+tokens used
+input: 3,739
+cache read: 4,608
+cache write: 0
+output: 127
+reasoning output: 0
+
+tool: viewcode
+{
+  "ref": "0a3a3a33f5fe8630e85234f33276e3dbe4d7da46",
+  "path": "tensorflow/compiler/mlir/lite/transforms/optimize.cc",
+  "startline": 55,
+  "endline": 90
+}
+Here are lines 55 through 90.
+
+constexpr char kRelu6[] = "RELU6";
+constexpr char kRelu1[] = "RELU_N1_TO_1";
+
+bool L2NormalizeReduceAxis(Value sq_op, DenseElementsAttr axis) {
+  if (sq_op.getType().cast<ShapedType>().getRank() - 1 ==
+          *axis.getValues<int>().begin() ||
+      *axis.getValues<int>().begin() == -1) {
+    return true;
+  }
+  if (sq_op.getType().cast<ShapedType>().getRank() != axis.getNumElements()) {
+    return false;
+  }
+  auto shape = sq_op.getType().cast<ShapedType>();
+  SmallVector<int, 4> elems{axis.getValues<int>().begin(),
+                            axis.getValues<int>().end()};
+  for (int i = 0; i < shape.getRank(); ++i) {
+    if (i != elems[i]) return false;
+  }
+  return true;
+}
+
+using ::llvm::cast;
+
+// Optimize TFLite operations in functions.
+struct Optimize : public PassWrapper<Optimize, FunctionPass> {
+  void runOnFunction() override;
+};
+
+// Returns whether the given type `a` is broadcast-compatible with `b`.
+bool IsBroadcastableElementsAttrAndType(Type a, Type b) {
+  return OpTrait::util::getBroadcastedType(a, b) != Type();
+}
+
+// Returns whether the resultant type of any broadcastable operation with
+// operands `a` and `b` matches `expected_output`. Returns false if `a` is not
+// broadcast-compatible with `b`.
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: locate_symbol
+{
+  "ref": "0a3a3a33f5fe8630e85234f33276e3dbe4d7da46",
+  "symbol": "L2NormalizeReduceAxis"
+}
+tensorflow/compiler/mlir/lite/transforms/optimize.cc:58
+tensorflow/compiler/mlir/lite/transforms/optimize_patterns.td:237
+
+tokens used
+input: 908
+cache read: 7,680
+cache write: 0
+output: 134
+reasoning output: 0
+
+The target release has the same vulnerable implementation: `L2NormalizeReduceAxis` dereferences `axis.getValues<int>().begin()` before checking whether the axis attribute is empty. I’m validating the one-line guard in the target context before editing.
+
+tool: validate
+{
+  "ref": "0a3a3a33f5fe8630e85234f33276e3dbe4d7da46",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/compiler/mlir/lite/transforms/optimize.cc b/tensorflow/compiler/mlir/lite/transforms/optimize.cc\n--- a/tensorflow/compiler/mlir/lite/transforms/optimize.cc\n+++ b/tensorflow/compiler/mlir/lite/transforms/optimize.cc\n@@ -58,6 +58,9 @@ constexpr char kRelu1[] = \"RELU_N1_TO_1\";\n \n bool L2NormalizeReduceAxis(Value sq_op, DenseElementsAttr axis) {\n+  if (axis.getNumElements() == 0) {\n+    return false;\n+  }\n   if (sq_op.getType().cast<ShapedType>().getRank() - 1 ==\n           *axis.getValues<int>().begin() ||\n       *axis.getValues<int>().begin() == -1) {\n"
+}
+This patch does not apply to the target TensorFlow ref.
+Git apply output:
+error: corrupt patch at line 13
+Touched files:
+- tensorflow/compiler/mlir/lite/transforms/optimize.cc
+Fix the patch context against the older TensorFlow version, then run validate again in hunk mode.
+
+tokens used
+input: 1,464
+cache read: 7,680
+cache write: 0
+output: 300
+reasoning output: 11
+
+The first validation patch was malformed, not semantically rejected. I’m retrying with a complete hunk header and context.
+
+tool: validate
+{
+  "ref": "0a3a3a33f5fe8630e85234f33276e3dbe4d7da46",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/compiler/mlir/lite/transforms/optimize.cc b/tensorflow/compiler/mlir/lite/transforms/optimize.cc\nindex d457612bf70..6a8803d246 100644\n--- a/tensorflow/compiler/mlir/lite/transforms/optimize.cc\n+++ b/tensorflow/compiler/mlir/lite/transforms/optimize.cc\n@@ -55,6 +55,9 @@ constexpr char kRelu6[] = \"RELU6\";\n constexpr char kRelu1[] = \"RELU_N1_TO_1\";\n \n bool L2NormalizeReduceAxis(Value sq_op, DenseElementsAttr axis) {\n+  if (axis.getNumElements() == 0) {\n+    return false;\n+  }\n   if (sq_op.getType().cast<ShapedType>().getRank() - 1 ==\n           *axis.getValues<int>().begin() ||\n       *axis.getValues<int>().begin() == -1) {\n"
+}
+Patch applied successfully
+
+tokens used
+input: 823
+cache read: 8,704
+cache write: 0
+output: 308
+reasoning output: 30
+
+The hunk validates cleanly against the target base. I’m applying the same minimal guard to the checked-out source file now.
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/compiler/mlir/lite/transforms/optimize.cc\n@@\n bool L2NormalizeReduceAxis(Value sq_op, DenseElementsAttr axis) {\n+  if (axis.getNumElements() == 0) {\n+    return false;\n+  }\n   if (sq_op.getType().cast<ShapedType>().getRank() - 1 ==\n           *axis.getValues<int>().begin() ||\n       *axis.getValues<int>().begin() == -1) {\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/compiler/mlir/lite/transforms/optimize.cc
+
+tokens used
+input: 9,878
+cache read: 0
+cache write: 0
+output: 170
+reasoning output: 0
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target code around L2NormalizeReduceAxis",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate the minimal backport hunk against target base",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply source change and capture final diff",
+      "status": "in_progress",
+      "priority": "high"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target code around L2NormalizeReduceAxis",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate the minimal backport hunk against target base",
+    "status": "completed",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply source change and capture final diff",
+    "status": "in_progress",
+    "priority": "high"
+  }
+]
+
+tokens used
+input: 351
+cache read: 9,728
+cache write: 0
+output: 80
+reasoning output: 0
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/compiler/mlir/lite/transforms/optimize.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0028-0a3a3a33f5fe",
+  "timeout": 120000
+}
+warning: in the working copy of 'tensorflow/compiler/mlir/lite/transforms/optimize.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/compiler/mlir/lite/transforms/optimize.cc b/tensorflow/compiler/mlir/lite/transforms/optimize.cc
+index 30ae4b81f4..0be9d2d109 100644
+--- a/tensorflow/compiler/mlir/lite/transforms/optimize.cc
++++ b/tensorflow/compiler/mlir/lite/transforms/optimize.cc
+@@ -56,6 +56,9 @@ constexpr char kRelu6[] = "RELU6";
+ constexpr char kRelu1[] = "RELU_N1_TO_1";
+ 
+ bool L2NormalizeReduceAxis(Value sq_op, DenseElementsAttr axis) {
++  if (axis.getNumElements() == 0) {
++    return false;
++  }
+   if (sq_op.getType().cast<ShapedType>().getRank() - 1 ==
+           *axis.getValues<int>().begin() ||
+       *axis.getValues<int>().begin() == -1) {
+
+tokens used
+input: 545
+cache read: 9,728
+cache write: 0
+output: 82
+reasoning output: 0
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target code around L2NormalizeReduceAxis",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate the minimal backport hunk against target base",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply source change and capture final diff",
+      "status": "completed",
+      "priority": "high"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target code around L2NormalizeReduceAxis",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate the minimal backport hunk against target base",
+    "status": "completed",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply source change and capture final diff",
+    "status": "completed",
+    "priority": "high"
+  }
+]
+
+tokens used
+input: 886
+cache read: 9,728
+cache write: 0
+output: 79
+reasoning output: 0
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/compiler/mlir/lite/transforms/optimize.cc b/tensorflow/compiler/mlir/lite/transforms/optimize.cc
+    index 30ae4b81f4..0be9d2d109 100644
+    --- a/tensorflow/compiler/mlir/lite/transforms/optimize.cc
+    +++ b/tensorflow/compiler/mlir/lite/transforms/optimize.cc
+    @@ -56,6 +56,9 @@ constexpr char kRelu6[] = "RELU6";
+     constexpr char kRelu1[] = "RELU_N1_TO_1";
+     
+     bool L2NormalizeReduceAxis(Value sq_op, DenseElementsAttr axis) {
+    +  if (axis.getNumElements() == 0) {
+    +    return false;
+    +  }
+       if (sq_op.getType().cast<ShapedType>().getRank() - 1 ==
+               *axis.getValues<int>().begin() ||
+           *axis.getValues<int>().begin() == -1) {
+  notes: >
+    Added the empty-axis guard before dereferencing axis values in L2NormalizeReduceAxis; the hunk was validated against the target base.
+```
+
+tokens used
+input: 1,078
+cache read: 9,728
+cache write: 0
+output: 277
+reasoning output: 0

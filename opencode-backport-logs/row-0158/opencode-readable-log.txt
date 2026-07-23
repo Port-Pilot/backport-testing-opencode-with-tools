@@ -1,0 +1,388 @@
+I’ll inspect the target-side `GraphConstructor::MakeEdge` and includes, then apply the minimal equivalent bounds checks if the function matches the newer patch shape.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target graph_constructor.cc context",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Validate and apply minimal backport hunk",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "content": "Review resulting diff",
+      "status": "pending",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target graph_constructor.cc context",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Validate and apply minimal backport hunk",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "content": "Review resulting diff",
+    "status": "pending",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 3,895
+cache read: 4,608
+cache write: 0
+output: 110
+reasoning output: 0
+
+tool: viewcode
+{
+  "ref": "df8c55ce12b5cfc6f29b01889f7773911a75e6ef",
+  "path": "tensorflow/core/common_runtime/graph_constructor.cc",
+  "startline": 35,
+  "endline": 60
+}
+This file doesn't exist in this commit.
+
+tool: viewcode
+{
+  "ref": "df8c55ce12b5cfc6f29b01889f7773911a75e6ef",
+  "path": "tensorflow/core/common_runtime/graph_constructor.cc",
+  "startline": 1410,
+  "endline": 1455
+}
+This file doesn't exist in this commit.
+
+tool: locate_symbol
+{
+  "ref": "df8c55ce12b5cfc6f29b01889f7773911a75e6ef",
+  "symbol": "GraphConstructor::MakeEdge"
+}
+tensorflow/core/graph/graph_constructor.cc:1400
+
+tokens used
+input: 1,038
+cache read: 7,680
+cache write: 0
+output: 187
+reasoning output: 0
+
+In TensorFlow 1.15.2 the equivalent implementation is under `tensorflow/core/graph/graph_constructor.cc`, not `common_runtime`, so I’m checking that file’s local context.
+
+tool: viewcode
+{
+  "ref": "df8c55ce12b5cfc6f29b01889f7773911a75e6ef",
+  "path": "tensorflow/core/graph/graph_constructor.cc",
+  "startline": 35,
+  "endline": 65
+}
+Here are lines 35 through 65.
+
+#include "tensorflow/core/framework/versions.h"
+#include "tensorflow/core/framework/versions.pb.h"
+#include "tensorflow/core/graph/algorithm.h"
+#include "tensorflow/core/graph/graph.h"
+#include "tensorflow/core/graph/tensor_id.h"
+#include "tensorflow/core/lib/core/errors.h"
+#include "tensorflow/core/lib/gtl/flatmap.h"
+#include "tensorflow/core/lib/gtl/flatset.h"
+#include "tensorflow/core/lib/gtl/inlined_vector.h"
+#include "tensorflow/core/lib/strings/scanner.h"
+#include "tensorflow/core/lib/strings/str_util.h"
+#include "tensorflow/core/platform/logging.h"
+#include "tensorflow/core/platform/macros.h"
+#include "tensorflow/core/public/version.h"
+
+namespace tensorflow {
+
+namespace {
+
+// We remove duplicate control inputs before adding edges to the Graph, so we
+// can skip expensive duplicates check in 'AddControlEdge'.
+static constexpr const bool kDoNotCheckDuplicates = true;
+
+inline bool IsMerge(const NodeDef& node_def) {
+  return node_def.op() == "Merge" || node_def.op() == "RefMerge";
+}
+
+inline bool IsNextIteration(const NodeDef& node_def) {
+  return node_def.op() == "NextIteration" ||
+         node_def.op() == "RefNextIteration";
+}
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: viewcode
+{
+  "ref": "df8c55ce12b5cfc6f29b01889f7773911a75e6ef",
+  "path": "tensorflow/core/graph/graph_constructor.cc",
+  "startline": 1385,
+  "endline": 1435
+}
+Here are lines 1385 through 1435.
+
+      missing_unused_input_map_keys_->push_back(key);
+    }
+  }
+  return Status::OK();
+}
+
+void GraphConstructor::Undo() {
+  for (const auto& iter : gdef_nodes_) {
+    if (iter.second.node != nullptr) {
+      g_->RemoveNode(iter.second.node);
+    }
+  }
+  g_->set_versions(original_versions_);
+}
+
+Status GraphConstructor::MakeEdge(Node* src, int output_index, Node* dst,
+                                  int input_index) {
+  DataType src_out = src->output_type(output_index);
+  DataType dst_in = dst->input_type(input_index);
+  if (!TypesCompatible(dst_in, src_out)) {
+    return errors::InvalidArgument(
+        "Input ", input_index, " of node ", dst->name(), " was passed ",
+        DataTypeString(src_out), " from ", src->name(), ":", output_index,
+        " incompatible with expected ", DataTypeString(dst_in), ".");
+  }
+  g_->AddEdge(src, output_index, dst, input_index);
+  return Status::OK();
+}
+
+}  // namespace
+
+Status ConvertGraphDefToGraph(const GraphConstructorOptions& opts,
+                              const GraphDef& gdef, Graph* g) {
+  ShapeRefiner refiner(gdef.versions().producer(), g->op_registry());
+  return GraphConstructor::Construct(
+      opts, gdef.node(), &gdef.versions(), &gdef.library(), g, &refiner,
+      /*return_tensors=*/nullptr, /*return_nodes=*/nullptr,
+      /*missing_unused_input_map_keys=*/nullptr);
+}
+
+Status ConvertGraphDefToGraph(const GraphConstructorOptions& opts,
+                              GraphDef&& gdef, Graph* g) {
+  ShapeRefiner refiner(gdef.versions().producer(), g->op_registry());
+  return GraphConstructor::Construct(opts, std::move(gdef), g, &refiner,
+                                     /*return_tensors=*/nullptr,
+                                     /*return_nodes=*/nullptr,
+                                     /*missing_unused_input_map_keys=*/nullptr);
+}
+
+Status ConvertNodeDefsToGraph(const GraphConstructorOptions& opts,
+                              gtl::ArraySlice<NodeDef> nodes, Graph* g) {
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tokens used
+input: 1,282
+cache read: 7,680
+cache write: 0
+output: 188
+reasoning output: 14
+
+The target already includes `tensorflow/core/lib/core/errors.h`, so only the bounds checks need to be ported into `MakeEdge`; no include change is necessary.
+
+tool: validate
+{
+  "ref": "df8c55ce12b5cfc6f29b01889f7773911a75e6ef",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/graph/graph_constructor.cc b/tensorflow/core/graph/graph_constructor.cc\n--- a/tensorflow/core/graph/graph_constructor.cc\n+++ b/tensorflow/core/graph/graph_constructor.cc\n@@ -1398,6 +1398,17 @@ void GraphConstructor::Undo() {\n \n Status GraphConstructor::MakeEdge(Node* src, int output_index, Node* dst,\n                                   int input_index) {\n+  if (output_index >= src->num_outputs()) {\n+    return errors::InvalidArgument(\n+        \"Output \", output_index, \" of node \", src->name(),\n+        \" does not exist. Node only has \", src->num_outputs(), \" outputs.\");\n+  }\n+  if (input_index >= dst->num_inputs()) {\n+    return errors::InvalidArgument(\n+        \"Input \", input_index, \" of node \", dst->name(),\n+        \" does not exist. Node only has \", dst->num_inputs(), \" inputs.\");\n+  }\n+\n   DataType src_out = src->output_type(output_index);\n   DataType dst_in = dst->input_type(input_index);\n   if (!TypesCompatible(dst_in, src_out)) {\n"
+}
+Patch applied successfully
+
+tokens used
+input: 1,255
+cache read: 8,704
+cache write: 0
+output: 374
+reasoning output: 52
+
+The hunk validates against the target base. I’m applying the same minimal source change now.
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/graph/graph_constructor.cc\n@@\n Status GraphConstructor::MakeEdge(Node* src, int output_index, Node* dst,\n                                   int input_index) {\n+  if (output_index >= src->num_outputs()) {\n+    return errors::InvalidArgument(\n+        \"Output \", output_index, \" of node \", src->name(),\n+        \" does not exist. Node only has \", src->num_outputs(), \" outputs.\");\n+  }\n+  if (input_index >= dst->num_inputs()) {\n+    return errors::InvalidArgument(\n+        \"Input \", input_index, \" of node \", dst->name(),\n+        \" does not exist. Node only has \", dst->num_inputs(), \" inputs.\");\n+  }\n+\n   DataType src_out = src->output_type(output_index);\n   DataType dst_in = dst->input_type(input_index);\n   if (!TypesCompatible(dst_in, src_out)) {\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/graph/graph_constructor.cc
+
+tokens used
+input: 670
+cache read: 9,728
+cache write: 0
+output: 276
+reasoning output: 0
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target graph_constructor.cc context",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate and apply minimal backport hunk",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Review resulting diff",
+      "status": "in_progress",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target graph_constructor.cc context",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate and apply minimal backport hunk",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Review resulting diff",
+    "status": "in_progress",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 973
+cache read: 9,728
+cache write: 0
+output: 71
+reasoning output: 0
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/graph/graph_constructor.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0158-df8c55ce12b5",
+  "timeout": 120000
+}
+warning: in the working copy of 'tensorflow/core/graph/graph_constructor.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/graph/graph_constructor.cc b/tensorflow/core/graph/graph_constructor.cc
+index b462ab3438..6900044159 100644
+--- a/tensorflow/core/graph/graph_constructor.cc
++++ b/tensorflow/core/graph/graph_constructor.cc
+@@ -1399,6 +1399,17 @@ void GraphConstructor::Undo() {
+ 
+ Status GraphConstructor::MakeEdge(Node* src, int output_index, Node* dst,
+                                   int input_index) {
++  if (output_index >= src->num_outputs()) {
++    return errors::InvalidArgument(
++        "Output ", output_index, " of node ", src->name(),
++        " does not exist. Node only has ", src->num_outputs(), " outputs.");
++  }
++  if (input_index >= dst->num_inputs()) {
++    return errors::InvalidArgument(
++        "Input ", input_index, " of node ", dst->name(),
++        " does not exist. Node only has ", dst->num_inputs(), " inputs.");
++  }
++
+   DataType src_out = src->output_type(output_index);
+   DataType dst_in = dst->input_type(input_index);
+   if (!TypesCompatible(dst_in, src_out)) {
+
+tokens used
+input: 1,149
+cache read: 9,728
+cache write: 0
+output: 76
+reasoning output: 0
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target graph_constructor.cc context",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate and apply minimal backport hunk",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Review resulting diff",
+      "status": "completed",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target graph_constructor.cc context",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate and apply minimal backport hunk",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Review resulting diff",
+    "status": "completed",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 511
+cache read: 10,752
+cache write: 0
+output: 72
+reasoning output: 13
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/graph/graph_constructor.cc b/tensorflow/core/graph/graph_constructor.cc
+    index b462ab3438..6900044159 100644
+    --- a/tensorflow/core/graph/graph_constructor.cc
+    +++ b/tensorflow/core/graph/graph_constructor.cc
+    @@ -1399,6 +1399,17 @@ void GraphConstructor::Undo() {
+     
+     Status GraphConstructor::MakeEdge(Node* src, int output_index, Node* dst,
+                                       int input_index) {
+    +  if (output_index >= src->num_outputs()) {
+    +    return errors::InvalidArgument(
+    +        "Output ", output_index, " of node ", src->name(),
+    +        " does not exist. Node only has ", src->num_outputs(), " outputs.");
+    +  }
+    +  if (input_index >= dst->num_inputs()) {
+    +    return errors::InvalidArgument(
+    +        "Input ", input_index, " of node ", dst->name(),
+    +        " does not exist. Node only has ", dst->num_inputs(), " inputs.");
+    +  }
+    +
+       DataType src_out = src->output_type(output_index);
+       DataType dst_in = dst->input_type(input_index);
+       if (!TypesCompatible(dst_in, src_out)) {
+  notes: >
+    Added MakeEdge input/output index bounds checks in the TensorFlow 1.15 graph constructor equivalent; the target already had the needed errors include.
+```
+
+tokens used
+input: 700
+cache read: 10,752
+cache write: 0
+output: 341
+reasoning output: 0

@@ -1,0 +1,333 @@
+I’ll locate the matching `CTCGreedyDecoderOp` implementation in the target checkout, verify the older context, then apply only the dimension guard from the supplied 2.5.0 patch.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target CTC greedy decoder context",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Validate and apply minimal backport hunk",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "content": "Review resulting diff for final YAML",
+      "status": "pending",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target CTC greedy decoder context",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Validate and apply minimal backport hunk",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "content": "Review resulting diff for final YAML",
+    "status": "pending",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 3,734
+cache read: 4,608
+cache write: 0
+output: 123
+reasoning output: 0
+
+tool: viewcode
+{
+  "ref": "bf171d8341da2cfe1b2500b6b0bbbaa9bacc63db",
+  "path": "tensorflow/core/kernels/ctc_decoder_ops.cc",
+  "startline": 200,
+  "endline": 260
+}
+Here are lines 200 through 260.
+
+        ctx, FastBoundsCheck(num_classes_raw, std::numeric_limits<int>::max()),
+        errors::InvalidArgument("num_classes cannot exceed max int"));
+    const int num_classes = static_cast<const int>(num_classes_raw);
+
+    auto inputs_t = inputs->tensor<T, 3>();
+
+    for (std::size_t t = 0; t < max_time; ++t) {
+      input_list_t.emplace_back(inputs_t.data() + t * batch_size * num_classes,
+                                batch_size, num_classes);
+    }
+    auto seq_len_t = seq_len->vec<int32>();
+    auto log_prob_t = log_prob->matrix<T>();
+
+    log_prob_t.setZero();
+
+    // Assumption: the blank index is num_classes - 1
+    int blank_index = num_classes - 1;
+
+    // Perform best path decoding
+    std::vector<std::vector<std::vector<int> > > sequences(batch_size);
+    auto decode = [&](const int64 begin, const int64 end) {
+      for (int b = begin; b < end; ++b) {
+        sequences[b].resize(1);
+        auto &sequence = sequences[b][0];
+        int prev_indices = -1;
+        for (int t = 0; t < seq_len_t(b); ++t) {
+          int max_class_indices;
+          log_prob_t(b, 0) +=
+              -RowMax<T>(input_list_t[t], b, &max_class_indices);
+          if (max_class_indices != blank_index &&
+              !(merge_repeated_ && max_class_indices == prev_indices)) {
+            sequence.push_back(max_class_indices);
+          }
+          prev_indices = max_class_indices;
+        }
+      }
+    };
+
+    const int64 kCostPerUnit = 50 * max_time * num_classes;
+    const int64 total = batch_size;
+    const DeviceBase::CpuWorkerThreads& worker_threads =
+        *ctx->device()->tensorflow_cpu_worker_threads();
+    Shard(worker_threads.num_threads, worker_threads.workers, total,
+          kCostPerUnit, decode);
+
+    OP_REQUIRES_OK(
+        ctx, decode_helper_.StoreAllDecodedSequences(
+                 sequences, &decoded_indices, &decoded_values, &decoded_shape));
+  }
+
+ private:
+  CTCDecodeHelper decode_helper_;
+  bool merge_repeated_;
+
+  TF_DISALLOW_COPY_AND_ASSIGN(CTCGreedyDecoderOp);
+};
+
+#define REGISTER_CPU(T)                                                   \
+  REGISTER_KERNEL_BUILDER(                                                \
+      Name("CTCGreedyDecoder").Device(DEVICE_CPU).TypeConstraint<T>("T"), \
+      CTCGreedyDecoderOp<T>);
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: git_show
+{
+  "ref": "ea3b43e98c32c97b35d52b4c66f9107452ca8fb2",
+  "context": "for (int t = 0; t < seq_len_t(b); ++t) {\n          int max_class_indices;\n          OP_REQUIRES(ctx, input_list_t[t].dimension(1) > 0,\n                      errors::InvalidArgument(\"Invalid input dimensions.\"));\n          log_prob_t(b, 0) +="
+}
+commit ea3b43e98c32c97b35d52b4c66f9107452ca8fb2
+Author: Amit Patankar <amitpatankar@google.com>
+Date:   Thu Apr 22 15:11:05 2021 -0700
+
+    Fix `tf.raw_ops.CTCGreedyDecoder` CHECK failure.
+    
+    PiperOrigin-RevId: 369960465
+    Change-Id: If0b8b3264d5a47a24ac0970ed7b81ce6b4921fae
+
+ tensorflow/core/kernels/ctc_decoder_ops.cc | 2 ++
+ 1 file changed, 2 insertions(+)
+This commit shows that there is a high probability that this code is new, so the corresponding code segment cannot be found in the old version.
+You can call `viewcode` and `locate_symbol` to further check the results step by step. For newly introduced code, we consider that this hunk `need not ported`.
+
+tool: locate_symbol
+{
+  "ref": "bf171d8341da2cfe1b2500b6b0bbbaa9bacc63db",
+  "symbol": "CTCGreedyDecoderOp"
+}
+tensorflow/core/kernels/ctc_decoder_ops.cc:176
+tensorflow/core/kernels/ctc_decoder_ops.cc:178
+tensorflow/core/kernels/ctc_decoder_ops.cc:254
+tensorflow/core/kernels/ctc_decoder_ops.cc:260
+
+tokens used
+input: 894
+cache read: 7,680
+cache write: 0
+output: 241
+reasoning output: 0
+
+The target file has the same greedy decoder loop and `RowMax` call, so the supplied guard maps directly into `tensorflow/core/kernels/ctc_decoder_ops.cc` with no API adaptation.
+
+tool: validate
+{
+  "ref": "bf171d8341da2cfe1b2500b6b0bbbaa9bacc63db",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/ctc_decoder_ops.cc b/tensorflow/core/kernels/ctc_decoder_ops.cc\n--- a/tensorflow/core/kernels/ctc_decoder_ops.cc\n+++ b/tensorflow/core/kernels/ctc_decoder_ops.cc\n@@ -223,6 +223,8 @@ class CTCGreedyDecoderOp : public OpKernel {\n         int prev_indices = -1;\n         for (int t = 0; t < seq_len_t(b); ++t) {\n           int max_class_indices;\n+          OP_REQUIRES(ctx, input_list_t[t].dimension(1) > 0,\n+                      errors::InvalidArgument(\"Invalid input dimensions.\"));\n           log_prob_t(b, 0) +=\n               -RowMax<T>(input_list_t[t], b, &max_class_indices);\n           if (max_class_indices != blank_index &&\n"
+}
+Patch applied successfully
+
+tokens used
+input: 2,008
+cache read: 7,680
+cache write: 0
+output: 296
+reasoning output: 29
+
+The candidate hunk applies cleanly against the target base. I’m applying that minimal source change now.
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/kernels/ctc_decoder_ops.cc\n@@\n         int prev_indices = -1;\n         for (int t = 0; t < seq_len_t(b); ++t) {\n           int max_class_indices;\n+          OP_REQUIRES(ctx, input_list_t[t].dimension(1) > 0,\n+                      errors::InvalidArgument(\"Invalid input dimensions.\"));\n           log_prob_t(b, 0) +=\n               -RowMax<T>(input_list_t[t], b, &max_class_indices);\n           if (max_class_indices != blank_index &&\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/kernels/ctc_decoder_ops.cc
+
+tokens used
+input: 1,322
+cache read: 8,704
+cache write: 0
+output: 187
+reasoning output: 0
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target CTC greedy decoder context",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate and apply minimal backport hunk",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Review resulting diff for final YAML",
+      "status": "in_progress",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target CTC greedy decoder context",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate and apply minimal backport hunk",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Review resulting diff for final YAML",
+    "status": "in_progress",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 514
+cache read: 9,728
+cache write: 0
+output: 75
+reasoning output: 0
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/kernels/ctc_decoder_ops.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0020-bf171d8341da",
+  "timeout": 120000
+}
+warning: in the working copy of 'tensorflow/core/kernels/ctc_decoder_ops.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/kernels/ctc_decoder_ops.cc b/tensorflow/core/kernels/ctc_decoder_ops.cc
+index 517612eecb..1075b17694 100644
+--- a/tensorflow/core/kernels/ctc_decoder_ops.cc
++++ b/tensorflow/core/kernels/ctc_decoder_ops.cc
+@@ -224,6 +224,8 @@ class CTCGreedyDecoderOp : public OpKernel {
+         int prev_indices = -1;
+         for (int t = 0; t < seq_len_t(b); ++t) {
+           int max_class_indices;
++          OP_REQUIRES(ctx, input_list_t[t].dimension(1) > 0,
++                      errors::InvalidArgument("Invalid input dimensions."));
+           log_prob_t(b, 0) +=
+               -RowMax<T>(input_list_t[t], b, &max_class_indices);
+           if (max_class_indices != blank_index &&
+
+tokens used
+input: 698
+cache read: 9,728
+cache write: 0
+output: 76
+reasoning output: 0
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target CTC greedy decoder context",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate and apply minimal backport hunk",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Review resulting diff for final YAML",
+      "status": "completed",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target CTC greedy decoder context",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate and apply minimal backport hunk",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Review resulting diff for final YAML",
+    "status": "completed",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 1,022
+cache read: 9,728
+cache write: 0
+output: 74
+reasoning output: 0
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/kernels/ctc_decoder_ops.cc b/tensorflow/core/kernels/ctc_decoder_ops.cc
+    index 517612eecb..1075b17694 100644
+    --- a/tensorflow/core/kernels/ctc_decoder_ops.cc
+    +++ b/tensorflow/core/kernels/ctc_decoder_ops.cc
+    @@ -224,6 +224,8 @@ class CTCGreedyDecoderOp : public OpKernel {
+             int prev_indices = -1;
+             for (int t = 0; t < seq_len_t(b); ++t) {
+               int max_class_indices;
+    +          OP_REQUIRES(ctx, input_list_t[t].dimension(1) > 0,
+    +                      errors::InvalidArgument("Invalid input dimensions."));
+               log_prob_t(b, 0) +=
+                   -RowMax<T>(input_list_t[t], b, &max_class_indices);
+               if (max_class_indices != blank_index &&
+  notes: >
+    Added the CTCGreedyDecoder input class dimension guard from the 2.5.0 security fix; the hunk was validated against the target base before applying.
+```
+
+tokens used
+input: 1,204
+cache read: 9,728
+cache write: 0
+output: 272
+reasoning output: 0

@@ -1,0 +1,489 @@
+I’ll inspect the target-side `sdca_internal.cc` around the patched functions, then apply only the matching checks from the supplied diff.
+
+tool: viewcode
+{
+  "ref": "47612cd69a2fdd76156360ca9102816e156f7e5c",
+  "path": "tensorflow/core/kernels/sdca_internal.cc",
+  "startline": 70,
+  "endline": 140
+}
+Here are lines 70 through 140.
+
+        sparse_features.values == nullptr ? 1.0 : (*sparse_features.values)(k);
+    auto it = indices_to_id_.find((*sparse_features.indices)(k));
+    for (size_t l = 0; l < normalized_bounded_dual_delta.size(); ++l) {
+      deltas_(l, it->second) +=
+          feature_value * normalized_bounded_dual_delta[l];
+    }
+  }
+}
+
+void ModelWeights::UpdateDeltaWeights(
+    const Eigen::ThreadPoolDevice& device, const Example& example,
+    const std::vector<double>& normalized_bounded_dual_delta) {
+  // Sparse weights.
+  for (size_t j = 0; j < sparse_weights_.size(); ++j) {
+    sparse_weights_[j].UpdateSparseDeltaWeights(
+        device, example.sparse_features_[j], normalized_bounded_dual_delta);
+  }
+
+  // Dense weights.
+  for (size_t j = 0; j < dense_weights_.size(); ++j) {
+    dense_weights_[j].UpdateDenseDeltaWeights(
+        device, *example.dense_vectors_[j], normalized_bounded_dual_delta);
+  }
+}
+
+Status ModelWeights::Initialize(OpKernelContext* const context) {
+  OpInputList sparse_indices_inputs;
+  TF_RETURN_IF_ERROR(
+      context->input_list("sparse_indices", &sparse_indices_inputs));
+  OpInputList sparse_weights_inputs;
+  TF_RETURN_IF_ERROR(
+      context->input_list("sparse_weights", &sparse_weights_inputs));
+  OpInputList dense_weights_inputs;
+  TF_RETURN_IF_ERROR(
+      context->input_list("dense_weights", &dense_weights_inputs));
+
+  OpOutputList sparse_weights_outputs;
+  TF_RETURN_IF_ERROR(context->output_list("out_delta_sparse_weights",
+                                          &sparse_weights_outputs));
+
+  OpOutputList dense_weights_outputs;
+  TF_RETURN_IF_ERROR(
+      context->output_list("out_delta_dense_weights", &dense_weights_outputs));
+
+  for (int i = 0; i < sparse_weights_inputs.size(); ++i) {
+    Tensor* delta_t;
+    TF_RETURN_IF_ERROR(sparse_weights_outputs.allocate(
+        i, sparse_weights_inputs[i].shape(), &delta_t));
+    // Convert the input vector to a row matrix in internal representation.
+    auto deltas = delta_t->shaped<float, 2>({1, delta_t->NumElements()});
+    deltas.setZero();
+    sparse_weights_.emplace_back(FeatureWeightsSparseStorage{
+        sparse_indices_inputs[i].flat<int64>(),
+        sparse_weights_inputs[i].shaped<float, 2>(
+            {1, sparse_weights_inputs[i].NumElements()}),
+        deltas});
+  }
+
+  // Reads in the weights, and allocates and initializes the delta weights.
+  const auto initialize_weights =
+      [&](const OpInputList& weight_inputs, OpOutputList* const weight_outputs,
+          std::vector<FeatureWeightsDenseStorage>* const feature_weights) {
+        for (int i = 0; i < weight_inputs.size(); ++i) {
+          Tensor* delta_t;
+          TF_RETURN_IF_ERROR(
+              weight_outputs->allocate(i, weight_inputs[i].shape(), &delta_t));
+          // Convert the input vector to a row matrix in internal
+          // representation.
+          auto deltas = delta_t->shaped<float, 2>({1, delta_t->NumElements()});
+          deltas.setZero();
+          feature_weights->emplace_back(FeatureWeightsDenseStorage{
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: viewcode
+{
+  "ref": "47612cd69a2fdd76156360ca9102816e156f7e5c",
+  "path": "tensorflow/core/kernels/sdca_internal.cc",
+  "startline": 300,
+  "endline": 450
+}
+Here are lines 300 through 450.
+
+  std::sort(
+      examples_not_seen.begin(), examples_not_seen.end(),
+      [](const std::pair<int, float>& lhs, const std::pair<int, float>& rhs) {
+        return lhs.second > rhs.second;
+      });
+  for (int i = id; i < num_examples(); ++i) {
+    sampled_count_[i] = examples_not_seen[i - id].first;
+  }
+  return Status::OK();
+}
+
+void Examples::RandomShuffle() {
+  std::iota(sampled_index_.begin(), sampled_index_.end(), 0);
+
+  std::random_device rd;
+  std::mt19937 rng(rd());
+  std::shuffle(sampled_index_.begin(), sampled_index_.end(), rng);
+}
+
+// TODO(sibyl-Aix6ihai): Refactor/shorten this function.
+Status Examples::Initialize(OpKernelContext* const context,
+                            const ModelWeights& weights,
+                            const int num_sparse_features,
+                            const int num_sparse_features_with_values,
+                            const int num_dense_features) {
+  num_features_ = num_sparse_features + num_dense_features;
+
+  OpInputList sparse_example_indices_inputs;
+  TF_RETURN_IF_ERROR(context->input_list("sparse_example_indices",
+                                         &sparse_example_indices_inputs));
+  OpInputList sparse_feature_indices_inputs;
+  TF_RETURN_IF_ERROR(context->input_list("sparse_feature_indices",
+                                         &sparse_feature_indices_inputs));
+  OpInputList sparse_feature_values_inputs;
+  if (num_sparse_features_with_values > 0) {
+    TF_RETURN_IF_ERROR(context->input_list("sparse_feature_values",
+                                           &sparse_feature_values_inputs));
+  }
+
+  const Tensor* example_weights_t;
+  TF_RETURN_IF_ERROR(context->input("example_weights", &example_weights_t));
+  auto example_weights = example_weights_t->flat<float>();
+
+  if (example_weights.size() >= std::numeric_limits<int>::max()) {
+    return errors::InvalidArgument(strings::Printf(
+        "Too many examples in a mini-batch: %zu > %d", example_weights.size(),
+        std::numeric_limits<int>::max()));
+  }
+
+  // The static_cast here is safe since num_examples can be at max an int.
+  const int num_examples = static_cast<int>(example_weights.size());
+  const Tensor* example_labels_t;
+  TF_RETURN_IF_ERROR(context->input("example_labels", &example_labels_t));
+  auto example_labels = example_labels_t->flat<float>();
+
+  OpInputList dense_features_inputs;
+  TF_RETURN_IF_ERROR(
+      context->input_list("dense_features", &dense_features_inputs));
+
+  examples_.clear();
+  examples_.resize(num_examples);
+  probabilities_.resize(num_examples);
+  sampled_index_.resize(num_examples);
+  sampled_count_.resize(num_examples);
+  for (int example_id = 0; example_id < num_examples; ++example_id) {
+    Example* const example = &examples_[example_id];
+    example->sparse_features_.resize(num_sparse_features);
+    example->dense_vectors_.resize(num_dense_features);
+    example->example_weight_ = example_weights(example_id);
+    example->example_label_ = example_labels(example_id);
+  }
+  const DeviceBase::CpuWorkerThreads& worker_threads =
+      *context->device()->tensorflow_cpu_worker_threads();
+  TF_RETURN_IF_ERROR(CreateSparseFeatureRepresentation(
+      worker_threads, num_examples, num_sparse_features, weights,
+      sparse_example_indices_inputs, sparse_feature_indices_inputs,
+      sparse_feature_values_inputs, &examples_));
+  TF_RETURN_IF_ERROR(CreateDenseFeatureRepresentation(
+      worker_threads, num_examples, num_dense_features, weights,
+      dense_features_inputs, &examples_));
+  TF_RETURN_IF_ERROR(ComputeSquaredNormPerExample(
+      worker_threads, num_examples, num_sparse_features, num_dense_features,
+      &examples_));
+  return Status::OK();
+}
+
+Status Examples::CreateSparseFeatureRepresentation(
+    const DeviceBase::CpuWorkerThreads& worker_threads, const int num_examples,
+    const int num_sparse_features, const ModelWeights& weights,
+    const OpInputList& sparse_example_indices_inputs,
+    const OpInputList& sparse_feature_indices_inputs,
+    const OpInputList& sparse_feature_values_inputs,
+    std::vector<Example>* const examples) {
+  mutex mu;
+  Status result;  // Guarded by mu
+  auto parse_partition = [&](const int64 begin, const int64 end) {
+    // The static_cast here is safe since begin and end can be at most
+    // num_examples which is an int.
+    for (int i = static_cast<int>(begin); i < end; ++i) {
+      auto example_indices =
+          sparse_example_indices_inputs[i].template flat<int64>();
+      auto feature_indices =
+          sparse_feature_indices_inputs[i].template flat<int64>();
+
+      // Parse features for each example. Features for a particular example
+      // are at the offsets (start_id, end_id]
+      int start_id = -1;
+      int end_id = 0;
+      for (int example_id = 0; example_id < num_examples; ++example_id) {
+        start_id = end_id;
+        while (end_id < example_indices.size() &&
+               example_indices(end_id) == example_id) {
+          ++end_id;
+        }
+        Example::SparseFeatures* const sparse_features =
+            &(*examples)[example_id].sparse_features_[i];
+        if (start_id < example_indices.size() &&
+            example_indices(start_id) == example_id) {
+          sparse_features->indices.reset(new UnalignedInt64Vector(
+              &(feature_indices(start_id)), end_id - start_id));
+          if (sparse_feature_values_inputs.size() > i) {
+            auto feature_weights =
+                sparse_feature_values_inputs[i].flat<float>();
+            sparse_features->values.reset(new UnalignedFloatVector(
+                &(feature_weights(start_id)), end_id - start_id));
+          }
+          // If features are non empty.
+          if (end_id - start_id > 0) {
+            // TODO(sibyl-Aix6ihai): Write this efficiently using vectorized
+            // operations from eigen.
+            for (int64 k = 0; k < sparse_features->indices->size(); ++k) {
+              const int64 feature_index = (*sparse_features->indices)(k);
+              if (!weights.SparseIndexValid(i, feature_index)) {
+                mutex_lock l(mu);
+                result = errors::InvalidArgument(
+                    "Found sparse feature indices out of valid range: ",
+                    (*sparse_features->indices)(k));
+                return;
+              }
+            }
+          }
+        } else {
+          // Add a Tensor that has size 0.
+          sparse_features->indices.reset(
+              new UnalignedInt64Vector(&(feature_indices(0)), 0));
+          // If values exist for this feature group.
+          if (sparse_feature_values_inputs.size() > i) {
+            auto feature_weights =
+                sparse_feature_values_inputs[i].flat<float>();
+            sparse_features->values.reset(
+                new UnalignedFloatVector(&(feature_weights(0)), 0));
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: locate_symbol
+{
+  "ref": "47612cd69a2fdd76156360ca9102816e156f7e5c",
+  "symbol": "ModelWeights::Initialize"
+}
+tensorflow/core/kernels/sdca_internal.cc:95
+
+tool: locate_symbol
+{
+  "ref": "47612cd69a2fdd76156360ca9102816e156f7e5c",
+  "symbol": "Examples::CreateSparseFeatureRepresentation"
+}
+tensorflow/core/kernels/sdca_internal.cc:386
+
+tokens used
+input: 4,397
+cache read: 4,608
+cache write: 0
+output: 257
+reasoning output: 0
+
+The target file has the same functions and matching structure, so the supplied checks can be ported directly with no file moves or API adaptation.
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/kernels/sdca_internal.cc\n@@\n   OpInputList sparse_weights_inputs;\n   TF_RETURN_IF_ERROR(\n       context->input_list(\"sparse_weights\", &sparse_weights_inputs));\n+  if (sparse_indices_inputs.size() != sparse_weights_inputs.size())\n+    return errors::InvalidArgument(\n+        \"sparse_indices and sparse_weights must have the same length, got \",\n+        sparse_indices_inputs.size(), \" and \", sparse_weights_inputs.size());\n   OpInputList dense_weights_inputs;\n   TF_RETURN_IF_ERROR(\n       context->input_list(\"dense_weights\", &dense_weights_inputs));\n@@\n   OpOutputList sparse_weights_outputs;\n   TF_RETURN_IF_ERROR(context->output_list(\"out_delta_sparse_weights\",\n                                           &sparse_weights_outputs));\n+  if (sparse_weights_outputs.size() != sparse_weights_inputs.size())\n+    return errors::InvalidArgument(\n+        \"out_delta_sparse_weights and sparse_weights must have the same \"\n+        \"length, got \",\n+        sparse_weights_outputs.size(), \" and \", sparse_weights_inputs.size());\n \n   OpOutputList dense_weights_outputs;\n   TF_RETURN_IF_ERROR(\n       context->output_list(\"out_delta_dense_weights\", &dense_weights_outputs));\n+  if (dense_weights_outputs.size() != dense_weights_inputs.size())\n+    return errors::InvalidArgument(\n+        \"out_delta_dense_weights and dense_weights must have the same length, \"\n+        \"got \",\n+        dense_weights_outputs.size(), \" and \", dense_weights_inputs.size());\n \n   for (int i = 0; i < sparse_weights_inputs.size(); ++i) {\n@@\n   OpInputList sparse_example_indices_inputs;\n   TF_RETURN_IF_ERROR(context->input_list(\"sparse_example_indices\",\n                                          &sparse_example_indices_inputs));\n+  if (sparse_example_indices_inputs.size() != num_sparse_features)\n+    return errors::InvalidArgument(\n+        \"Expected \", num_sparse_features,\n+        \" tensors in sparse_example_indices but got \",\n+        sparse_example_indices_inputs.size());\n   OpInputList sparse_feature_indices_inputs;\n   TF_RETURN_IF_ERROR(context->input_list(\"sparse_feature_indices\",\n                                          &sparse_feature_indices_inputs));\n+  if (sparse_feature_indices_inputs.size() != num_sparse_features)\n+    return errors::InvalidArgument(\n+        \"Expected \", num_sparse_features,\n+        \" tensors in sparse_feature_indices but got \",\n+        sparse_feature_indices_inputs.size());\n   OpInputList sparse_feature_values_inputs;\n   if (num_sparse_features_with_values > 0) {\n     TF_RETURN_IF_ERROR(context->input_list(\"sparse_feature_values\",\n                                            &sparse_feature_values_inputs));\n+    if (sparse_feature_values_inputs.size() != num_sparse_features_with_values)\n+      return errors::InvalidArgument(\n+          \"Expected \", num_sparse_features_with_values,\n+          \" tensors in sparse_feature_values but got \",\n+          sparse_feature_values_inputs.size());\n   }\n@@\n       auto example_indices =\n           sparse_example_indices_inputs[i].template flat<int64>();\n       auto feature_indices =\n           sparse_feature_indices_inputs[i].template flat<int64>();\n+      if (example_indices.size() != feature_indices.size()) {\n+        mutex_lock l(mu);\n+        result = errors::InvalidArgument(\n+            \"Found mismatched example_indices and feature_indices [\",\n+            example_indices, \"] vs [\", feature_indices, \"]\");\n+        return;\n+      }\n \n       // Parse features for each example. Features for a particular example\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/kernels/sdca_internal.cc
+
+tokens used
+input: 2,856
+cache read: 8,704
+cache write: 0
+output: 900
+reasoning output: 29
+
+The source file is updated. I’ll inspect the resulting diff and do a lightweight compile-oriented sanity check by validating the applied patch hunks against the target ref.
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/kernels/sdca_internal.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0150-47612cd69a2f",
+  "timeout": 120000
+}
+warning: in the working copy of 'tensorflow/core/kernels/sdca_internal.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/kernels/sdca_internal.cc b/tensorflow/core/kernels/sdca_internal.cc
+index cbc754af0e..11a3be8bf4 100644
+--- a/tensorflow/core/kernels/sdca_internal.cc
++++ b/tensorflow/core/kernels/sdca_internal.cc
+@@ -99,6 +99,10 @@ Status ModelWeights::Initialize(OpKernelContext* const context) {
+   OpInputList sparse_weights_inputs;
+   TF_RETURN_IF_ERROR(
+       context->input_list("sparse_weights", &sparse_weights_inputs));
++  if (sparse_indices_inputs.size() != sparse_weights_inputs.size())
++    return errors::InvalidArgument(
++        "sparse_indices and sparse_weights must have the same length, got ",
++        sparse_indices_inputs.size(), " and ", sparse_weights_inputs.size());
+   OpInputList dense_weights_inputs;
+   TF_RETURN_IF_ERROR(
+       context->input_list("dense_weights", &dense_weights_inputs));
+@@ -106,10 +110,20 @@ Status ModelWeights::Initialize(OpKernelContext* const context) {
+   OpOutputList sparse_weights_outputs;
+   TF_RETURN_IF_ERROR(context->output_list("out_delta_sparse_weights",
+                                           &sparse_weights_outputs));
++  if (sparse_weights_outputs.size() != sparse_weights_inputs.size())
++    return errors::InvalidArgument(
++        "out_delta_sparse_weights and sparse_weights must have the same "
++        "length, got ",
++        sparse_weights_outputs.size(), " and ", sparse_weights_inputs.size());
+ 
+   OpOutputList dense_weights_outputs;
+   TF_RETURN_IF_ERROR(
+       context->output_list("out_delta_dense_weights", &dense_weights_outputs));
++  if (dense_weights_outputs.size() != dense_weights_inputs.size())
++    return errors::InvalidArgument(
++        "out_delta_dense_weights and dense_weights must have the same length, "
++        "got ",
++        dense_weights_outputs.size(), " and ", dense_weights_inputs.size());
+ 
+   for (int i = 0; i < sparse_weights_inputs.size(); ++i) {
+     Tensor* delta_t;
+@@ -327,13 +341,28 @@ Status Examples::Initialize(OpKernelContext* const context,
+   OpInputList sparse_example_indices_inputs;
+   TF_RETURN_IF_ERROR(context->input_list("sparse_example_indices",
+                                          &sparse_example_indices_inputs));
++  if (sparse_example_indices_inputs.size() != num_sparse_features)
++    return errors::InvalidArgument(
++        "Expected ", num_sparse_features,
++        " tensors in sparse_example_indices but got ",
++        sparse_example_indices_inputs.size());
+   OpInputList sparse_feature_indices_inputs;
+   TF_RETURN_IF_ERROR(context->input_list("sparse_feature_indices",
+                                          &sparse_feature_indices_inputs));
++  if (sparse_feature_indices_inputs.size() != num_sparse_features)
++    return errors::InvalidArgument(
++        "Expected ", num_sparse_features,
++        " tensors in sparse_feature_indices but got ",
++        sparse_feature_indices_inputs.size());
+   OpInputList sparse_feature_values_inputs;
+   if (num_sparse_features_with_values > 0) {
+     TF_RETURN_IF_ERROR(context->input_list("sparse_feature_values",
+                                            &sparse_feature_values_inputs));
++    if (sparse_feature_values_inputs.size() != num_sparse_features_with_values)
++      return errors::InvalidArgument(
++          "Expected ", num_sparse_features_with_values,
++          " tensors in sparse_feature_values but got ",
++          sparse_feature_values_inputs.size());
+   }
+ 
+   const Tensor* example_weights_t;
+@@ -400,6 +429,13 @@ Status Examples::CreateSparseFeatureRepresentation(
+           sparse_example_indices_inputs[i].template flat<int64>();
+       auto feature_indices =
+           sparse_feature_indices_inputs[i].template flat<int64>();
++      if (example_indices.size() != feature_indices.size()) {
++        mutex_lock l(mu);
++        result = errors::InvalidArgument(
++            "Found mismatched example_indices and feature_indices [",
++            example_indices, "] vs [", feature_indices, "]");
++        return;
++      }
+ 
+       // Parse features for each example. Features for a particular example
+       // are at the offsets (start_id, end_id]
+
+tokens used
+input: 1,765
+cache read: 10,752
+cache write: 0
+output: 117
+reasoning output: 65
+
+tool: validate
+{
+  "ref": "47612cd69a2fdd76156360ca9102816e156f7e5c",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/sdca_internal.cc b/tensorflow/core/kernels/sdca_internal.cc\nindex cbc754af0e..11a3be8bf4 100644\n--- a/tensorflow/core/kernels/sdca_internal.cc\n+++ b/tensorflow/core/kernels/sdca_internal.cc\n@@ -99,6 +99,10 @@ Status ModelWeights::Initialize(OpKernelContext* const context) {\n   OpInputList sparse_weights_inputs;\n   TF_RETURN_IF_ERROR(\n       context->input_list(\"sparse_weights\", &sparse_weights_inputs));\n+  if (sparse_indices_inputs.size() != sparse_weights_inputs.size())\n+    return errors::InvalidArgument(\n+        \"sparse_indices and sparse_weights must have the same length, got \",\n+        sparse_indices_inputs.size(), \" and \", sparse_weights_inputs.size());\n   OpInputList dense_weights_inputs;\n   TF_RETURN_IF_ERROR(\n       context->input_list(\"dense_weights\", &dense_weights_inputs));\n@@ -106,10 +110,20 @@ Status ModelWeights::Initialize(OpKernelContext* const context) {\n   OpOutputList sparse_weights_outputs;\n   TF_RETURN_IF_ERROR(context->output_list(\"out_delta_sparse_weights\",\n                                           &sparse_weights_outputs));\n+  if (sparse_weights_outputs.size() != sparse_weights_inputs.size())\n+    return errors::InvalidArgument(\n+        \"out_delta_sparse_weights and sparse_weights must have the same \"\n+        \"length, got \",\n+        sparse_weights_outputs.size(), \" and \", sparse_weights_inputs.size());\n \n   OpOutputList dense_weights_outputs;\n   TF_RETURN_IF_ERROR(\n       context->output_list(\"out_delta_dense_weights\", &dense_weights_outputs));\n+  if (dense_weights_outputs.size() != dense_weights_inputs.size())\n+    return errors::InvalidArgument(\n+        \"out_delta_dense_weights and dense_weights must have the same length, \"\n+        \"got \",\n+        dense_weights_outputs.size(), \" and \", dense_weights_inputs.size());\n \n   for (int i = 0; i < sparse_weights_inputs.size(); ++i) {\n     Tensor* delta_t;\n@@ -327,13 +341,28 @@ Status Examples::Initialize(OpKernelContext* const context,\n   OpInputList sparse_example_indices_inputs;\n   TF_RETURN_IF_ERROR(context->input_list(\"sparse_example_indices\",\n                                          &sparse_example_indices_inputs));\n+  if (sparse_example_indices_inputs.size() != num_sparse_features)\n+    return errors::InvalidArgument(\n+        \"Expected \", num_sparse_features,\n+        \" tensors in sparse_example_indices but got \",\n+        sparse_example_indices_inputs.size());\n   OpInputList sparse_feature_indices_inputs;\n   TF_RETURN_IF_ERROR(context->input_list(\"sparse_feature_indices\",\n                                          &sparse_feature_indices_inputs));\n+  if (sparse_feature_indices_inputs.size() != num_sparse_features)\n+    return errors::InvalidArgument(\n+        \"Expected \", num_sparse_features,\n+        \" tensors in sparse_feature_indices but got \",\n+        sparse_feature_indices_inputs.size());\n   OpInputList sparse_feature_values_inputs;\n   if (num_sparse_features_with_values > 0) {\n     TF_RETURN_IF_ERROR(context->input_list(\"sparse_feature_values\",\n                                            &sparse_feature_values_inputs));\n+    if (sparse_feature_values_inputs.size() != num_sparse_features_with_values)\n+      return errors::InvalidArgument(\n+          \"Expected \", num_sparse_features_with_values,\n+          \" tensors in sparse_feature_values but got \",\n+          sparse_feature_values_inputs.size());\n   }\n \n   const Tensor* example_weights_t;\n@@ -400,6 +429,13 @@ Status Examples::CreateSparseFeatureRepresentation(\n           sparse_example_indices_inputs[i].template flat<int64>();\n       auto feature_indices =\n           sparse_feature_indices_inputs[i].template flat<int64>();\n+      if (example_indices.size() != feature_indices.size()) {\n+        mutex_lock l(mu);\n+        result = errors::InvalidArgument(\n+            \"Found mismatched example_indices and feature_indices [\",\n+            example_indices, \"] vs [\", feature_indices, \"]\");\n+        return;\n+      }\n \n       // Parse features for each example. Features for a particular example\n       // are at the offsets (start_id, end_id]\n"
+}
+Patch applied successfully
+
+tokens used
+input: 1,849
+cache read: 11,776
+cache write: 0
+output: 1,049
+reasoning output: 16
+
+Applied the SdcaOptimizer input/output list size validation checks to `tensorflow/core/kernels/sdca_internal.cc`. Hunk validation against `47612cd69a2fdd76156360ca9102816e156f7e5c` succeeded.
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/kernels/sdca_internal.cc b/tensorflow/core/kernels/sdca_internal.cc
+    index cbc754af0e..11a3be8bf4 100644
+    --- a/tensorflow/core/kernels/sdca_internal.cc
+    +++ b/tensorflow/core/kernels/sdca_internal.cc
+    @@ -99,6 +99,10 @@ Status ModelWeights::Initialize(OpKernelContext* const context) {
+       OpInputList sparse_weights_inputs;
+       TF_RETURN_IF_ERROR(
+           context->input_list("sparse_weights", &sparse_weights_inputs));
+    +  if (sparse_indices_inputs.size() != sparse_weights_inputs.size())
+    +    return errors::InvalidArgument(
+    +        "sparse_indices and sparse_weights must have the same length, got ",
+    +        sparse_indices_inputs.size(), " and ", sparse_weights_inputs.size());
+       OpInputList dense_weights_inputs;
+       TF_RETURN_IF_ERROR(
+           context->input_list("dense_weights", &dense_weights_inputs));
+    @@ -106,10 +110,20 @@ Status ModelWeights::Initialize(OpKernelContext* const context) {
+       OpOutputList sparse_weights_outputs;
+       TF_RETURN_IF_ERROR(context->output_list("out_delta_sparse_weights",
+                                               &sparse_weights_outputs));
+    +  if (sparse_weights_outputs.size() != sparse_weights_inputs.size())
+    +    return errors::InvalidArgument(
+    +        "out_delta_sparse_weights and sparse_weights must have the same "
+    +        "length, got ",
+    +        sparse_weights_outputs.size(), " and ", sparse_weights_inputs.size());
+     
+       OpOutputList dense_weights_outputs;
+       TF_RETURN_IF_ERROR(
+           context->output_list("out_delta_dense_weights", &dense_weights_outputs));
+    +  if (dense_weights_outputs.size() != dense_weights_inputs.size())
+    +    return errors::InvalidArgument(
+    +        "out_delta_dense_weights and dense_weights must have the same length, "
+    +        "got ",
+    +        dense_weights_outputs.size(), " and ", dense_weights_inputs.size());
+     
+       for (int i = 0; i < sparse_weights_inputs.size(); ++i) {
+         Tensor* delta_t;
+    @@ -327,13 +341,28 @@ Status Examples::Initialize(OpKernelContext* const context,
+       OpInputList sparse_example_indices_inputs;
+       TF_RETURN_IF_ERROR(context->input_list("sparse_example_indices",
+                                              &sparse_example_indices_inputs));
+    +  if (sparse_example_indices_inputs.size() != num_sparse_features)
+    +    return errors::InvalidArgument(
+    +        "Expected ", num_sparse_features,
+    +        " tensors in sparse_example_indices but got ",
+    +        sparse_example_indices_inputs.size());
+       OpInputList sparse_feature_indices_inputs;
+       TF_RETURN_IF_ERROR(context->input_list("sparse_feature_indices",
+                                              &sparse_feature_indices_inputs));
+    +  if (sparse_feature_indices_inputs.size() != num_sparse_features)
+    +    return errors::InvalidArgument(
+    +        "Expected ", num_sparse_features,
+    +        " tensors in sparse_feature_indices but got ",
+    +        sparse_feature_indices_inputs.size());
+       OpInputList sparse_feature_values_inputs;
+       if (num_sparse_features_with_values > 0) {
+         TF_RETURN_IF_ERROR(context->input_list("sparse_feature_values",
+                                                &sparse_feature_values_inputs));
+    +    if (sparse_feature_values_inputs.size() != num_sparse_features_with_values)
+    +      return errors::InvalidArgument(
+    +          "Expected ", num_sparse_features_with_values,
+    +          " tensors in sparse_feature_values but got ",
+    +          sparse_feature_values_inputs.size());
+       }
+     
+       const Tensor* example_weights_t;
+    @@ -400,6 +429,13 @@ Status Examples::CreateSparseFeatureRepresentation(
+               sparse_example_indices_inputs[i].template flat<int64>();
+           auto feature_indices =
+               sparse_feature_indices_inputs[i].template flat<int64>();
+    +      if (example_indices.size() != feature_indices.size()) {
+    +        mutex_lock l(mu);
+    +        result = errors::InvalidArgument(
+    +            "Found mismatched example_indices and feature_indices [",
+    +            example_indices, "] vs [", feature_indices, "]");
+    +        return;
+    +      }
+     
+           // Parse features for each example. Features for a particular example
+           // are at the offsets (start_id, end_id]
+  notes: >
+    Backported the supplied SdcaOptimizer null pointer prevention checks directly; hunk validation succeeded.
+```
+
+tokens used
+input: 1,903
+cache read: 12,800
+cache write: 0
+output: 1,027
+reasoning output: 60

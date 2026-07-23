@@ -1,0 +1,2452 @@
+I’ll inspect the target-side files around each patched area first, then apply the minimal equivalent changes directly in this checkout without looking at the held-out backport commit.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target TensorFlow code for all patched files and context",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Apply minimal security backport changes",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "content": "Verify patch shape and collect final diff",
+      "status": "pending",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target TensorFlow code for all patched files and context",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Apply minimal security backport changes",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "content": "Verify patch shape and collect final diff",
+    "status": "pending",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 6,206
+cache read: 4,608
+cache write: 0
+output: 118
+reasoning output: 0
+
+tool: viewcode
+{
+  "ref": "4c0b84bf2a714bcdd18da1f1f94d533d72399d52",
+  "path": "tensorflow/core/framework/BUILD",
+  "startline": 820,
+  "endline": 850
+}
+Here are lines 820 through 850.
+
+        "//tensorflow/core/platform:macros",
+        "@com_google_absl//absl/memory",
+    ],
+)
+
+cc_library(
+    name = "kernel_shape_util",
+    srcs = ["kernel_shape_util.cc"],
+    hdrs = ["kernel_shape_util.h"],
+    deps = [
+        ":tensor",
+        ":tensor_shape",
+        "//tensorflow/core/lib/core:errors",
+        "//tensorflow/core/platform:status",
+        "//tensorflow/core/util:padding",
+    ],
+)
+
+cc_library(
+    name = "common_shape_fns",
+    srcs = ["common_shape_fns.cc"],
+    hdrs = ["common_shape_fns.h"],
+    deps = [
+        ":attr_value_proto_cc",
+        ":shape_inference",
+        ":tensor",
+        ":tensor_shape",
+        "//tensorflow/core/lib/core:errors",
+        "//tensorflow/core/lib/gtl:inlined_vector",
+        "//tensorflow/core/util:einsum_op_util",
+        "//tensorflow/core/util:padding",
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: viewcode
+{
+  "ref": "4c0b84bf2a714bcdd18da1f1f94d533d72399d52",
+  "path": "tensorflow/core/framework/tensor.cc",
+  "startline": 45,
+  "endline": 810
+}
+Here are lines 45 through 810.
+
+#include "tensorflow/core/lib/core/coding.h"
+#include "tensorflow/core/lib/core/errors.h"
+#include "tensorflow/core/lib/core/status.h"
+#include "tensorflow/core/lib/gtl/inlined_vector.h"
+#include "tensorflow/core/lib/strings/str_util.h"
+#include "tensorflow/core/lib/strings/strcat.h"
+#include "tensorflow/core/platform/logging.h"
+#include "tensorflow/core/platform/macros.h"
+#include "tensorflow/core/platform/protobuf.h"
+#include "tensorflow/core/platform/tensor_coding.h"
+#include "tensorflow/core/platform/types.h"
+
+namespace tensorflow {
+
+// Allow Tensors to be stored inside Variants with automatic
+// encoding/decoding when those Variants are themselves being decoded
+// in a Tensor's FromProto.
+//
+// NOTE(mrry): The corresponding "copy function" registrations can be found in
+// ../common_runtime/copy_tensor.cc (due to dependencies on other common_runtime
+// code).
+REGISTER_UNARY_VARIANT_DECODE_FUNCTION(Tensor, "tensorflow::Tensor");
+
+bool TensorBuffer::GetAllocatedBytes(size_t* out_bytes) const {
+  AllocationDescription allocation_description;
+  FillAllocationDescription(&allocation_description);
+  if (allocation_description.allocated_bytes() > 0) {
+    *out_bytes = allocation_description.allocated_bytes();
+    return true;
+  } else {
+    return false;
+  }
+}
+
+namespace {
+
+// An un-templated base class for Buffer.
+class BufferBase : public TensorBuffer {
+ public:
+  explicit BufferBase(Allocator* alloc, void* data_ptr)
+      : TensorBuffer(data_ptr), alloc_(alloc) {}
+
+  TensorBuffer* root_buffer() override { return this; }
+
+  bool GetAllocatedBytes(size_t* out_bytes) const override {
+    if (alloc_->TracksAllocationSizes()) {
+      *out_bytes = alloc_->AllocatedSize(data());
+      return *out_bytes > 0;
+    } else {
+      return false;
+    }
+  }
+
+  void FillAllocationDescription(AllocationDescription* proto) const override {
+    void* data_ptr = data();
+    int64 rb = size();
+    proto->set_requested_bytes(rb);
+    proto->set_allocator_name(alloc_->Name());
+    proto->set_ptr(reinterpret_cast<uintptr_t>(data_ptr));
+    if (alloc_->TracksAllocationSizes()) {
+      int64 ab = alloc_->AllocatedSize(data_ptr);
+      proto->set_allocated_bytes(ab);
+      int64 id = alloc_->AllocationId(data_ptr);
+      if (id > 0) {
+        proto->set_allocation_id(id);
+      }
+      if (RefCountIsOne()) {
+        proto->set_has_single_reference(true);
+      }
+    }
+  }
+
+ protected:
+  void RecordDeallocation() {
+    LogMemory::RecordTensorDeallocation(alloc_->AllocationId(data()),
+                                        alloc_->Name());
+  }
+
+  Allocator* const alloc_;
+};
+
+// Typed ref-counted buffer: T[n].
+template <typename T>
+class Buffer : public BufferBase {
+ public:
+  Buffer(Allocator* a, int64 n);
+  Buffer(Allocator* a, int64 n, const AllocationAttributes& allocation_attr);
+
+  size_t size() const override { return sizeof(T) * elem_; }
+
+ private:
+  int64 elem_;
+
+  ~Buffer() override;
+
+  TF_DISALLOW_COPY_AND_ASSIGN(Buffer);
+};
+
+void LogUnexpectedSize(int64 actual, int64 expected) {
+  LOG(ERROR) << "Input size was " << actual << " and expected " << expected;
+}
+
+bool MemoryLoggingEnabled() {
+  static bool memory_logging_enabled = LogMemory::IsEnabled();
+  return memory_logging_enabled;
+}
+
+// A set of helper functions depending on T.
+template <typename T>
+struct Helper {
+  // By default, we assume T is a simple type (float, int32, etc.)
+  static_assert(is_simple_type<T>::value, "T is not a simple type.");
+  typedef protobuf::RepeatedField<T> RepeatedFieldType;
+
+  // Encoder of simple type T to a string.  We do a copy.
+  template <typename Destination>
+  static void Encode(TensorBuffer* in, int64 n, Destination* out) {
+    DCHECK_EQ(in->size(), sizeof(T) * n);
+    port::AssignRefCounted(StringPiece(in->base<const char>(), in->size()), in,
+                           out);
+  }
+
+  // Decoder of simple type T. Copy the bytes from "in" into the
+  // tensor buffer.
+  template <typename Source>
+  static TensorBuffer* Decode(Allocator* a, const Source& in, int64 n) {
+    if (in.size() != sizeof(T) * n) {
+      LogUnexpectedSize(in.size(), sizeof(T) * n);
+      return nullptr;
+    }
+    Buffer<T>* buf = new Buffer<T>(a, n);
+    char* data = buf->template base<char>();
+    if (data == nullptr) {
+      buf->Unref();
+      return nullptr;
+    }
+    port::CopyToArray(in, data);
+    return buf;
+  }
+
+  // Memory usage.
+  static int64 TotalBytes(TensorBuffer* in, int64 n) {
+    DCHECK_EQ(in->size(), sizeof(T) * n);
+    return in->size();
+  }
+};
+
+// Helper specialization for string (the only non-simple type we
+// support).
+template <>
+struct Helper<tstring> {
+  // Proto message uses RepeatedFieldType to hold repeated T.
+  typedef protobuf::RepeatedPtrField<string> RepeatedFieldType;
+
+  // Encodes "n" elements of type string stored in "in" into Cord
+  // "out", which is usually the TensorProto::tensor_content.
+  template <typename Destination>
+  static void Encode(TensorBuffer* in, int64 n, Destination* out) {
+    port::EncodeStringList(in->base<const tstring>(), n, out);
+  }
+
+  // Decodes "n" elements of type string from "in" and constructs a
+  // buffer out of it. Returns nullptr if the decoding fails. "in" is
+  // usually the TensorProto::tensor_content.
+  template <typename Source>
+  static TensorBuffer* Decode(Allocator* a, const Source& in, int64 n) {
+    Buffer<tstring>* buf = new Buffer<tstring>(a, n);
+    tstring* strings = buf->template base<tstring>();
+    if (strings == nullptr || !port::DecodeStringList(in, strings, n)) {
+      buf->Unref();
+      return nullptr;
+    }
+    return buf;
+  }
+
+  // Returns the estimated memory usage of "n" elements of type T
+  // stored in buffer "in".
+  static int64 TotalBytes(TensorBuffer* in, int n) {
+    int64 tot = in->size();
+    DCHECK_EQ(tot, sizeof(tstring) * n);
+    const tstring* p = in->base<const tstring>();
+    for (int i = 0; i < n; ++i, ++p) tot += p->size();
+    return tot;
+  }
+};
+
+template <>
+struct Helper<ResourceHandle> {
+  // Proto message uses RepeatedFieldType to hold repeated T.
+  typedef protobuf::RepeatedPtrField<string> RepeatedFieldType;
+
+  // Encodes "n" elements of type ResourceHandle stored in "in" into destination
+  // "out", which is usually the TensorProto::tensor_content.
+  template <typename Destination>
+  static void Encode(TensorBuffer* in, int64 n, Destination* out) {
+    EncodeResourceHandleList(in->base<const ResourceHandle>(), n,
+                             port::NewStringListEncoder(out));
+  }
+
+  // Decodes "n" elements of type string from "in" and constructs a
+  // buffer out of it. Returns nullptr if the decoding fails. "in" is
+  // usually the TensorProto::tensor_content.
+  template <typename Source>
+  static TensorBuffer* Decode(Allocator* a, const Source& in, int64 n) {
+    auto* buf = new Buffer<ResourceHandle>(a, n);
+    ResourceHandle* ps = buf->template base<ResourceHandle>();
+    if (ps == nullptr ||
+        !DecodeResourceHandleList(port::NewStringListDecoder(in), ps, n)) {
+      buf->Unref();
+      return nullptr;
+    }
+    return buf;
+  }
+
+  // Returns the estimated memory usage of "n" elements of type T
+  // stored in buffer "in".
+  static int64 TotalBytes(TensorBuffer* in, int n) {
+    return n * sizeof(ResourceHandle);
+  }
+};
+
+template <>
+struct Helper<Variant> {
+  // Encodes "n" elements of type Variant stored in "in" into destination
+  // "out", which is usually the TensorProto::tensor_content.
+  template <typename Destination>
+  static void Encode(TensorBuffer* in, int64 n, Destination* out) {
+    EncodeVariantList(in->base<const Variant>(), n,
+                      port::NewStringListEncoder(out));
+  }
+
+  // Decodes "n" elements of type Variant from "in" and constructs a
+  // buffer out of it. Returns nullptr if the decoding fails. "in" is
+  // usually the TensorProto::tensor_content.
+  template <typename Source>
+  static TensorBuffer* Decode(Allocator* a, const Source& in, int64 n) {
+    auto* buf = new Buffer<Variant>(a, n);
+    Variant* ps = buf->template base<Variant>();
+    if (ps == nullptr ||
+        !DecodeVariantList(port::NewStringListDecoder(in), ps, n)) {
+      buf->Unref();
+      return nullptr;
+    }
+    return buf;
+  }
+
+  // Returns the estimated memory usage of "n" elements of type T
+  // stored in buffer "in".
+  static int64 TotalBytes(TensorBuffer* in, int n) {
+    return n * sizeof(Variant);
+  }
+};
+
+template <typename T>
+struct ProtoHelper {};
+
+// For a C++ type "T" (float, double, int32, etc.), the repeated field
+// "N"_val (float_val, int_val, label_val, etc.) of type "F" (float,
+// int32, string, etc) in the TensorProto is used for serializing the
+// tensor of type "T".
+#define PROTO_TRAITS(T, F, N)                                          \
+  template <>                                                          \
+  struct ProtoHelper<T> {                                              \
+    typedef Helper<F>::RepeatedFieldType FieldType;                    \
+    static FieldType::const_iterator Begin(const TensorProto& proto) { \
+      return proto.N##_val().begin();                                  \
+    }                                                                  \
+    static size_t NumElements(const TensorProto& proto) {              \
+      return proto.N##_val().size();                                   \
+    }                                                                  \
+    static void Fill(const T* data, size_t n, TensorProto* proto) {    \
+      typename ProtoHelper<T>::FieldType copy(data, data + n);         \
+      proto->mutable_##N##_val()->Swap(&copy);                         \
+    }                                                                  \
+  };
+PROTO_TRAITS(float, float, float);
+PROTO_TRAITS(double, double, double);
+PROTO_TRAITS(int32, int32, int);
+PROTO_TRAITS(uint8, int32, int);
+PROTO_TRAITS(uint16, int32, int);
+PROTO_TRAITS(uint32, uint32, uint32);
+PROTO_TRAITS(int16, int32, int);
+PROTO_TRAITS(int8, int32, int);
+PROTO_TRAITS(bool, bool, bool);
+PROTO_TRAITS(tstring, tstring, string);
+PROTO_TRAITS(qint8, int32, int);
+PROTO_TRAITS(quint8, int32, int);
+PROTO_TRAITS(qint16, int32, int);
+PROTO_TRAITS(quint16, int32, int);
+#undef PROTO_TRAITS
+
+template <>
+struct ProtoHelper<int64> {
+  static const int64* Begin(const TensorProto& proto) {
+    return reinterpret_cast<const int64*>(proto.int64_val().begin());
+  }
+  static size_t NumElements(const TensorProto& proto) {
+    return proto.int64_val().size();
+  }
+  static void Fill(const int64* data, size_t n, TensorProto* proto) {
+    protobuf::RepeatedField<protobuf_int64> copy(data, data + n);
+    proto->mutable_int64_val()->Swap(&copy);
+  }
+};
+
+template <>
+struct ProtoHelper<uint64> {
+  static const uint64* Begin(const TensorProto& proto) {
+    return reinterpret_cast<const uint64*>(proto.uint64_val().begin());
+  }
+  static size_t NumElements(const TensorProto& proto) {
+    return proto.uint64_val().size();
+  }
+  static void Fill(const uint64* data, size_t n, TensorProto* proto) {
+    protobuf::RepeatedField<protobuf_uint64> copy(data, data + n);
+    proto->mutable_uint64_val()->Swap(&copy);
+  }
+};
+
+template <>
+struct ProtoHelper<ResourceHandle> {
+  static protobuf::RepeatedPtrField<ResourceHandleProto>::const_iterator Begin(
+      const TensorProto& proto) {
+    return proto.resource_handle_val().begin();
+  }
+  static size_t NumElements(const TensorProto& proto) {
+    return proto.resource_handle_val().size();
+  }
+  static void Fill(const ResourceHandle* data, size_t n, TensorProto* proto) {
+    auto* handles = proto->mutable_resource_handle_val();
+    handles->Clear();
+    for (size_t i = 0; i < n; i++) {
+      data[i].AsProto(handles->Add());
+    }
+  }
+};
+
+template <>
+struct ProtoHelper<Variant> {
+  static protobuf::RepeatedPtrField<VariantTensorDataProto>::const_iterator
+  Begin(const TensorProto& proto) {
+    return proto.variant_val().begin();
+  }
+  static size_t NumElements(const TensorProto& proto) {
+    return proto.variant_val().size();
+  }
+  static void Fill(const Variant* data, size_t n, TensorProto* proto) {
+    auto* variant_values = proto->mutable_variant_val();
+    variant_values->Clear();
+    for (size_t i = 0; i < n; ++i) {
+      VariantTensorData tmp;
+      data[i].Encode(&tmp);
+      tmp.ToProto(variant_values->Add());
+    }
+  }
+};
+
+template <>
+struct ProtoHelper<complex64> {
+  typedef Helper<float>::RepeatedFieldType FieldType;
+  static const complex64* Begin(const TensorProto& proto) {
+    return reinterpret_cast<const complex64*>(proto.scomplex_val().data());
+  }
+  static size_t NumElements(const TensorProto& proto) {
+    return proto.scomplex_val().size() / 2;
+  }
+  static void Fill(const complex64* data, size_t n, TensorProto* proto) {
+    const float* p = reinterpret_cast<const float*>(data);
+    FieldType copy(p, p + n * 2);
+    proto->mutable_scomplex_val()->Swap(&copy);
+  }
+};
+
+template <>
+struct ProtoHelper<complex128> {
+  typedef Helper<double>::RepeatedFieldType FieldType;
+  static const complex128* Begin(const TensorProto& proto) {
+    return reinterpret_cast<const complex128*>(proto.dcomplex_val().data());
+  }
+  static size_t NumElements(const TensorProto& proto) {
+    return proto.dcomplex_val().size() / 2;
+  }
+  static void Fill(const complex128* data, size_t n, TensorProto* proto) {
+    const double* p = reinterpret_cast<const double*>(data);
+    FieldType copy(p, p + n * 2);
+    proto->mutable_dcomplex_val()->Swap(&copy);
+  }
+};
+
+template <>
+struct ProtoHelper<qint32> {
+  typedef Helper<int32>::RepeatedFieldType FieldType;
+  static const qint32* Begin(const TensorProto& proto) {
+    return reinterpret_cast<const qint32*>(proto.int_val().data());
+  }
+  static size_t NumElements(const TensorProto& proto) {
+    return proto.int_val().size();
+  }
+  static void Fill(const qint32* data, size_t n, TensorProto* proto) {
+    const int32* p = reinterpret_cast<const int32*>(data);
+    FieldType copy(p, p + n);
+    proto->mutable_int_val()->Swap(&copy);
+  }
+};
+
+template <>
+struct ProtoHelper<bfloat16> {
+  static void Fill(const bfloat16* data, size_t n, TensorProto* proto) {
+    proto->mutable_half_val()->Reserve(n);
+    for (size_t i = 0; i < n; ++i) {
+      proto->mutable_half_val()->AddAlreadyReserved(data[i].value);
+    }
+  }
+};
+
+template <>
+struct ProtoHelper<Eigen::half> {
+  static void Fill(const Eigen::half* data, size_t n, TensorProto* proto) {
+    proto->mutable_half_val()->Reserve(n);
+    for (size_t i = 0; i < n; ++i) {
+      proto->mutable_half_val()->AddAlreadyReserved(data[i].x);
+    }
+  }
+};
+
+template <typename T>
+Buffer<T>::Buffer(Allocator* a, int64 n)
+    : BufferBase(a, TypedAllocator::Allocate<T>(a, n, AllocationAttributes())),
+      elem_(n) {}
+
+template <typename T>
+Buffer<T>::Buffer(Allocator* a, int64 n,
+                  const AllocationAttributes& allocation_attr)
+    : BufferBase(a, TypedAllocator::Allocate<T>(a, n, allocation_attr)),
+      elem_(n) {}
+
+template <typename T>
+Buffer<T>::~Buffer() {
+  if (data()) {
+    if (MemoryLoggingEnabled()) {
+      RecordDeallocation();
+    }
+    TypedAllocator::Deallocate<T>(alloc_, static_cast<T*>(data()), elem_);
+  }
+}
+
+// Allocates a T[n] buffer. Fills in the buffer with repeated values
+// in "in".  If "in" has less values than "n", fills the rest of T[n]
+// with the last value. If "in" has no values, fills T[n] with the
+// default value for T.
+//
+// This routine is using the typed fields (float_val, etc.) in the
+// tensor proto as opposed to the untyped binary representation
+// (tensor_content). This is used when we expect the TensorProto is
+// used by a client program which may not know how to encode a tensor
+// in the compact binary representation.
+template <typename T>
+TensorBuffer* FromProtoField(Allocator* a, const TensorProto& in, int64 n) {
+  CHECK_GT(n, 0);
+  Buffer<T>* buf = new Buffer<T>(a, n);
+  T* data = buf->template base<T>();
+  if (data == nullptr) {
+    buf->Unref();
+    return nullptr;
+  }
+
+  const int64 in_n = ProtoHelper<T>::NumElements(in);
+  if (in_n <= 0) {
+    std::fill_n(data, n, T());
+  } else {
+    auto begin = ProtoHelper<T>::Begin(in);
+    if (n <= in_n) {
+      std::copy_n(begin, n, data);
+    } else {
+      std::copy_n(begin, in_n, data);
+      if (std::is_trivially_copyable<T>::value) {
+        const T last = *(data + in_n - 1);
+        std::fill_n(data + in_n, n - in_n, last);
+      } else {
+        const T& last = *(data + in_n - 1);
+        std::fill_n(data + in_n, n - in_n, last);
+      }
+    }
+  }
+
+  return buf;
+}
+
+template <>
+TensorBuffer* FromProtoField<Variant>(Allocator* a, const TensorProto& in,
+                                      int64 n) {
+  CHECK_GT(n, 0);
+  Buffer<Variant>* buf = new Buffer<Variant>(a, n);
+  Variant* data = buf->template base<Variant>();
+  if (data == nullptr) {
+    buf->Unref();
+    return nullptr;
+  }
+  const int64 in_n = ProtoHelper<Variant>::NumElements(in);
+  if (in_n <= 0) {
+    std::fill_n(data, n, Variant());
+  } else {
+    // If tensor shape says we have n < in_n elements in the output tensor
+    // then make sure to only decode the first n out of the in_n elements in the
+    // in tensors. In all other cases, we decode all in_n elements of in and set
+    // the remaining elements up to n to be the default Variant() value.
+    const int64 real_n = n < in_n ? n : in_n;
+    for (int64 i = 0; i < real_n; ++i) {
+      data[i] = in.variant_val(i);
+      if (!DecodeUnaryVariant(&data[i])) {
+        LOG(ERROR) << "Could not decode variant with type_name: \""
+                   << data[i].TypeName()
+                   << "\".  Perhaps you forgot to register a "
+                      "decoder via REGISTER_UNARY_VARIANT_DECODE_FUNCTION?";
+        buf->Unref();
+        return nullptr;
+      }
+    }
+    for (int64 i = in_n; i < n; ++i) {
+      data[i] = Variant();
+    }
+  }
+  return buf;
+}
+
+// fp16 and bfloat16 are opaque to the protobuf, so we deserialize these
+// identical to uint16 but with data stored in half_val instead of int_val (ie.,
+// we don't use ProtoHelper<uint16>).
+template <>
+TensorBuffer* FromProtoField<Eigen::half>(Allocator* a, const TensorProto& in,
+                                          int64 n) {
+  CHECK_GT(n, 0);
+  Buffer<Eigen::half>* buf = new Buffer<Eigen::half>(a, n);
+  uint16* data = buf->template base<uint16>();
+  if (data == nullptr) {
+    buf->Unref();
+    return nullptr;
+  }
+  const int64 in_n = in.half_val().size();
+  auto begin = in.half_val().begin();
+  if (n <= in_n) {
+    std::copy_n(begin, n, data);
+  } else if (in_n > 0) {
+    std::copy_n(begin, in_n, data);
+    const uint16 last = *(data + in_n - 1);
+    std::fill_n(data + in_n, n - in_n, last);
+  } else {
+    std::fill_n(data, n, 0);
+  }
+  return buf;
+}
+
+template <>
+TensorBuffer* FromProtoField<bfloat16>(Allocator* a, const TensorProto& in,
+                                       int64 n) {
+  CHECK_GT(n, 0);
+  Buffer<bfloat16>* buf = new Buffer<bfloat16>(a, n);
+  uint16* data = buf->template base<uint16>();
+  if (data == nullptr) {
+    buf->Unref();
+    return nullptr;
+  }
+  const int64 in_n = in.half_val().size();
+  auto begin = in.half_val().begin();
+  if (n <= in_n) {
+    std::copy_n(begin, n, data);
+  } else if (in_n > 0) {
+    std::copy_n(begin, in_n, data);
+    const uint16 last = *(data + in_n - 1);
+    std::fill_n(data + in_n, n - in_n, last);
+  } else {
+    std::fill_n(data, n, 0);
+  }
+  return buf;
+}
+
+// Copies T[n] stored in the buffer "in" into the repeated field in
+// "out" corresponding to type T.
+template <typename T>
+void ToProtoField(const TensorBuffer& in, int64 n, TensorProto* out) {
+  const T* data = in.base<const T>();
+  // NOTE: T may not the same as
+  // ProtoHelper<T>::FieldType::value_type.  E.g., T==int16,
+  // ProtoHelper<T>::FieldType::value_type==int32.  If performance is
+  // critical, we can specialize T=float and do memcpy directly.
+  ProtoHelper<T>::Fill(data, n, out);
+}
+
+void RefIfNonNull(core::RefCounted* buf) {
+  if (buf) buf->Ref();
+}
+
+void UnrefIfNonNull(core::RefCounted* buf) {
+  if (buf) buf->Unref();
+}
+
+}  // end namespace
+
+Tensor::Tensor() : Tensor(DT_FLOAT) {}
+
+Tensor::Tensor(DataType type) : shape_(type), buf_(nullptr) {}
+
+Tensor::Tensor(DataType type, const TensorShape& shape, TensorBuffer* buf)
+    : shape_(shape), buf_(buf) {
+  set_dtype(type);
+  RefIfNonNull(buf);
+}
+
+bool Tensor::IsInitialized() const {
+  return (buf_ != nullptr && buf_->data() != nullptr) ||
+         shape_.num_elements() == 0;
+}
+
+void Tensor::CheckType(DataType expected_dtype) const {
+  CHECK_EQ(dtype(), expected_dtype)
+      << " " << DataTypeString(expected_dtype) << " expected, got "
+      << DataTypeString(dtype());
+}
+
+void Tensor::CheckTypeAndIsAligned(DataType expected_dtype) const {
+  CHECK_EQ(dtype(), expected_dtype)
+      << " " << DataTypeString(expected_dtype) << " expected, got "
+      << DataTypeString(dtype());
+  CHECK(IsAligned()) << "ptr = " << base<void>();
+}
+
+void Tensor::CheckIsAlignedAndSingleElement() const {
+  CHECK(IsAligned()) << "Aligned and single element";
+  CHECK_EQ(1, NumElements()) << "Must have a one element tensor";
+}
+
+Tensor::~Tensor() { UnrefIfNonNull(buf_); }
+
+void Tensor::CopyFromInternal(const Tensor& other, const TensorShape& shape) {
+  CHECK_EQ(shape.num_elements(), other.NumElements());
+  // Data type will be overwritten if this == &other, since dtype is part of
+  // shape.
+  DataType other_dtype = other.dtype();
+  shape_ = shape;
+  set_dtype(other_dtype);
+  if (buf_ != other.buf_) {
+    UnrefIfNonNull(buf_);
+    buf_ = other.buf_;
+    RefIfNonNull(buf_);
+  }
+}
+
+Status Tensor::BitcastFrom(const Tensor& other, DataType dtype,
+                           const TensorShape& shape) {
+  int in_size = DataTypeSize(other.dtype());
+  int out_size = DataTypeSize(dtype);
+  if (in_size == 0) {
+    return errors::InvalidArgument("other tensor has zero-sized data type");
+  }
+  if (out_size == 0) {
+    return errors::InvalidArgument("specified output type is zero-sized");
+  }
+  if (shape.num_elements() * out_size !=
+      other.shape().num_elements() * in_size) {
+    return errors::InvalidArgument(
+        "input and output shapes/data type sizes are not compatible");
+  }
+  shape_ = shape;
+  shape_.set_data_type(dtype);
+  if (buf_ != other.buf_) {
+    UnrefIfNonNull(buf_);
+    buf_ = other.buf_;
+    RefIfNonNull(buf_);
+  }
+  return Status::OK();
+}
+
+// Notice that buf_ either points to a regular TensorBuffer or a SubBuffer.
+// For the latter case, we have to make sure that the refcount is
+// one both for the SubBuffer _and_ the underlying TensorBuffer.
+bool Tensor::RefCountIsOne() const {
+  return buf_ != nullptr && buf_->RefCountIsOne() &&
+         buf_->root_buffer()->RefCountIsOne() && buf_->OwnsMemory();
+}
+
+// The macro CASES() expands to a switch statement conditioned on
+// TYPE_ENUM. Each case expands the STMTS after a typedef for T.
+#define SINGLE_ARG(...) __VA_ARGS__
+#define CASE(TYPE, STMTS)             \
+  case DataTypeToEnum<TYPE>::value: { \
+    typedef TYPE T;                   \
+    STMTS;                            \
+    break;                            \
+  }
+#define CASES_WITH_DEFAULT(TYPE_ENUM, STMTS, INVALID, DEFAULT) \
+  switch (TYPE_ENUM) {                                         \
+    CASE(float, SINGLE_ARG(STMTS))                             \
+    CASE(double, SINGLE_ARG(STMTS))                            \
+    CASE(int32, SINGLE_ARG(STMTS))                             \
+    CASE(uint8, SINGLE_ARG(STMTS))                             \
+    CASE(uint16, SINGLE_ARG(STMTS))                            \
+    CASE(uint32, SINGLE_ARG(STMTS))                            \
+    CASE(uint64, SINGLE_ARG(STMTS))                            \
+    CASE(int16, SINGLE_ARG(STMTS))                             \
+    CASE(int8, SINGLE_ARG(STMTS))                              \
+    CASE(tstring, SINGLE_ARG(STMTS))                           \
+    CASE(complex64, SINGLE_ARG(STMTS))                         \
+    CASE(complex128, SINGLE_ARG(STMTS))                        \
+    CASE(int64, SINGLE_ARG(STMTS))                             \
+    CASE(bool, SINGLE_ARG(STMTS))                              \
+    CASE(qint32, SINGLE_ARG(STMTS))                            \
+    CASE(quint8, SINGLE_ARG(STMTS))                            \
+    CASE(qint8, SINGLE_ARG(STMTS))                             \
+    CASE(quint16, SINGLE_ARG(STMTS))                           \
+    CASE(qint16, SINGLE_ARG(STMTS))                            \
+    CASE(bfloat16, SINGLE_ARG(STMTS))                          \
+    CASE(Eigen::half, SINGLE_ARG(STMTS))                       \
+    CASE(ResourceHandle, SINGLE_ARG(STMTS))                    \
+    CASE(Variant, SINGLE_ARG(STMTS))                           \
+    case DT_INVALID:                                           \
+      INVALID;                                                 \
+      break;                                                   \
+    default:                                                   \
+      DEFAULT;                                                 \
+      break;                                                   \
+  }
+
+#define CASES(TYPE_ENUM, STMTS)                                      \
+  CASES_WITH_DEFAULT(TYPE_ENUM, STMTS,                               \
+                     LOG(FATAL) << "Unexpected type: " << TYPE_ENUM; \
+                     , LOG(FATAL) << "Type not set";)
+
+Tensor::Tensor(Allocator* a, DataType type, const TensorShape& shape)
+    : shape_(shape), buf_(nullptr) {
+  set_dtype(type);
+  CHECK_NOTNULL(a);
+  if (shape_.num_elements() > 0 || a->AllocatesOpaqueHandle()) {
+    CASES(type, buf_ = new Buffer<T>(a, shape.num_elements()));
+  }
+  if (MemoryLoggingEnabled() && buf_ != nullptr && buf_->data() != nullptr) {
+    LogMemory::RecordTensorAllocation("Unknown", LogMemory::UNKNOWN_STEP_ID,
+                                      *this);
+  }
+}
+
+Tensor::Tensor(Allocator* a, DataType type, const TensorShape& shape,
+               const AllocationAttributes& allocation_attr)
+    : shape_(shape), buf_(nullptr) {
+  set_dtype(type);
+  CHECK_NOTNULL(a);
+  if (shape_.num_elements() > 0 || a->AllocatesOpaqueHandle()) {
+    CASES(type, buf_ = new Buffer<T>(a, shape.num_elements(), allocation_attr));
+  }
+  if (MemoryLoggingEnabled() && !allocation_attr.allocation_will_be_logged &&
+      buf_ != nullptr && buf_->data() != nullptr) {
+    LogMemory::RecordTensorAllocation("Unknown (with attributes)",
+                                      LogMemory::UNKNOWN_STEP_ID, *this);
+  }
+}
+
+// NOTE(mrry): The default allocator for a Tensor (when none is specified) is
+// the default CPU allocator for NUMA zone 0. Accessing that currently involves
+// acquiring a lock, which guards initialization of the per-NUMA zone
+// allocators, and becomes highly contended.
+//
+// Note also that it would be better if all Tensor allocations required the user
+// to specify an allocator, for purposes of accounting, etc. However, the
+// default allocator is widely used throughout the codebase and in client code.
+static Allocator* get_default_cpu_allocator() {
+  static Allocator* default_cpu_allocator =
+      cpu_allocator(port::kNUMANoAffinity);
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: viewcode
+{
+  "ref": "4c0b84bf2a714bcdd18da1f1f94d533d72399d52",
+  "path": "tensorflow/core/framework/tensor.h",
+  "startline": 145,
+  "endline": 190
+}
+Here are lines 145 through 190.
+
+  /// and LogMemory::RecordTensorAllocation should be called after the
+  /// tensor is constructed. Calling the Tensor constructor directly
+  /// from within an Op is deprecated: use the
+  /// OpKernelConstruction/OpKernelContext allocate_* methods to
+  /// allocate a new tensor, which record the kernel and step.
+  ///
+  /// `a` must outlive the lifetime of this Tensor.
+  Tensor(Allocator* a, DataType type, const TensorShape& shape,
+         const AllocationAttributes& allocation_attr);
+
+  /// \brief Creates a tensor with the input datatype, shape and buf.
+  ///
+  /// Acquires a ref on buf that belongs to this Tensor.
+  Tensor(DataType type, const TensorShape& shape, TensorBuffer* buf);
+
+  /// \brief Creates an empty Tensor of the given data type.
+  ///
+  /// Like Tensor(), returns a 1-dimensional, 0-element Tensor with
+  /// IsInitialized() returning True. See the Tensor() documentation
+  /// for details.
+  explicit Tensor(DataType type);
+
+ private:
+  // A tag type for selecting the `Tensor` constructor overload that creates a
+  // scalar tensor in host memory.
+  struct host_scalar_tag {};
+
+  class HostScalarTensorBufferBase;
+  template <typename T>
+  struct ValueAndTensorBuffer;
+
+  // Creates a tensor with the given scalar `value` in CPU memory.
+  template <typename T>
+  Tensor(T value, host_scalar_tag tag);
+
+ public:
+  // A series of specialized constructors for scalar tensors in host memory.
+  //
+  // NOTE: The `Variant` host-scalar constructor is not defined, because Variant
+  // is implicitly constructible from many different types, and this causes
+  // ambiguities with some compilers.
+  explicit Tensor(float scalar_value)
+      : Tensor(scalar_value, host_scalar_tag{}) {}
+  explicit Tensor(double scalar_value)
+      : Tensor(scalar_value, host_scalar_tag{}) {}
+  explicit Tensor(int32 scalar_value)
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: viewcode
+{
+  "ref": "4c0b84bf2a714bcdd18da1f1f94d533d72399d52",
+  "path": "tensorflow/core/util/tensor_slice_reader.cc",
+  "startline": 235,
+  "endline": 270
+}
+Here are lines 235 through 270.
+
+    mutex_lock l(mu_);
+    const TensorSliceSet* tss = gtl::FindPtrOrNull(tensors_, name);
+    if (tss == nullptr) {
+      return errors::NotFound(name, " not found in checkpoint file");
+    }
+
+    if (tss->Slices().size() > 1) {
+      // TODO(sherrym): Support multi-slice checkpoints.
+      return errors::Unimplemented("Sliced checkpoints are not supported");
+    }
+
+    type = tss->type();
+    shape = tss->shape();
+    slice = tss->Slices().begin()->second.slice;
+  }
+
+  std::unique_ptr<tensorflow::Tensor> t(new tensorflow::Tensor(type, shape));
+  bool success = false;
+
+#define READER_COPY(dt)                                                  \
+  case dt:                                                               \
+    success = CopySliceData(name, slice,                                 \
+                            t->flat<EnumToDataType<dt>::Type>().data()); \
+    break;
+
+  switch (type) {
+    READER_COPY(DT_FLOAT);
+    READER_COPY(DT_DOUBLE);
+    READER_COPY(DT_INT32);
+    READER_COPY(DT_UINT8);
+    READER_COPY(DT_INT16);
+    READER_COPY(DT_INT8);
+    READER_COPY(DT_INT64);
+    READER_COPY(DT_STRING);
+    default:
+      return errors::Unimplemented("Data type not supported");
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: viewcode
+{
+  "ref": "4c0b84bf2a714bcdd18da1f1f94d533d72399d52",
+  "path": "tensorflow/core/util/tensor_slice_reader_test.cc",
+  "startline": 1,
+  "endline": 340
+}
+Here are lines 1 through 340.
+
+/* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+==============================================================================*/
+
+#include <utility>
+
+#include "tensorflow/core/util/tensor_slice_reader.h"
+
+#include "tensorflow/core/framework/types.h"
+#include "tensorflow/core/framework/versions.pb.h"
+#include "tensorflow/core/lib/core/status_test_util.h"
+#include "tensorflow/core/lib/core/stringpiece.h"
+#include "tensorflow/core/lib/io/path.h"
+#include "tensorflow/core/lib/strings/str_util.h"
+#include "tensorflow/core/lib/strings/strcat.h"
+#include "tensorflow/core/platform/env.h"
+#include "tensorflow/core/platform/logging.h"
+#include "tensorflow/core/platform/protobuf.h"
+#include "tensorflow/core/platform/test.h"
+#include "tensorflow/core/platform/types.h"
+#include "tensorflow/core/public/version.h"
+#include "tensorflow/core/util/saved_tensor_slice_util.h"
+#include "tensorflow/core/util/tensor_slice_reader_cache.h"
+#include "tensorflow/core/util/tensor_slice_writer.h"
+
+namespace tensorflow {
+
+namespace checkpoint {
+
+namespace {
+
+// A simple test where we write a few tensor slices with a number of tensor
+// slice writers and then read them back from a tensor slice reader.
+//
+// We have a 2-d tensor of shape 4 X 5 that looks like this:
+//
+//   0   1   2   3   4
+//   5   6   7   8   9
+//  10  11  12  13  14
+//  15  16  17  18  19
+//
+// We assume this is a row-major matrix.
+
+void SimpleFloatHelper(
+    const TensorSliceWriter::CreateBuilderFunction& create_function,
+    TensorSliceReader::OpenTableFunction open_function) {
+  const string fname_base = io::JoinPath(testing::TmpDir(), "float_checkpoint");
+
+  TensorShape shape({4, 5});
+
+  // File #0 contains a slice that is the top two rows:
+  //
+  //   0   1   2   3   4
+  //   5   6   7   8   9
+  //   .   .   .   .   .
+  //   .   .   .   .   .
+  {
+    const string fname = strings::StrCat(fname_base, "_0");
+    TensorSliceWriter writer(fname, create_function);
+    const float data[] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9};
+    TensorSlice slice = TensorSlice::ParseOrDie("0,2:-");
+    TF_CHECK_OK(writer.Add("test", shape, slice, data));
+    TF_CHECK_OK(writer.Finish());
+  }
+
+  // File #1 contains two slices:
+  //
+  // slice #0 is the bottom left corner
+  //   .   .   .   .   .
+  //   .   .   .   .   .
+  //  10  11  12   .   .
+  //  15  16  17   .   .
+  //
+  // slice #1 is the bottom right corner
+  //   .   .   .   .   .
+  //   .   .   .   .   .
+  //   .   .   .   .   .
+  //   .   .   .  18  19
+  {
+    const string fname = strings::StrCat(fname_base, "_1");
+    TensorSliceWriter writer(fname, create_function);
+    // slice #0
+    {
+      const float data[] = {10, 11, 12, 15, 16, 17};
+      TensorSlice slice = TensorSlice::ParseOrDie("2,2:0,3");
+      TF_CHECK_OK(writer.Add("test", shape, slice, data));
+    }
+    // slice #1
+    {
+      const float data[] = {18, 19};
+      TensorSlice slice = TensorSlice::ParseOrDie("3,1:3,2");
+      TF_CHECK_OK(writer.Add("test", shape, slice, data));
+    }
+    TF_CHECK_OK(writer.Finish());
+  }
+
+  // Notice that we leave a hole in the tensor
+  //   .   .   .   .   .
+  //   .   .   .   .   .
+  //   .   .   . (13) (14)
+  //   .   .   .   .   .
+
+  // Now we need to read the tensor slices
+  const string filepattern = strings::StrCat(fname_base, "_*");
+  TensorSliceReader reader(filepattern, std::move(open_function));
+  TF_EXPECT_OK(reader.status());
+  EXPECT_EQ(2, reader.num_files());
+
+  // We query some of the tensors
+  {
+    TensorShape shape;
+    DataType type;
+    EXPECT_TRUE(reader.HasTensor("test", &shape, &type));
+    EXPECT_EQ("[4,5]", shape.DebugString());
+    EXPECT_EQ(DT_FLOAT, type);
+    EXPECT_FALSE(reader.HasTensor("don't exist", nullptr, nullptr));
+  }
+
+  // Now we query some slices
+  //
+  // Slice #1 is an exact match
+  //   0   1   2   3   4
+  //   5   6   7   8   9
+  //   .   .   .   .   .
+  //   .   .   .   .   .
+  {
+    TensorSlice s = TensorSlice::ParseOrDie("0,2:-");
+    float expected[] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9};
+    float results[10];
+    EXPECT_TRUE(reader.CopySliceData("test", s, results));
+    for (int i = 0; i < 10; ++i) {
+      EXPECT_EQ(expected[i], results[i]);
+    }
+  }
+
+  // Slice #2 is a subset match
+  //   .   .   .   .   .
+  //   5   6   7   8   9
+  //   .   .   .   .   .
+  //   .   .   .   .   .
+  {
+    TensorSlice s = TensorSlice::ParseOrDie("1,1:-");
+    float expected[] = {5, 6, 7, 8, 9};
+    float results[5];
+    EXPECT_TRUE(reader.CopySliceData("test", s, results));
+    for (int i = 0; i < 5; ++i) {
+      EXPECT_EQ(expected[i], results[i]);
+    }
+  }
+
+  // Slice #4 includes the hole and so there is no match
+  //   .   .   .   .   .
+  //   .   .   7   8   9
+  //   .   .  12  13  14
+  //   .   .   .   .   .
+  {
+    TensorSlice s = TensorSlice::ParseOrDie("1,2:2,3");
+    float results[6];
+    EXPECT_FALSE(reader.CopySliceData("test", s, results));
+  }
+}
+
+TEST(TensorSliceReaderTest, SimpleFloat) {
+  SimpleFloatHelper(CreateTableTensorSliceBuilder, OpenTableTensorSliceReader);
+}
+
+template <typename T, typename U>
+void SimpleIntXHelper(
+    const TensorSliceWriter::CreateBuilderFunction& create_function,
+    TensorSliceReader::OpenTableFunction open_function,
+    const string& checkpoint_file) {
+  const string fname_base = io::JoinPath(testing::TmpDir(), checkpoint_file);
+
+  TensorShape shape({4, 5});
+
+  // File #0 contains a slice that is the top two rows:
+  //
+  //   0   1   2   3   4
+  //   5   6   7   8   9
+  //   .   .   .   .   .
+  //   .   .   .   .   .
+  {
+    const string fname = strings::StrCat(fname_base, "_0");
+    TensorSliceWriter writer(fname, create_function);
+    const T data[] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9};
+    TensorSlice slice = TensorSlice::ParseOrDie("0,2:-");
+    TF_CHECK_OK(writer.Add("test", shape, slice, data));
+    TF_CHECK_OK(writer.Finish());
+  }
+
+  // File #1 contains two slices:
+  //
+  // slice #0 is the bottom left corner
+  //   .   .   .   .   .
+  //   .   .   .   .   .
+  //  10  11  12   .   .
+  //  15  16  17   .   .
+  //
+  // slice #1 is the bottom right corner
+  //   .   .   .   .   .
+  //   .   .   .   .   .
+  //   .   .   .   .   .
+  //   .   .   .  18  19
+  {
+    const string fname = strings::StrCat(fname_base, "_1");
+    TensorSliceWriter writer(fname, create_function);
+    // slice #0
+    {
+      const T data[] = {10, 11, 12, 15, 16, 17};
+      TensorSlice slice = TensorSlice::ParseOrDie("2,2:0,3");
+      TF_CHECK_OK(writer.Add("test", shape, slice, data));
+    }
+    // slice #1
+    {
+      const T data[] = {18, 19};
+      TensorSlice slice = TensorSlice::ParseOrDie("3,1:3,2");
+      TF_CHECK_OK(writer.Add("test", shape, slice, data));
+    }
+    TF_CHECK_OK(writer.Finish());
+  }
+
+  // Notice that we leave a hole in the tensor
+  //   .   .   .   .   .
+  //   .   .   .   .   .
+  //   .   .   . (13) (14)
+  //   .   .   .   .   .
+
+  // Now we need to read the tensor slices
+  const string filepattern = strings::StrCat(fname_base, "_*");
+  TensorSliceReader reader(filepattern, std::move(open_function));
+  TF_EXPECT_OK(reader.status());
+  EXPECT_EQ(2, reader.num_files());
+
+  // We query some of the tensors
+  {
+    TensorShape shape;
+    DataType type;
+    EXPECT_TRUE(reader.HasTensor("test", &shape, &type));
+    EXPECT_EQ("[4,5]", shape.DebugString());
+    EXPECT_EQ(DataTypeToEnum<T>::v(), type);
+    EXPECT_FALSE(reader.HasTensor("don't exist", nullptr, nullptr));
+  }
+
+  // Now we query some slices
+  //
+  // Slice #1 is an exact match
+  //   0   1   2   3   4
+  //   5   6   7   8   9
+  //   .   .   .   .   .
+  //   .   .   .   .   .
+  {
+    TensorSlice s = TensorSlice::ParseOrDie("0,2:-");
+    T expected[] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9};
+    U results[10];
+    EXPECT_TRUE(reader.CopySliceData("test", s, results));
+    for (int i = 0; i < 10; ++i) {
+      EXPECT_EQ(expected[i], results[i]);
+    }
+  }
+
+  // Slice #2 is a subset match
+  //   .   .   .   .   .
+  //   5   6   7   8   9
+  //   .   .   .   .   .
+  //   .   .   .   .   .
+  {
+    TensorSlice s = TensorSlice::ParseOrDie("1,1:-");
+    T expected[] = {5, 6, 7, 8, 9};
+    U results[5];
+    EXPECT_TRUE(reader.CopySliceData("test", s, results));
+    for (int i = 0; i < 5; ++i) {
+      EXPECT_EQ(expected[i], results[i]);
+    }
+  }
+
+  // Slice #4 includes the hole and so there is no match
+  //   .   .   .   .   .
+  //   .   .   7   8   9
+  //   .   .  12  13  14
+  //   .   .   .   .   .
+  {
+    TensorSlice s = TensorSlice::ParseOrDie("1,2:2,3");
+    U results[6];
+    EXPECT_FALSE(reader.CopySliceData("test", s, results));
+  }
+}
+
+#define TEST_SIMPLE_INT(TYPE, SAVED_TYPE)                             \
+  TEST(TensorSliceReaderTest, Simple##TYPE) {                         \
+    SimpleIntXHelper<TYPE, SAVED_TYPE>(CreateTableTensorSliceBuilder, \
+                                       OpenTableTensorSliceReader,    \
+                                       #TYPE "_checkpoint");          \
+  }
+
+TEST_SIMPLE_INT(int32, int32)
+TEST_SIMPLE_INT(int64, int64)
+TEST_SIMPLE_INT(int16, int32)
+TEST_SIMPLE_INT(int8, int32)
+TEST_SIMPLE_INT(uint8, int32)
+
+void CachedTensorSliceReaderTesterHelper(
+    const TensorSliceWriter::CreateBuilderFunction& create_function,
+    const TensorSliceReader::OpenTableFunction& open_function) {
+  const string fname_base = io::JoinPath(testing::TmpDir(), "float_checkpoint");
+
+  TensorShape shape({4, 5});
+
+  // File #0 contains a slice that is the top two rows:
+  //
+  //   0   1   2   3   4
+  //   5   6   7   8   9
+  //   .   .   .   .   .
+  //   .   .   .   .   .
+  {
+    const string fname = strings::StrCat(fname_base, "_0");
+    TensorSliceWriter writer(fname, create_function);
+    const float data[] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9};
+    TensorSlice slice = TensorSlice::ParseOrDie("0,2:-");
+    TF_CHECK_OK(writer.Add("test", shape, slice, data));
+    TF_CHECK_OK(writer.Finish());
+  }
+
+  // File #1 contains two slices:
+  //
+  // slice #0 is the bottom left corner
+  //   .   .   .   .   .
+  //   .   .   .   .   .
+  //  10  11  12   .   .
+  //  15  16  17   .   .
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tokens used
+input: 292
+cache read: 10,752
+cache write: 0
+output: 309
+reasoning output: 0
+
+The target release already has similar locations and APIs, but `tensor.cc` uses `tensorflow/core/lib/core/errors.h` rather than the newer `platform/errors.h`, so the backport should avoid adding a nonmatching dependency/include unless needed. I’m checking the exact Bazel target before editing.
+
+tool: grep
+{
+  "pattern": "name = \"tensor\"|tensor.cc|platform:errors|lib/core:errors",
+  "path": "tensorflow/core/framework/BUILD",
+  "include": "BUILD"
+}
+Found 13 matches
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0085-4c0b84bf2a71\tensorflow\core\framework\BUILD:
+  Line 315:         "tensor.cc",
+
+  Line 676:         "//tensorflow/core/lib/core:errors",
+
+  Line 735:     name = "tensor",
+
+  Line 738:         "tensor.cc",
+
+  Line 777:         "//tensorflow/core/lib/core:errors",
+
+  Line 814:         "//tensorflow/core/lib/core:errors",
+
+  Line 832:         "//tensorflow/core/lib/core:errors",
+
+  Line 847:         "//tensorflow/core/lib/core:errors",
+
+  Line 867:         "//tensorflow/core/lib/core:errors",
+
+  Line 889:         "//tensorflow/core/lib/core:errors",
+
+  Line 924:         "//tensorflow/core/platform:errors",
+
+  Line 962:         "//tensorflow/core/lib/core:errors",
+
+  Line 1000:         "//tensorflow/core/lib/core:errors",
+
+tokens used
+input: 11,776
+cache read: 10,752
+cache write: 0
+output: 114
+reasoning output: 15
+
+tool: read
+{
+  "filePath": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0085-4c0b84bf2a71\\tensorflow\\core\\framework\\BUILD",
+  "offset": 735,
+  "limit": 55
+}
+<path>C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0085-4c0b84bf2a71\tensorflow\core\framework\BUILD</path>
+<type>file</type>
+<content>
+735:     name = "tensor",
+736:     srcs = [
+737:         "log_memory.cc",
+738:         "tensor.cc",
+739:         "typed_allocator.cc",
+740:         "types.cc",
+741:         "variant.cc",
+742:         "variant_op_registry.cc",
+743:         "variant_tensor_data.cc",
+744:     ],
+745:     hdrs = [
+746:         "log_memory.h",
+747:         "register_types.h",
+748:         "tensor.h",
+749:         "typed_allocator.h",
+750:         "types.h",
+751:         "variant.h",
+752:         "variant_encode_decode.h",
+753:         "variant_op_registry.h",
+754:         "variant_tensor_data.h",
+755:     ],
+756:     visibility = [
+757:         "//tensorflow/core:__pkg__",
+758:         "//tensorflow/core/util:__pkg__",
+759:         "//tensorflow/security/fuzzing:__subpackages__",
+760:     ],
+761:     deps = [
+762:         ":allocation_description_proto_cc",
+763:         ":allocator",
+764:         ":bfloat16",
+765:         ":log_memory_proto_cc",
+766:         ":numeric_types",
+767:         ":resource_handle",
+768:         ":resource_handle_proto_cc",
+769:         ":tensor_description_proto_cc",
+770:         ":tensor_proto_cc",
+771:         ":tensor_shape",
+772:         ":tensor_types",
+773:         ":type_index",
+774:         ":type_traits",
+775:         ":types_proto_cc",
+776:         "//tensorflow/core/lib/core:coding",
+777:         "//tensorflow/core/lib/core:errors",
+778:         "//tensorflow/core/lib/core:refcount",
+779:         "//tensorflow/core/lib/core:status",
+780:         "//tensorflow/core/lib/core:stringpiece",
+781:         "//tensorflow/core/lib/gtl:array_slice",
+782:         "//tensorflow/core/lib/gtl:flatmap",
+783:         "//tensorflow/core/lib/gtl:inlined_vector",
+784:         "//tensorflow/core/lib/hash",
+785:         "//tensorflow/core/lib/strings:str_util",
+786:         "//tensorflow/core/lib/strings:strcat",
+787:         "//tensorflow/core/platform:abi",
+788:         "//tensorflow/core/platform:logging",
+789:         "//tensorflow/core/platform:macros",
+
+(Showing lines 735-789 of 1654. Use offset=790 to continue.)
+</content>
+
+tokens used
+input: 890
+cache read: 22,016
+cache write: 0
+output: 73
+reasoning output: 0
+
+I’m applying the factory-based validation in `Tensor::BuildTensor`, switching checkpoint tensor allocation to use it, and adding regression tests that mutate checkpoint metadata to cover unset and ref datatypes.
+
+tool: grep
+{
+  "pattern": "tensor_slice_reader_test|saved_tensor_slice|table_builder|core/lib/io:table",
+  "path": "tensorflow/core/util/BUILD",
+  "include": "BUILD"
+}
+Found 11 matches
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0085-4c0b84bf2a71\tensorflow\core\util\BUILD:
+  Line 54:         "saved_tensor_slice.proto",
+
+  Line 115:         "saved_tensor_slice_util.cc",
+
+  Line 116:         "saved_tensor_slice_util.h",
+
+  Line 175:         "saved_tensor_slice_util.h",
+
+  Line 226:         "saved_tensor_slice_util.cc",
+
+  Line 352:         "saved_tensor_slice_util.h",
+
+  Line 726:         "saved_tensor_slice_util_test.cc",
+
+  Line 730:         "tensor_slice_reader_test.cc",
+
+  Line 845:     name = "saved_tensor_slice_proto",
+
+  Line 846:     srcs = ["saved_tensor_slice.proto"],
+
+  Line 874:         ":saved_tensor_slice_proto",
+
+tokens used
+input: 1,541
+cache read: 22,016
+cache write: 0
+output: 93
+reasoning output: 44
+
+tool: read
+{
+  "filePath": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0085-4c0b84bf2a71\\tensorflow\\core\\util\\BUILD",
+  "offset": 700,
+  "limit": 80
+}
+<path>C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0085-4c0b84bf2a71\tensorflow\core\util\BUILD</path>
+<type>file</type>
+<content>
+700:         "gpu_kernel_helper_test.cu.cc",
+701:     ],
+702:     deps = [
+703:         "//tensorflow/core:test",
+704:         "//tensorflow/core:test_main",
+705:         "//third_party/eigen3",
+706:     ],
+707: )
+708: 
+709: tf_cc_tests(
+710:     name = "higher_level_tests",
+711:     size = "small",
+712:     srcs = [
+713:         "bcast_test.cc",
+714:         "command_line_flags_test.cc",
+715:         "device_name_utils_test.cc",
+716:         "dump_graph_test.cc",
+717:         "equal_graph_def_test.cc",
+718:         "events_writer_test.cc",
+719:         "example_proto_fast_parsing_test.cc",
+720:         "example_proto_helper_test.cc",
+721:         "matmul_bcast_test.cc",
+722:         "memmapped_file_system_test.cc",
+723:         "presized_cuckoo_map_test.cc",
+724:         "reffed_status_callback_test.cc",
+725:         "reporter_test.cc",
+726:         "saved_tensor_slice_util_test.cc",
+727:         "semver_test.cc",
+728:         "stat_summarizer_test.cc",
+729:         "tensor_format_test.cc",
+730:         "tensor_slice_reader_test.cc",
+731:         "tensor_slice_set_test.cc",
+732:         "tensor_slice_util_test.cc",
+733:         "tensor_slice_writer_test.cc",
+734:         "work_sharder_test.cc",
+735:     ],
+736:     linkopts = select({
+737:         "//tensorflow:macos": ["-headerpad_max_install_names"],
+738:         "//conditions:default": [],
+739:     }),
+740:     linkstatic = tf_kernel_tests_linkstatic(),
+741:     visibility = [
+742:         "//tensorflow/core:__pkg__",
+743:     ],
+744:     deps = [
+745:         ":protos_test_cc",
+746:         "//tensorflow/cc:cc_ops",
+747:         "//tensorflow/cc:cc_ops_internal",
+748:         "//tensorflow/cc:function_ops",
+749:         "//tensorflow/cc:ops",
+750:         "//tensorflow/cc:scope",
+751:         "//tensorflow/cc:sendrecv_ops",
+752:         "//tensorflow/cc:while_loop",
+753:         "//tensorflow/core",
+754:         "//tensorflow/core:core_cpu",
+755:         "//tensorflow/core:core_cpu_internal",
+756:         "//tensorflow/core:framework",
+757:         "//tensorflow/core:framework_internal",
+758:         "//tensorflow/core:lib",
+759:         "//tensorflow/core:lib_internal",
+760:         "//tensorflow/core:ops",
+761:         "//tensorflow/core:protos_all_cc",
+762:         "//tensorflow/core:test",
+763:         "//tensorflow/core:test_main",
+764:         "//tensorflow/core:testlib",
+765:         "//tensorflow/core/common_runtime:direct_session_internal",
+766:         "//tensorflow/core/kernels:ops_util",
+767:         "//tensorflow/core/platform:regexp",
+768:         "//third_party/eigen3",
+769:         "@com_google_absl//absl/base",
+770:         "@com_google_absl//absl/container:flat_hash_set",
+771:         "@com_google_absl//absl/memory",
+772:         "@com_google_absl//absl/strings",
+773:     ],
+774: )
+775: 
+776: tf_cc_test(
+777:     name = "debug_events_writer_test",
+778:     size = "small",
+779:     srcs = ["debug_events_writer_test.cc"],
+
+(Showing lines 700-779 of 880. Use offset=780 to continue.)
+</content>
+
+tokens used
+input: 875
+cache read: 23,040
+cache write: 0
+output: 73
+reasoning output: 0
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/framework/tensor.cc\n@@\n-#define CASE(TYPE, STMTS)             \\\n-  case DataTypeToEnum<TYPE>::value: { \\\n-    typedef TYPE T;                   \\\n-    STMTS;                            \\\n-    break;                            \\\n+#define CASE(TYPE, STMTS)               \\\n+  case DataTypeToEnum<TYPE>::value: {   \\\n+    typedef TF_ATTRIBUTE_UNUSED TYPE T; \\\n+    STMTS;                              \\\n+    break;                              \\\n   }\n@@\n-#define CASES(TYPE_ENUM, STMTS)                                      \\\n-  CASES_WITH_DEFAULT(TYPE_ENUM, STMTS,                               \\\n-                     LOG(FATAL) << \"Unexpected type: \" << TYPE_ENUM; \\\n-                     , LOG(FATAL) << \"Type not set\";)\n+#define CASES(TYPE_ENUM, STMTS)                                      \\\n+  CASES_WITH_DEFAULT(TYPE_ENUM, STMTS, LOG(FATAL) << \"Type not set\"; \\\n+                     , LOG(FATAL) << \"Unexpected type: \" << TYPE_ENUM;)\n@@\n Tensor::Tensor(Allocator* a, DataType type, const TensorShape& shape,\n                const AllocationAttributes& allocation_attr)\n     : shape_(shape), buf_(nullptr) {\n@@\n   }\n }\n+\n+Status Tensor::BuildTensor(DataType type, const TensorShape& shape,\n+                           Tensor* out_tensor) {\n+  // Avoid crashes due to invalid or unsupported types.\n+  CASES_WITH_DEFAULT(\n+      type, {}, return errors::InvalidArgument(\"Type not set\"),\n+      return errors::InvalidArgument(\"Unexpected type: \", DataType_Name(type)));\n+  *out_tensor = Tensor(type, shape);\n+  return Status::OK();\n+}\n \n // NOTE(mrry): The default allocator for a Tensor (when none is specified) is\n*** Update File: tensorflow/core/framework/tensor.h\n@@\n   /// IsInitialized() returning True. See the Tensor() documentation\n   /// for details.\n   explicit Tensor(DataType type);\n+\n+  /// \\brief Initializes a tensor with the input `type` and `shape`, or returns\n+  /// an error and leaves `out_tensor` unmodified. This factory method should be\n+  /// used instead of the corresponding constructor if calling code cannot\n+  /// validate that the `DataType` is valid and supported.\n+  ///\n+  /// The underlying buffer is allocated using a `CPUAllocator`.\n+  static Status BuildTensor(DataType type, const TensorShape& shape,\n+                            Tensor* out_tensor);\n \n  private:\n*** Update File: tensorflow/core/util/tensor_slice_reader.cc\n@@\n-  std::unique_ptr<tensorflow::Tensor> t(new tensorflow::Tensor(type, shape));\n+  std::unique_ptr<tensorflow::Tensor> t(new tensorflow::Tensor);\n+  Status s = tensorflow::Tensor::BuildTensor(type, shape, t.get());\n+  if (!s.ok()) return s;\n   bool success = false;\n*** Update File: tensorflow/core/util/tensor_slice_reader_test.cc\n@@\n-#include <utility>\n-\n #include \"tensorflow/core/util/tensor_slice_reader.h\"\n \n+#include <utility>\n+#include <vector>\n+\n #include \"tensorflow/core/framework/types.h\"\n #include \"tensorflow/core/framework/versions.pb.h\"\n #include \"tensorflow/core/lib/core/status_test_util.h\"\n #include \"tensorflow/core/lib/core/stringpiece.h\"\n+#include \"tensorflow/core/lib/io/iterator.h\"\n #include \"tensorflow/core/lib/io/path.h\"\n+#include \"tensorflow/core/lib/io/table.h\"\n+#include \"tensorflow/core/lib/io/table_builder.h\"\n #include \"tensorflow/core/lib/strings/str_util.h\"\n #include \"tensorflow/core/lib/strings/strcat.h\"\n #include \"tensorflow/core/platform/env.h\"\n@@\n #include \"tensorflow/core/platform/test.h\"\n #include \"tensorflow/core/platform/types.h\"\n #include \"tensorflow/core/public/version.h\"\n+#include \"tensorflow/core/util/saved_tensor_slice.pb.h\"\n #include \"tensorflow/core/util/saved_tensor_slice_util.h\"\n #include \"tensorflow/core/util/tensor_slice_reader_cache.h\"\n #include \"tensorflow/core/util/tensor_slice_writer.h\"\n@@\n TEST_SIMPLE_INT(int16, int32)\n TEST_SIMPLE_INT(int8, int32)\n TEST_SIMPLE_INT(uint8, int32)\n+\n+// Modifies the SavedTensorSlices messages in a checkpoint to allow creating\n+// malformed or unsupported checkpoints.\n+void MutateSavedTensorSlices(\n+    const std::string& fname,\n+    const std::function<std::string(SavedTensorSlices)>& mutator) {\n+  table::Options options;\n+  options.compression = table::kNoCompression;\n+\n+  // Read all entries from the table.\n+  std::vector<std::pair<std::string, std::string>> entries;\n+  {\n+    std::unique_ptr<RandomAccessFile> file;\n+    TF_CHECK_OK(Env::Default()->NewRandomAccessFile(fname, &file));\n+    uint64 file_size;\n+    TF_CHECK_OK(Env::Default()->GetFileSize(fname, &file_size));\n+    table::Table* t;\n+    TF_CHECK_OK(table::Table::Open(options, file.get(), file_size, &t));\n+    std::unique_ptr<table::Table> table(t);\n+    std::unique_ptr<table::Iterator> it(table->NewIterator());\n+    for (it->Seek(\"\"); it->Valid(); it->Next()) {\n+      entries.emplace_back(it->key(), it->value());\n+    }\n+    TF_CHECK_OK(it->status());\n+  }\n+\n+  // Rewrite the table, mutating each value.\n+  {\n+    std::unique_ptr<WritableFile> file;\n+    TF_CHECK_OK(Env::Default()->NewWritableFile(fname, &file));\n+    table::TableBuilder builder(options, file.get());\n+    for (const auto& entry : entries) {\n+      SavedTensorSlices sts;\n+      CHECK(sts.ParseFromString(entry.second));\n+      builder.Add(entry.first, mutator(std::move(sts)));\n+    }\n+    TF_CHECK_OK(builder.Finish());\n+    TF_CHECK_OK(file->Close());\n+  }\n+}\n+\n+TEST(TensorSliceReaderTest, MissingTensorType) {\n+  const string fname = io::JoinPath(testing::TmpDir(), \"invalid_checkpoint\");\n+  TensorSliceWriter writer(fname, CreateTableTensorSliceBuilder);\n+  const int32 data[] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9};\n+  TensorShape shape({4, 5});\n+  TensorSlice slice = TensorSlice::ParseOrDie(\"0,2:-\");\n+  TF_CHECK_OK(writer.Add(\"test\", shape, slice, data));\n+  TF_CHECK_OK(writer.Finish());\n+\n+  MutateSavedTensorSlices(fname, [](SavedTensorSlices sts) {\n+    if (sts.has_meta()) {\n+      for (auto& tensor : *sts.mutable_meta()->mutable_tensor()) {\n+        tensor.clear_type();\n+      }\n+    }\n+    return sts.SerializeAsString();\n+  });\n+\n+  TensorSliceReader reader(fname, OpenTableTensorSliceReader);\n+  TF_CHECK_OK(reader.status());\n+\n+  // The tensor should be present, but loading it should fail due to the\n+  // unset (invalid) type.\n+  EXPECT_TRUE(reader.HasTensor(\"test\", nullptr, nullptr));\n+  std::unique_ptr<Tensor> tensor;\n+  EXPECT_FALSE(reader.GetTensor(\"test\", &tensor).ok());\n+}\n+\n+TEST(TensorSliceReaderTest, UnsupportedTensorType) {\n+  const string fname = io::JoinPath(testing::TmpDir(), \"int32_ref_checkpoint\");\n+  TensorSliceWriter writer(fname, CreateTableTensorSliceBuilder);\n+  const int32 data[] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9};\n+  TensorShape shape({4, 5});\n+  TensorSlice slice = TensorSlice::ParseOrDie(\"0,2:-\");\n+  TF_CHECK_OK(writer.Add(\"test\", shape, slice, data));\n+  TF_CHECK_OK(writer.Finish());\n+\n+  MutateSavedTensorSlices(fname, [](SavedTensorSlices sts) {\n+    if (sts.has_meta()) {\n+      for (auto& tensor : *sts.mutable_meta()->mutable_tensor()) {\n+        tensor.set_type(DT_INT32_REF);\n+      }\n+    }\n+    return sts.SerializeAsString();\n+  });\n+\n+  TensorSliceReader reader(fname, OpenTableTensorSliceReader);\n+  TF_CHECK_OK(reader.status());\n+\n+  // The tensor should be present, but loading it should fail due to the\n+  // unsupported type.\n+  EXPECT_TRUE(reader.HasTensor(\"test\", nullptr, nullptr));\n+  std::unique_ptr<Tensor> tensor;\n+  EXPECT_FALSE(reader.GetTensor(\"test\", &tensor).ok());\n+}\n \n void CachedTensorSliceReaderTesterHelper(\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/framework/tensor.cc
+M tensorflow/core/framework/tensor.h
+M tensorflow/core/util/tensor_slice_reader.cc
+M tensorflow/core/util/tensor_slice_reader_test.cc
+
+tokens used
+input: 1,788
+cache read: 23,040
+cache write: 0
+output: 2,186
+reasoning output: 94
+
+The source edits are in place. I’m checking the resulting diff and validating that the patch applies cleanly to the specified target base.
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/framework/tensor.cc tensorflow/core/framework/tensor.h tensorflow/core/util/tensor_slice_reader.cc tensorflow/core/util/tensor_slice_reader_test.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0085-4c0b84bf2a71",
+  "timeout": 120000
+}
+warning: in the working copy of 'tensorflow/core/framework/tensor.cc', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'tensorflow/core/framework/tensor.h', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'tensorflow/core/util/tensor_slice_reader.cc', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'tensorflow/core/util/tensor_slice_reader_test.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/framework/tensor.cc b/tensorflow/core/framework/tensor.cc
+index 03499ec022..4ef7a66e13 100644
+--- a/tensorflow/core/framework/tensor.cc
++++ b/tensorflow/core/framework/tensor.cc
+@@ -725,11 +725,11 @@ bool Tensor::RefCountIsOne() const {
+ // The macro CASES() expands to a switch statement conditioned on
+ // TYPE_ENUM. Each case expands the STMTS after a typedef for T.
+ #define SINGLE_ARG(...) __VA_ARGS__
+-#define CASE(TYPE, STMTS)             \
+-  case DataTypeToEnum<TYPE>::value: { \
+-    typedef TYPE T;                   \
+-    STMTS;                            \
+-    break;                            \
++#define CASE(TYPE, STMTS)               \
++  case DataTypeToEnum<TYPE>::value: {   \
++    typedef TF_ATTRIBUTE_UNUSED TYPE T; \
++    STMTS;                              \
++    break;                              \
+   }
+ #define CASES_WITH_DEFAULT(TYPE_ENUM, STMTS, INVALID, DEFAULT) \
+   switch (TYPE_ENUM) {                                         \
+@@ -765,9 +765,8 @@ bool Tensor::RefCountIsOne() const {
+   }
+ 
+ #define CASES(TYPE_ENUM, STMTS)                                      \
+-  CASES_WITH_DEFAULT(TYPE_ENUM, STMTS,                               \
+-                     LOG(FATAL) << "Unexpected type: " << TYPE_ENUM; \
+-                     , LOG(FATAL) << "Type not set";)
++  CASES_WITH_DEFAULT(TYPE_ENUM, STMTS, LOG(FATAL) << "Type not set"; \
++                     , LOG(FATAL) << "Unexpected type: " << TYPE_ENUM;)
+ 
+ Tensor::Tensor(Allocator* a, DataType type, const TensorShape& shape)
+     : shape_(shape), buf_(nullptr) {
+@@ -797,6 +796,16 @@ Tensor::Tensor(Allocator* a, DataType type, const TensorShape& shape,
+   }
+ }
+ 
++Status Tensor::BuildTensor(DataType type, const TensorShape& shape,
++                           Tensor* out_tensor) {
++  // Avoid crashes due to invalid or unsupported types.
++  CASES_WITH_DEFAULT(
++      type, {}, return errors::InvalidArgument("Type not set"),
++      return errors::InvalidArgument("Unexpected type: ", DataType_Name(type)));
++  *out_tensor = Tensor(type, shape);
++  return Status::OK();
++}
++
+ // NOTE(mrry): The default allocator for a Tensor (when none is specified) is
+ // the default CPU allocator for NUMA zone 0. Accessing that currently involves
+ // acquiring a lock, which guards initialization of the per-NUMA zone
+diff --git a/tensorflow/core/framework/tensor.h b/tensorflow/core/framework/tensor.h
+index 6aa079e8b5..50b6c0953a 100644
+--- a/tensorflow/core/framework/tensor.h
++++ b/tensorflow/core/framework/tensor.h
+@@ -164,6 +164,15 @@ class Tensor {
+   /// for details.
+   explicit Tensor(DataType type);
+ 
++  /// \brief Initializes a tensor with the input `type` and `shape`, or returns
++  /// an error and leaves `out_tensor` unmodified. This factory method should be
++  /// used instead of the corresponding constructor if calling code cannot
++  /// validate that the `DataType` is valid and supported.
++  ///
++  /// The underlying buffer is allocated using a `CPUAllocator`.
++  static Status BuildTensor(DataType type, const TensorShape& shape,
++                            Tensor* out_tensor);
++
+  private:
+   // A tag type for selecting the `Tensor` constructor overload that creates a
+   // scalar tensor in host memory.
+diff --git a/tensorflow/core/util/tensor_slice_reader.cc b/tensorflow/core/util/tensor_slice_reader.cc
+index 58c4c22ce7..00911b13f3 100644
+--- a/tensorflow/core/util/tensor_slice_reader.cc
++++ b/tensorflow/core/util/tensor_slice_reader.cc
+@@ -248,7 +248,9 @@ Status TensorSliceReader::GetTensor(
+     slice = tss->Slices().begin()->second.slice;
+   }
+ 
+-  std::unique_ptr<tensorflow::Tensor> t(new tensorflow::Tensor(type, shape));
++  std::unique_ptr<tensorflow::Tensor> t(new tensorflow::Tensor);
++  Status s = tensorflow::Tensor::BuildTensor(type, shape, t.get());
++  if (!s.ok()) return s;
+   bool success = false;
+ 
+ #define READER_COPY(dt)                                                  \
+diff --git a/tensorflow/core/util/tensor_slice_reader_test.cc b/tensorflow/core/util/tensor_slice_reader_test.cc
+index fe617e8e30..3fc25e6f29 100644
+--- a/tensorflow/core/util/tensor_slice_reader_test.cc
++++ b/tensorflow/core/util/tensor_slice_reader_test.cc
+@@ -13,15 +13,19 @@ See the License for the specific language governing permissions and
+ limitations under the License.
+ ==============================================================================*/
+ 
+-#include <utility>
+-
+ #include "tensorflow/core/util/tensor_slice_reader.h"
+ 
++#include <utility>
++#include <vector>
++
+ #include "tensorflow/core/framework/types.h"
+ #include "tensorflow/core/framework/versions.pb.h"
+ #include "tensorflow/core/lib/core/status_test_util.h"
+ #include "tensorflow/core/lib/core/stringpiece.h"
++#include "tensorflow/core/lib/io/iterator.h"
+ #include "tensorflow/core/lib/io/path.h"
++#include "tensorflow/core/lib/io/table.h"
++#include "tensorflow/core/lib/io/table_builder.h"
+ #include "tensorflow/core/lib/strings/str_util.h"
+ #include "tensorflow/core/lib/strings/strcat.h"
+ #include "tensorflow/core/platform/env.h"
+@@ -30,6 +34,7 @@ limitations under the License.
+ #include "tensorflow/core/platform/test.h"
+ #include "tensorflow/core/platform/types.h"
+ #include "tensorflow/core/public/version.h"
++#include "tensorflow/core/util/saved_tensor_slice.pb.h"
+ #include "tensorflow/core/util/saved_tensor_slice_util.h"
+ #include "tensorflow/core/util/tensor_slice_reader_cache.h"
+ #include "tensorflow/core/util/tensor_slice_writer.h"
+@@ -309,6 +314,102 @@ TEST_SIMPLE_INT(int16, int32)
+ TEST_SIMPLE_INT(int8, int32)
+ TEST_SIMPLE_INT(uint8, int32)
+ 
++// Modifies the SavedTensorSlices messages in a checkpoint to allow creating
++// malformed or unsupported checkpoints.
++void MutateSavedTensorSlices(
++    const std::string& fname,
++    const std::function<std::string(SavedTensorSlices)>& mutator) {
++  table::Options options;
++  options.compression = table::kNoCompression;
++
++  // Read all entries from the table.
++  std::vector<std::pair<std::string, std::string>> entries;
++  {
++    std::unique_ptr<RandomAccessFile> file;
++    TF_CHECK_OK(Env::Default()->NewRandomAccessFile(fname, &file));
++    uint64 file_size;
++    TF_CHECK_OK(Env::Default()->GetFileSize(fname, &file_size));
++    table::Table* t;
++    TF_CHECK_OK(table::Table::Open(options, file.get(), file_size, &t));
++    std::unique_ptr<table::Table> table(t);
++    std::unique_ptr<table::Iterator> it(table->NewIterator());
++    for (it->Seek(""); it->Valid(); it->Next()) {
++      entries.emplace_back(it->key(), it->value());
++    }
++    TF_CHECK_OK(it->status());
++  }
++
++  // Rewrite the table, mutating each value.
++  {
++    std::unique_ptr<WritableFile> file;
++    TF_CHECK_OK(Env::Default()->NewWritableFile(fname, &file));
++    table::TableBuilder builder(options, file.get());
++    for (const auto& entry : entries) {
++      SavedTensorSlices sts;
++      CHECK(sts.ParseFromString(entry.second));
++      builder.Add(entry.first, mutator(std::move(sts)));
++    }
++    TF_CHECK_OK(builder.Finish());
++    TF_CHECK_OK(file->Close());
++  }
++}
++
++TEST(TensorSliceReaderTest, MissingTensorType) {
++  const string fname = io::JoinPath(testing::TmpDir(), "invalid_checkpoint");
++  TensorSliceWriter writer(fname, CreateTableTensorSliceBuilder);
++  const int32 data[] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9};
++  TensorShape shape({4, 5});
++  TensorSlice slice = TensorSlice::ParseOrDie("0,2:-");
++  TF_CHECK_OK(writer.Add("test", shape, slice, data));
++  TF_CHECK_OK(writer.Finish());
++
++  MutateSavedTensorSlices(fname, [](SavedTensorSlices sts) {
++    if (sts.has_meta()) {
++      for (auto& tensor : *sts.mutable_meta()->mutable_tensor()) {
++        tensor.clear_type();
++      }
++    }
++    return sts.SerializeAsString();
++  });
++
++  TensorSliceReader reader(fname, OpenTableTensorSliceReader);
++  TF_CHECK_OK(reader.status());
++
++  // The tensor should be present, but loading it should fail due to the
++  // unset (invalid) type.
++  EXPECT_TRUE(reader.HasTensor("test", nullptr, nullptr));
++  std::unique_ptr<Tensor> tensor;
++  EXPECT_FALSE(reader.GetTensor("test", &tensor).ok());
++}
++
++TEST(TensorSliceReaderTest, UnsupportedTensorType) {
++  const string fname = io::JoinPath(testing::TmpDir(), "int32_ref_checkpoint");
++  TensorSliceWriter writer(fname, CreateTableTensorSliceBuilder);
++  const int32 data[] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9};
++  TensorShape shape({4, 5});
++  TensorSlice slice = TensorSlice::ParseOrDie("0,2:-");
++  TF_CHECK_OK(writer.Add("test", shape, slice, data));
++  TF_CHECK_OK(writer.Finish());
++
++  MutateSavedTensorSlices(fname, [](SavedTensorSlices sts) {
++    if (sts.has_meta()) {
++      for (auto& tensor : *sts.mutable_meta()->mutable_tensor()) {
++        tensor.set_type(DT_INT32_REF);
++      }
++    }
++    return sts.SerializeAsString();
++  });
++
++  TensorSliceReader reader(fname, OpenTableTensorSliceReader);
++  TF_CHECK_OK(reader.status());
++
++  // The tensor should be present, but loading it should fail due to the
++  // unsupported type.
++  EXPECT_TRUE(reader.HasTensor("test", nullptr, nullptr));
++  std::unique_ptr<Tensor> tensor;
++  EXPECT_FALSE(reader.GetTensor("test", &tensor).ok());
++}
++
+ void CachedTensorSliceReaderTesterHelper(
+     const TensorSliceWriter::CreateBuilderFunction& create_function,
+     const TensorSliceReader::OpenTableFunction& open_function) {
+
+tokens used
+input: 3,098
+cache read: 24,064
+cache write: 0
+output: 134
+reasoning output: 155
+
+tool: validate
+{
+  "ref": "4c0b84bf2a714bcdd18da1f1f94d533d72399d52",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/framework/tensor.cc b/tensorflow/core/framework/tensor.cc\nindex 03499ec022..4ef7a66e13 100644\n--- a/tensorflow/core/framework/tensor.cc\n+++ b/tensorflow/core/framework/tensor.cc\n@@ -725,11 +725,11 @@ bool Tensor::RefCountIsOne() const {\n // The macro CASES() expands to a switch statement conditioned on\n // TYPE_ENUM. Each case expands the STMTS after a typedef for T.\n #define SINGLE_ARG(...) __VA_ARGS__\n-#define CASE(TYPE, STMTS)             \\\n-  case DataTypeToEnum<TYPE>::value: { \\\n-    typedef TYPE T;                   \\\n-    STMTS;                            \\\n-    break;                            \\\n+#define CASE(TYPE, STMTS)               \\\n+  case DataTypeToEnum<TYPE>::value: {   \\\n+    typedef TF_ATTRIBUTE_UNUSED TYPE T; \\\n+    STMTS;                              \\\n+    break;                              \\\n   }\n #define CASES_WITH_DEFAULT(TYPE_ENUM, STMTS, INVALID, DEFAULT) \\\n   switch (TYPE_ENUM) {                                         \\\n@@ -765,9 +765,8 @@ bool Tensor::RefCountIsOne() const {\n   }\n \n #define CASES(TYPE_ENUM, STMTS)                                      \\\n-  CASES_WITH_DEFAULT(TYPE_ENUM, STMTS,                               \\\n-                     LOG(FATAL) << \"Unexpected type: \" << TYPE_ENUM; \\\n-                     , LOG(FATAL) << \"Type not set\";)\n+  CASES_WITH_DEFAULT(TYPE_ENUM, STMTS, LOG(FATAL) << \"Type not set\"; \\\n+                     , LOG(FATAL) << \"Unexpected type: \" << TYPE_ENUM;)\n \n Tensor::Tensor(Allocator* a, DataType type, const TensorShape& shape)\n     : shape_(shape), buf_(nullptr) {\n@@ -797,6 +796,16 @@ Tensor::Tensor(Allocator* a, DataType type, const TensorShape& shape,\n   }\n }\n \n+Status Tensor::BuildTensor(DataType type, const TensorShape& shape,\n+                           Tensor* out_tensor) {\n+  // Avoid crashes due to invalid or unsupported types.\n+  CASES_WITH_DEFAULT(\n+      type, {}, return errors::InvalidArgument(\"Type not set\"),\n+      return errors::InvalidArgument(\"Unexpected type: \", DataType_Name(type)));\n+  *out_tensor = Tensor(type, shape);\n+  return Status::OK();\n+}\n+\n // NOTE(mrry): The default allocator for a Tensor (when none is specified) is\n // the default CPU allocator for NUMA zone 0. Accessing that currently involves\n // acquiring a lock, which guards initialization of the per-NUMA zone\ndiff --git a/tensorflow/core/framework/tensor.h b/tensorflow/core/framework/tensor.h\nindex 6aa079e8b5..50b6c0953a 100644\n--- a/tensorflow/core/framework/tensor.h\n+++ b/tensorflow/core/framework/tensor.h\n@@ -164,6 +164,15 @@ class Tensor {\n   /// for details.\n   explicit Tensor(DataType type);\n \n+  /// \\brief Initializes a tensor with the input `type` and `shape`, or returns\n+  /// an error and leaves `out_tensor` unmodified. This factory method should be\n+  /// used instead of the corresponding constructor if calling code cannot\n+  /// validate that the `DataType` is valid and supported.\n+  ///\n+  /// The underlying buffer is allocated using a `CPUAllocator`.\n+  static Status BuildTensor(DataType type, const TensorShape& shape,\n+                            Tensor* out_tensor);\n+\n  private:\n   // A tag type for selecting the `Tensor` constructor overload that creates a\n   // scalar tensor in host memory.\ndiff --git a/tensorflow/core/util/tensor_slice_reader.cc b/tensorflow/core/util/tensor_slice_reader.cc\nindex 58c4c22ce7..00911b13f3 100644\n--- a/tensorflow/core/util/tensor_slice_reader.cc\n+++ b/tensorflow/core/util/tensor_slice_reader.cc\n@@ -248,7 +248,9 @@ Status TensorSliceReader::GetTensor(\n     slice = tss->Slices().begin()->second.slice;\n   }\n \n-  std::unique_ptr<tensorflow::Tensor> t(new tensorflow::Tensor(type, shape));\n+  std::unique_ptr<tensorflow::Tensor> t(new tensorflow::Tensor);\n+  Status s = tensorflow::Tensor::BuildTensor(type, shape, t.get());\n+  if (!s.ok()) return s;\n   bool success = false;\n \n #define READER_COPY(dt)                                                  \\\ndiff --git a/tensorflow/core/util/tensor_slice_reader_test.cc b/tensorflow/core/util/tensor_slice_reader_test.cc\nindex fe617e8e30..3fc25e6f29 100644\n--- a/tensorflow/core/util/tensor_slice_reader_test.cc\n+++ b/tensorflow/core/util/tensor_slice_reader_test.cc\n@@ -13,15 +13,19 @@ See the License for the specific language governing permissions and\n limitations under the License.\n ==============================================================================*/\n \n-#include <utility>\n-\n #include \"tensorflow/core/util/tensor_slice_reader.h\"\n \n+#include <utility>\n+#include <vector>\n+\n #include \"tensorflow/core/framework/types.h\"\n #include \"tensorflow/core/framework/versions.pb.h\"\n #include \"tensorflow/core/lib/core/status_test_util.h\"\n #include \"tensorflow/core/lib/core/stringpiece.h\"\n+#include \"tensorflow/core/lib/io/iterator.h\"\n #include \"tensorflow/core/lib/io/path.h\"\n+#include \"tensorflow/core/lib/io/table.h\"\n+#include \"tensorflow/core/lib/io/table_builder.h\"\n #include \"tensorflow/core/lib/strings/str_util.h\"\n #include \"tensorflow/core/lib/strings/strcat.h\"\n #include \"tensorflow/core/platform/env.h\"\n@@ -30,6 +34,7 @@ limitations under the License.\n #include \"tensorflow/core/platform/test.h\"\n #include \"tensorflow/core/platform/types.h\"\n #include \"tensorflow/core/public/version.h\"\n+#include \"tensorflow/core/util/saved_tensor_slice.pb.h\"\n #include \"tensorflow/core/util/saved_tensor_slice_util.h\"\n #include \"tensorflow/core/util/tensor_slice_reader_cache.h\"\n #include \"tensorflow/core/util/tensor_slice_writer.h\"\n@@ -309,6 +314,102 @@ TEST_SIMPLE_INT(int16, int32)\n TEST_SIMPLE_INT(int8, int32)\n TEST_SIMPLE_INT(uint8, int32)\n \n+// Modifies the SavedTensorSlices messages in a checkpoint to allow creating\n+// malformed or unsupported checkpoints.\n+void MutateSavedTensorSlices(\n+    const std::string& fname,\n+    const std::function<std::string(SavedTensorSlices)>& mutator) {\n+  table::Options options;\n+  options.compression = table::kNoCompression;\n+\n+  // Read all entries from the table.\n+  std::vector<std::pair<std::string, std::string>> entries;\n+  {\n+    std::unique_ptr<RandomAccessFile> file;\n+    TF_CHECK_OK(Env::Default()->NewRandomAccessFile(fname, &file));\n+    uint64 file_size;\n+    TF_CHECK_OK(Env::Default()->GetFileSize(fname, &file_size));\n+    table::Table* t;\n+    TF_CHECK_OK(table::Table::Open(options, file.get(), file_size, &t));\n+    std::unique_ptr<table::Table> table(t);\n+    std::unique_ptr<table::Iterator> it(table->NewIterator());\n+    for (it->Seek(\"\"); it->Valid(); it->Next()) {\n+      entries.emplace_back(it->key(), it->value());\n+    }\n+    TF_CHECK_OK(it->status());\n+  }\n+\n+  // Rewrite the table, mutating each value.\n+  {\n+    std::unique_ptr<WritableFile> file;\n+    TF_CHECK_OK(Env::Default()->NewWritableFile(fname, &file));\n+    table::TableBuilder builder(options, file.get());\n+    for (const auto& entry : entries) {\n+      SavedTensorSlices sts;\n+      CHECK(sts.ParseFromString(entry.second));\n+      builder.Add(entry.first, mutator(std::move(sts)));\n+    }\n+    TF_CHECK_OK(builder.Finish());\n+    TF_CHECK_OK(file->Close());\n+  }\n+}\n+\n+TEST(TensorSliceReaderTest, MissingTensorType) {\n+  const string fname = io::JoinPath(testing::TmpDir(), \"invalid_checkpoint\");\n+  TensorSliceWriter writer(fname, CreateTableTensorSliceBuilder);\n+  const int32 data[] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9};\n+  TensorShape shape({4, 5});\n+  TensorSlice slice = TensorSlice::ParseOrDie(\"0,2:-\");\n+  TF_CHECK_OK(writer.Add(\"test\", shape, slice, data));\n+  TF_CHECK_OK(writer.Finish());\n+\n+  MutateSavedTensorSlices(fname, [](SavedTensorSlices sts) {\n+    if (sts.has_meta()) {\n+      for (auto& tensor : *sts.mutable_meta()->mutable_tensor()) {\n+        tensor.clear_type();\n+      }\n+    }\n+    return sts.SerializeAsString();\n+  });\n+\n+  TensorSliceReader reader(fname, OpenTableTensorSliceReader);\n+  TF_CHECK_OK(reader.status());\n+\n+  // The tensor should be present, but loading it should fail due to the\n+  // unset (invalid) type.\n+  EXPECT_TRUE(reader.HasTensor(\"test\", nullptr, nullptr));\n+  std::unique_ptr<Tensor> tensor;\n+  EXPECT_FALSE(reader.GetTensor(\"test\", &tensor).ok());\n+}\n+\n+TEST(TensorSliceReaderTest, UnsupportedTensorType) {\n+  const string fname = io::JoinPath(testing::TmpDir(), \"int32_ref_checkpoint\");\n+  TensorSliceWriter writer(fname, CreateTableTensorSliceBuilder);\n+  const int32 data[] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9};\n+  TensorShape shape({4, 5});\n+  TensorSlice slice = TensorSlice::ParseOrDie(\"0,2:-\");\n+  TF_CHECK_OK(writer.Add(\"test\", shape, slice, data));\n+  TF_CHECK_OK(writer.Finish());\n+\n+  MutateSavedTensorSlices(fname, [](SavedTensorSlices sts) {\n+    if (sts.has_meta()) {\n+      for (auto& tensor : *sts.mutable_meta()->mutable_tensor()) {\n+        tensor.set_type(DT_INT32_REF);\n+      }\n+    }\n+    return sts.SerializeAsString();\n+  });\n+\n+  TensorSliceReader reader(fname, OpenTableTensorSliceReader);\n+  TF_CHECK_OK(reader.status());\n+\n+  // The tensor should be present, but loading it should fail due to the\n+  // unsupported type.\n+  EXPECT_TRUE(reader.HasTensor(\"test\", nullptr, nullptr));\n+  std::unique_ptr<Tensor> tensor;\n+  EXPECT_FALSE(reader.GetTensor(\"test\", &tensor).ok());\n+}\n+\n void CachedTensorSliceReaderTesterHelper(\n     const TensorSliceWriter::CreateBuilderFunction& create_function,\n     const TensorSliceReader::OpenTableFunction& open_function) {\n"
+}
+Patch applied successfully
+
+tokens used
+input: 3,887
+cache read: 26,112
+cache write: 0
+output: 2,734
+reasoning output: 23
+
+tool: read
+{
+  "filePath": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0085-4c0b84bf2a71\\tensorflow\\core\\framework\\tensor.cc",
+  "offset": 780,
+  "limit": 50
+}
+<path>C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0085-4c0b84bf2a71\tensorflow\core\framework\tensor.cc</path>
+<type>file</type>
+<content>
+780:                                       *this);
+781:   }
+782: }
+783: 
+784: Tensor::Tensor(Allocator* a, DataType type, const TensorShape& shape,
+785:                const AllocationAttributes& allocation_attr)
+786:     : shape_(shape), buf_(nullptr) {
+787:   set_dtype(type);
+788:   CHECK_NOTNULL(a);
+789:   if (shape_.num_elements() > 0 || a->AllocatesOpaqueHandle()) {
+790:     CASES(type, buf_ = new Buffer<T>(a, shape.num_elements(), allocation_attr));
+791:   }
+792:   if (MemoryLoggingEnabled() && !allocation_attr.allocation_will_be_logged &&
+793:       buf_ != nullptr && buf_->data() != nullptr) {
+794:     LogMemory::RecordTensorAllocation("Unknown (with attributes)",
+795:                                       LogMemory::UNKNOWN_STEP_ID, *this);
+796:   }
+797: }
+798: 
+799: Status Tensor::BuildTensor(DataType type, const TensorShape& shape,
+800:                            Tensor* out_tensor) {
+801:   // Avoid crashes due to invalid or unsupported types.
+802:   CASES_WITH_DEFAULT(
+803:       type, {}, return errors::InvalidArgument("Type not set"),
+804:       return errors::InvalidArgument("Unexpected type: ", DataType_Name(type)));
+805:   *out_tensor = Tensor(type, shape);
+806:   return Status::OK();
+807: }
+808: 
+809: // NOTE(mrry): The default allocator for a Tensor (when none is specified) is
+810: // the default CPU allocator for NUMA zone 0. Accessing that currently involves
+811: // acquiring a lock, which guards initialization of the per-NUMA zone
+812: // allocators, and becomes highly contended.
+813: //
+814: // Note also that it would be better if all Tensor allocations required the user
+815: // to specify an allocator, for purposes of accounting, etc. However, the
+816: // default allocator is widely used throughout the codebase and in client code.
+817: static Allocator* get_default_cpu_allocator() {
+818:   static Allocator* default_cpu_allocator =
+819:       cpu_allocator(port::kNUMANoAffinity);
+820:   return default_cpu_allocator;
+821: }
+822: 
+823: Tensor::Tensor(DataType type, const TensorShape& shape)
+824:     : Tensor(get_default_cpu_allocator(), type, shape) {}
+825: 
+826: bool Tensor::HostScalarTensorBufferBase::GetAllocatedBytes(
+827:     size_t* out_bytes) const {
+828:   // `this->FillAllocationDescription()` never sets allocated bytes information,
+829:   // so we can short-circuit the construction of an `AllocationDescription`.
+
+(Showing lines 780-829 of 1313. Use offset=830 to continue.)
+</content>
+
+tokens used
+input: 3,585
+cache read: 29,184
+cache write: 0
+output: 76
+reasoning output: 205
+
+Patch validation succeeded in hunk mode against `4c0b84bf2a714bcdd18da1f1f94d533d72399d52`. No full build was run, per the task constraints.
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/framework/tensor.cc tensorflow/core/framework/tensor.h tensorflow/core/util/tensor_slice_reader.cc tensorflow/core/util/tensor_slice_reader_test.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0085-4c0b84bf2a71",
+  "timeout": 120000
+}
+warning: in the working copy of 'tensorflow/core/framework/tensor.cc', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'tensorflow/core/framework/tensor.h', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'tensorflow/core/util/tensor_slice_reader.cc', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'tensorflow/core/util/tensor_slice_reader_test.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/framework/tensor.cc b/tensorflow/core/framework/tensor.cc
+index 03499ec022..4ef7a66e13 100644
+--- a/tensorflow/core/framework/tensor.cc
++++ b/tensorflow/core/framework/tensor.cc
+@@ -725,11 +725,11 @@ bool Tensor::RefCountIsOne() const {
+ // The macro CASES() expands to a switch statement conditioned on
+ // TYPE_ENUM. Each case expands the STMTS after a typedef for T.
+ #define SINGLE_ARG(...) __VA_ARGS__
+-#define CASE(TYPE, STMTS)             \
+-  case DataTypeToEnum<TYPE>::value: { \
+-    typedef TYPE T;                   \
+-    STMTS;                            \
+-    break;                            \
++#define CASE(TYPE, STMTS)               \
++  case DataTypeToEnum<TYPE>::value: {   \
++    typedef TF_ATTRIBUTE_UNUSED TYPE T; \
++    STMTS;                              \
++    break;                              \
+   }
+ #define CASES_WITH_DEFAULT(TYPE_ENUM, STMTS, INVALID, DEFAULT) \
+   switch (TYPE_ENUM) {                                         \
+@@ -765,9 +765,8 @@ bool Tensor::RefCountIsOne() const {
+   }
+ 
+ #define CASES(TYPE_ENUM, STMTS)                                      \
+-  CASES_WITH_DEFAULT(TYPE_ENUM, STMTS,                               \
+-                     LOG(FATAL) << "Unexpected type: " << TYPE_ENUM; \
+-                     , LOG(FATAL) << "Type not set";)
++  CASES_WITH_DEFAULT(TYPE_ENUM, STMTS, LOG(FATAL) << "Type not set"; \
++                     , LOG(FATAL) << "Unexpected type: " << TYPE_ENUM;)
+ 
+ Tensor::Tensor(Allocator* a, DataType type, const TensorShape& shape)
+     : shape_(shape), buf_(nullptr) {
+@@ -797,6 +796,16 @@ Tensor::Tensor(Allocator* a, DataType type, const TensorShape& shape,
+   }
+ }
+ 
++Status Tensor::BuildTensor(DataType type, const TensorShape& shape,
++                           Tensor* out_tensor) {
++  // Avoid crashes due to invalid or unsupported types.
++  CASES_WITH_DEFAULT(
++      type, {}, return errors::InvalidArgument("Type not set"),
++      return errors::InvalidArgument("Unexpected type: ", DataType_Name(type)));
++  *out_tensor = Tensor(type, shape);
++  return Status::OK();
++}
++
+ // NOTE(mrry): The default allocator for a Tensor (when none is specified) is
+ // the default CPU allocator for NUMA zone 0. Accessing that currently involves
+ // acquiring a lock, which guards initialization of the per-NUMA zone
+diff --git a/tensorflow/core/framework/tensor.h b/tensorflow/core/framework/tensor.h
+index 6aa079e8b5..50b6c0953a 100644
+--- a/tensorflow/core/framework/tensor.h
++++ b/tensorflow/core/framework/tensor.h
+@@ -164,6 +164,15 @@ class Tensor {
+   /// for details.
+   explicit Tensor(DataType type);
+ 
++  /// \brief Initializes a tensor with the input `type` and `shape`, or returns
++  /// an error and leaves `out_tensor` unmodified. This factory method should be
++  /// used instead of the corresponding constructor if calling code cannot
++  /// validate that the `DataType` is valid and supported.
++  ///
++  /// The underlying buffer is allocated using a `CPUAllocator`.
++  static Status BuildTensor(DataType type, const TensorShape& shape,
++                            Tensor* out_tensor);
++
+  private:
+   // A tag type for selecting the `Tensor` constructor overload that creates a
+   // scalar tensor in host memory.
+diff --git a/tensorflow/core/util/tensor_slice_reader.cc b/tensorflow/core/util/tensor_slice_reader.cc
+index 58c4c22ce7..00911b13f3 100644
+--- a/tensorflow/core/util/tensor_slice_reader.cc
++++ b/tensorflow/core/util/tensor_slice_reader.cc
+@@ -248,7 +248,9 @@ Status TensorSliceReader::GetTensor(
+     slice = tss->Slices().begin()->second.slice;
+   }
+ 
+-  std::unique_ptr<tensorflow::Tensor> t(new tensorflow::Tensor(type, shape));
++  std::unique_ptr<tensorflow::Tensor> t(new tensorflow::Tensor);
++  Status s = tensorflow::Tensor::BuildTensor(type, shape, t.get());
++  if (!s.ok()) return s;
+   bool success = false;
+ 
+ #define READER_COPY(dt)                                                  \
+diff --git a/tensorflow/core/util/tensor_slice_reader_test.cc b/tensorflow/core/util/tensor_slice_reader_test.cc
+index fe617e8e30..3fc25e6f29 100644
+--- a/tensorflow/core/util/tensor_slice_reader_test.cc
++++ b/tensorflow/core/util/tensor_slice_reader_test.cc
+@@ -13,15 +13,19 @@ See the License for the specific language governing permissions and
+ limitations under the License.
+ ==============================================================================*/
+ 
+-#include <utility>
+-
+ #include "tensorflow/core/util/tensor_slice_reader.h"
+ 
++#include <utility>
++#include <vector>
++
+ #include "tensorflow/core/framework/types.h"
+ #include "tensorflow/core/framework/versions.pb.h"
+ #include "tensorflow/core/lib/core/status_test_util.h"
+ #include "tensorflow/core/lib/core/stringpiece.h"
++#include "tensorflow/core/lib/io/iterator.h"
+ #include "tensorflow/core/lib/io/path.h"
++#include "tensorflow/core/lib/io/table.h"
++#include "tensorflow/core/lib/io/table_builder.h"
+ #include "tensorflow/core/lib/strings/str_util.h"
+ #include "tensorflow/core/lib/strings/strcat.h"
+ #include "tensorflow/core/platform/env.h"
+@@ -30,6 +34,7 @@ limitations under the License.
+ #include "tensorflow/core/platform/test.h"
+ #include "tensorflow/core/platform/types.h"
+ #include "tensorflow/core/public/version.h"
++#include "tensorflow/core/util/saved_tensor_slice.pb.h"
+ #include "tensorflow/core/util/saved_tensor_slice_util.h"
+ #include "tensorflow/core/util/tensor_slice_reader_cache.h"
+ #include "tensorflow/core/util/tensor_slice_writer.h"
+@@ -309,6 +314,102 @@ TEST_SIMPLE_INT(int16, int32)
+ TEST_SIMPLE_INT(int8, int32)
+ TEST_SIMPLE_INT(uint8, int32)
+ 
++// Modifies the SavedTensorSlices messages in a checkpoint to allow creating
++// malformed or unsupported checkpoints.
++void MutateSavedTensorSlices(
++    const std::string& fname,
++    const std::function<std::string(SavedTensorSlices)>& mutator) {
++  table::Options options;
++  options.compression = table::kNoCompression;
++
++  // Read all entries from the table.
++  std::vector<std::pair<std::string, std::string>> entries;
++  {
++    std::unique_ptr<RandomAccessFile> file;
++    TF_CHECK_OK(Env::Default()->NewRandomAccessFile(fname, &file));
++    uint64 file_size;
++    TF_CHECK_OK(Env::Default()->GetFileSize(fname, &file_size));
++    table::Table* t;
++    TF_CHECK_OK(table::Table::Open(options, file.get(), file_size, &t));
++    std::unique_ptr<table::Table> table(t);
++    std::unique_ptr<table::Iterator> it(table->NewIterator());
++    for (it->Seek(""); it->Valid(); it->Next()) {
++      entries.emplace_back(it->key(), it->value());
++    }
++    TF_CHECK_OK(it->status());
++  }
++
++  // Rewrite the table, mutating each value.
++  {
++    std::unique_ptr<WritableFile> file;
++    TF_CHECK_OK(Env::Default()->NewWritableFile(fname, &file));
++    table::TableBuilder builder(options, file.get());
++    for (const auto& entry : entries) {
++      SavedTensorSlices sts;
++      CHECK(sts.ParseFromString(entry.second));
++      builder.Add(entry.first, mutator(std::move(sts)));
++    }
++    TF_CHECK_OK(builder.Finish());
++    TF_CHECK_OK(file->Close());
++  }
++}
++
++TEST(TensorSliceReaderTest, MissingTensorType) {
++  const string fname = io::JoinPath(testing::TmpDir(), "invalid_checkpoint");
++  TensorSliceWriter writer(fname, CreateTableTensorSliceBuilder);
++  const int32 data[] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9};
++  TensorShape shape({4, 5});
++  TensorSlice slice = TensorSlice::ParseOrDie("0,2:-");
++  TF_CHECK_OK(writer.Add("test", shape, slice, data));
++  TF_CHECK_OK(writer.Finish());
++
++  MutateSavedTensorSlices(fname, [](SavedTensorSlices sts) {
++    if (sts.has_meta()) {
++      for (auto& tensor : *sts.mutable_meta()->mutable_tensor()) {
++        tensor.clear_type();
++      }
++    }
++    return sts.SerializeAsString();
++  });
++
++  TensorSliceReader reader(fname, OpenTableTensorSliceReader);
++  TF_CHECK_OK(reader.status());
++
++  // The tensor should be present, but loading it should fail due to the
++  // unset (invalid) type.
++  EXPECT_TRUE(reader.HasTensor("test", nullptr, nullptr));
++  std::unique_ptr<Tensor> tensor;
++  EXPECT_FALSE(reader.GetTensor("test", &tensor).ok());
++}
++
++TEST(TensorSliceReaderTest, UnsupportedTensorType) {
++  const string fname = io::JoinPath(testing::TmpDir(), "int32_ref_checkpoint");
++  TensorSliceWriter writer(fname, CreateTableTensorSliceBuilder);
++  const int32 data[] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9};
++  TensorShape shape({4, 5});
++  TensorSlice slice = TensorSlice::ParseOrDie("0,2:-");
++  TF_CHECK_OK(writer.Add("test", shape, slice, data));
++  TF_CHECK_OK(writer.Finish());
++
++  MutateSavedTensorSlices(fname, [](SavedTensorSlices sts) {
++    if (sts.has_meta()) {
++      for (auto& tensor : *sts.mutable_meta()->mutable_tensor()) {
++        tensor.set_type(DT_INT32_REF);
++      }
++    }
++    return sts.SerializeAsString();
++  });
++
++  TensorSliceReader reader(fname, OpenTableTensorSliceReader);
++  TF_CHECK_OK(reader.status());
++
++  // The tensor should be present, but loading it should fail due to the
++  // unsupported type.
++  EXPECT_TRUE(reader.HasTensor("test", nullptr, nullptr));
++  std::unique_ptr<Tensor> tensor;
++  EXPECT_FALSE(reader.GetTensor("test", &tensor).ok());
++}
++
+ void CachedTensorSliceReaderTesterHelper(
+     const TensorSliceWriter::CreateBuilderFunction& create_function,
+     const TensorSliceReader::OpenTableFunction& open_function) {
+
+tokens used
+input: 1,467
+cache read: 32,256
+cache write: 0
+output: 153
+reasoning output: 66
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target TensorFlow code for all patched files and context",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Apply minimal security backport changes",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Verify patch shape and collect final diff",
+      "status": "completed",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target TensorFlow code for all patched files and context",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Apply minimal security backport changes",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Verify patch shape and collect final diff",
+    "status": "completed",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 3,210
+cache read: 33,280
+cache write: 0
+output: 79
+reasoning output: 8
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/framework/tensor.cc b/tensorflow/core/framework/tensor.cc
+    index 03499ec022..4ef7a66e13 100644
+    --- a/tensorflow/core/framework/tensor.cc
+    +++ b/tensorflow/core/framework/tensor.cc
+    @@ -725,11 +725,11 @@ bool Tensor::RefCountIsOne() const {
+     // The macro CASES() expands to a switch statement conditioned on
+     // TYPE_ENUM. Each case expands the STMTS after a typedef for T.
+     #define SINGLE_ARG(...) __VA_ARGS__
+    -#define CASE(TYPE, STMTS)             \
+    -  case DataTypeToEnum<TYPE>::value: { \
+    -    typedef TYPE T;                   \
+    -    STMTS;                            \
+    -    break;                            \
+    +#define CASE(TYPE, STMTS)               \
+    +  case DataTypeToEnum<TYPE>::value: {   \
+    +    typedef TF_ATTRIBUTE_UNUSED TYPE T; \
+    +    STMTS;                              \
+    +    break;                              \
+       }
+     #define CASES_WITH_DEFAULT(TYPE_ENUM, STMTS, INVALID, DEFAULT) \
+       switch (TYPE_ENUM) {                                         \
+    @@ -765,9 +765,8 @@ bool Tensor::RefCountIsOne() const {
+       }
+     
+     #define CASES(TYPE_ENUM, STMTS)                                      \
+    -  CASES_WITH_DEFAULT(TYPE_ENUM, STMTS,                               \
+    -                     LOG(FATAL) << "Unexpected type: " << TYPE_ENUM; \
+    -                     , LOG(FATAL) << "Type not set";)
+    +  CASES_WITH_DEFAULT(TYPE_ENUM, STMTS, LOG(FATAL) << "Type not set"; \
+    +                     , LOG(FATAL) << "Unexpected type: " << TYPE_ENUM;)
+     
+     Tensor::Tensor(Allocator* a, DataType type, const TensorShape& shape)
+         : shape_(shape), buf_(nullptr) {
+    @@ -797,6 +796,16 @@ Tensor::Tensor(Allocator* a, DataType type, const TensorShape& shape,
+       }
+     }
+     
+    +Status Tensor::BuildTensor(DataType type, const TensorShape& shape,
+    +                           Tensor* out_tensor) {
+    +  // Avoid crashes due to invalid or unsupported types.
+    +  CASES_WITH_DEFAULT(
+    +      type, {}, return errors::InvalidArgument("Type not set"),
+    +      return errors::InvalidArgument("Unexpected type: ", DataType_Name(type)));
+    +  *out_tensor = Tensor(type, shape);
+    +  return Status::OK();
+    +}
+    +
+     // NOTE(mrry): The default allocator for a Tensor (when none is specified) is
+     // the default CPU allocator for NUMA zone 0. Accessing that currently involves
+     // acquiring a lock, which guards initialization of the per-NUMA zone
+    diff --git a/tensorflow/core/framework/tensor.h b/tensorflow/core/framework/tensor.h
+    index 6aa079e8b5..50b6c0953a 100644
+    --- a/tensorflow/core/framework/tensor.h
+    +++ b/tensorflow/core/framework/tensor.h
+    @@ -164,6 +164,15 @@ class Tensor {
+       /// for details.
+       explicit Tensor(DataType type);
+     
+    +  /// \brief Initializes a tensor with the input `type` and `shape`, or returns
+    +  /// an error and leaves `out_tensor` unmodified. This factory method should be
+    +  /// used instead of the corresponding constructor if calling code cannot
+    +  /// validate that the `DataType` is valid and supported.
+    +  ///
+    +  /// The underlying buffer is allocated using a `CPUAllocator`.
+    +  static Status BuildTensor(DataType type, const TensorShape& shape,
+    +                            Tensor* out_tensor);
+    +
+      private:
+       // A tag type for selecting the `Tensor` constructor overload that creates a
+       // scalar tensor in host memory.
+    diff --git a/tensorflow/core/util/tensor_slice_reader.cc b/tensorflow/core/util/tensor_slice_reader.cc
+    index 58c4c22ce7..00911b13f3 100644
+    --- a/tensorflow/core/util/tensor_slice_reader.cc
+    +++ b/tensorflow/core/util/tensor_slice_reader.cc
+    @@ -248,7 +248,9 @@ Status TensorSliceReader::GetTensor(
+         slice = tss->Slices().begin()->second.slice;
+       }
+     
+    -  std::unique_ptr<tensorflow::Tensor> t(new tensorflow::Tensor(type, shape));
+    +  std::unique_ptr<tensorflow::Tensor> t(new tensorflow::Tensor);
+    +  Status s = tensorflow::Tensor::BuildTensor(type, shape, t.get());
+    +  if (!s.ok()) return s;
+       bool success = false;
+     
+     #define READER_COPY(dt)                                                  \
+    diff --git a/tensorflow/core/util/tensor_slice_reader_test.cc b/tensorflow/core/util/tensor_slice_reader_test.cc
+    index fe617e8e30..3fc25e6f29 100644
+    --- a/tensorflow/core/util/tensor_slice_reader_test.cc
+    +++ b/tensorflow/core/util/tensor_slice_reader_test.cc
+    @@ -13,15 +13,19 @@ See the License for the specific language governing permissions and
+     limitations under the License.
+     ==============================================================================*/
+     
+    -#include <utility>
+    -
+     #include "tensorflow/core/util/tensor_slice_reader.h"
+     
+    +#include <utility>
+    +#include <vector>
+    +
+     #include "tensorflow/core/framework/types.h"
+     #include "tensorflow/core/framework/versions.pb.h"
+     #include "tensorflow/core/lib/core/status_test_util.h"
+     #include "tensorflow/core/lib/core/stringpiece.h"
+    +#include "tensorflow/core/lib/io/iterator.h"
+     #include "tensorflow/core/lib/io/path.h"
+    +#include "tensorflow/core/lib/io/table.h"
+    +#include "tensorflow/core/lib/io/table_builder.h"
+     #include "tensorflow/core/lib/strings/str_util.h"
+     #include "tensorflow/core/lib/strings/strcat.h"
+     #include "tensorflow/core/platform/env.h"
+    @@ -30,6 +34,7 @@ limitations under the License.
+     #include "tensorflow/core/platform/test.h"
+     #include "tensorflow/core/platform/types.h"
+     #include "tensorflow/core/public/version.h"
+    +#include "tensorflow/core/util/saved_tensor_slice.pb.h"
+     #include "tensorflow/core/util/saved_tensor_slice_util.h"
+     #include "tensorflow/core/util/tensor_slice_reader_cache.h"
+     #include "tensorflow/core/util/tensor_slice_writer.h"
+    @@ -309,6 +314,102 @@ TEST_SIMPLE_INT(int16, int32)
+     TEST_SIMPLE_INT(int8, int32)
+     TEST_SIMPLE_INT(uint8, int32)
+     
+    +// Modifies the SavedTensorSlices messages in a checkpoint to allow creating
+    +// malformed or unsupported checkpoints.
+    +void MutateSavedTensorSlices(
+    +    const std::string& fname,
+    +    const std::function<std::string(SavedTensorSlices)>& mutator) {
+    +  table::Options options;
+    +  options.compression = table::kNoCompression;
+    +
+    +  // Read all entries from the table.
+    +  std::vector<std::pair<std::string, std::string>> entries;
+    +  {
+    +    std::unique_ptr<RandomAccessFile> file;
+    +    TF_CHECK_OK(Env::Default()->NewRandomAccessFile(fname, &file));
+    +    uint64 file_size;
+    +    TF_CHECK_OK(Env::Default()->GetFileSize(fname, &file_size));
+    +    table::Table* t;
+    +    TF_CHECK_OK(table::Table::Open(options, file.get(), file_size, &t));
+    +    std::unique_ptr<table::Table> table(t);
+    +    std::unique_ptr<table::Iterator> it(table->NewIterator());
+    +    for (it->Seek(""); it->Valid(); it->Next()) {
+    +      entries.emplace_back(it->key(), it->value());
+    +    }
+    +    TF_CHECK_OK(it->status());
+    +  }
+    +
+    +  // Rewrite the table, mutating each value.
+    +  {
+    +    std::unique_ptr<WritableFile> file;
+    +    TF_CHECK_OK(Env::Default()->NewWritableFile(fname, &file));
+    +    table::TableBuilder builder(options, file.get());
+    +    for (const auto& entry : entries) {
+    +      SavedTensorSlices sts;
+    +      CHECK(sts.ParseFromString(entry.second));
+    +      builder.Add(entry.first, mutator(std::move(sts)));
+    +    }
+    +    TF_CHECK_OK(builder.Finish());
+    +    TF_CHECK_OK(file->Close());
+    +  }
+    +}
+    +
+    +TEST(TensorSliceReaderTest, MissingTensorType) {
+    +  const string fname = io::JoinPath(testing::TmpDir(), "invalid_checkpoint");
+    +  TensorSliceWriter writer(fname, CreateTableTensorSliceBuilder);
+    +  const int32 data[] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9};
+    +  TensorShape shape({4, 5});
+    +  TensorSlice slice = TensorSlice::ParseOrDie("0,2:-");
+    +  TF_CHECK_OK(writer.Add("test", shape, slice, data));
+    +  TF_CHECK_OK(writer.Finish());
+    +
+    +  MutateSavedTensorSlices(fname, [](SavedTensorSlices sts) {
+    +    if (sts.has_meta()) {
+    +      for (auto& tensor : *sts.mutable_meta()->mutable_tensor()) {
+    +        tensor.clear_type();
+    +      }
+    +    }
+    +    return sts.SerializeAsString();
+    +  });
+    +
+    +  TensorSliceReader reader(fname, OpenTableTensorSliceReader);
+    +  TF_CHECK_OK(reader.status());
+    +
+    +  // The tensor should be present, but loading it should fail due to the
+    +  // unset (invalid) type.
+    +  EXPECT_TRUE(reader.HasTensor("test", nullptr, nullptr));
+    +  std::unique_ptr<Tensor> tensor;
+    +  EXPECT_FALSE(reader.GetTensor("test", &tensor).ok());
+    +}
+    +
+    +TEST(TensorSliceReaderTest, UnsupportedTensorType) {
+    +  const string fname = io::JoinPath(testing::TmpDir(), "int32_ref_checkpoint");
+    +  TensorSliceWriter writer(fname, CreateTableTensorSliceBuilder);
+    +  const int32 data[] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9};
+    +  TensorShape shape({4, 5});
+    +  TensorSlice slice = TensorSlice::ParseOrDie("0,2:-");
+    +  TF_CHECK_OK(writer.Add("test", shape, slice, data));
+    +  TF_CHECK_OK(writer.Finish());
+    +
+    +  MutateSavedTensorSlices(fname, [](SavedTensorSlices sts) {
+    +    if (sts.has_meta()) {
+    +      for (auto& tensor : *sts.mutable_meta()->mutable_tensor()) {
+    +        tensor.set_type(DT_INT32_REF);
+    +      }
+    +    }
+    +    return sts.SerializeAsString();
+    +  });
+    +
+    +  TensorSliceReader reader(fname, OpenTableTensorSliceReader);
+    +  TF_CHECK_OK(reader.status());
+    +
+    +  // The tensor should be present, but loading it should fail due to the
+    +  // unsupported type.
+    +  EXPECT_TRUE(reader.HasTensor("test", nullptr, nullptr));
+    +  std::unique_ptr<Tensor> tensor;
+    +  EXPECT_FALSE(reader.GetTensor("test", &tensor).ok());
+    +}
+    +
+     void CachedTensorSliceReaderTesterHelper(
+         const TensorSliceWriter::CreateBuilderFunction& create_function,
+         const TensorSliceReader::OpenTableFunction& open_function) {
+  notes: >
+    Backported guarded tensor construction for checkpoint loading and regression tests; the newer BUILD/include hunk was unnecessary because this target already uses tensorflow/core/lib/core:errors in the tensor target.
+```
+
+tokens used
+input: 336
+cache read: 36,352
+cache write: 0
+output: 2,689
+reasoning output: 80

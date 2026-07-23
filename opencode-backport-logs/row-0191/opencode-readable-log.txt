@@ -1,0 +1,838 @@
+I’ll inspect the target-side implementation of `SparseDenseBinaryOpShared` and compare it only against the provided newer hunk context before applying the minimal equivalent guard.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Locate target TensorFlow 2.3.4 sparse dense binary op implementation",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Map newer div-by-zero hunk to target code and validate context if needed",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "content": "Apply minimal source change in current checkout",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "content": "Inspect final diff and report YAML result",
+      "status": "pending",
+      "priority": "high"
+    }
+  ]
+}
+[
+  {
+    "content": "Locate target TensorFlow 2.3.4 sparse dense binary op implementation",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Map newer div-by-zero hunk to target code and validate context if needed",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "content": "Apply minimal source change in current checkout",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "content": "Inspect final diff and report YAML result",
+    "status": "pending",
+    "priority": "high"
+  }
+]
+
+tokens used
+input: 3,893
+cache read: 4,608
+cache write: 0
+output: 149
+reasoning output: 0
+
+tool: grep
+{
+  "pattern": "SparseDenseBinaryOpShared|dense_gathered_flat|ctx->op_kernel",
+  "path": "tensorflow/core/kernels",
+  "include": "sparse_dense_binary_op_shared.cc"
+}
+Found 10 matches
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0191-3929ffacfbef\tensorflow\core\kernels\sparse_dense_binary_op_shared.cc:
+  Line 16: // SparseDenseBinaryOpShared is the shared code for binary coefficient-wise
+
+  Line 56: class SparseDenseBinaryOpShared : public OpKernel {
+
+  Line 58:   explicit SparseDenseBinaryOpShared(OpKernelConstruction *ctx)
+
+  Line 104:                     "SparseDenseBinaryOpShared broadcasts dense to sparse "
+
+  Line 124:     auto dense_gathered_flat = dense_gathered.flat<T>();
+
+  Line 145:       dense_gathered_flat(i) = rhs_ref.coeff(idx);                             \
+
+  Line 165:         values_t->flat<T>().binaryExpr(dense_gathered_flat,
+
+  Line 178:       SparseDenseBinaryOpShared<CPUDevice, T, functor::mul<T>>)              \
+
+  Line 182:       SparseDenseBinaryOpShared<CPUDevice, T, functor::div<T>>)              \
+
+  Line 185:       SparseDenseBinaryOpShared<CPUDevice, T, functor::add<T>>)
+
+tool: viewcode
+{
+  "ref": "3929ffacfbef7c431e8397920d040aaf47acff19",
+  "path": "tensorflow/core/kernels/sparse_dense_binary_op_shared.cc",
+  "startline": 80,
+  "endline": 180
+}
+Here are lines 80 through 180.
+
+                    shape_t->shape().DebugString()));
+    OP_REQUIRES(
+        ctx, values_t->dim_size(0) == indices_t->dim_size(0),
+        errors::InvalidArgument(
+            "The first dimension of values and indices should match. (",
+            values_t->dim_size(0), " vs. ", indices_t->dim_size(0), ")"));
+
+    const auto indices_mat = indices_t->matrix<int64>();
+    const auto shape_vec = shape_t->vec<int64>();
+    const auto lhs_dims = BCast::FromShape(TensorShape(shape_vec));
+    const auto rhs_dims = BCast::FromShape(dense_t->shape());
+    BCast b(lhs_dims, rhs_dims, false);  // false for keeping the same num dims.
+
+    // True iff (size(lhs) >= size(rhs)) and all dims in lhs is greater or equal
+    // to dims in rhs (from right to left).
+    auto VecGreaterEq = [](ArraySlice<int64> lhs, ArraySlice<int64> rhs) {
+      if (lhs.size() < rhs.size()) return false;
+      for (size_t i = 0; i < rhs.size(); ++i) {
+        if (lhs[lhs.size() - 1 - i] < rhs[rhs.size() - 1 - i]) return false;
+      }
+      return true;
+    };
+    OP_REQUIRES(ctx, VecGreaterEq(lhs_dims, rhs_dims) && b.IsValid(),
+                errors::InvalidArgument(
+                    "SparseDenseBinaryOpShared broadcasts dense to sparse "
+                    "only; got incompatible shapes: [",
+                    absl::StrJoin(lhs_dims, ","), "] vs. [",
+                    absl::StrJoin(rhs_dims, ","), "]"));
+
+    Tensor *output_values = nullptr;
+    Tensor dense_gathered;
+    const int64 nnz = indices_t->dim_size(0);
+    OP_REQUIRES_OK(ctx,
+                   ctx->allocate_output(0, TensorShape({nnz}), &output_values));
+    OP_REQUIRES_OK(
+        ctx, ctx->allocate_temp(DataTypeToEnum<T>::value, TensorShape({nnz}),
+                                &dense_gathered));
+
+    // Pulls relevant entries from the dense side, with reshape and broadcasting
+    // *of the dense side* taken into account.  Use a TensorRef to avoid blowing
+    // up memory.
+    //
+    // We can directly use the sparse indices to look up dense side, because
+    // "b.y_reshape()" and "b.y_bcast()" are guaranteed to have rank "ndims".
+    auto dense_gathered_flat = dense_gathered.flat<T>();
+    const int ndims = lhs_dims.size();
+    switch (ndims) {
+#define CASE(NDIM)                                                             \
+  case NDIM: {                                                                 \
+    TensorRef<Eigen::Tensor<const T, NDIM, Eigen::RowMajor>> rhs_ref =         \
+        dense_t->shaped<T, NDIM>(b.y_reshape())                                \
+            .broadcast(BCast::ToIndexArray<NDIM>(b.y_bcast()));                \
+    Eigen::array<Eigen::DenseIndex, NDIM> idx;                                 \
+    bool indices_valid = true;                                                 \
+    for (int i = 0; i < nnz; ++i) {                                            \
+      for (int d = 0; d < NDIM; ++d) {                                         \
+        idx[d] = internal::SubtleMustCopy(indices_mat(i, d));                  \
+        if (!FastBoundsCheck(idx[d], rhs_ref.dimension(d))) {                  \
+          indices_valid = false;                                               \
+        }                                                                      \
+      }                                                                        \
+      OP_REQUIRES(                                                             \
+          ctx, indices_valid,                                                  \
+          errors::InvalidArgument("Provided indices are out-of-bounds w.r.t. " \
+                                  "dense side with broadcasted shape"));       \
+      dense_gathered_flat(i) = rhs_ref.coeff(idx);                             \
+    }                                                                          \
+    break;                                                                     \
+  }
+
+      CASE(1);
+      CASE(2);
+      CASE(3);
+      CASE(4);
+      CASE(5);
+      default:
+        OP_REQUIRES(
+            ctx, false,
+            errors::InvalidArgument("Only tensors with ranks between 1 and 5 "
+                                    "are currently supported.  Tensor rank: ",
+                                    ndims));
+#undef CASE
+    }
+
+    output_values->flat<T>().device(ctx->eigen_device<Device>()) =
+        values_t->flat<T>().binaryExpr(dense_gathered_flat,
+                                       typename Functor::func());
+  }
+};
+
+// NOTE(aselle): If Div is extended to non-reals, make sure to use the same
+// separation of operator semantics as done for dense cwise ops. I.e. you
+// should make SparseDenseCwiseRealDiv, SparseDenseCwiseTruncateDiv,
+// SparseDenseCwiseFloorDiv, and then deprecate, SparseDenseCwiseDiv.
+// TODO(zongheng): extend to other eligible cwise operations as requested.
+#define REGISTER_KERNELS(T)                                                  \
+  REGISTER_KERNEL_BUILDER(                                                   \
+      Name("SparseDenseCwiseMul").Device(DEVICE_CPU).TypeConstraint<T>("T"), \
+      SparseDenseBinaryOpShared<CPUDevice, T, functor::mul<T>>)              \
+                                                                             \
+  REGISTER_KERNEL_BUILDER(                                                   \
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: locate_symbol
+{
+  "ref": "3929ffacfbef7c431e8397920d040aaf47acff19",
+  "symbol": "SparseDenseBinaryOpShared"
+}
+tensorflow/core/kernels/sparse_dense_binary_op_shared.cc:56
+tensorflow/core/kernels/sparse_dense_binary_op_shared.cc:58
+tensorflow/core/kernels/sparse_dense_binary_op_shared.cc:104
+tensorflow/core/kernels/sparse_dense_binary_op_shared.cc:178
+tensorflow/core/kernels/sparse_dense_binary_op_shared.cc:182
+tensorflow/core/kernels/sparse_dense_binary_op_shared.cc:185
+
+tokens used
+input: 1,126
+cache read: 7,680
+cache write: 0
+output: 167
+reasoning output: 0
+
+The target file has the same gather loop and registration shape as the newer hunk, so the fix can be ported directly with only context adjustments if required. I’m checking includes/APIs before editing.
+
+tool: grep
+{
+  "pattern": "StrContains\\(|type_string_view\\(|type_string\\(",
+  "path": "tensorflow/core",
+  "include": "*.cc"
+}
+Found 100 matches (more matches available)
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0191-3929ffacfbef\tensorflow\core\summary\summary_file_writer_test.cc:
+  Line 63:       if (absl::StrContains(f, test_name)) {
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0191-3929ffacfbef\tensorflow\core\util\device_name_utils_test.cc:
+  Line 425:   EXPECT_TRUE(absl::StrContains(s.error_message(), expected_error_substr)) << s;
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0191-3929ffacfbef\tensorflow\core\util\dump_graph_test.cc:
+  Line 53:   EXPECT_TRUE(str_util::StrContains(ret, "TF_DUMP_GRAPH_PREFIX not specified"));
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0191-3929ffacfbef\tensorflow\core\common_runtime\base_collective_executor.cc:
+  Line 290:                                  ctx->op_kernel().type_string_view(),
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0191-3929ffacfbef\tensorflow\core\common_runtime\accumulate_n_optimizer.cc:
+  Line 69:       if (n->type_string() == "AccumulateNV2") {
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0191-3929ffacfbef\tensorflow\core\grappler\verifiers\structure_verifier_test.cc:
+  Line 90:       absl::StrContains(status.error_message(), "Op type not registered"));
+
+  Line 100:       absl::StrContains(status.error_message(), "Node already exists:"));
+
+  Line 111:       absl::StrContains(status.error_message(),
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0191-3929ffacfbef\tensorflow\core\common_runtime\collective_param_resolver_local.cc:
+  Line 139:             " with type ", cp->group.device_type.type_string(),
+
+  Line 141:             gr->group.device_type.type_string());
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0191-3929ffacfbef\tensorflow\core\common_runtime\colocation_graph.cc:
+  Line 522:                     return !IsXlaDevice(entry.first.type_string());
+
+  Line 778:   if (tensor_list_ops->contains(node.type_string())) {
+
+  Line 1241:               "\nOp: ", node->type_string(),
+
+  Line 1244:               KernelsRegisteredForOp(node->type_string()));
+
+  Line 1281:           "Operation was ", node->type_string(), " and inputs were [",
+
+  Line 1354:     const string& op_type = node->type_string();
+
+  Line 1366:     strings::StrAppend(&text, "\n  ", node->name(), " (", node->type_string(),
+
+  Line 1426:         node.assigned_device_name(), node.type_string(), member));
+
+  Line 1440:           "No OpKernel was registered to support Op '", node.type_string(),
+
+  Line 1446:           "Registered kernels:\n", KernelsRegisteredForOp(node.type_string()));
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0191-3929ffacfbef\tensorflow\core\common_runtime\constant_folding.cc:
+  Line 53:   const auto& ts = n->type_string();
+
+  Line 192:   const auto& ts = n->type_string();
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0191-3929ffacfbef\tensorflow\core\common_runtime\composite_device_test.cc:
+  Line 34:     EXPECT_TRUE(absl::StrContains(status.error_message(),
+
+  Line 63:         absl::StrContains(status.error_message(), "Got a duplicated device"))
+
+  Line 77:     EXPECT_TRUE(absl::StrContains(status.error_message(),
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0191-3929ffacfbef\tensorflow\core\data\service\credentials_factory_test.cc:
+  Line 74:       absl::StrContains(s.ToString(),
+
+  Line 85:       absl::StrContains(s.ToString(),
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0191-3929ffacfbef\tensorflow\core\distributed_runtime\collective_param_resolver_distributed.cc:
+  Line 35:     req_.set_device_type(group.device_type.type_string());
+
+  Line 64:     req_.set_device_type(group.device_type.type_string());
+
+  Line 135:           response->set_device_type(gr->group.device_type.type_string());
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0191-3929ffacfbef\tensorflow\core\distributed_runtime\graph_mgr.cc:
+  Line 269:       if (kernel && !OpSegment::ShouldOwnKernel(lib, kernel->type_string())) {
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0191-3929ffacfbef\tensorflow\core\tpu\kernels\tpu_compile_op_common.cc:
+  Line 431:     if (node->type_string() == kArgOp) {
+
+  Line 436:     } else if (node->type_string() == kRetvalOp) {
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0191-3929ffacfbef\tensorflow\core\tpu\graph_rewrite\distributed_tpu_rewrite_helpers.cc:
+  Line 212:     if (node->type_string() == node_type) {
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0191-3929ffacfbef\tensorflow\core\distributed_runtime\eager\eager_service_impl_test.cc:
+  Line 1211:   EXPECT_TRUE(absl::StrContains(
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0191-3929ffacfbef\tensorflow\core\distributed_runtime\master_session.cc:
+  Line 95:           NodeDetails(n->type_string(),
+
+  Line 240:         : type_string(std::move(type_string)),
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0191-3929ffacfbef\tensorflow\core\graph\graph.cc:
+  Line 173: const string& Node::type_string() const { return props_->node_def.op(); }
+
+  Line 450:   TF_CHECK_OK(ops_.LookUpOpDef(node->type_string(), &op_def));
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0191-3929ffacfbef\tensorflow\core\graph\costmodel.cc:
+  Line 447:           << " type_string: " << n->type_string();
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0191-3929ffacfbef\tensorflow\core\graph\control_flow_test.cc:
+  Line 63:   EXPECT_TRUE(absl::StrContains(status.error_message(),
+
+  Line 66:   EXPECT_TRUE(absl::StrContains(status.error_message(),
+
+  Line 69:   EXPECT_TRUE(absl::StrContains(status.error_message(),
+
+  Line 73:       absl::StrContains(status.error_message(), "{{node outer/Switch}}"))
+
+  Line 112:       absl::StrContains(status.error_message(), "Mismatched parent frames"))
+
+  Line 114:   EXPECT_TRUE(absl::StrContains(status.error_message(), "{{node Enter2}}"))
+
+  Line 137:       absl::StrContains(status.error_message(), "more than one LoopCond node"))
+
+  Line 140:       absl::StrContains(status.error_message(), "{{node sub/LoopCond}}"))
+
+  Line 142:   EXPECT_TRUE(absl::StrContains(status.error_message(), "{{node LoopCond}}"))
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0191-3929ffacfbef\tensorflow\core\graph\control_flow.cc:
+  Line 70:           !absl::StrContains(frame.loop_cond->name(), "LoopCounter") &&
+
+  Line 71:           !absl::StrContains(node->name(), "LoopCounter")) {
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0191-3929ffacfbef\tensorflow\core\graph\collective_order.cc:
+  Line 41:         node->IsCollective() && node->type_string() == "CollectiveReduce";
+
+  Line 79:         collective_nodes[i]->type_string() != "CollectiveReduce") {
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0191-3929ffacfbef\tensorflow\core\graph\optimizer_cse_test.cc:
+  Line 74:         nodes.push_back(strings::StrCat(n->name(), "(", n->type_string(), ")"));
+
+  Line 166: static bool IsNotMultiply(const Node* n) { return n->type_string() != "Mul"; }
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0191-3929ffacfbef\tensorflow\core\graph\optimizer_cse.cc:
+  Line 201:   hasher.MixString(n->type_string());
+
+  Line 242:   if (a->type_string() != b->type_string()) return false;
+
+  Line 300:     if (n->type_string() == "Placeholder" ||
+
+  Line 301:         n->type_string() == "PlaceholderV2" ||
+
+  Line 302:         n->type_string() == "PlaceholderWithDefault") {
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0191-3929ffacfbef\tensorflow\core\graph\graph_partition.cc:
+  Line 283:             << " from " << src->name() << " (" << src->type_string() << ")"
+
+  Line 286:             << dst->name() << " (" << dst->type_string() << ")"
+
+  Line 293:             << " from " << src->name() << " (" << src->type_string() << ")"
+
+  Line 295:             << " (" << dst->type_string() << ")"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0191-3929ffacfbef\tensorflow\core\graph\subgraph_test.cc:
+  Line 85:       if (n->type_string() == "_Send" || n->type_string() == "_Recv") {
+
+  Line 316:   bool ok = absl::StrContains(base, substr);
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0191-3929ffacfbef\tensorflow\core\graph\subgraph.cc:
+  Line 95:                  (n->type_string() == "Placeholder" ||
+
+  Line 96:                   n->type_string() == "PlaceholderV2")) {
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0191-3929ffacfbef\tensorflow\core\graph\validate_test.cc:
+  Line 64:   EXPECT_TRUE(absl::StrContains(s.ToString(), "NodeDef missing attr"));
+
+  Line 87:   EXPECT_TRUE(absl::StrContains(s.ToString(), "NodeDef missing attr"));
+
+  Line 95:   EXPECT_TRUE(absl::StrContains(s.ToString(), "NodeDef missing attr"));
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0191-3929ffacfbef\tensorflow\core\grappler\op_types.cc:
+  Line 731:   if (absl::StrContains(lower_op_name, "inplace")) {
+
+  Line 989:          absl::StrContains(op_name, "Segment") ||
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0191-3929ffacfbef\tensorflow\core\grappler\optimizers\arithmetic_optimizer.cc:
+  Line 197:          absl::StrContains(device, DEVICE_CPU);
+
+  Line 2113:            (StrContains(device, DEVICE_CPU) || StrContains(device, DEVICE_GPU));
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0191-3929ffacfbef\tensorflow\core\framework\common_shape_fns_test.cc:
+  Line 144:     EXPECT_TRUE(absl::StrContains(
+
+  Line 164:     EXPECT_TRUE(absl::StrContains(
+
+  Line 175:     EXPECT_TRUE(absl::StrContains(
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0191-3929ffacfbef\tensorflow\core\framework\common_shape_fns.cc:
+  Line 145:   if (num_periods == 3 && !absl::StrContains(subscript, "...")) {
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0191-3929ffacfbef\tensorflow\core\framework\collective.cc:
+  Line 59:       " device_type=", device_type.type_string(), " num_tasks=", num_tasks,
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0191-3929ffacfbef\tensorflow\core\framework\dataset.cc:
+  Line 216:   const string& type_string = dataset->type_string();
+
+  Line 510:   return strings::StrCat(name_view(), ":", type_string_view());
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0191-3929ffacfbef\tensorflow\core\framework\function_test.cc:
+  Line 562:   EXPECT_TRUE(absl::StrContains(s.ToString(), substr))
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0191-3929ffacfbef\tensorflow\core\framework\graph_to_functiondef.cc:
+  Line 308:       return errors::InvalidArgument("Multiple '", node->type_string(),
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0191-3929ffacfbef\tensorflow\core\kernels\as_string_op_test.cc:
+  Line 154:   ASSERT_TRUE(absl::StrContains(
+
+  Line 164:       absl::StrContains(s.error_message(),
+
+  Line 172:   ASSERT_TRUE(absl::StrContains(
+
+  Line 181:   ASSERT_TRUE(absl::StrContains(
+
+  Line 189:   ASSERT_TRUE(absl::StrContains(s.error_message(),
+
+  Line 196:   ASSERT_TRUE(absl::StrContains(s.error_message(),
+
+  Line 234:       absl::StrContains(s.error_message(), "Fill argument not supported"));
+
+  Line 241:       absl::StrContains(s.error_message(), "Fill argument not supported"));
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0191-3929ffacfbef\tensorflow\core\profiler\utils\kernel_stats_utils.cc:
+  Line 82:   bool possible_tensor_kernel = absl::StrContains(kernel_name, "884") ||
+
+  Line 83:                                 absl::StrContains(kernel_name, "1688");
+
+  Line 116:       || absl::StrContains(tf_op_name, "BatchMatMul")
+
+  Line 122:       || absl::StrContains(tf_op_name, "CudnnRNNV")
+
+  Line 123:       || absl::StrContains(tf_op_name, "CudnnRNNForward")
+
+  Line 124:       || absl::StrContains(tf_op_name, "CudnnRNNBackprop")
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0191-3929ffacfbef\tensorflow\core\profiler\utils\event_span.cc:
+  Line 149:     if (absl::StrContains(event_name, "half") ||
+
+  Line 150:         absl::StrContains(event_name, "fp16"))
+
+
+(Results truncated. Consider using a more specific path or pattern.)
+
+tool: viewcode
+{
+  "ref": "3929ffacfbef7c431e8397920d040aaf47acff19",
+  "path": "tensorflow/core/kernels/sparse_dense_binary_op_shared.cc",
+  "startline": 1,
+  "endline": 79
+}
+Here are lines 1 through 79.
+
+/* Copyright 2016 The TensorFlow Authors. All Rights Reserved.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+==============================================================================*/
+
+// SparseDenseBinaryOpShared is the shared code for binary coefficient-wise
+// (cwise) operations of the following form:
+//
+//   sparse_t <binary cwise op> dense_t -> new sparse_t
+//
+// where:
+//
+//   (1) "binary cwise op" can be, for example, cdiv, cmul, cfloordiv, etc.
+//   (2) LIMITATION: we only support broadcasting the dense side to the sparse
+//       side.  In other words, NumDims(sparse_t) >= NumDims(dense_t), and if
+//       they are equal, each dim size of sparse_t >= that of dense_t.
+//   (3) Note that the result is a new sparse tensor, which means the implicitly
+//       zero elements of sparse_t do not participate.  (Hence, this should not
+//       be used for, say, cadd.)
+//
+// The only output is a vector of flat values with shape [nnz], since this op
+// does not change neither the indices nor the shape of the sparse operand.
+//
+// See docs of all registered ops in ../ops/sparse_ops.cc.
+
+#define EIGEN_USE_THREADS
+
+#include "third_party/eigen3/unsupported/Eigen/CXX11/Tensor"
+#include "tensorflow/core/framework/op_kernel.h"
+#include "tensorflow/core/framework/register_types.h"
+#include "tensorflow/core/framework/tensor.h"
+#include "tensorflow/core/framework/tensor_util.h"
+#include "tensorflow/core/framework/types.h"
+#include "tensorflow/core/kernels/cwise_ops.h"
+#include "tensorflow/core/kernels/cwise_ops_common.h"
+#include "tensorflow/core/util/bcast.h"
+
+using Eigen::TensorRef;
+using tensorflow::gtl::ArraySlice;
+
+namespace tensorflow {
+
+typedef Eigen::ThreadPoolDevice CPUDevice;
+
+template <typename Device, typename T, typename Functor>
+class SparseDenseBinaryOpShared : public OpKernel {
+ public:
+  explicit SparseDenseBinaryOpShared(OpKernelConstruction *ctx)
+      : OpKernel(ctx) {}
+
+  void Compute(OpKernelContext *ctx) override {
+    const Tensor *indices_t, *values_t, *shape_t, *dense_t;
+    OP_REQUIRES_OK(ctx, ctx->input("sp_indices", &indices_t));
+    OP_REQUIRES_OK(ctx, ctx->input("sp_values", &values_t));
+    OP_REQUIRES_OK(ctx, ctx->input("sp_shape", &shape_t));
+    OP_REQUIRES_OK(ctx, ctx->input("dense", &dense_t));
+
+    // Validations.
+    OP_REQUIRES(ctx, TensorShapeUtils::IsMatrix(indices_t->shape()),
+                errors::InvalidArgument(
+                    "Input sp_indices should be a matrix but received shape: ",
+                    indices_t->shape().DebugString()));
+    OP_REQUIRES(ctx,
+                TensorShapeUtils::IsVector(values_t->shape()) &&
+                    TensorShapeUtils::IsVector(shape_t->shape()),
+                errors::InvalidArgument(
+                    "Inputs sp_values and sp_shape should be vectors "
+                    "but received shapes: ",
+                    values_t->shape().DebugString(), " and ",
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tokens used
+input: 1,811
+cache read: 8,704
+cache write: 0
+output: 163
+reasoning output: 15
+
+I’m going to add the runtime check in the existing dense gather path, using `type_string_view()` and `absl::StrContains` as in the source fix because both APIs are already present in this target tree.
+
+tool: validate
+{
+  "ref": "3929ffacfbef7c431e8397920d040aaf47acff19",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/sparse_dense_binary_op_shared.cc b/tensorflow/core/kernels/sparse_dense_binary_op_shared.cc\n--- a/tensorflow/core/kernels/sparse_dense_binary_op_shared.cc\n+++ b/tensorflow/core/kernels/sparse_dense_binary_op_shared.cc\n@@ -117,6 +117,10 @@ class SparseDenseBinaryOpShared : public OpKernel {\n     OP_REQUIRES_OK(\n         ctx, ctx->allocate_temp(DataTypeToEnum<T>::value, TensorShape({nnz}),\n                                 &dense_gathered));\n+    bool op_is_div = false;\n+    if (absl::StrContains(ctx->op_kernel().type_string_view(), \"Div\")) {\n+      op_is_div = true;\n+    }\n \n     // Pulls relevant entries from the dense side, with reshape and broadcasting\n     // *of the dense side* taken into account.  Use a TensorRef to avoid blowing\n@@ -143,6 +147,12 @@ class SparseDenseBinaryOpShared : public OpKernel {\n           errors::InvalidArgument(\"Provided indices are out-of-bounds w.r.t. \" \\\n                                   \"dense side with broadcasted shape\"));       \\\n       dense_gathered_flat(i) = rhs_ref.coeff(idx);                             \\\n+      if (op_is_div) {                                                         \\\n+        OP_REQUIRES(ctx, dense_gathered_flat(i) != 0,                          \\\n+                    errors::InvalidArgument(                                   \\\n+                        \"SparseDenseCwiseDiv cannot divide by zero,\"           \\\n+                        \"but input dense tensor contains zero \"));             \\\n+      }                                                                        \\\n     }                                                                          \\\n     break;                                                                     \\\n   }\n"
+}
+Patch applied successfully
+
+tokens used
+input: 5,911
+cache read: 9,728
+cache write: 0
+output: 489
+reasoning output: 101
+
+The hunk validates against the target base. Applying the same minimal source change now.
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/kernels/sparse_dense_binary_op_shared.cc\n@@\n     OP_REQUIRES_OK(\n         ctx, ctx->allocate_temp(DataTypeToEnum<T>::value, TensorShape({nnz}),\n                                 &dense_gathered));\n+    bool op_is_div = false;\n+    if (absl::StrContains(ctx->op_kernel().type_string_view(), \"Div\")) {\n+      op_is_div = true;\n+    }\n \n     // Pulls relevant entries from the dense side, with reshape and broadcasting\n     // *of the dense side* taken into account.  Use a TensorRef to avoid blowing\n@@\n           errors::InvalidArgument(\"Provided indices are out-of-bounds w.r.t. \" \\\n                                   \"dense side with broadcasted shape\"));       \\\n       dense_gathered_flat(i) = rhs_ref.coeff(idx);                             \\\n+      if (op_is_div) {                                                         \\\n+        OP_REQUIRES(ctx, dense_gathered_flat(i) != 0,                          \\\n+                    errors::InvalidArgument(                                   \\\n+                        \"SparseDenseCwiseDiv cannot divide by zero,\"           \\\n+                        \"but input dense tensor contains zero \"));             \\\n+      }                                                                        \\\n     }                                                                          \\\n     break;                                                                     \\\n   }\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/kernels/sparse_dense_binary_op_shared.cc
+
+tokens used
+input: 1,394
+cache read: 14,848
+cache write: 0
+output: 353
+reasoning output: 0
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Locate target TensorFlow 2.3.4 sparse dense binary op implementation",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Map newer div-by-zero hunk to target code and validate context if needed",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Apply minimal source change in current checkout",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Inspect final diff and report YAML result",
+      "status": "in_progress",
+      "priority": "high"
+    }
+  ]
+}
+[
+  {
+    "content": "Locate target TensorFlow 2.3.4 sparse dense binary op implementation",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Map newer div-by-zero hunk to target code and validate context if needed",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Apply minimal source change in current checkout",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Inspect final diff and report YAML result",
+    "status": "in_progress",
+    "priority": "high"
+  }
+]
+
+tokens used
+input: 753
+cache read: 15,872
+cache write: 0
+output: 109
+reasoning output: 0
+
+The source edit is applied. I’m checking the resulting diff to ensure only the intended file changed.
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/kernels/sparse_dense_binary_op_shared.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0191-3929ffacfbef"
+}
+warning: in the working copy of 'tensorflow/core/kernels/sparse_dense_binary_op_shared.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/kernels/sparse_dense_binary_op_shared.cc b/tensorflow/core/kernels/sparse_dense_binary_op_shared.cc
+index dac4a3d3e6..657f0bf681 100644
+--- a/tensorflow/core/kernels/sparse_dense_binary_op_shared.cc
++++ b/tensorflow/core/kernels/sparse_dense_binary_op_shared.cc
+@@ -114,6 +114,10 @@ class SparseDenseBinaryOpShared : public OpKernel {
+     OP_REQUIRES_OK(
+         ctx, ctx->allocate_temp(DataTypeToEnum<T>::value, TensorShape({nnz}),
+                                 &dense_gathered));
++    bool op_is_div = false;
++    if (absl::StrContains(ctx->op_kernel().type_string_view(), "Div")) {
++      op_is_div = true;
++    }
+ 
+     // Pulls relevant entries from the dense side, with reshape and broadcasting
+     // *of the dense side* taken into account.  Use a TensorRef to avoid blowing
+@@ -143,6 +147,12 @@ class SparseDenseBinaryOpShared : public OpKernel {
+           errors::InvalidArgument("Provided indices are out-of-bounds w.r.t. " \
+                                   "dense side with broadcasted shape"));       \
+       dense_gathered_flat(i) = rhs_ref.coeff(idx);                             \
++      if (op_is_div) {                                                         \
++        OP_REQUIRES(ctx, dense_gathered_flat(i) != 0,                          \
++                    errors::InvalidArgument(                                   \
++                        "SparseDenseCwiseDiv cannot divide by zero,"           \
++                        "but input dense tensor contains zero "));             \
++      }                                                                        \
+     }                                                                          \
+     break;                                                                     \
+   }
+
+tool: bash
+{
+  "command": "git status --short",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0191-3929ffacfbef"
+}
+ M tensorflow/core/kernels/sparse_dense_binary_op_shared.cc
+
+tokens used
+input: 1,018
+cache read: 15,872
+cache write: 0
+output: 173
+reasoning output: 0
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Locate target TensorFlow 2.3.4 sparse dense binary op implementation",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Map newer div-by-zero hunk to target code and validate context if needed",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Apply minimal source change in current checkout",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Inspect final diff and report YAML result",
+      "status": "completed",
+      "priority": "high"
+    }
+  ]
+}
+[
+  {
+    "content": "Locate target TensorFlow 2.3.4 sparse dense binary op implementation",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Map newer div-by-zero hunk to target code and validate context if needed",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Apply minimal source change in current checkout",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Inspect final diff and report YAML result",
+    "status": "completed",
+    "priority": "high"
+  }
+]
+
+tokens used
+input: 1,630
+cache read: 15,872
+cache write: 0
+output: 110
+reasoning output: 28
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/kernels/sparse_dense_binary_op_shared.cc b/tensorflow/core/kernels/sparse_dense_binary_op_shared.cc
+    index dac4a3d3e6..657f0bf681 100644
+    --- a/tensorflow/core/kernels/sparse_dense_binary_op_shared.cc
+    +++ b/tensorflow/core/kernels/sparse_dense_binary_op_shared.cc
+    @@ -114,6 +114,10 @@ class SparseDenseBinaryOpShared : public OpKernel {
+         OP_REQUIRES_OK(
+             ctx, ctx->allocate_temp(DataTypeToEnum<T>::value, TensorShape({nnz}),
+                                     &dense_gathered));
+    +    bool op_is_div = false;
+    +    if (absl::StrContains(ctx->op_kernel().type_string_view(), "Div")) {
+    +      op_is_div = true;
+    +    }
+     
+         // Pulls relevant entries from the dense side, with reshape and broadcasting
+         // *of the dense side* taken into account.  Use a TensorRef to avoid blowing
+    @@ -143,6 +147,12 @@ class SparseDenseBinaryOpShared : public OpKernel {
+               errors::InvalidArgument("Provided indices are out-of-bounds w.r.t. " \
+                                       "dense side with broadcasted shape"));       \
+           dense_gathered_flat(i) = rhs_ref.coeff(idx);                             \
+    +      if (op_is_div) {                                                         \
+    +        OP_REQUIRES(ctx, dense_gathered_flat(i) != 0,                          \
+    +                    errors::InvalidArgument(                                   \
+    +                        "SparseDenseCwiseDiv cannot divide by zero,"           \
+    +                        "but input dense tensor contains zero "));             \
+    +      }                                                                        \
+         }                                                                          \
+         break;                                                                     \
+       }
+  notes: >
+    Backported the SparseDenseCwiseDiv dense-side zero divisor validation into the TensorFlow 2.3.4 sparse dense binary op implementation; hunk validation succeeded.
+```
+
+tokens used
+input: 899
+cache read: 16,896
+cache write: 0
+output: 449
+reasoning output: 0

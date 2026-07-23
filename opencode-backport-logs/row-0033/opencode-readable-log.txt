@@ -1,0 +1,347 @@
+I’ll inspect the target-side `tensor.cc` around the patched region, then apply the minimal equivalent change and validate the hunk against the specified base.
+
+tool: viewcode
+{
+  "ref": "a972db8d8fabd14e054c5d97eefb258957e7dce1",
+  "path": "tensorflow/core/framework/tensor.cc",
+  "startline": 1160,
+  "endline": 1235
+}
+Here are lines 1160 through 1235.
+
+    // As for each element, print the sub-dim.
+    PrintOneDimV2(dim_index + 1, shape, num_elts_at_ends, num_dims, data,
+                  data_index + elements_per_iter * i, result);
+  }
+  if (element_count > 2 * num_elts_at_ends) {
+    PrintDimSpacing(dim_index, num_dims, result);
+    strings::StrAppend(result, "...");
+  }
+  for (int64_t i = start_of_end; i < element_count; i++) {
+    // As for each element, print the sub-dim.
+    PrintDimSpacing(dim_index, num_dims, result);
+    PrintOneDimV2(dim_index + 1, shape, num_elts_at_ends, num_dims, data,
+                  data_index + elements_per_iter * i, result);
+  }
+
+  strings::StrAppend(result, "]");
+}
+
+template <typename T>
+string SummarizeArray(int64_t limit, int64_t num_elts,
+                      const TensorShape& tensor_shape, const char* data,
+                      const bool print_v2) {
+  string ret;
+  const T* array = reinterpret_cast<const T*>(data);
+
+  const gtl::InlinedVector<int64_t, 4> shape = tensor_shape.dim_sizes();
+  if (shape.empty()) {
+    for (int64_t i = 0; i < limit; ++i) {
+      if (i > 0) strings::StrAppend(&ret, " ");
+      strings::StrAppend(&ret, PrintOneElement(array[i], print_v2));
+    }
+    if (num_elts > limit) strings::StrAppend(&ret, "...");
+    return ret;
+  }
+  if (print_v2) {
+    const int num_dims = tensor_shape.dims();
+    PrintOneDimV2(0, shape, limit, num_dims, array, 0, &ret);
+  } else {
+    int64_t data_index = 0;
+    const int shape_size = tensor_shape.dims();
+    PrintOneDim(0, shape, limit, shape_size, array, &data_index, &ret);
+
+    if (num_elts > limit) strings::StrAppend(&ret, "...");
+  }
+
+  return ret;
+}
+}  // namespace
+
+string Tensor::SummarizeValue(int64_t max_entries, bool print_v2) const {
+  const int64_t num_elts = NumElements();
+  if (max_entries < 0) {
+    max_entries = num_elts;
+  }
+  size_t limit = std::min(max_entries, num_elts);
+  if ((limit > 0) && (buf_ == nullptr)) {
+    return strings::StrCat("uninitialized Tensor of ", num_elts,
+                           " elements of type ", dtype());
+  }
+  const char* data = limit > 0 ? tensor_data().data() : nullptr;
+  switch (dtype()) {
+    case DT_BFLOAT16:
+      return SummarizeArray<bfloat16>(limit, num_elts, shape_, data, print_v2);
+      break;
+    case DT_HALF:
+      return SummarizeArray<Eigen::half>(limit, num_elts, shape_, data,
+                                         print_v2);
+      break;
+    case DT_FLOAT:
+      return SummarizeArray<float>(limit, num_elts, shape_, data, print_v2);
+      break;
+    case DT_DOUBLE:
+      return SummarizeArray<double>(limit, num_elts, shape_, data, print_v2);
+      break;
+    case DT_UINT32:
+      return SummarizeArray<uint32>(limit, num_elts, shape_, data, print_v2);
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: viewcode
+{
+  "ref": "a972db8d8fabd14e054c5d97eefb258957e7dce1",
+  "path": "tensorflow/core/framework/tensor.cc",
+  "startline": 1,
+  "endline": 60
+}
+Here are lines 1 through 60.
+
+/* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+==============================================================================*/
+
+// Implementation notes:
+//
+// Tensor.cc uses a few templated classes and structs to facilitate
+// implementation of the Tensor class.
+//
+// * Buffer<T>: provides the implementation for a typed array T[n].
+//   The array is allocated by the given allocator. It runs T's
+//   default constructors and destructors when T is not a simple type
+//   (e.g., string.), and skips them otherwise.
+//
+// * Helper<T>: provides various routines given type T.  The routines
+//   includes running the constructor and destructor of T[], encoding
+//   an decoding T[] into/from a Cord, etc.
+
+#include "tensorflow/core/framework/tensor.h"
+
+#include <utility>
+
+#include "absl/strings/escaping.h"
+#include "tensorflow/core/framework/allocation_description.pb.h"
+#include "tensorflow/core/framework/log_memory.h"
+#include "tensorflow/core/framework/resource_handle.h"
+#include "tensorflow/core/framework/resource_handle.pb.h"
+#include "tensorflow/core/framework/tensor.pb.h"
+#include "tensorflow/core/framework/tensor_description.pb.h"
+#include "tensorflow/core/framework/type_traits.h"
+#include "tensorflow/core/framework/typed_allocator.h"
+#include "tensorflow/core/framework/types.h"
+#include "tensorflow/core/framework/types.pb.h"
+#include "tensorflow/core/framework/variant.h"
+#include "tensorflow/core/framework/variant_encode_decode.h"
+#include "tensorflow/core/framework/variant_op_registry.h"
+#include "tensorflow/core/framework/variant_tensor_data.h"
+#include "tensorflow/core/lib/core/coding.h"
+#include "tensorflow/core/lib/core/errors.h"
+#include "tensorflow/core/lib/core/status.h"
+#include "tensorflow/core/lib/gtl/inlined_vector.h"
+#include "tensorflow/core/lib/strings/str_util.h"
+#include "tensorflow/core/lib/strings/strcat.h"
+#include "tensorflow/core/platform/errors.h"
+#include "tensorflow/core/platform/logging.h"
+#include "tensorflow/core/platform/macros.h"
+#include "tensorflow/core/platform/protobuf.h"
+#include "tensorflow/core/platform/tensor_coding.h"
+#include "tensorflow/core/platform/types.h"
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tokens used
+input: 4,137
+cache read: 4,608
+cache write: 0
+output: 172
+reasoning output: 0
+
+The target file has the same vulnerable `SummarizeArray` implementation, so the source patch maps directly: add `<memory>`, split the implementation into an internal helper, and specialize `bool` to sanitize char data to 0/1 before reinterpretation.
+
+tool: validate
+{
+  "ref": "a972db8d8fabd14e054c5d97eefb258957e7dce1",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/framework/tensor.cc b/tensorflow/core/framework/tensor.cc\nindex 14c0d4a0e6e..74f1a1bd03e 100644\n--- a/tensorflow/core/framework/tensor.cc\n+++ b/tensorflow/core/framework/tensor.cc\n@@ -29,6 +29,7 @@ limitations under the License.\n \n #include \"tensorflow/core/framework/tensor.h\"\n \n+#include <memory>\n #include <utility>\n \n #include \"absl/strings/escaping.h\"\n@@ -1183,12 +1184,10 @@ void PrintOneDimV2(int dim_index, const gtl::InlinedVector<int64_t, 4>& shape,\n }\n \n template <typename T>\n-string SummarizeArray(int64_t limit, int64_t num_elts,\n-                      const TensorShape& tensor_shape, const char* data,\n-                      const bool print_v2) {\n+string SummarizeArrayInternal(int64_t limit, int64_t num_elts,\n+                              const TensorShape& tensor_shape, const T* array,\n+                              const bool print_v2) {\n   string ret;\n-  const T* array = reinterpret_cast<const T*>(data);\n-\n   const gtl::InlinedVector<int64_t, 4> shape = tensor_shape.dim_sizes();\n   if (shape.empty()) {\n     for (int64_t i = 0; i < limit; ++i) {\n@@ -1211,6 +1210,29 @@ string SummarizeArray(int64_t limit, int64_t num_elts,\n \n   return ret;\n }\n+\n+template <typename T>\n+string SummarizeArray(int64_t limit, int64_t num_elts,\n+                      const TensorShape& tensor_shape, const char* data,\n+                      const bool print_v2) {\n+  const T* array = reinterpret_cast<const T*>(data);\n+  return SummarizeArrayInternal<T>(limit, num_elts, tensor_shape, array,\n+                                   print_v2);\n+}\n+\n+template <>\n+string SummarizeArray<bool>(int64_t limit, int64_t num_elts,\n+                            const TensorShape& tensor_shape, const char* data,\n+                            const bool print_v2) {\n+  // We first convert all chars to be 0/1 to not get InvalidEnumValue sanitizer\n+  // error\n+  auto mutable_data = std::unique_ptr<char[]>(new char[num_elts]);\n+  for (int64_t i = 0; i < num_elts; ++i)\n+    mutable_data.get()[i] = data[i] ? 1 : 0;\n+  bool* array = reinterpret_cast<bool*>(mutable_data.get());\n+  return SummarizeArrayInternal<bool>(limit, num_elts, tensor_shape, array,\n+                                      print_v2);\n+}\n }  // namespace\n \n string Tensor::SummarizeValue(int64_t max_entries, bool print_v2) const {\n"
+}
+Patch applied successfully
+
+tokens used
+input: 2,625
+cache read: 7,680
+cache write: 0
+output: 804
+reasoning output: 25
+
+The hunk validates cleanly against the target base. I’m applying that exact minimal change now.
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/framework/tensor.cc\n@@\n #include \"tensorflow/core/framework/tensor.h\"\n \n+#include <memory>\n #include <utility>\n@@\n template <typename T>\n-string SummarizeArray(int64_t limit, int64_t num_elts,\n-                      const TensorShape& tensor_shape, const char* data,\n-                      const bool print_v2) {\n+string SummarizeArrayInternal(int64_t limit, int64_t num_elts,\n+                              const TensorShape& tensor_shape, const T* array,\n+                              const bool print_v2) {\n   string ret;\n-  const T* array = reinterpret_cast<const T*>(data);\n-\n   const gtl::InlinedVector<int64_t, 4> shape = tensor_shape.dim_sizes();\n   if (shape.empty()) {\n     for (int64_t i = 0; i < limit; ++i) {\n@@\n \n   return ret;\n }\n+\n+template <typename T>\n+string SummarizeArray(int64_t limit, int64_t num_elts,\n+                      const TensorShape& tensor_shape, const char* data,\n+                      const bool print_v2) {\n+  const T* array = reinterpret_cast<const T*>(data);\n+  return SummarizeArrayInternal<T>(limit, num_elts, tensor_shape, array,\n+                                   print_v2);\n+}\n+\n+template <>\n+string SummarizeArray<bool>(int64_t limit, int64_t num_elts,\n+                            const TensorShape& tensor_shape, const char* data,\n+                            const bool print_v2) {\n+  // We first convert all chars to be 0/1 to not get InvalidEnumValue sanitizer\n+  // error\n+  auto mutable_data = std::unique_ptr<char[]>(new char[num_elts]);\n+  for (int64_t i = 0; i < num_elts; ++i)\n+    mutable_data.get()[i] = data[i] ? 1 : 0;\n+  bool* array = reinterpret_cast<bool*>(mutable_data.get());\n+  return SummarizeArrayInternal<bool>(limit, num_elts, tensor_shape, array,\n+                                      print_v2);\n+}\n }  // namespace\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/framework/tensor.cc
+
+tokens used
+input: 1,419
+cache read: 9,728
+cache write: 0
+output: 569
+reasoning output: 0
+
+The source edit is applied. I’ll inspect the resulting diff to confirm only the intended file changed.
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/framework/tensor.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0033-a972db8d8fab",
+  "timeout": 120000
+}
+warning: in the working copy of 'tensorflow/core/framework/tensor.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/framework/tensor.cc b/tensorflow/core/framework/tensor.cc
+index c7a08ee080..7400651425 100644
+--- a/tensorflow/core/framework/tensor.cc
++++ b/tensorflow/core/framework/tensor.cc
+@@ -29,6 +29,7 @@ limitations under the License.
+ 
+ #include "tensorflow/core/framework/tensor.h"
+ 
++#include <memory>
+ #include <utility>
+ 
+ #include "absl/strings/escaping.h"
+@@ -1176,12 +1177,10 @@ void PrintOneDimV2(int dim_index, const gtl::InlinedVector<int64, 4>& shape,
+ }
+ 
+ template <typename T>
+-string SummarizeArray(int64_t limit, int64_t num_elts,
+-                      const TensorShape& tensor_shape, const char* data,
+-                      const bool print_v2) {
++string SummarizeArrayInternal(int64_t limit, int64_t num_elts,
++                              const TensorShape& tensor_shape, const T* array,
++                              const bool print_v2) {
+   string ret;
+-  const T* array = reinterpret_cast<const T*>(data);
+-
+   const gtl::InlinedVector<int64_t, 4> shape = tensor_shape.dim_sizes();
+   if (shape.empty()) {
+     for (int64_t i = 0; i < limit; ++i) {
+@@ -1204,6 +1203,29 @@ string SummarizeArray(int64_t limit, int64_t num_elts,
+ 
+   return ret;
+ }
++
++template <typename T>
++string SummarizeArray(int64_t limit, int64_t num_elts,
++                      const TensorShape& tensor_shape, const char* data,
++                      const bool print_v2) {
++  const T* array = reinterpret_cast<const T*>(data);
++  return SummarizeArrayInternal<T>(limit, num_elts, tensor_shape, array,
++                                   print_v2);
++}
++
++template <>
++string SummarizeArray<bool>(int64_t limit, int64_t num_elts,
++                            const TensorShape& tensor_shape, const char* data,
++                            const bool print_v2) {
++  // We first convert all chars to be 0/1 to not get InvalidEnumValue sanitizer
++  // error
++  auto mutable_data = std::unique_ptr<char[]>(new char[num_elts]);
++  for (int64_t i = 0; i < num_elts; ++i)
++    mutable_data.get()[i] = data[i] ? 1 : 0;
++  bool* array = reinterpret_cast<bool*>(mutable_data.get());
++  return SummarizeArrayInternal<bool>(limit, num_elts, tensor_shape, array,
++                                      print_v2);
++}
+ }  // namespace
+ 
+ string Tensor::SummarizeValue(int64_t max_entries, bool print_v2) const {
+
+tokens used
+input: 989
+cache read: 10,752
+cache write: 0
+output: 101
+reasoning output: 14
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/framework/tensor.cc b/tensorflow/core/framework/tensor.cc
+    index c7a08ee080..7400651425 100644
+    --- a/tensorflow/core/framework/tensor.cc
+    +++ b/tensorflow/core/framework/tensor.cc
+    @@ -29,6 +29,7 @@ limitations under the License.
+     
+     #include "tensorflow/core/framework/tensor.h"
+     
+    +#include <memory>
+     #include <utility>
+     
+     #include "absl/strings/escaping.h"
+    @@ -1176,12 +1177,10 @@ void PrintOneDimV2(int dim_index, const gtl::InlinedVector<int64, 4>& shape,
+     }
+     
+     template <typename T>
+    -string SummarizeArray(int64_t limit, int64_t num_elts,
+    -                      const TensorShape& tensor_shape, const char* data,
+    -                      const bool print_v2) {
+    +string SummarizeArrayInternal(int64_t limit, int64_t num_elts,
+    +                              const TensorShape& tensor_shape, const T* array,
+    +                              const bool print_v2) {
+       string ret;
+    -  const T* array = reinterpret_cast<const T*>(data);
+    -
+       const gtl::InlinedVector<int64_t, 4> shape = tensor_shape.dim_sizes();
+       if (shape.empty()) {
+         for (int64_t i = 0; i < limit; ++i) {
+    @@ -1204,6 +1203,29 @@ string SummarizeArray(int64_t limit, int64_t num_elts,
+     
+       return ret;
+     }
+    +
+    +template <typename T>
+    +string SummarizeArray(int64_t limit, int64_t num_elts,
+    +                      const TensorShape& tensor_shape, const char* data,
+    +                      const bool print_v2) {
+    +  const T* array = reinterpret_cast<const T*>(data);
+    +  return SummarizeArrayInternal<T>(limit, num_elts, tensor_shape, array,
+    +                                   print_v2);
+    +}
+    +
+    +template <>
+    +string SummarizeArray<bool>(int64_t limit, int64_t num_elts,
+    +                            const TensorShape& tensor_shape, const char* data,
+    +                            const bool print_v2) {
+    +  // We first convert all chars to be 0/1 to not get InvalidEnumValue sanitizer
+    +  // error
+    +  auto mutable_data = std::unique_ptr<char[]>(new char[num_elts]);
+    +  for (int64_t i = 0; i < num_elts; ++i)
+    +    mutable_data.get()[i] = data[i] ? 1 : 0;
+    +  bool* array = reinterpret_cast<bool*>(mutable_data.get());
+    +  return SummarizeArrayInternal<bool>(limit, num_elts, tensor_shape, array,
+    +                                      print_v2);
+    +}
+     }  // namespace
+     
+     string Tensor::SummarizeValue(int64_t max_entries, bool print_v2) const {
+  notes: >
+    Backported the bool tensor summarization sanitizer by adding a bool specialization that normalizes char data to 0/1 before reinterpretation; hunk validation succeeded against the target base.
+```
+
+tokens used
+input: 1,772
+cache read: 10,752
+cache write: 0
+output: 743
+reasoning output: 17

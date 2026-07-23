@@ -1,0 +1,860 @@
+I’ll locate the target 2.6.4 implementations for the kernel and test, compare the surrounding code shape to the provided 2.10 patch, then apply the minimal equivalent changes.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target edit distance kernel and test context",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Validate and apply minimal backport hunks",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "content": "Inspect resulting diff and report YAML",
+      "status": "pending",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target edit distance kernel and test context",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Validate and apply minimal backport hunks",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "content": "Inspect resulting diff and report YAML",
+    "status": "pending",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 4,671
+cache read: 4,608
+cache write: 0
+output: 122
+reasoning output: 0
+
+tool: viewcode
+{
+  "ref": "75867f82431f8801f26d651ca567a3ff1b0d39c3",
+  "path": "tensorflow/core/kernels/edit_distance_op.cc",
+  "startline": 180,
+  "endline": 285
+}
+Here are lines 180 through 285.
+
+    output_strides[output_shape.dims() - 1] = 1;
+    for (int d = output_shape.dims() - 2; d >= 0; --d) {
+      output_strides[d] = output_strides[d + 1] * output_shape.dim_size(d + 1);
+    }
+
+    auto hypothesis_grouper = hypothesis.group(group_dims);
+    auto truth_grouper = truth.group(group_dims);
+
+    auto hypothesis_iter = hypothesis_grouper.begin();
+    auto truth_iter = truth_grouper.begin();
+
+    auto cmp = std::equal_to<T>();
+
+    while (hypothesis_iter != hypothesis_grouper.end() &&
+           truth_iter != truth_grouper.end()) {
+      sparse::Group truth_i = *truth_iter;
+      sparse::Group hypothesis_j = *hypothesis_iter;
+      std::vector<int64> g_truth = truth_i.group();
+      std::vector<int64> g_hypothesis = hypothesis_j.group();
+      auto truth_seq = truth_i.values<T>();
+      auto hypothesis_seq = hypothesis_j.values<T>();
+
+      if (g_truth == g_hypothesis) {
+        auto loc = std::inner_product(g_truth.begin(), g_truth.end(),
+                                      output_strides.begin(), int64{0});
+        OP_REQUIRES(
+            ctx, loc < output_elements,
+            errors::Internal("Got an inner product ", loc,
+                             " which would require in writing to outside of "
+                             "the buffer for the output tensor (max elements ",
+                             output_elements, ")"));
+        output_t(loc) =
+            gtl::LevenshteinDistance<T>(truth_seq, hypothesis_seq, cmp);
+        if (normalize_) output_t(loc) /= truth_seq.size();
+
+        ++hypothesis_iter;
+        ++truth_iter;
+      } else if (g_truth > g_hypothesis) {  // zero-length truth
+        auto loc = std::inner_product(g_hypothesis.begin(), g_hypothesis.end(),
+                                      output_strides.begin(), int64{0});
+        OP_REQUIRES(
+            ctx, loc < output_elements,
+            errors::Internal("Got an inner product ", loc,
+                             " which would require in writing to outside of "
+                             "the buffer for the output tensor (max elements ",
+                             output_elements, ")"));
+        output_t(loc) = hypothesis_seq.size();
+        if (normalize_ && output_t(loc) != 0.0f) {
+          output_t(loc) = std::numeric_limits<float>::infinity();
+        }
+        ++hypothesis_iter;
+      } else {  // zero-length hypothesis
+        auto loc = std::inner_product(g_truth.begin(), g_truth.end(),
+                                      output_strides.begin(), int64{0});
+        OP_REQUIRES(
+            ctx, loc < output_elements,
+            errors::Internal("Got an inner product ", loc,
+                             " which would require in writing to outside of "
+                             "the buffer for the output tensor (max elements ",
+                             output_elements, ")"));
+        output_t(loc) = (normalize_) ? 1.0 : truth_seq.size();
+        ++truth_iter;
+      }
+    }
+    while (hypothesis_iter != hypothesis_grouper.end()) {  // zero-length truths
+      sparse::Group hypothesis_j = *hypothesis_iter;
+      std::vector<int64> g_hypothesis = hypothesis_j.group();
+      auto hypothesis_seq = hypothesis_j.values<T>();
+      auto loc = std::inner_product(g_hypothesis.begin(), g_hypothesis.end(),
+                                    output_strides.begin(), int64{0});
+      OP_REQUIRES(
+          ctx, loc < output_elements,
+          errors::Internal("Got an inner product ", loc,
+                           " which would require in writing to outside of the "
+                           "buffer for the output tensor (max elements ",
+                           output_elements, ")"));
+      output_t(loc) = hypothesis_seq.size();
+      if (normalize_ && output_t(loc) != 0.0f) {
+        output_t(loc) = std::numeric_limits<float>::infinity();
+      }
+      ++hypothesis_iter;
+    }
+    while (truth_iter != truth_grouper.end()) {  // missing hypotheses
+      sparse::Group truth_i = *truth_iter;
+      std::vector<int64> g_truth = truth_i.group();
+      auto truth_seq = truth_i.values<T>();
+      auto loc = std::inner_product(g_truth.begin(), g_truth.end(),
+                                    output_strides.begin(), int64{0});
+      OP_REQUIRES(
+          ctx, loc < output_elements,
+          errors::Internal("Got an inner product ", loc,
+                           " which would require in writing to outside of the "
+                           "buffer for the output tensor (max elements ",
+                           output_elements, ")"));
+      output_t(loc) = (normalize_) ? 1.0 : truth_seq.size();
+      ++truth_iter;
+    }
+  }
+
+ private:
+  bool normalize_;
+
+  TF_DISALLOW_COPY_AND_ASSIGN(EditDistanceOp);
+};
+
+#define REGISTER_CPU_KERNEL(T)                                        \
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: viewcode
+{
+  "ref": "75867f82431f8801f26d651ca567a3ff1b0d39c3",
+  "path": "tensorflow/python/kernel_tests/array_ops/edit_distance_op_test.py",
+  "startline": 1,
+  "endline": 260
+}
+This file doesn't exist in this commit.
+
+tool: locate_symbol
+{
+  "ref": "75867f82431f8801f26d651ca567a3ff1b0d39c3",
+  "symbol": "EditDistanceOp"
+}
+tensorflow/core/kernels/edit_distance_op.cc:109
+tensorflow/core/kernels/edit_distance_op.cc:111
+tensorflow/core/kernels/edit_distance_op.cc:282
+tensorflow/core/kernels/edit_distance_op.cc:288
+
+tokens used
+input: 807
+cache read: 8,704
+cache write: 0
+output: 184
+reasoning output: 0
+
+tool: glob
+{
+  "pattern": "tensorflow/python/kernel_tests/**/*edit_distance*"
+}
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0267-75867f82431f\tensorflow\python\kernel_tests\edit_distance_op_test.py
+
+tool: grep
+{
+  "pattern": "testEditDistanceZeroLengthHypothesisAndTruth|class.*EditDistance",
+  "path": "tensorflow/python",
+  "include": "*.py"
+}
+Found 2 matches
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0267-75867f82431f\tensorflow\python\kernel_tests\edit_distance_op_test.py:
+  Line 38: class EditDistanceTest(test.TestCase):
+
+  Line 199:   def testEditDistanceZeroLengthHypothesisAndTruth(self):
+
+tokens used
+input: 6,233
+cache read: 4,608
+cache write: 0
+output: 79
+reasoning output: 11
+
+The kernel code is structurally the same in 2.6.4. The Python test file lives at `tensorflow/python/kernel_tests/edit_distance_op_test.py` in this release, not under `array_ops/`.
+
+tool: read
+{
+  "filePath": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0267-75867f82431f\\tensorflow\\python\\kernel_tests\\edit_distance_op_test.py",
+  "offset": 1,
+  "limit": 250
+}
+<path>C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0267-75867f82431f\tensorflow\python\kernel_tests\edit_distance_op_test.py</path>
+<type>file</type>
+<content>
+1: # Copyright 2015 The TensorFlow Authors. All Rights Reserved.
+2: #
+3: # Licensed under the Apache License, Version 2.0 (the "License");
+4: # you may not use this file except in compliance with the License.
+5: # You may obtain a copy of the License at
+6: #
+7: #     http://www.apache.org/licenses/LICENSE-2.0
+8: #
+9: # Unless required by applicable law or agreed to in writing, software
+10: # distributed under the License is distributed on an "AS IS" BASIS,
+11: # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+12: # See the License for the specific language governing permissions and
+13: # limitations under the License.
+14: # ==============================================================================
+15: """Tests for tensorflow.kernels.edit_distance_op."""
+16: 
+17: from __future__ import absolute_import
+18: from __future__ import division
+19: from __future__ import print_function
+20: 
+21: import numpy as np
+22: 
+23: from tensorflow.python.framework import constant_op
+24: from tensorflow.python.framework import ops
+25: from tensorflow.python.framework import sparse_tensor
+26: from tensorflow.python.ops import array_ops
+27: from tensorflow.python.platform import test
+28: 
+29: 
+30: def ConstantOf(x):
+31:   x = np.asarray(x)
+32:   # Convert to int64 if it's not a string or unicode
+33:   if x.dtype.char not in "SU":
+34:     x = np.asarray(x, dtype=np.int64)
+35:   return constant_op.constant(x)
+36: 
+37: 
+38: class EditDistanceTest(test.TestCase):
+39: 
+40:   def _testEditDistanceST(self,
+41:                           hypothesis_st,
+42:                           truth_st,
+43:                           normalize,
+44:                           expected_output,
+45:                           expected_shape,
+46:                           expected_err_re=None):
+47:     edit_distance = array_ops.edit_distance(
+48:         hypothesis=hypothesis_st, truth=truth_st, normalize=normalize)
+49: 
+50:     if expected_err_re is None:
+51:       self.assertEqual(edit_distance.get_shape(), expected_shape)
+52:       output = self.evaluate(edit_distance)
+53:       self.assertAllClose(output, expected_output)
+54:     else:
+55:       with self.assertRaisesOpError(expected_err_re):
+56:         self.evaluate(edit_distance)
+57: 
+58:   def _testEditDistance(self,
+59:                         hypothesis,
+60:                         truth,
+61:                         normalize,
+62:                         expected_output,
+63:                         expected_err_re=None):
+64:     # Shape inference figures out the shape from the shape variables
+65:     # Explicit tuple() needed since zip returns an iterator in Python 3.
+66:     expected_shape = [
+67:         max(h, t) for h, t in tuple(zip(hypothesis[2], truth[2]))[:-1]
+68:     ]
+69: 
+70:     # SparseTensorValue inputs.
+71:     with ops.Graph().as_default() as g, self.session(g):
+72:       # hypothesis and truth are (index, value, shape) tuples
+73:       self._testEditDistanceST(
+74:           hypothesis_st=sparse_tensor.SparseTensorValue(
+75:               *[ConstantOf(x) for x in hypothesis]),
+76:           truth_st=sparse_tensor.SparseTensorValue(
+77:               *[ConstantOf(x) for x in truth]),
+78:           normalize=normalize,
+79:           expected_output=expected_output,
+80:           expected_shape=expected_shape,
+81:           expected_err_re=expected_err_re)
+82: 
+83:     # SparseTensor inputs.
+84:     with ops.Graph().as_default() as g, self.session(g):
+85:       # hypothesis and truth are (index, value, shape) tuples
+86:       self._testEditDistanceST(
+87:           hypothesis_st=sparse_tensor.SparseTensor(
+88:               *[ConstantOf(x) for x in hypothesis]),
+89:           truth_st=sparse_tensor.SparseTensor(*[ConstantOf(x) for x in truth]),
+90:           normalize=normalize,
+91:           expected_output=expected_output,
+92:           expected_shape=expected_shape,
+93:           expected_err_re=expected_err_re)
+94: 
+95:   def testEditDistanceNormalized(self):
+96:     hypothesis_indices = [[0, 0], [0, 1], [1, 0], [1, 1]]
+97:     hypothesis_values = [0, 1, 1, -1]
+98:     hypothesis_shape = [2, 2]
+99:     truth_indices = [[0, 0], [1, 0], [1, 1]]
+100:     truth_values = [0, 1, 1]
+101:     truth_shape = [2, 2]
+102:     expected_output = [1.0, 0.5]
+103: 
+104:     self._testEditDistance(
+105:         hypothesis=(hypothesis_indices, hypothesis_values, hypothesis_shape),
+106:         truth=(truth_indices, truth_values, truth_shape),
+107:         normalize=True,
+108:         expected_output=expected_output)
+109: 
+110:   def testEditDistanceUnnormalized(self):
+111:     hypothesis_indices = [[0, 0], [1, 0], [1, 1]]
+112:     hypothesis_values = [10, 10, 11]
+113:     hypothesis_shape = [2, 2]
+114:     truth_indices = [[0, 0], [0, 1], [1, 0], [1, 1]]
+115:     truth_values = [1, 2, 1, -1]
+116:     truth_shape = [2, 3]
+117:     expected_output = [2.0, 2.0]
+118: 
+119:     self._testEditDistance(
+120:         hypothesis=(hypothesis_indices, hypothesis_values, hypothesis_shape),
+121:         truth=(truth_indices, truth_values, truth_shape),
+122:         normalize=False,
+123:         expected_output=expected_output)
+124: 
+125:   def testEditDistanceProperDistance(self):
+126:     # In this case, the values are individual characters stored in the
+127:     # SparseTensor (type DT_STRING)
+128:     hypothesis_indices = ([[0, i] for i, _ in enumerate("algorithm")] +
+129:                           [[1, i] for i, _ in enumerate("altruistic")])
+130:     hypothesis_values = [x for x in "algorithm"] + [x for x in "altruistic"]
+131:     hypothesis_shape = [2, 11]
+132:     truth_indices = ([[0, i] for i, _ in enumerate("altruistic")] +
+133:                      [[1, i] for i, _ in enumerate("algorithm")])
+134:     truth_values = [x for x in "altruistic"] + [x for x in "algorithm"]
+135:     truth_shape = [2, 11]
+136:     expected_unnormalized = [6.0, 6.0]
+137:     expected_normalized = [6.0 / len("altruistic"), 6.0 / len("algorithm")]
+138: 
+139:     self._testEditDistance(
+140:         hypothesis=(hypothesis_indices, hypothesis_values, hypothesis_shape),
+141:         truth=(truth_indices, truth_values, truth_shape),
+142:         normalize=False,
+143:         expected_output=expected_unnormalized)
+144: 
+145:     self._testEditDistance(
+146:         hypothesis=(hypothesis_indices, hypothesis_values, hypothesis_shape),
+147:         truth=(truth_indices, truth_values, truth_shape),
+148:         normalize=True,
+149:         expected_output=expected_normalized)
+150: 
+151:   def testEditDistance3D(self):
+152:     hypothesis_indices = [[0, 0, 0], [1, 0, 0]]
+153:     hypothesis_values = [0, 1]
+154:     hypothesis_shape = [2, 1, 1]
+155:     truth_indices = [[0, 1, 0], [1, 0, 0], [1, 1, 0]]
+156:     truth_values = [0, 1, 1]
+157:     truth_shape = [2, 2, 1]
+158:     expected_output = [
+159:         [np.inf, 1.0],  # (0,0): no truth, (0,1): no hypothesis
+160:         [0.0, 1.0]
+161:     ]  # (1,0): match,    (1,1): no hypothesis
+162: 
+163:     self._testEditDistance(
+164:         hypothesis=(hypothesis_indices, hypothesis_values, hypothesis_shape),
+165:         truth=(truth_indices, truth_values, truth_shape),
+166:         normalize=True,
+167:         expected_output=expected_output)
+168: 
+169:   def testEditDistanceZeroLengthHypothesis(self):
+170:     hypothesis_indices = np.empty((0, 2), dtype=np.int64)
+171:     hypothesis_values = []
+172:     hypothesis_shape = [1, 0]
+173:     truth_indices = [[0, 0]]
+174:     truth_values = [0]
+175:     truth_shape = [1, 1]
+176:     expected_output = [1.0]
+177: 
+178:     self._testEditDistance(
+179:         hypothesis=(hypothesis_indices, hypothesis_values, hypothesis_shape),
+180:         truth=(truth_indices, truth_values, truth_shape),
+181:         normalize=True,
+182:         expected_output=expected_output)
+183: 
+184:   def testEditDistanceZeroLengthTruth(self):
+185:     hypothesis_indices = [[0, 0]]
+186:     hypothesis_values = [0]
+187:     hypothesis_shape = [1, 1]
+188:     truth_indices = np.empty((0, 2), dtype=np.int64)
+189:     truth_values = []
+190:     truth_shape = [1, 0]
+191:     expected_output = [np.inf]  # Normalized, loss is 1/0 = inf
+192: 
+193:     self._testEditDistance(
+194:         hypothesis=(hypothesis_indices, hypothesis_values, hypothesis_shape),
+195:         truth=(truth_indices, truth_values, truth_shape),
+196:         normalize=True,
+197:         expected_output=expected_output)
+198: 
+199:   def testEditDistanceZeroLengthHypothesisAndTruth(self):
+200:     hypothesis_indices = np.empty((0, 2), dtype=np.int64)
+201:     hypothesis_values = []
+202:     hypothesis_shape = [1, 0]
+203:     truth_indices = np.empty((0, 2), dtype=np.int64)
+204:     truth_values = []
+205:     truth_shape = [1, 0]
+206:     expected_output = [0]  # Normalized is 0 because of exact match
+207: 
+208:     self._testEditDistance(
+209:         hypothesis=(hypothesis_indices, hypothesis_values, hypothesis_shape),
+210:         truth=(truth_indices, truth_values, truth_shape),
+211:         normalize=True,
+212:         expected_output=expected_output)
+213: 
+214: 
+215: if __name__ == "__main__":
+216:   test.main()
+
+(End of file - total 216 lines)
+</content>
+
+tokens used
+input: 338
+cache read: 10,752
+cache write: 0
+output: 126
+reasoning output: 0
+
+I’m applying the same negative-bound validation in the kernel and adding the regression test to the older test location.
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/kernels/edit_distance_op.cc\n@@\n-            ctx, loc < output_elements,\n+            ctx, 0 <= loc && loc < output_elements,\n             errors::Internal(\"Got an inner product \", loc,\n-                             \" which would require in writing to outside of \"\n+                             \" which would require writing to outside of \"\n                              \"the buffer for the output tensor (max elements \",\n                              output_elements, \")\"));\n@@\n-            ctx, loc < output_elements,\n+            ctx, 0 <= loc && loc < output_elements,\n             errors::Internal(\"Got an inner product \", loc,\n-                             \" which would require in writing to outside of \"\n+                             \" which would require writing to outside of \"\n                              \"the buffer for the output tensor (max elements \",\n                              output_elements, \")\"));\n@@\n-            ctx, loc < output_elements,\n+            ctx, 0 <= loc && loc < output_elements,\n             errors::Internal(\"Got an inner product \", loc,\n-                             \" which would require in writing to outside of \"\n+                             \" which would require writing to outside of \"\n                              \"the buffer for the output tensor (max elements \",\n                              output_elements, \")\"));\n@@\n-          ctx, loc < output_elements,\n+          ctx, 0 <= loc && loc < output_elements,\n           errors::Internal(\"Got an inner product \", loc,\n-                           \" which would require in writing to outside of the \"\n+                           \" which would require writing to outside of the \"\n                            \"buffer for the output tensor (max elements \",\n                            output_elements, \")\"));\n@@\n-          ctx, loc < output_elements,\n+          ctx, 0 <= loc && loc < output_elements,\n           errors::Internal(\"Got an inner product \", loc,\n-                           \" which would require in writing to outside of the \"\n+                           \" which would require writing to outside of the \"\n                            \"buffer for the output tensor (max elements \",\n                            output_elements, \")\"));\n*** Update File: tensorflow/python/kernel_tests/edit_distance_op_test.py\n@@\n   def testEditDistanceZeroLengthHypothesisAndTruth(self):\n     hypothesis_indices = np.empty((0, 2), dtype=np.int64)\n     hypothesis_values = []\n@@\n         normalize=True,\n         expected_output=expected_output)\n \n+  def testEditDistanceBadIndices(self):\n+    hypothesis_indices = np.full((3, 3), -1250999896764, dtype=np.int64)\n+    hypothesis_values = np.empty(3, dtype=np.int64)\n+    hypothesis_shape = np.empty(3, dtype=np.int64)\n+    truth_indices = np.full((3, 3), -1250999896764, dtype=np.int64)\n+    truth_values = np.full([3], 2, dtype=np.int64)\n+    truth_shape = np.full([3], 2, dtype=np.int64)\n+    expected_output = []  # dummy; ignored\n+\n+    self._testEditDistance(\n+        hypothesis=(hypothesis_indices, hypothesis_values, hypothesis_shape),\n+        truth=(truth_indices, truth_values, truth_shape),\n+        normalize=False,\n+        expected_output=expected_output,\n+        expected_err_re=(r\"inner product -\\d+ which would require writing \"\n+                         \"to outside of the buffer for the output tensor\"))\n+\n \n if __name__ == \"__main__\":\n   test.main()\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/kernels/edit_distance_op.cc
+M tensorflow/python/kernel_tests/edit_distance_op_test.py
+
+tokens used
+input: 2,988
+cache read: 10,752
+cache write: 0
+output: 877
+reasoning output: 56
+
+The source changes are in place. I’ll now inspect the resulting diff and run lightweight hunk validation against the target base.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target edit distance kernel and test context",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate and apply minimal backport hunks",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Inspect resulting diff and report YAML",
+      "status": "pending",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target edit distance kernel and test context",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate and apply minimal backport hunks",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Inspect resulting diff and report YAML",
+    "status": "pending",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 1,911
+cache read: 12,800
+cache write: 0
+output: 108
+reasoning output: 0
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/kernels/edit_distance_op.cc tensorflow/python/kernel_tests/edit_distance_op_test.py",
+  "timeout": 120000
+}
+warning: in the working copy of 'tensorflow/core/kernels/edit_distance_op.cc', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'tensorflow/python/kernel_tests/edit_distance_op_test.py', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/kernels/edit_distance_op.cc b/tensorflow/core/kernels/edit_distance_op.cc
+index 386a1af084..d156365da4 100644
+--- a/tensorflow/core/kernels/edit_distance_op.cc
++++ b/tensorflow/core/kernels/edit_distance_op.cc
+@@ -203,9 +203,9 @@ class EditDistanceOp : public OpKernel {
+         auto loc = std::inner_product(g_truth.begin(), g_truth.end(),
+                                       output_strides.begin(), int64{0});
+         OP_REQUIRES(
+-            ctx, loc < output_elements,
++            ctx, 0 <= loc && loc < output_elements,
+             errors::Internal("Got an inner product ", loc,
+-                             " which would require in writing to outside of "
++                             " which would require writing to outside of "
+                              "the buffer for the output tensor (max elements ",
+                              output_elements, ")"));
+         output_t(loc) =
+@@ -218,9 +218,9 @@ class EditDistanceOp : public OpKernel {
+         auto loc = std::inner_product(g_hypothesis.begin(), g_hypothesis.end(),
+                                       output_strides.begin(), int64{0});
+         OP_REQUIRES(
+-            ctx, loc < output_elements,
++            ctx, 0 <= loc && loc < output_elements,
+             errors::Internal("Got an inner product ", loc,
+-                             " which would require in writing to outside of "
++                             " which would require writing to outside of "
+                              "the buffer for the output tensor (max elements ",
+                              output_elements, ")"));
+         output_t(loc) = hypothesis_seq.size();
+@@ -232,9 +232,9 @@ class EditDistanceOp : public OpKernel {
+         auto loc = std::inner_product(g_truth.begin(), g_truth.end(),
+                                       output_strides.begin(), int64{0});
+         OP_REQUIRES(
+-            ctx, loc < output_elements,
++            ctx, 0 <= loc && loc < output_elements,
+             errors::Internal("Got an inner product ", loc,
+-                             " which would require in writing to outside of "
++                             " which would require writing to outside of "
+                              "the buffer for the output tensor (max elements ",
+                              output_elements, ")"));
+         output_t(loc) = (normalize_) ? 1.0 : truth_seq.size();
+@@ -248,9 +248,9 @@ class EditDistanceOp : public OpKernel {
+       auto loc = std::inner_product(g_hypothesis.begin(), g_hypothesis.end(),
+                                     output_strides.begin(), int64{0});
+       OP_REQUIRES(
+-          ctx, loc < output_elements,
++          ctx, 0 <= loc && loc < output_elements,
+           errors::Internal("Got an inner product ", loc,
+-                           " which would require in writing to outside of the "
++                           " which would require writing to outside of the "
+                            "buffer for the output tensor (max elements ",
+                            output_elements, ")"));
+       output_t(loc) = hypothesis_seq.size();
+@@ -266,9 +266,9 @@ class EditDistanceOp : public OpKernel {
+       auto loc = std::inner_product(g_truth.begin(), g_truth.end(),
+                                     output_strides.begin(), int64{0});
+       OP_REQUIRES(
+-          ctx, loc < output_elements,
++          ctx, 0 <= loc && loc < output_elements,
+           errors::Internal("Got an inner product ", loc,
+-                           " which would require in writing to outside of the "
++                           " which would require writing to outside of the "
+                            "buffer for the output tensor (max elements ",
+                            output_elements, ")"));
+       output_t(loc) = (normalize_) ? 1.0 : truth_seq.size();
+diff --git a/tensorflow/python/kernel_tests/edit_distance_op_test.py b/tensorflow/python/kernel_tests/edit_distance_op_test.py
+index 4a06ab770a..ff49202545 100644
+--- a/tensorflow/python/kernel_tests/edit_distance_op_test.py
++++ b/tensorflow/python/kernel_tests/edit_distance_op_test.py
+@@ -211,6 +211,23 @@ class EditDistanceTest(test.TestCase):
+         normalize=True,
+         expected_output=expected_output)
+ 
++  def testEditDistanceBadIndices(self):
++    hypothesis_indices = np.full((3, 3), -1250999896764, dtype=np.int64)
++    hypothesis_values = np.empty(3, dtype=np.int64)
++    hypothesis_shape = np.empty(3, dtype=np.int64)
++    truth_indices = np.full((3, 3), -1250999896764, dtype=np.int64)
++    truth_values = np.full([3], 2, dtype=np.int64)
++    truth_shape = np.full([3], 2, dtype=np.int64)
++    expected_output = []  # dummy; ignored
++
++    self._testEditDistance(
++        hypothesis=(hypothesis_indices, hypothesis_values, hypothesis_shape),
++        truth=(truth_indices, truth_values, truth_shape),
++        normalize=False,
++        expected_output=expected_output,
++        expected_err_re=(r"inner product -\d+ which would require writing "
++                         "to outside of the buffer for the output tensor"))
++
+ 
+ if __name__ == "__main__":
+   test.main()
+
+tokens used
+input: 1,105
+cache read: 13,824
+cache write: 0
+output: 42
+reasoning output: 0
+
+tool: validate
+{
+  "ref": "75867f82431f8801f26d651ca567a3ff1b0d39c3",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/edit_distance_op.cc b/tensorflow/core/kernels/edit_distance_op.cc\nindex 386a1af084..d156365da4 100644\n--- a/tensorflow/core/kernels/edit_distance_op.cc\n+++ b/tensorflow/core/kernels/edit_distance_op.cc\n@@ -203,9 +203,9 @@ class EditDistanceOp : public OpKernel {\n         auto loc = std::inner_product(g_truth.begin(), g_truth.end(),\n                                       output_strides.begin(), int64{0});\n         OP_REQUIRES(\n-            ctx, loc < output_elements,\n+            ctx, 0 <= loc && loc < output_elements,\n             errors::Internal(\"Got an inner product \", loc,\n-                             \" which would require in writing to outside of \"\n+                             \" which would require writing to outside of \"\n                              \"the buffer for the output tensor (max elements \",\n                              output_elements, \")\"));\n         output_t(loc) =\n@@ -218,9 +218,9 @@ class EditDistanceOp : public OpKernel {\n         auto loc = std::inner_product(g_hypothesis.begin(), g_hypothesis.end(),\n                                       output_strides.begin(), int64{0});\n         OP_REQUIRES(\n-            ctx, loc < output_elements,\n+            ctx, 0 <= loc && loc < output_elements,\n             errors::Internal(\"Got an inner product \", loc,\n-                             \" which would require in writing to outside of \"\n+                             \" which would require writing to outside of \"\n                              \"the buffer for the output tensor (max elements \",\n                              output_elements, \")\"));\n         output_t(loc) = hypothesis_seq.size();\n@@ -232,9 +232,9 @@ class EditDistanceOp : public OpKernel {\n         auto loc = std::inner_product(g_truth.begin(), g_truth.end(),\n                                       output_strides.begin(), int64{0});\n         OP_REQUIRES(\n-            ctx, loc < output_elements,\n+            ctx, 0 <= loc && loc < output_elements,\n             errors::Internal(\"Got an inner product \", loc,\n-                             \" which would require in writing to outside of \"\n+                             \" which would require writing to outside of \"\n                              \"the buffer for the output tensor (max elements \",\n                              output_elements, \")\"));\n         output_t(loc) = (normalize_) ? 1.0 : truth_seq.size();\n@@ -248,9 +248,9 @@ class EditDistanceOp : public OpKernel {\n       auto loc = std::inner_product(g_hypothesis.begin(), g_hypothesis.end(),\n                                     output_strides.begin(), int64{0});\n       OP_REQUIRES(\n-          ctx, loc < output_elements,\n+          ctx, 0 <= loc && loc < output_elements,\n           errors::Internal(\"Got an inner product \", loc,\n-                           \" which would require in writing to outside of the \"\n+                           \" which would require writing to outside of the \"\n                            \"buffer for the output tensor (max elements \",\n                            output_elements, \")\"));\n       output_t(loc) = hypothesis_seq.size();\n@@ -266,9 +266,9 @@ class EditDistanceOp : public OpKernel {\n       auto loc = std::inner_product(g_truth.begin(), g_truth.end(),\n                                     output_strides.begin(), int64{0});\n       OP_REQUIRES(\n-          ctx, loc < output_elements,\n+          ctx, 0 <= loc && loc < output_elements,\n           errors::Internal(\"Got an inner product \", loc,\n-                           \" which would require in writing to outside of the \"\n+                           \" which would require writing to outside of the \"\n                            \"buffer for the output tensor (max elements \",\n                            output_elements, \")\"));\n       output_t(loc) = (normalize_) ? 1.0 : truth_seq.size();\ndiff --git a/tensorflow/python/kernel_tests/edit_distance_op_test.py b/tensorflow/python/kernel_tests/edit_distance_op_test.py\nindex 4a06ab770a..ff49202545 100644\n--- a/tensorflow/python/kernel_tests/edit_distance_op_test.py\n+++ b/tensorflow/python/kernel_tests/edit_distance_op_test.py\n@@ -211,6 +211,23 @@ class EditDistanceTest(test.TestCase):\n         normalize=True,\n         expected_output=expected_output)\n \n+  def testEditDistanceBadIndices(self):\n+    hypothesis_indices = np.full((3, 3), -1250999896764, dtype=np.int64)\n+    hypothesis_values = np.empty(3, dtype=np.int64)\n+    hypothesis_shape = np.empty(3, dtype=np.int64)\n+    truth_indices = np.full((3, 3), -1250999896764, dtype=np.int64)\n+    truth_values = np.full([3], 2, dtype=np.int64)\n+    truth_shape = np.full([3], 2, dtype=np.int64)\n+    expected_output = []  # dummy; ignored\n+\n+    self._testEditDistance(\n+        hypothesis=(hypothesis_indices, hypothesis_values, hypothesis_shape),\n+        truth=(truth_indices, truth_values, truth_shape),\n+        normalize=False,\n+        expected_output=expected_output,\n+        expected_err_re=(r\"inner product -\\d+ which would require writing \"\n+                         \"to outside of the buffer for the output tensor\"))\n+\n \n if __name__ == \"__main__\":\n   test.main()\n"
+}
+Patch applied successfully
+
+tokens used
+input: 1,316
+cache read: 14,848
+cache write: 0
+output: 1,317
+reasoning output: 12
+
+tool: bash
+{
+  "command": "git diff --check -- tensorflow/core/kernels/edit_distance_op.cc tensorflow/python/kernel_tests/edit_distance_op_test.py",
+  "timeout": 120000
+}
+warning: in the working copy of 'tensorflow/core/kernels/edit_distance_op.cc', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'tensorflow/python/kernel_tests/edit_distance_op_test.py', LF will be replaced by CRLF the next time Git touches it
+
+tool: bash
+{
+  "command": "git status --short",
+  "timeout": 120000
+}
+ M tensorflow/core/kernels/edit_distance_op.cc
+ M tensorflow/python/kernel_tests/edit_distance_op_test.py
+
+tokens used
+input: 1,634
+cache read: 15,872
+cache write: 0
+output: 84
+reasoning output: 76
+
+Hunk validation against `75867f82431f8801f26d651ca567a3ff1b0d39c3` succeeded, and `git diff --check` reported no whitespace errors.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target edit distance kernel and test context",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate and apply minimal backport hunks",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Inspect resulting diff and report YAML",
+      "status": "in_progress",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target edit distance kernel and test context",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate and apply minimal backport hunks",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Inspect resulting diff and report YAML",
+    "status": "in_progress",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 874
+cache read: 16,896
+cache write: 0
+output: 129
+reasoning output: 18
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target edit distance kernel and test context",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate and apply minimal backport hunks",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Inspect resulting diff and report YAML",
+      "status": "completed",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target edit distance kernel and test context",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate and apply minimal backport hunks",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Inspect resulting diff and report YAML",
+    "status": "completed",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 1,131
+cache read: 16,896
+cache write: 0
+output: 75
+reasoning output: 0
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/kernels/edit_distance_op.cc b/tensorflow/core/kernels/edit_distance_op.cc
+    index 386a1af084..d156365da4 100644
+    --- a/tensorflow/core/kernels/edit_distance_op.cc
+    +++ b/tensorflow/core/kernels/edit_distance_op.cc
+    @@ -203,9 +203,9 @@ class EditDistanceOp : public OpKernel {
+             auto loc = std::inner_product(g_truth.begin(), g_truth.end(),
+                                           output_strides.begin(), int64{0});
+             OP_REQUIRES(
+    -            ctx, loc < output_elements,
+    +            ctx, 0 <= loc && loc < output_elements,
+                 errors::Internal("Got an inner product ", loc,
+    -                             " which would require in writing to outside of "
+    +                             " which would require writing to outside of "
+                                  "the buffer for the output tensor (max elements ",
+                                  output_elements, ")"));
+             output_t(loc) =
+    @@ -218,9 +218,9 @@ class EditDistanceOp : public OpKernel {
+             auto loc = std::inner_product(g_hypothesis.begin(), g_hypothesis.end(),
+                                           output_strides.begin(), int64{0});
+             OP_REQUIRES(
+    -            ctx, loc < output_elements,
+    +            ctx, 0 <= loc && loc < output_elements,
+                 errors::Internal("Got an inner product ", loc,
+    -                             " which would require in writing to outside of "
+    +                             " which would require writing to outside of "
+                                  "the buffer for the output tensor (max elements ",
+                                  output_elements, ")"));
+             output_t(loc) = hypothesis_seq.size();
+    @@ -232,9 +232,9 @@ class EditDistanceOp : public OpKernel {
+             auto loc = std::inner_product(g_truth.begin(), g_truth.end(),
+                                           output_strides.begin(), int64{0});
+             OP_REQUIRES(
+    -            ctx, loc < output_elements,
+    +            ctx, 0 <= loc && loc < output_elements,
+                 errors::Internal("Got an inner product ", loc,
+    -                             " which would require in writing to outside of "
+    +                             " which would require writing to outside of "
+                                  "the buffer for the output tensor (max elements ",
+                                  output_elements, ")"));
+             output_t(loc) = (normalize_) ? 1.0 : truth_seq.size();
+    @@ -248,9 +248,9 @@ class EditDistanceOp : public OpKernel {
+           auto loc = std::inner_product(g_hypothesis.begin(), g_hypothesis.end(),
+                                         output_strides.begin(), int64{0});
+           OP_REQUIRES(
+    -          ctx, loc < output_elements,
+    +          ctx, 0 <= loc && loc < output_elements,
+               errors::Internal("Got an inner product ", loc,
+    -                           " which would require in writing to outside of the "
+    +                           " which would require writing to outside of the "
+                                "buffer for the output tensor (max elements ",
+                                output_elements, ")"));
+           output_t(loc) = hypothesis_seq.size();
+    @@ -266,9 +266,9 @@ class EditDistanceOp : public OpKernel {
+           auto loc = std::inner_product(g_truth.begin(), g_truth.end(),
+                                         output_strides.begin(), int64{0});
+           OP_REQUIRES(
+    -          ctx, loc < output_elements,
+    +          ctx, 0 <= loc && loc < output_elements,
+               errors::Internal("Got an inner product ", loc,
+    -                           " which would require in writing to outside of the "
+    +                           " which would require writing to outside of the "
+                                "buffer for the output tensor (max elements ",
+                                output_elements, ")"));
+           output_t(loc) = (normalize_) ? 1.0 : truth_seq.size();
+    diff --git a/tensorflow/python/kernel_tests/edit_distance_op_test.py b/tensorflow/python/kernel_tests/edit_distance_op_test.py
+    index 4a06ab770a..ff49202545 100644
+    --- a/tensorflow/python/kernel_tests/edit_distance_op_test.py
+    +++ b/tensorflow/python/kernel_tests/edit_distance_op_test.py
+    @@ -211,6 +211,23 @@ class EditDistanceTest(test.TestCase):
+             normalize=True,
+             expected_output=expected_output)
+     
+    +  def testEditDistanceBadIndices(self):
+    +    hypothesis_indices = np.full((3, 3), -1250999896764, dtype=np.int64)
+    +    hypothesis_values = np.empty(3, dtype=np.int64)
+    +    hypothesis_shape = np.empty(3, dtype=np.int64)
+    +    truth_indices = np.full((3, 3), -1250999896764, dtype=np.int64)
+    +    truth_values = np.full([3], 2, dtype=np.int64)
+    +    truth_shape = np.full([3], 2, dtype=np.int64)
+    +    expected_output = []  # dummy; ignored
+    +
+    +    self._testEditDistance(
+    +        hypothesis=(hypothesis_indices, hypothesis_values, hypothesis_shape),
+    +        truth=(truth_indices, truth_values, truth_shape),
+    +        normalize=False,
+    +        expected_output=expected_output,
+    +        expected_err_re=(r"inner product -\d+ which would require writing "
+    +                         "to outside of the buffer for the output tensor"))
+    +
+     
+     if __name__ == "__main__":
+       test.main()
+  notes: >
+    Backported the EditDistance negative output-index validation and regression test to the TensorFlow 2.6.4 file layout; hunk validation and diff whitespace checks passed.
+```
+
+tokens used
+input: 291
+cache read: 17,920
+cache write: 0
+output: 1,233
+reasoning output: 0

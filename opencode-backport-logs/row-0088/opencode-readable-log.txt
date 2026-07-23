@@ -1,0 +1,1034 @@
+I’ll inspect the target files around both hunks, then apply the minimal equivalent changes directly if the contexts match.
+
+tool: viewcode
+{
+  "ref": "a9bed74411425d51331d7333c6eb160d9f902584",
+  "path": "tensorflow/python/kernel_tests/init_ops_test.py",
+  "startline": 520,
+  "endline": 555
+}
+Here are lines 520 through 555.
+
+
+    self.assertEqual(
+        math_ops.range(zero_int32, zero_int64, 1).dtype, dtypes.int64)
+    self.assertEqual(
+        math_ops.range(zero_int64, zero_float32, 1).dtype, dtypes.float32)
+    self.assertEqual(
+        math_ops.range(zero_float32, zero_float64, 1).dtype, dtypes.float64)
+    self.assertEqual(
+        math_ops.range(zero_float64, zero_int32, 1).dtype, dtypes.float64)
+
+    self.assertEqual(
+        math_ops.range(0, 0, 1, dtype=dtypes.int32).dtype, dtypes.int32)
+    self.assertEqual(
+        math_ops.range(0, 0, 1, dtype=dtypes.int64).dtype, dtypes.int64)
+    self.assertEqual(
+        math_ops.range(0, 0, 1, dtype=dtypes.float32).dtype, dtypes.float32)
+    self.assertEqual(
+        math_ops.range(0, 0, 1, dtype=dtypes.float64).dtype, dtypes.float64)
+
+  def testMixedDType(self):
+    # Test case for GitHub issue 35710
+    tf_ans = math_ops.range(
+        constant_op.constant(4, dtype=dtypes.int32), dtype=dtypes.int64)
+    self.assertAllEqual(self.evaluate(tf_ans), np.array([0, 1, 2, 3]))
+ 
+ def testLargeStarts(self):
+    # Test case for GitHub issue 46899.
+    with self.session():
+      with self.assertRaises(errors_impl.InternalError):
+        v = math_ops.range(start=-1e+38, limit=1)
+        self.evaluate(v)
+
+# TODO(vrv): move to sequence_ops_test?
+class LinSpaceTest(test.TestCase):
+
+  def _gpu_modes(self):
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: viewcode
+{
+  "ref": "a9bed74411425d51331d7333c6eb160d9f902584",
+  "path": "tensorflow/python/kernel_tests/init_ops_test.py",
+  "startline": 1,
+  "endline": 60
+}
+Here are lines 1 through 60.
+
+# Copyright 2015 The TensorFlow Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+"""Tests for tensorflow.ops.ops."""
+
+from __future__ import absolute_import
+from __future__ import division
+from __future__ import print_function
+
+import numpy as np
+from six.moves import xrange  # pylint: disable=redefined-builtin
+
+from tensorflow.python.framework import constant_op
+from tensorflow.python.framework import dtypes
+from tensorflow.python.framework import ops
+from tensorflow.python.framework import random_seed
+from tensorflow.python.framework import test_util
+from tensorflow.python.layers import convolutional
+from tensorflow.python.ops import array_ops
+from tensorflow.python.ops import init_ops
+from tensorflow.python.ops import linalg_ops
+from tensorflow.python.ops import math_ops
+from tensorflow.python.ops import partitioned_variables
+from tensorflow.python.ops import random_ops
+from tensorflow.python.ops import variable_scope
+from tensorflow.python.ops import variables
+from tensorflow.python.platform import test
+
+
+# Returns true iff the two initializers produce the same tensor to
+# within a tiny tolerance.
+def identicaltest(tc, init1, init2, shape=None):
+  """Tests if two initializations are identical to within tiny tolerances.
+
+  Args:
+    tc: An instance of TensorFlowTestCase.
+    init1: An Initializer that generates a tensor of a given shape
+    init2: An Initializer that generates a tensor of a given shape
+    shape: Shape of the tensor to initialize or `None` to use a vector of length
+      100.
+
+  Returns:
+    True or False as determined by test.
+  """
+  if shape is None:
+    shape = [100]
+  with tc.test_session(graph=ops.Graph()):
+    t1 = init1(shape).eval()
+  with tc.test_session(graph=ops.Graph()):
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: viewcode
+{
+  "ref": "a9bed74411425d51331d7333c6eb160d9f902584",
+  "path": "tensorflow/core/kernels/sequence_ops.cc",
+  "startline": 45,
+  "endline": 95
+}
+Here are lines 45 through 95.
+
+                                        start_in.shape().DebugString()));
+    OP_REQUIRES(context,
+                TensorShapeUtils::IsScalar(limit_in.shape()) ||
+                    (TensorShapeUtils::IsVector(limit_in.shape()) &&
+                     limit_in.shape().dim_size(0) == 1),
+                errors::InvalidArgument("limit must be a scalar, not shape ",
+                                        limit_in.shape().DebugString()));
+    OP_REQUIRES(context,
+                TensorShapeUtils::IsScalar(delta_in.shape()) ||
+                    (TensorShapeUtils::IsVector(delta_in.shape()) &&
+                     delta_in.shape().dim_size(0) == 1),
+                errors::InvalidArgument("delta must be a scalar, not shape ",
+                                        delta_in.shape().DebugString()));
+    const T start = start_in.scalar<T>()();
+    const T limit = limit_in.scalar<T>()();
+    const T delta = delta_in.scalar<T>()();
+    OP_REQUIRES(context, delta != 0,
+                errors::InvalidArgument("Requires delta != 0: ", delta));
+    if (delta > 0) {
+      OP_REQUIRES(
+          context, start <= limit,
+          errors::InvalidArgument(
+              "Requires start <= limit when delta > 0: ", start, "/", limit));
+    } else {
+      OP_REQUIRES(
+          context, start >= limit,
+          errors::InvalidArgument(
+              "Requires start >= limit when delta < 0: ", start, "/", limit));
+    }
+    int64 size = (std::is_integral<T>::value
+                      ? ((std::abs(limit - start) + std::abs(delta) - 1) /
+                         std::abs(delta))
+                      : std::ceil(std::abs((limit - start) / delta)));
+    TensorShape shape;
+    OP_REQUIRES_OK(context, shape.AddDimWithStatus(size));
+    Tensor* out = nullptr;
+    OP_REQUIRES_OK(context, context->allocate_output(0, shape, &out));
+    auto flat = out->flat<T>();
+    T val = start;
+    for (int64 i = 0; i < size; ++i) {
+      flat(i) = T(val);
+      val += delta;
+    }
+  }
+};
+
+#define REGISTER_KERNEL(DEV, TYPE)                           \
+  REGISTER_KERNEL_BUILDER(Name("Range")                      \
+                              .Device(DEV)                   \
+                              .HostMemory("start")           \
+                              .HostMemory("limit")           \
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tokens used
+input: 4,067
+cache read: 4,608
+cache write: 0
+output: 215
+reasoning output: 0
+
+The target already has nearby `RangeOp` logic and a related large-range test area. I’m checking the local file state before editing so I don’t overwrite any existing workspace changes.
+
+tool: grep
+{
+  "pattern": "errors_impl|testLargeStarts|testLargeLimits",
+  "path": "tensorflow/python/kernel_tests/init_ops_test.py"
+}
+Found 100 matches (more matches available)
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0088-a9bed7441142\tensorflow\python\kernel_tests\array_ops_test.py:
+  Line 35: from tensorflow.python.framework import errors_impl
+
+  Line 426:       with self.assertRaisesRegex(errors_impl.InvalidArgumentError,
+
+  Line 429:       with self.assertRaisesRegex(errors_impl.InvalidArgumentError,
+
+  Line 433:           errors_impl.InvalidArgumentError,
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0088-a9bed7441142\tensorflow\python\kernel_tests\array_ops\slice_op_test.py:
+  Line 28: from tensorflow.python.framework import errors_impl
+
+  Line 188:         (ValueError, errors_impl.InvalidArgumentError), "out of range"):
+
+  Line 204:         (ValueError, errors_impl.InvalidArgumentError), "out of range"):
+
+  Line 456:       with self.assertRaisesRegex(errors_impl.OperatorNotAllowedInGraphError,
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0088-a9bed7441142\tensorflow\python\kernel_tests\barrier_ops_test.py:
+  Line 26: from tensorflow.python.framework import errors_impl
+
+  Line 544:         except errors_impl.OutOfRangeError:
+
+  Line 550:         except errors_impl.CancelledError:
+
+  Line 632:           except errors_impl.OutOfRangeError:
+
+  Line 648:           except errors_impl.CancelledError:
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0088-a9bed7441142\tensorflow\python\kernel_tests\bias_op_base.py:
+  Line 27: from tensorflow.python.framework import errors_impl
+
+  Line 98:       return errors_impl.InvalidArgumentError
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0088-a9bed7441142\tensorflow\python\kernel_tests\bucketize_op_test.py:
+  Line 25: from tensorflow.python.framework import errors_impl
+
+  Line 70:       with self.assertRaisesRegex(errors_impl.InvalidArgumentError,
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0088-a9bed7441142\tensorflow\python\kernel_tests\cholesky_op_test.py:
+  Line 27: from tensorflow.python.framework import errors_impl
+
+  Line 149:     with self.assertRaises((ValueError, errors_impl.InvalidArgumentError)):
+
+  Line 151:     with self.assertRaises((ValueError, errors_impl.InvalidArgumentError)):
+
+  Line 159:     with self.assertRaises((ValueError, errors_impl.InvalidArgumentError)):
+
+  Line 161:     with self.assertRaises((ValueError, errors_impl.InvalidArgumentError)):
+
+  Line 171:           errors_impl.InvalidArgumentError,
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0088-a9bed7441142\tensorflow\python\kernel_tests\concat_op_test.py:
+  Line 25: from tensorflow.python.framework import errors_impl
+
+  Line 690:     with self.assertRaisesRegex(errors_impl.InvalidArgumentError,
+
+  Line 700:     with self.assertRaisesRegex(errors_impl.InvalidArgumentError,
+
+  Line 710:     with self.assertRaisesRegex(errors_impl.InvalidArgumentError,
+
+  Line 721:         errors_impl.InvalidArgumentError,
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0088-a9bed7441142\tensorflow\python\kernel_tests\conditional_accumulator_test.py:
+  Line 26: from tensorflow.python.framework import errors_impl
+
+  Line 180:       with self.assertRaises(errors_impl.InvalidArgumentError):
+
+  Line 183:       with self.assertRaises(errors_impl.InvalidArgumentError):
+
+  Line 302:       with self.assertRaises(errors_impl.InvalidArgumentError):
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0088-a9bed7441142\tensorflow\python\kernel_tests\confusion_matrix_test.py:
+  Line 25: from tensorflow.python.framework import errors_impl
+
+  Line 192:     with self.assertRaisesWithPredicateMatch(errors_impl.InvalidArgumentError,
+
+  Line 208:     with self.assertRaisesWithPredicateMatch(errors_impl.InvalidArgumentError,
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0088-a9bed7441142\tensorflow\python\kernel_tests\constant_op_eager_test.py:
+  Line 27: from tensorflow.python.framework import errors_impl
+
+  Line 586:       with self.assertRaises(errors_impl.InvalidArgumentError):
+
+  Line 591:     with self.assertRaises(errors_impl.InvalidArgumentError):
+
+  Line 595:     with self.assertRaises(errors_impl.InvalidArgumentError):
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0088-a9bed7441142\tensorflow\python\kernel_tests\constant_op_test.py:
+  Line 30: from tensorflow.python.framework import errors_impl
+
+  Line 755:         with self.assertRaises(errors_impl.InvalidArgumentError):
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0088-a9bed7441142\tensorflow\python\kernel_tests\control_flow_ops_py_test.py:
+  Line 45: from tensorflow.python.framework import errors_impl
+
+  Line 256:           errors_impl.InvalidArgumentError,
+
+  Line 1136:           errors_impl.InvalidArgumentError,
+
+  Line 2844:       with self.assertRaises(errors_impl.DeadlineExceededError):
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0088-a9bed7441142\tensorflow\python\kernel_tests\conv_ops_test.py:
+  Line 34: from tensorflow.python.framework import errors_impl
+
+  Line 2529:       with self.assertRaisesRegex(errors_impl.UnimplementedError,
+
+  Line 2545:       with self.assertRaisesRegex(errors_impl.UnimplementedError,
+
+  Line 2620:           errors_impl.InvalidArgumentError,
+
+  Line 2640:           errors_impl.InvalidArgumentError,
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0088-a9bed7441142\tensorflow\python\kernel_tests\ctc_loss_op_test.py:
+  Line 29: from tensorflow.python.framework import errors_impl
+
+  Line 304:       with self.assertRaisesRegex(errors_impl.InvalidArgumentError,
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0088-a9bed7441142\tensorflow\python\kernel_tests\cwise_ops_binary_test.py:
+  Line 26: from tensorflow.python.framework import errors_impl
+
+  Line 800:             errors_impl.InvalidArgumentError,
+
+  Line 808:             errors_impl.InvalidArgumentError,
+
+  Line 816:             errors_impl.InvalidArgumentError,
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0088-a9bed7441142\tensorflow\python\kernel_tests\decode_image_op_test.py:
+  Line 25: from tensorflow.python.framework import errors_impl
+
+  Line 78:         with self.assertRaises(errors_impl.InvalidArgumentError):
+
+  Line 94:       with self.assertRaises(errors_impl.InvalidArgumentError):
+
+  Line 117:       with self.assertRaises(errors_impl.InvalidArgumentError):
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0088-a9bed7441142\tensorflow\python\kernel_tests\depthtospace_op_test.py:
+  Line 27: from tensorflow.python.framework import errors_impl
+
+  Line 54:             errors_impl.InvalidArgumentError,
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0088-a9bed7441142\tensorflow\python\kernel_tests\fifo_queue_test.py:
+  Line 34: from tensorflow.python.framework import errors_impl
+
+  Line 170:       with self.assertRaisesRegex(errors_impl.NotFoundError,
+
+  Line 174:       with self.assertRaisesRegex(errors_impl.NotFoundError,
+
+  Line 476:       with self.assertRaisesRegex(errors_impl.OutOfRangeError,
+
+  Line 746:       with self.assertRaisesRegex(errors_impl.InvalidArgumentError,
+
+  Line 760:           errors_impl.InvalidArgumentError,
+
+  Line 1000:         with self.assertRaisesRegex(errors_impl.OutOfRangeError,
+
+  Line 1023:         with self.assertRaisesRegex(errors_impl.OutOfRangeError,
+
+  Line 1051:         with self.assertRaisesRegex(errors_impl.OutOfRangeError,
+
+  Line 1079:         with self.assertRaisesRegex(errors_impl.OutOfRangeError,
+
+  Line 1127:         with self.assertRaises(errors_impl.OutOfRangeError):
+
+  Line 1164:         with self.assertRaises(errors_impl.OutOfRangeError):
+
+  Line 1194:         with self.assertRaisesRegex(errors_impl.OutOfRangeError,
+
+  Line 1217:         with self.assertRaisesRegex(errors_impl.OutOfRangeError,
+
+  Line 1239:       with self.assertRaisesRegex(errors_impl.CancelledError, "is closed"):
+
+  Line 1253:       with self.assertRaisesRegex(errors_impl.CancelledError, "is closed"):
+
+  Line 1636:           errors_impl.InvalidArgumentError,
+
+  Line 1707:       with self.assertRaisesRegex(errors_impl.DeadlineExceededError,
+
+  Line 1717:       with self.assertRaisesRegex(errors_impl.DeadlineExceededError,
+
+  Line 1721:       with self.assertRaisesRegex(errors_impl.DeadlineExceededError,
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0088-a9bed7441142\tensorflow\python\kernel_tests\init_ops_test.py:
+  Line 545:  def testLargeStarts(self):
+
+  Line 548:       with self.assertRaises(errors_impl.InternalError):
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0088-a9bed7441142\tensorflow\python\kernel_tests\lookup_ops_test.py:
+  Line 38: from tensorflow.python.framework import errors_impl
+
+  Line 315:       raised_error = errors_impl.InvalidArgumentError
+
+  Line 543:     with self.assertRaises(errors_impl.OpError):
+
+  Line 906:         with self.assertRaises(errors_impl.InvalidArgumentError):
+
+  Line 1345:     with self.assertRaisesRegex(errors_impl.InvalidArgumentError,
+
+  Line 2003:     with self.assertRaisesRegex(errors_impl.InvalidArgumentError,
+
+  Line 2008:     with self.assertRaisesRegex(errors_impl.InvalidArgumentError,
+
+  Line 2015:     with self.assertRaisesRegex(errors_impl.InvalidArgumentError,
+
+  Line 2020:     with self.assertRaisesRegex(errors_impl.InvalidArgumentError,
+
+  Line 2027:     with self.assertRaisesRegex(errors_impl.InvalidArgumentError,
+
+  Line 2030:     with self.assertRaisesRegex(errors_impl.InvalidArgumentError,
+
+  Line 2034:     with self.assertRaisesRegex(errors_impl.InvalidArgumentError,
+
+  Line 2046:         errors_impl.InvalidArgumentError,
+
+  Line 2056:     with self.assertRaisesRegex(errors_impl.InvalidArgumentError,
+
+  Line 2066:     with self.assertRaisesRegex(errors_impl.InvalidArgumentError,
+
+  Line 2131:       with self.assertRaises(errors_impl.OpError):
+
+
+(Results truncated. Consider using a more specific path or pattern.)
+
+tool: grep
+{
+  "pattern": "int64 size = \\(std::is_integral|TensorShape shape|AddDimWithStatus",
+  "path": "tensorflow/core/kernels/sequence_ops.cc"
+}
+Found 100 matches (more matches available)
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0088-a9bed7441142\tensorflow\core\kernels\conditional_accumulator_base.h:
+  Line 126:   const PartialTensorShape shape_;
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0088-a9bed7441142\tensorflow\core\kernels\conditional_accumulator_base_op.h:
+  Line 90:   PartialTensorShape shape_;
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0088-a9bed7441142\tensorflow\core\kernels\constant_op.cc:
+  Line 156:     TensorShape shape;
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0088-a9bed7441142\tensorflow\core\kernels\debug_ops.h:
+  Line 165:       TensorShape shape({0});
+
+  Line 254:     TensorShape shape({1});
+
+  Line 357:     TensorShape shape({14 + input_shape.dims()});
+
+  Line 543:       TensorShape shape({2});
+
+  Line 556:       TensorShape shape({5});
+
+  Line 581:       TensorShape shape({11});
+
+  Line 620:       TensorShape shape({10});
+
+  Line 646:       TensorShape shape({3});
+
+  Line 729:       TensorShape shape({2});
+
+  Line 756:       TensorShape shape({5});
+
+  Line 783:       TensorShape shape({11});
+
+  Line 815:       TensorShape shape({10});
+
+  Line 848:       TensorShape shape({3});
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0088-a9bed7441142\tensorflow\core\kernels\depthwise_conv_grad_op.cc:
+  Line 666:       TensorShape shape =
+
+  Line 1163:       TensorShape shape =
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0088-a9bed7441142\tensorflow\core\kernels\depthwise_conv_op.cc:
+  Line 435:       TensorShape shape =
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0088-a9bed7441142\tensorflow\core\kernels\dequantize_op_test.cc:
+  Line 81:     TensorShape shape({static_cast<int64>(input.size())});
+
+  Line 111:     TensorShape shape({static_cast<int64>(input.size())});
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0088-a9bed7441142\tensorflow\core\kernels\deserialize_sparse_string_op.cc:
+  Line 96:     TensorShape shape;
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0088-a9bed7441142\tensorflow\core\kernels\dynamic_partition_op.cc:
+  Line 71:       TensorShape shape;
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0088-a9bed7441142\tensorflow\core\kernels\dynamic_partition_op_gpu.cu.cc:
+  Line 225:       TensorShape shape;
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0088-a9bed7441142\tensorflow\core\kernels\encode_proto_op.cc:
+  Line 559:       TensorShape shape_prefix = v.shape();
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0088-a9bed7441142\tensorflow\core\kernels\fifo_queue.cc:
+  Line 317:                   const TensorShape shape =
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0088-a9bed7441142\tensorflow\core\kernels\fingerprint_op_test.cc:
+  Line 119:   const TensorShape shape = {1, 2, 4, 6};
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0088-a9bed7441142\tensorflow\core\kernels\data\experimental\snapshot_util.cc:
+  Line 790:       TensorShape shape(tensor_metadata.tensor_shape());
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0088-a9bed7441142\tensorflow\core\kernels\functional_ops.cc:
+  Line 870:     TensorShape shape;
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0088-a9bed7441142\tensorflow\core\kernels\fused_batch_norm_op_test.cc:
+  Line 245:   TensorShape shape = data_format == FORMAT_NHWC ? TensorShape({n, h, w, c})
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0088-a9bed7441142\tensorflow\core\kernels\fuzzing\parse_tensor_op_fuzz.cc:
+  Line 54:     TensorShape shape(proto.tensor_shape());
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0088-a9bed7441142\tensorflow\core\kernels\immutable_constant_op.h:
+  Line 43:   TensorShape shape_;
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0088-a9bed7441142\tensorflow\core\kernels\inplace_ops.cc:
+  Line 120:   TensorShape shape_;
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0088-a9bed7441142\tensorflow\core\kernels\list_kernels.h:
+  Line 351:           TensorShape shape_except_first_dim = TensorShape(
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0088-a9bed7441142\tensorflow\core\kernels\merge_v2_checkpoints_op_test.cc:
+  Line 48: Tensor Constant(T v, TensorShape shape) {
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0088-a9bed7441142\tensorflow\core\kernels\image\resize_bilinear_op_test.cc:
+  Line 137:     const TensorShape shape({batch_size, input_width, input_height, channels});
+
+  Line 560:     const TensorShape shape(
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0088-a9bed7441142\tensorflow\core\kernels\nccl_ops.cc:
+  Line 234:     TensorShape shape;
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0088-a9bed7441142\tensorflow\core\kernels\linalg\svd_op_gpu.cu.cc:
+  Line 130:         TensorShape shapeRaw = M_copy.shape();
+
+  Line 142:         TensorShape shapeRaw = M_copy.shape();
+
+  Line 293:     TensorShape shapeRaw = M.shape();
+
+  Line 363:     TensorShape shapeRaw = input.shape();
+
+  Line 365:     TensorShape shapeS = shapeRaw;
+
+  Line 366:     TensorShape shapeU = shapeRaw;
+
+  Line 367:     TensorShape shapeV = shapeRaw;
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0088-a9bed7441142\tensorflow\core\kernels\mlir_generated\gpu_abs_test.cc:
+  Line 43:     TensorShape shape({2, 3});
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0088-a9bed7441142\tensorflow\core\kernels\mlir_generated\gpu_tanh_test.cc:
+  Line 42:     TensorShape shape({2, 7});
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0088-a9bed7441142\tensorflow\core\kernels\nn_ops_test.cc:
+  Line 83:   TensorShape shape;
+
+  Line 748:   TensorShape shape({batch_size, rows, cols, depth});
+
+  Line 831:   TensorShape shape1({batch_size, rows, cols, depth});
+
+  Line 931:   TensorShape shape2({4});
+
+  Line 1029:   TensorShape shape1({batch_size, rows, cols, depth});
+
+  Line 1210:   TensorShape shape1({batch_size, rows, cols, depth});
+
+  Line 1283:   TensorShape shape1({batch_size, rows, cols, depth});
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0088-a9bed7441142\tensorflow\core\kernels\ops_util_test.cc:
+  Line 395:   TensorShape shape({});
+
+  Line 403:   TensorShape shape({0, 1, 2});
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0088-a9bed7441142\tensorflow\core\kernels\padding_fifo_queue.cc:
+  Line 169:                   TensorShape shape({batch_size});
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0088-a9bed7441142\tensorflow\core\kernels\mkl\mkl_reshape_op.cc:
+  Line 81:     TensorShape shape;
+
+  Line 135:       TensorShape shape_from = mkl_shape_input.GetTfShape();
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0088-a9bed7441142\tensorflow\core\kernels\priority_queue.cc:
+  Line 348:                   const TensorShape shape =
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0088-a9bed7441142\tensorflow\core\kernels\quantization_utils_test.cc:
+  Line 657:   TensorShape shape({num_vals});
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0088-a9bed7441142\tensorflow\core\kernels\quantized_concat_op_test.cc:
+  Line 258:   TensorShape shape({kDim1, dim2});
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0088-a9bed7441142\tensorflow\core\kernels\queue_base.h:
+  Line 116:     TensorShape shape({batch_size});
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0088-a9bed7441142\tensorflow\core\kernels\ragged_tensor_to_tensor_op_test.cc:
+  Line 33:   TensorShape shape;
+
+  Line 39:   TensorShape shape({static_cast<int64>(values.size())});
+
+  Line 45:   TensorShape shape({});
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0088-a9bed7441142\tensorflow\core\kernels\random_shuffle_queue_op.cc:
+  Line 396:                   const TensorShape shape =
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0088-a9bed7441142\tensorflow\core\kernels\reduction_ops_common.cc:
+  Line 23:   TensorShape shape;
+
+  Line 30:   TensorShape shape;
+
+  Line 37:   TensorShape shape;
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0088-a9bed7441142\tensorflow\core\kernels\reduction_ops_common.h:
+  Line 110:     TensorShape shape;
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0088-a9bed7441142\tensorflow\core\kernels\remote_fused_graph_execute_utils.cc:
+  Line 624:     TensorShape shape;
+
+  Line 648:     TensorShape shape;
+
+  Line 1279:         TensorShape shape;
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0088-a9bed7441142\tensorflow\core\kernels\reshape_op.h:
+  Line 49:     TensorShape shape;
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0088-a9bed7441142\tensorflow\core\kernels\resource_variable_ops.cc:
+  Line 223:   PartialTensorShape shape;
+
+  Line 305:     TensorShape shape = variable->tensor()->shape();
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0088-a9bed7441142\tensorflow\core\kernels\reverse_op_test.cc:
+  Line 203:   TensorShape shape{outer_dim, middle_dim, channels};
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0088-a9bed7441142\tensorflow\core\kernels\roll_op_test.cc:
+  Line 455:     TensorShape shape{rows, columns};                                         \
+
+  Line 470:     TensorShape shape{rows, columns};                                         \
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0088-a9bed7441142\tensorflow\core\kernels\save_op_test.cc:
+  Line 141:     TensorShape shape;
+
+  Line 160:     TensorShape shape;
+
+  Line 179:     TensorShape shape;
+
+  Line 198:     TensorShape shape;
+
+  Line 217:     TensorShape shape;
+
+  Line 235:     TensorShape shape;
+
+  Line 253:     TensorShape shape;
+
+  Line 271:     TensorShape shape;
+
+  Line 289:     TensorShape shape;
+
+  Line 307:     TensorShape shape;
+
+  Line 325:     TensorShape shape;
+
+  Line 342:     TensorShape shape;
+
+  Line 361:     TensorShape shape;
+
+  Line 379:     TensorShape shape;
+
+  Line 474:     TensorShape shape;
+
+  Line 489:     TensorShape shape;
+
+  Line 507:     TensorShape shape;
+
+  Line 525:     TensorShape shape;
+
+  Line 540:     TensorShape shape;
+
+  Line 620:     TensorShape shape;
+
+
+(Results truncated. Consider using a more specific path or pattern.)
+
+tokens used
+input: 2,716
+cache read: 7,680
+cache write: 0
+output: 144
+reasoning output: 45
+
+The target C++ allocation path differs slightly from the source patch: it already uses `TensorShape::AddDimWithStatus`, so the security-relevant change is the explicit typed assignment before adding the dimension. The Python test file also already references `errors_impl` later, so I’ll add the missing import and the new large-limit case next to the existing range tests.
+
+tool: read
+{
+  "filePath": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0088-a9bed7441142\\tensorflow\\core\\kernels\\sequence_ops.cc",
+  "offset": 65,
+  "limit": 25
+}
+<path>C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0088-a9bed7441142\tensorflow\core\kernels\sequence_ops.cc</path>
+<type>file</type>
+<content>
+65:           context, start <= limit,
+66:           errors::InvalidArgument(
+67:               "Requires start <= limit when delta > 0: ", start, "/", limit));
+68:     } else {
+69:       OP_REQUIRES(
+70:           context, start >= limit,
+71:           errors::InvalidArgument(
+72:               "Requires start >= limit when delta < 0: ", start, "/", limit));
+73:     }
+74:     int64 size = (std::is_integral<T>::value
+75:                       ? ((std::abs(limit - start) + std::abs(delta) - 1) /
+76:                          std::abs(delta))
+77:                       : std::ceil(std::abs((limit - start) / delta)));
+78:     TensorShape shape;
+79:     OP_REQUIRES_OK(context, shape.AddDimWithStatus(size));
+80:     Tensor* out = nullptr;
+81:     OP_REQUIRES_OK(context, context->allocate_output(0, shape, &out));
+82:     auto flat = out->flat<T>();
+83:     T val = start;
+84:     for (int64 i = 0; i < size; ++i) {
+85:       flat(i) = T(val);
+86:       val += delta;
+87:     }
+88:   }
+89: };
+
+(Showing lines 65-89 of 190. Use offset=90 to continue.)
+</content>
+
+tool: read
+{
+  "filePath": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0088-a9bed7441142\\tensorflow\\python\\kernel_tests\\init_ops_test.py",
+  "offset": 20,
+  "limit": 15
+}
+<path>C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0088-a9bed7441142\tensorflow\python\kernel_tests\init_ops_test.py</path>
+<type>file</type>
+<content>
+20: 
+21: import numpy as np
+22: from six.moves import xrange  # pylint: disable=redefined-builtin
+23: 
+24: from tensorflow.python.framework import constant_op
+25: from tensorflow.python.framework import dtypes
+26: from tensorflow.python.framework import ops
+27: from tensorflow.python.framework import random_seed
+28: from tensorflow.python.framework import test_util
+29: from tensorflow.python.layers import convolutional
+30: from tensorflow.python.ops import array_ops
+31: from tensorflow.python.ops import init_ops
+32: from tensorflow.python.ops import linalg_ops
+33: from tensorflow.python.ops import math_ops
+34: from tensorflow.python.ops import partitioned_variables
+
+(Showing lines 20-34 of 1365. Use offset=35 to continue.)
+</content>
+
+tool: read
+{
+  "filePath": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0088-a9bed7441142\\tensorflow\\python\\kernel_tests\\init_ops_test.py",
+  "offset": 535,
+  "limit": 25
+}
+<path>C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0088-a9bed7441142\tensorflow\python\kernel_tests\init_ops_test.py</path>
+<type>file</type>
+<content>
+535:         math_ops.range(0, 0, 1, dtype=dtypes.float32).dtype, dtypes.float32)
+536:     self.assertEqual(
+537:         math_ops.range(0, 0, 1, dtype=dtypes.float64).dtype, dtypes.float64)
+538: 
+539:   def testMixedDType(self):
+540:     # Test case for GitHub issue 35710
+541:     tf_ans = math_ops.range(
+542:         constant_op.constant(4, dtype=dtypes.int32), dtype=dtypes.int64)
+543:     self.assertAllEqual(self.evaluate(tf_ans), np.array([0, 1, 2, 3]))
+544:  
+545:  def testLargeStarts(self):
+546:     # Test case for GitHub issue 46899.
+547:     with self.session():
+548:       with self.assertRaises(errors_impl.InternalError):
+549:         v = math_ops.range(start=-1e+38, limit=1)
+550:         self.evaluate(v)
+551: 
+552: # TODO(vrv): move to sequence_ops_test?
+553: class LinSpaceTest(test.TestCase):
+554: 
+555:   def _gpu_modes(self):
+556:     if test.is_gpu_available():
+557:       return [False, True]
+558:     else:
+559:       return [False]
+
+(Showing lines 535-559 of 1365. Use offset=560 to continue.)
+</content>
+
+tokens used
+input: 7,326
+cache read: 9,728
+cache write: 0
+output: 309
+reasoning output: 30
+
+There is pre-existing malformed whitespace around `testLargeStarts` in the checked-out file and it already references `errors_impl` without importing it. I’ll avoid changing that unrelated test except where the required import also fixes the missing reference.
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/kernels/sequence_ops.cc tensorflow/python/kernel_tests/init_ops_test.py",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0088-a9bed7441142",
+  "timeout": 120000
+}
+(no output)
+
+tokens used
+input: 1,486
+cache read: 16,896
+cache write: 0
+output: 137
+reasoning output: 30
+
+I’m applying the source hunk in target style: keep `int64`, split the integral/float branches with `static_cast<int64>`, and add the regression test/import from the source patch.
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/kernels/sequence_ops.cc\n@@\n-    int64 size = (std::is_integral<T>::value\n-                      ? ((std::abs(limit - start) + std::abs(delta) - 1) /\n-                         std::abs(delta))\n-                      : std::ceil(std::abs((limit - start) / delta)));\n+    int64 size = 0;\n+    if (std::is_integral<T>::value) {\n+      size = static_cast<int64>(\n+          (std::abs(limit - start) + std::abs(delta) - 1) / std::abs(delta));\n+    } else {\n+      size = static_cast<int64>(std::ceil(std::abs((limit - start) / delta)));\n+    }\n*** Update File: tensorflow/python/kernel_tests/init_ops_test.py\n@@\n from tensorflow.python.framework import constant_op\n from tensorflow.python.framework import dtypes\n+from tensorflow.python.framework import errors_impl\n from tensorflow.python.framework import ops\n from tensorflow.python.framework import random_seed\n from tensorflow.python.framework import test_util\n@@\n     tf_ans = math_ops.range(\n         constant_op.constant(4, dtype=dtypes.int32), dtype=dtypes.int64)\n     self.assertAllEqual(self.evaluate(tf_ans), np.array([0, 1, 2, 3]))\n+\n+  def testLargeLimits(self):\n+    # Test case for GitHub issue 46913.\n+    with self.session():\n+      with self.assertRaises(errors_impl.ResourceExhaustedError):\n+        v = math_ops.range(0, 9223372036854775807)\n+        self.evaluate(v)\n  \n  def testLargeStarts(self):\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/kernels/sequence_ops.cc
+M tensorflow/python/kernel_tests/init_ops_test.py
+
+tokens used
+input: 643
+cache read: 17,920
+cache write: 0
+output: 468
+reasoning output: 516
+
+The edits are in place. I’ll validate the resulting hunks against the target base and inspect the final diff.
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/kernels/sequence_ops.cc tensorflow/python/kernel_tests/init_ops_test.py",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0088-a9bed7441142",
+  "timeout": 120000
+}
+warning: in the working copy of 'tensorflow/core/kernels/sequence_ops.cc', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'tensorflow/python/kernel_tests/init_ops_test.py', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/kernels/sequence_ops.cc b/tensorflow/core/kernels/sequence_ops.cc
+index 1de9380dad..ebf31d61e5 100644
+--- a/tensorflow/core/kernels/sequence_ops.cc
++++ b/tensorflow/core/kernels/sequence_ops.cc
+@@ -71,10 +71,13 @@ class RangeOp : public OpKernel {
+           errors::InvalidArgument(
+               "Requires start >= limit when delta < 0: ", start, "/", limit));
+     }
+-    int64 size = (std::is_integral<T>::value
+-                      ? ((std::abs(limit - start) + std::abs(delta) - 1) /
+-                         std::abs(delta))
+-                      : std::ceil(std::abs((limit - start) / delta)));
++    int64 size = 0;
++    if (std::is_integral<T>::value) {
++      size = static_cast<int64>(
++          (std::abs(limit - start) + std::abs(delta) - 1) / std::abs(delta));
++    } else {
++      size = static_cast<int64>(std::ceil(std::abs((limit - start) / delta)));
++    }
+     TensorShape shape;
+     OP_REQUIRES_OK(context, shape.AddDimWithStatus(size));
+     Tensor* out = nullptr;
+diff --git a/tensorflow/python/kernel_tests/init_ops_test.py b/tensorflow/python/kernel_tests/init_ops_test.py
+index bf2cfeeadd..66cd26ebe8 100644
+--- a/tensorflow/python/kernel_tests/init_ops_test.py
++++ b/tensorflow/python/kernel_tests/init_ops_test.py
+@@ -23,6 +23,7 @@ from six.moves import xrange  # pylint: disable=redefined-builtin
+ 
+ from tensorflow.python.framework import constant_op
+ from tensorflow.python.framework import dtypes
++from tensorflow.python.framework import errors_impl
+ from tensorflow.python.framework import ops
+ from tensorflow.python.framework import random_seed
+ from tensorflow.python.framework import test_util
+@@ -541,6 +542,13 @@ class RangeTest(test.TestCase):
+     tf_ans = math_ops.range(
+         constant_op.constant(4, dtype=dtypes.int32), dtype=dtypes.int64)
+     self.assertAllEqual(self.evaluate(tf_ans), np.array([0, 1, 2, 3]))
++
++  def testLargeLimits(self):
++    # Test case for GitHub issue 46913.
++    with self.session():
++      with self.assertRaises(errors_impl.ResourceExhaustedError):
++        v = math_ops.range(0, 9223372036854775807)
++        self.evaluate(v)
+  
+  def testLargeStarts(self):
+     # Test case for GitHub issue 46899.
+
+tokens used
+input: 1,664
+cache read: 17,920
+cache write: 0
+output: 113
+reasoning output: 48
+
+tool: validate
+{
+  "ref": "a9bed74411425d51331d7333c6eb160d9f902584",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/sequence_ops.cc b/tensorflow/core/kernels/sequence_ops.cc\nindex 1de9380dad..ebf31d61e5 100644\n--- a/tensorflow/core/kernels/sequence_ops.cc\n+++ b/tensorflow/core/kernels/sequence_ops.cc\n@@ -71,10 +71,13 @@ class RangeOp : public OpKernel {\n           errors::InvalidArgument(\n               \"Requires start >= limit when delta < 0: \", start, \"/\", limit));\n     }\n-    int64 size = (std::is_integral<T>::value\n-                      ? ((std::abs(limit - start) + std::abs(delta) - 1) /\n-                         std::abs(delta))\n-                      : std::ceil(std::abs((limit - start) / delta)));\n+    int64 size = 0;\n+    if (std::is_integral<T>::value) {\n+      size = static_cast<int64>(\n+          (std::abs(limit - start) + std::abs(delta) - 1) / std::abs(delta));\n+    } else {\n+      size = static_cast<int64>(std::ceil(std::abs((limit - start) / delta)));\n+    }\n     TensorShape shape;\n     OP_REQUIRES_OK(context, shape.AddDimWithStatus(size));\n     Tensor* out = nullptr;\ndiff --git a/tensorflow/python/kernel_tests/init_ops_test.py b/tensorflow/python/kernel_tests/init_ops_test.py\nindex bf2cfeeadd..66cd26ebe8 100644\n--- a/tensorflow/python/kernel_tests/init_ops_test.py\n+++ b/tensorflow/python/kernel_tests/init_ops_test.py\n@@ -23,6 +23,7 @@ from six.moves import xrange  # pylint: disable=redefined-builtin\n \n from tensorflow.python.framework import constant_op\n from tensorflow.python.framework import dtypes\n+from tensorflow.python.framework import errors_impl\n from tensorflow.python.framework import ops\n from tensorflow.python.framework import random_seed\n from tensorflow.python.framework import test_util\n@@ -541,6 +542,13 @@ class RangeTest(test.TestCase):\n     tf_ans = math_ops.range(\n         constant_op.constant(4, dtype=dtypes.int32), dtype=dtypes.int64)\n     self.assertAllEqual(self.evaluate(tf_ans), np.array([0, 1, 2, 3]))\n+\n+  def testLargeLimits(self):\n+    # Test case for GitHub issue 46913.\n+    with self.session():\n+      with self.assertRaises(errors_impl.ResourceExhaustedError):\n+        v = math_ops.range(0, 9223372036854775807)\n+        self.evaluate(v)\n  \n  def testLargeStarts(self):\n     # Test case for GitHub issue 46899.\n"
+}
+Patch applied successfully
+
+tokens used
+input: 1,463
+cache read: 18,944
+cache write: 0
+output: 686
+reasoning output: 14
+
+Hunk validation against `a9bed74411425d51331d7333c6eb160d9f902584` succeeded.
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/kernels/sequence_ops.cc b/tensorflow/core/kernels/sequence_ops.cc
+    index 1de9380dad..ebf31d61e5 100644
+    --- a/tensorflow/core/kernels/sequence_ops.cc
+    +++ b/tensorflow/core/kernels/sequence_ops.cc
+    @@ -71,10 +71,13 @@ class RangeOp : public OpKernel {
+               errors::InvalidArgument(
+                   "Requires start >= limit when delta < 0: ", start, "/", limit));
+         }
+    -    int64 size = (std::is_integral<T>::value
+    -                      ? ((std::abs(limit - start) + std::abs(delta) - 1) /
+    -                         std::abs(delta))
+    -                      : std::ceil(std::abs((limit - start) / delta)));
+    +    int64 size = 0;
+    +    if (std::is_integral<T>::value) {
+    +      size = static_cast<int64>(
+    +          (std::abs(limit - start) + std::abs(delta) - 1) / std::abs(delta));
+    +    } else {
+    +      size = static_cast<int64>(std::ceil(std::abs((limit - start) / delta)));
+    +    }
+         TensorShape shape;
+         OP_REQUIRES_OK(context, shape.AddDimWithStatus(size));
+         Tensor* out = nullptr;
+    diff --git a/tensorflow/python/kernel_tests/init_ops_test.py b/tensorflow/python/kernel_tests/init_ops_test.py
+    index bf2cfeeadd..66cd26ebe8 100644
+    --- a/tensorflow/python/kernel_tests/init_ops_test.py
+    +++ b/tensorflow/python/kernel_tests/init_ops_test.py
+    @@ -23,6 +23,7 @@ from six.moves import xrange  # pylint: disable=redefined-builtin
+     
+     from tensorflow.python.framework import constant_op
+     from tensorflow.python.framework import dtypes
+    +from tensorflow.python.framework import errors_impl
+     from tensorflow.python.framework import ops
+     from tensorflow.python.framework import random_seed
+     from tensorflow.python.framework import test_util
+    @@ -541,6 +542,13 @@ class RangeTest(test.TestCase):
+         tf_ans = math_ops.range(
+             constant_op.constant(4, dtype=dtypes.int32), dtype=dtypes.int64)
+         self.assertAllEqual(self.evaluate(tf_ans), np.array([0, 1, 2, 3]))
+    +
+    +  def testLargeLimits(self):
+    +    # Test case for GitHub issue 46913.
+    +    with self.session():
+    +      with self.assertRaises(errors_impl.ResourceExhaustedError):
+    +        v = math_ops.range(0, 9223372036854775807)
+    +        self.evaluate(v)
+      
+      def testLargeStarts(self):
+         # Test case for GitHub issue 46899.
+  notes: >
+    Backported the RangeOp size computation cast split and added the large limit regression test; hunk validation against the target base succeeded.
+```
+
+tokens used
+input: 1,152
+cache read: 19,968
+cache write: 0
+output: 717
+reasoning output: 237

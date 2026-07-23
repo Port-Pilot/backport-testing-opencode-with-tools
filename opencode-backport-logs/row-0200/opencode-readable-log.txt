@@ -1,0 +1,495 @@
+I’ll inspect the target-side implementation of `UncompressElementOp::Compute`, verify the hunk context against the target base, then apply the minimal null-check backport only if the older code has the same dereference risk.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Locate target implementation for UncompressElementOp::Compute",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Validate the adapted hunk against target base",
+      "status": "pending",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply minimal source change",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "content": "Inspect final diff for correctness",
+      "status": "pending",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Locate target implementation for UncompressElementOp::Compute",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Validate the adapted hunk against target base",
+    "status": "pending",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply minimal source change",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "content": "Inspect final diff for correctness",
+    "status": "pending",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 3,725
+cache read: 4,608
+cache write: 0
+output: 145
+reasoning output: 0
+
+tool: locate_symbol
+{
+  "ref": "3929ffacfbef7c431e8397920d040aaf47acff19",
+  "symbol": "UncompressElementOp::Compute"
+}
+tensorflow/core/kernels/data/experimental/compression_ops.cc:47
+
+tool: grep
+{
+  "pattern": "UncompressElementOp::Compute|UncompressElement",
+  "path": "."
+}
+Found 19 matches
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0200-3929ffacfbef\tensorflow\core\data\compression_utils_test.cc:
+  Line 33:   TF_ASSERT_OK(UncompressElement(compressed, &round_trip_element));
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0200-3929ffacfbef\tensorflow\core\data\compression_utils.h:
+  Line 33: Status UncompressElement(const CompressedElement& compressed,
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0200-3929ffacfbef\tensorflow\core\data\compression_utils.cc:
+  Line 76: Status UncompressElement(const CompressedElement& compressed,
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0200-3929ffacfbef\tensorflow\go\op\wrappers.go:
+  Line 11328: func UncompressElement(scope *Scope, compressed tf.Output, output_types []tf.DataType, output_shapes []tf.Shape) (components []tf.Output) {
+
+  Line 11334: 		Type: "UncompressElement",
+
+  Line 11347: 		scope.UpdateErr("UncompressElement", err)
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0200-3929ffacfbef\tensorflow\core\ops\ops.pbtxt:
+  Line 53574:   name: "UncompressElement"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0200-3929ffacfbef\tensorflow\core\ops\experimental_dataset_ops.cc:
+  Line 141: REGISTER_OP("UncompressElement")
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0200-3929ffacfbef\tensorflow\tools\api\golden\v2\tensorflow.raw_ops.pbtxt:
+  Line 5056:     name: "UncompressElement"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0200-3929ffacfbef\tensorflow\tools\api\golden\v1\tensorflow.raw_ops.pbtxt:
+  Line 5056:     name: "UncompressElement"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0200-3929ffacfbef\tensorflow\core\ops\compat\ops_history_v2\UncompressElement.pbtxt:
+  Line 2:   name: "UncompressElement"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0200-3929ffacfbef\tensorflow\core\kernels\data\experimental\compression_ops.cc:
+  Line 41: UncompressElementOp::UncompressElementOp(OpKernelConstruction* ctx)
+
+  Line 47: void UncompressElementOp::Compute(OpKernelContext* ctx) {
+
+  Line 53:   OP_REQUIRES_OK(ctx, UncompressElement(*compressed, &components));
+
+  Line 71: REGISTER_KERNEL_BUILDER(Name("UncompressElement").Device(DEVICE_CPU),
+
+  Line 72:                         UncompressElementOp);
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0200-3929ffacfbef\tensorflow\core\kernels\data\experimental\compression_ops.h:
+  Line 31: class UncompressElementOp : public OpKernel {
+
+  Line 36:   explicit UncompressElementOp(OpKernelConstruction* ctx);
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0200-3929ffacfbef\tensorflow\core\api_def\base_api\api_def_UncompressElement.pbtxt:
+  Line 2:   graph_op_name: "UncompressElement"
+
+tokens used
+input: 937
+cache read: 7,680
+cache write: 0
+output: 91
+reasoning output: 0
+
+The target file and function are the same as the newer patch location, and the vulnerable dereference is present. I’m checking exact surrounding code and validating the minimal adapted hunk before editing.
+
+tool: read
+{
+  "filePath": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0200-3929ffacfbef\\tensorflow\\core\\kernels\\data\\experimental\\compression_ops.cc",
+  "offset": 35,
+  "limit": 35
+}
+<path>C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0200-3929ffacfbef\tensorflow\core\kernels\data\experimental\compression_ops.cc</path>
+<type>file</type>
+<content>
+35: 
+36:   Tensor* output;
+37:   OP_REQUIRES_OK(ctx, ctx->allocate_output(0, TensorShape({}), &output));
+38:   output->scalar<Variant>()() = std::move(compressed);
+39: }
+40: 
+41: UncompressElementOp::UncompressElementOp(OpKernelConstruction* ctx)
+42:     : OpKernel(ctx) {
+43:   OP_REQUIRES_OK(ctx, ctx->GetAttr(kOutputTypes, &output_types_));
+44:   OP_REQUIRES_OK(ctx, ctx->GetAttr(kOutputShapes, &output_shapes_));
+45: }
+46: 
+47: void UncompressElementOp::Compute(OpKernelContext* ctx) {
+48:   Tensor tensor = ctx->input(0);
+49:   const Variant& variant = tensor.scalar<Variant>()();
+50:   const CompressedElement* compressed = variant.get<CompressedElement>();
+51: 
+52:   std::vector<Tensor> components;
+53:   OP_REQUIRES_OK(ctx, UncompressElement(*compressed, &components));
+54:   OP_REQUIRES(ctx, components.size() == output_types_.size(),
+55:               errors::FailedPrecondition("Expected ", output_types_.size(),
+56:                                          " outputs from uncompress, but got ",
+57:                                          components.size()));
+58:   for (int i = 0; i < components.size(); ++i) {
+59:     OP_REQUIRES(
+60:         ctx, components[i].dtype() == output_types_[i],
+61:         errors::FailedPrecondition("Expected a tensor of type ",
+62:                                    DataTypeString(output_types_[i]),
+63:                                    " but got a tensor of type ",
+64:                                    DataTypeString(components[i].dtype())));
+65:     ctx->set_output(i, components[i]);
+66:   }
+67: }
+68: 
+69: REGISTER_KERNEL_BUILDER(Name("CompressElement").Device(DEVICE_CPU),
+
+(Showing lines 35-69 of 76. Use offset=70 to continue.)
+</content>
+
+tool: viewcode
+{
+  "ref": "3929ffacfbef7c431e8397920d040aaf47acff19",
+  "path": "tensorflow/core/kernels/data/experimental/compression_ops.cc",
+  "startline": 35,
+  "endline": 65
+}
+Here are lines 35 through 65.
+
+
+  Tensor* output;
+  OP_REQUIRES_OK(ctx, ctx->allocate_output(0, TensorShape({}), &output));
+  output->scalar<Variant>()() = std::move(compressed);
+}
+
+UncompressElementOp::UncompressElementOp(OpKernelConstruction* ctx)
+    : OpKernel(ctx) {
+  OP_REQUIRES_OK(ctx, ctx->GetAttr(kOutputTypes, &output_types_));
+  OP_REQUIRES_OK(ctx, ctx->GetAttr(kOutputShapes, &output_shapes_));
+}
+
+void UncompressElementOp::Compute(OpKernelContext* ctx) {
+  Tensor tensor = ctx->input(0);
+  const Variant& variant = tensor.scalar<Variant>()();
+  const CompressedElement* compressed = variant.get<CompressedElement>();
+
+  std::vector<Tensor> components;
+  OP_REQUIRES_OK(ctx, UncompressElement(*compressed, &components));
+  OP_REQUIRES(ctx, components.size() == output_types_.size(),
+              errors::FailedPrecondition("Expected ", output_types_.size(),
+                                         " outputs from uncompress, but got ",
+                                         components.size()));
+  for (int i = 0; i < components.size(); ++i) {
+    OP_REQUIRES(
+        ctx, components[i].dtype() == output_types_[i],
+        errors::FailedPrecondition("Expected a tensor of type ",
+                                   DataTypeString(output_types_[i]),
+                                   " but got a tensor of type ",
+                                   DataTypeString(components[i].dtype())));
+    ctx->set_output(i, components[i]);
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tokens used
+input: 2,052
+cache read: 7,680
+cache write: 0
+output: 196
+reasoning output: 0
+
+tool: validate
+{
+  "ref": "3929ffacfbef7c431e8397920d040aaf47acff19",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/data/experimental/compression_ops.cc b/tensorflow/core/kernels/data/experimental/compression_ops.cc\n--- a/tensorflow/core/kernels/data/experimental/compression_ops.cc\n+++ b/tensorflow/core/kernels/data/experimental/compression_ops.cc\n@@ -48,6 +48,11 @@ void UncompressElementOp::Compute(OpKernelContext* ctx) {\n   Tensor tensor = ctx->input(0);\n   const Variant& variant = tensor.scalar<Variant>()();\n   const CompressedElement* compressed = variant.get<CompressedElement>();\n+  OP_REQUIRES(\n+      ctx, compressed != nullptr,\n+      errors::InvalidArgument(\n+          \"Input does not contain a compressed element. Instead got tensor \",\n+          tensor.DebugString()));\n \n   std::vector<Tensor> components;\n   OP_REQUIRES_OK(ctx, UncompressElement(*compressed, &components));\n"
+}
+Patch applied successfully
+
+tokens used
+input: 2,093
+cache read: 8,704
+cache write: 0
+output: 257
+reasoning output: 0
+
+The adapted hunk applies cleanly to the target base. I’m applying the same null-check in the checked-out source file now.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Locate target implementation for UncompressElementOp::Compute",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate the adapted hunk against target base",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply minimal source change",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Inspect final diff for correctness",
+      "status": "pending",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Locate target implementation for UncompressElementOp::Compute",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate the adapted hunk against target base",
+    "status": "completed",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply minimal source change",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Inspect final diff for correctness",
+    "status": "pending",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 1,339
+cache read: 9,728
+cache write: 0
+output: 126
+reasoning output: 0
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/kernels/data/experimental/compression_ops.cc\n@@\n   Tensor tensor = ctx->input(0);\n   const Variant& variant = tensor.scalar<Variant>()();\n   const CompressedElement* compressed = variant.get<CompressedElement>();\n+  OP_REQUIRES(\n+      ctx, compressed != nullptr,\n+      errors::InvalidArgument(\n+          \"Input does not contain a compressed element. Instead got tensor \",\n+          tensor.DebugString()));\n \n   std::vector<Tensor> components;\n   OP_REQUIRES_OK(ctx, UncompressElement(*compressed, &components));\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/kernels/data/experimental/compression_ops.cc
+
+tokens used
+input: 580
+cache read: 10,752
+cache write: 0
+output: 167
+reasoning output: 0
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Locate target implementation for UncompressElementOp::Compute",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate the adapted hunk against target base",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply minimal source change",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Inspect final diff for correctness",
+      "status": "in_progress",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Locate target implementation for UncompressElementOp::Compute",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate the adapted hunk against target base",
+    "status": "completed",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply minimal source change",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Inspect final diff for correctness",
+    "status": "in_progress",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 777
+cache read: 10,752
+cache write: 0
+output: 92
+reasoning output: 0
+
+The source change is applied. I’m inspecting the resulting diff to ensure only the intended hunk changed.
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/kernels/data/experimental/compression_ops.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0200-3929ffacfbef"
+}
+warning: in the working copy of 'tensorflow/core/kernels/data/experimental/compression_ops.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/kernels/data/experimental/compression_ops.cc b/tensorflow/core/kernels/data/experimental/compression_ops.cc
+index efa7018acb..8cc214671b 100644
+--- a/tensorflow/core/kernels/data/experimental/compression_ops.cc
++++ b/tensorflow/core/kernels/data/experimental/compression_ops.cc
+@@ -48,6 +48,11 @@ void UncompressElementOp::Compute(OpKernelContext* ctx) {
+   Tensor tensor = ctx->input(0);
+   const Variant& variant = tensor.scalar<Variant>()();
+   const CompressedElement* compressed = variant.get<CompressedElement>();
++  OP_REQUIRES(
++      ctx, compressed != nullptr,
++      errors::InvalidArgument(
++          "Input does not contain a compressed element. Instead got tensor ",
++          tensor.DebugString()));
+ 
+   std::vector<Tensor> components;
+   OP_REQUIRES_OK(ctx, UncompressElement(*compressed, &components));
+
+tokens used
+input: 1,008
+cache read: 10,752
+cache write: 0
+output: 100
+reasoning output: 0
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Locate target implementation for UncompressElementOp::Compute",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate the adapted hunk against target base",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply minimal source change",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Inspect final diff for correctness",
+      "status": "completed",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Locate target implementation for UncompressElementOp::Compute",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate the adapted hunk against target base",
+    "status": "completed",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply minimal source change",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Inspect final diff for correctness",
+    "status": "completed",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 1,363
+cache read: 10,752
+cache write: 0
+output: 93
+reasoning output: 16
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/kernels/data/experimental/compression_ops.cc b/tensorflow/core/kernels/data/experimental/compression_ops.cc
+    index efa7018acb..8cc214671b 100644
+    --- a/tensorflow/core/kernels/data/experimental/compression_ops.cc
+    +++ b/tensorflow/core/kernels/data/experimental/compression_ops.cc
+    @@ -48,6 +48,11 @@ void UncompressElementOp::Compute(OpKernelContext* ctx) {
+       Tensor tensor = ctx->input(0);
+       const Variant& variant = tensor.scalar<Variant>()();
+       const CompressedElement* compressed = variant.get<CompressedElement>();
+    +  OP_REQUIRES(
+    +      ctx, compressed != nullptr,
+    +      errors::InvalidArgument(
+    +          "Input does not contain a compressed element. Instead got tensor ",
+    +          tensor.DebugString()));
+     
+       std::vector<Tensor> components;
+       OP_REQUIRES_OK(ctx, UncompressElement(*compressed, &components));
+  notes: >
+    Added the missing compressed-element null check before dereferencing the Variant payload in UncompressElementOp.
+```
+
+tokens used
+input: 586
+cache read: 11,776
+cache write: 0
+output: 266
+reasoning output: 0

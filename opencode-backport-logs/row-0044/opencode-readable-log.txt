@@ -1,0 +1,202 @@
+I’ll inspect the target-side `BinaryOp::Compute` context and confirm the hunk applies cleanly before editing the checkout.
+
+tool: viewcode
+{
+  "ref": "b2b3444b71ea99685edafa7731fb7ba57939f437",
+  "path": "tensorflow/core/kernels/cwise_ops_common.h",
+  "startline": 70,
+  "endline": 120
+}
+Here are lines 70 through 120.
+
+
+  void SetUnimplementedError(OpKernelContext* ctx);
+  void SetComputeError(OpKernelContext* ctx);
+};
+
+// Coefficient-wise binary operations:
+//   Device: E.g., CPUDevice, GPUDevice.
+//   Functor: defined in cwise_ops.h. E.g., functor::add.
+template <typename Device, typename Functor>
+class BinaryOp : public BinaryOpShared {
+ public:
+  typedef typename Functor::in_type Tin;    // Input scalar data type.
+  typedef typename Functor::out_type Tout;  // Output scalar data type.
+
+  explicit BinaryOp(OpKernelConstruction* ctx)
+      : BinaryOpShared(ctx, DataTypeToEnum<Tout>::v(),
+                       DataTypeToEnum<Tin>::v()) {}
+
+  void Compute(OpKernelContext* ctx) override {
+    const Tensor& input_0 = ctx->input(0);
+    const Tensor& input_1 = ctx->input(1);
+    const Device& eigen_device = ctx->eigen_device<Device>();
+    bool error = false;
+    bool* const error_ptr = Functor::has_errors ? &error : nullptr;
+
+    // NOTE: Handle three simple cases before building the BinaryOpState, which
+    // is relatively expensive for small operations.
+    if (input_0.shape() == input_1.shape()) {
+      // tensor op tensor with no broadcasting.
+      Tensor* out;
+      OP_REQUIRES_OK(ctx, ctx->forward_input_or_allocate_output(
+                              {0, 1}, 0, input_0.shape(), &out));
+      functor::BinaryFunctor<Device, Functor, 1>()(
+          eigen_device, out->template flat<Tout>(),
+          input_0.template flat<Tin>(), input_1.template flat<Tin>(),
+          error_ptr);
+      if (Functor::has_errors && error) {
+        SetComputeError(ctx);
+      }
+      return;
+    } else if (input_0.shape().dims() == 0) {
+      // scalar op tensor.
+      Tensor* out;
+      OP_REQUIRES_OK(ctx, ctx->forward_input_or_allocate_output(
+                              {1}, 0, input_1.shape(), &out));
+
+      functor::BinaryFunctor<Device, Functor, 1>().Left(
+          eigen_device, out->template flat<Tout>(),
+          input_0.template scalar<Tin>(), input_1.template flat<Tin>(),
+          error_ptr);
+      if (Functor::has_errors && error) {
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: git_show
+{
+  "ref": "a7c02f1a9bbc35473969618a09ee5f9f5d3e52d9",
+  "context": "class BinaryOp : public BinaryOpShared {\n\n  void Compute(OpKernelContext* ctx) override {\n    const Tensor& input_0 = ctx->input(0);\n    const Tensor& input_1 = ctx->input(1);\n    const Device& eigen_device = ctx->eigen_device<Device>();"
+}
+commit a7c02f1a9bbc35473969618a09ee5f9f5d3e52d9
+Author: Mihai Maruseac <mihaimaruseac@google.com>
+Date:   Fri Nov 12 00:24:39 2021 -0800
+
+    Validate real and expected type of arguments to cwise ops.
+    
+    Without this validation, it is possible to trigger a `CHECK`-fail denial of service.
+    
+    This is a rollforward of a previous commit which was rolled back as it was relying on RTTI. This time we don't use RTTI, we replace `typeid(Tin).name()` with a double function call, `DataTypeString(DataTypeToEnum<Tin>::v())`.
+    
+    PiperOrigin-RevId: 409340416
+    Change-Id: I96080b2796729a3a9b65e7c68307ac276070f2f0
+
+ tensorflow/core/kernels/cwise_ops_common.h | 10 ++++++++++
+ 1 file changed, 10 insertions(+)
+This commit shows that there is a high probability that this code is new, so the corresponding code segment cannot be found in the old version.
+You can call `viewcode` and `locate_symbol` to further check the results step by step. For newly introduced code, we consider that this hunk `need not ported`.
+
+tokens used
+input: 3,817
+cache read: 4,608
+cache write: 0
+output: 219
+reasoning output: 0
+
+The target file has the same `BinaryOp::Compute` structure, so the backport is a direct insertion of the dtype checks before the typed tensor access paths.
+
+tool: validate
+{
+  "ref": "b2b3444b71ea99685edafa7731fb7ba57939f437",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/cwise_ops_common.h b/tensorflow/core/kernels/cwise_ops_common.h\n--- a/tensorflow/core/kernels/cwise_ops_common.h\n+++ b/tensorflow/core/kernels/cwise_ops_common.h\n@@ -87,7 +87,17 @@ class BinaryOp : public BinaryOpShared {\n \n   void Compute(OpKernelContext* ctx) override {\n     const Tensor& input_0 = ctx->input(0);\n+    OP_REQUIRES(ctx, input_0.dtype() == DataTypeToEnum<Tin>::v(),\n+                errors::InvalidArgument(\n+                    \"Expected tensor of type \",\n+                    DataTypeString(DataTypeToEnum<Tin>::v()), \" but got type \",\n+                    DataTypeString(input_0.dtype())));\n     const Tensor& input_1 = ctx->input(1);\n+    OP_REQUIRES(ctx, input_1.dtype() == DataTypeToEnum<Tin>::v(),\n+                errors::InvalidArgument(\n+                    \"Expected tensor of type \",\n+                    DataTypeString(DataTypeToEnum<Tin>::v()), \" but got type \",\n+                    DataTypeString(input_1.dtype())));\n     const Device& eigen_device = ctx->eigen_device<Device>();\n     bool error = false;\n     bool* const error_ptr = Functor::has_errors ? &error : nullptr;\n"
+}
+Patch applied successfully
+
+tokens used
+input: 1,829
+cache read: 7,680
+cache write: 0
+output: 405
+reasoning output: 35
+
+The hunk validates against the target base. I’m applying the same minimal source change now.
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/kernels/cwise_ops_common.h\n@@\n   void Compute(OpKernelContext* ctx) override {\n     const Tensor& input_0 = ctx->input(0);\n+    OP_REQUIRES(ctx, input_0.dtype() == DataTypeToEnum<Tin>::v(),\n+                errors::InvalidArgument(\n+                    \"Expected tensor of type \",\n+                    DataTypeString(DataTypeToEnum<Tin>::v()), \" but got type \",\n+                    DataTypeString(input_0.dtype())));\n     const Tensor& input_1 = ctx->input(1);\n+    OP_REQUIRES(ctx, input_1.dtype() == DataTypeToEnum<Tin>::v(),\n+                errors::InvalidArgument(\n+                    \"Expected tensor of type \",\n+                    DataTypeString(DataTypeToEnum<Tin>::v()), \" but got type \",\n+                    DataTypeString(input_1.dtype())));\n     const Device& eigen_device = ctx->eigen_device<Device>();\n     bool error = false;\n     bool* const error_ptr = Functor::has_errors ? &error : nullptr;\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/kernels/cwise_ops_common.h
+
+tokens used
+input: 1,258
+cache read: 8,704
+cache write: 0
+output: 308
+reasoning output: 0
+
+The source edit is in place; I’m checking the resulting diff to ensure only the intended file changed.
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/kernels/cwise_ops_common.h",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0044-b2b3444b71ea",
+  "timeout": 120000
+}
+warning: in the working copy of 'tensorflow/core/kernels/cwise_ops_common.h', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/kernels/cwise_ops_common.h b/tensorflow/core/kernels/cwise_ops_common.h
+index 4f2c83322b..27fcbf2f33 100644
+--- a/tensorflow/core/kernels/cwise_ops_common.h
++++ b/tensorflow/core/kernels/cwise_ops_common.h
+@@ -87,7 +87,17 @@ class BinaryOp : public BinaryOpShared {
+ 
+   void Compute(OpKernelContext* ctx) override {
+     const Tensor& input_0 = ctx->input(0);
++    OP_REQUIRES(ctx, input_0.dtype() == DataTypeToEnum<Tin>::v(),
++                errors::InvalidArgument(
++                    "Expected tensor of type ",
++                    DataTypeString(DataTypeToEnum<Tin>::v()), " but got type ",
++                    DataTypeString(input_0.dtype())));
+     const Tensor& input_1 = ctx->input(1);
++    OP_REQUIRES(ctx, input_1.dtype() == DataTypeToEnum<Tin>::v(),
++                errors::InvalidArgument(
++                    "Expected tensor of type ",
++                    DataTypeString(DataTypeToEnum<Tin>::v()), " but got type ",
++                    DataTypeString(input_1.dtype())));
+     const Device& eigen_device = ctx->eigen_device<Device>();
+     bool error = false;
+     bool* const error_ptr = Functor::has_errors ? &error : nullptr;
+
+tokens used
+input: 570
+cache read: 9,728
+cache write: 0
+output: 106
+reasoning output: 14
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/kernels/cwise_ops_common.h b/tensorflow/core/kernels/cwise_ops_common.h
+    index 4f2c83322b..27fcbf2f33 100644
+    --- a/tensorflow/core/kernels/cwise_ops_common.h
+    +++ b/tensorflow/core/kernels/cwise_ops_common.h
+    @@ -87,7 +87,17 @@ class BinaryOp : public BinaryOpShared {
+     
+       void Compute(OpKernelContext* ctx) override {
+         const Tensor& input_0 = ctx->input(0);
+    +    OP_REQUIRES(ctx, input_0.dtype() == DataTypeToEnum<Tin>::v(),
+    +                errors::InvalidArgument(
+    +                    "Expected tensor of type ",
+    +                    DataTypeString(DataTypeToEnum<Tin>::v()), " but got type ",
+    +                    DataTypeString(input_0.dtype())));
+         const Tensor& input_1 = ctx->input(1);
+    +    OP_REQUIRES(ctx, input_1.dtype() == DataTypeToEnum<Tin>::v(),
+    +                errors::InvalidArgument(
+    +                    "Expected tensor of type ",
+    +                    DataTypeString(DataTypeToEnum<Tin>::v()), " but got type ",
+    +                    DataTypeString(input_1.dtype())));
+         const Device& eigen_device = ctx->eigen_device<Device>();
+         bool error = false;
+         bool* const error_ptr = Functor::has_errors ? &error : nullptr;
+  notes: >
+    Backported the cwise BinaryOp input dtype validation checks directly; the hunk was validated against the target base.
+```
+
+tokens used
+input: 1,041
+cache read: 9,728
+cache write: 0
+output: 375
+reasoning output: 21

@@ -1,0 +1,1260 @@
+I’ll inspect the target-side files and symbols for the patched CLI/test locations, then apply the minimal equivalent changes without looking at the held-out backport commit.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target saved_model_cli and tests around patched functions",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Validate uncertain hunks against target base",
+      "status": "pending",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply minimal backport edits",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "content": "Review resulting diff",
+      "status": "pending",
+      "priority": "high"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target saved_model_cli and tests around patched functions",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Validate uncertain hunks against target base",
+    "status": "pending",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply minimal backport edits",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "content": "Review resulting diff",
+    "status": "pending",
+    "priority": "high"
+  }
+]
+
+tokens used
+input: 4,946
+cache read: 4,608
+cache write: 0
+output: 129
+reasoning output: 0
+
+tool: viewcode
+{
+  "ref": "bb93d96771228278adee16f357f5b86d588887f4",
+  "path": "tensorflow/python/tools/saved_model_cli.py",
+  "startline": 1,
+  "endline": 80
+}
+Here are lines 1 through 80.
+
+# Copyright 2017 The TensorFlow Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+"""Command-line interface to inspect and execute a graph in a SavedModel.
+
+For detailed usages and examples, please refer to:
+https://www.tensorflow.org/guide/saved_model#cli_to_inspect_and_execute_savedmodel
+
+"""
+
+from __future__ import absolute_import
+from __future__ import division
+from __future__ import print_function
+
+import argparse
+import os
+import re
+import sys
+
+import numpy as np
+import six
+
+from tensorflow.core.example import example_pb2
+from tensorflow.core.framework import types_pb2
+from tensorflow.python.client import session
+from tensorflow.python.debug.wrappers import local_cli_wrapper
+from tensorflow.python.eager import def_function
+from tensorflow.python.eager import function as defun
+from tensorflow.python.framework import meta_graph as meta_graph_lib
+from tensorflow.python.framework import ops as ops_lib
+from tensorflow.python.framework import tensor_spec
+from tensorflow.python.lib.io import file_io
+from tensorflow.python.platform import app  # pylint: disable=unused-import
+from tensorflow.python.platform import tf_logging as logging
+from tensorflow.python.saved_model import load
+from tensorflow.python.saved_model import loader
+from tensorflow.python.saved_model import save
+from tensorflow.python.saved_model import signature_constants
+from tensorflow.python.tools import saved_model_aot_compile
+from tensorflow.python.tools import saved_model_utils
+from tensorflow.python.tpu import tpu
+from tensorflow.python.util.compat import collections_abc
+
+
+_XLA_DEBUG_OPTIONS_URL = (
+    'https://github.com/tensorflow/tensorflow/blob/master/'
+    'tensorflow/compiler/xla/debug_options_flags.cc')
+
+
+# Set of ops to denylist.
+_OP_DENYLIST = set(['WriteFile', 'ReadFile', 'PrintV2'])
+
+
+def _show_tag_sets(saved_model_dir):
+  """Prints the tag-sets stored in SavedModel directory.
+
+  Prints all the tag-sets for MetaGraphs stored in SavedModel directory.
+
+  Args:
+    saved_model_dir: Directory containing the SavedModel to inspect.
+  """
+  tag_sets = saved_model_utils.get_saved_model_tag_sets(saved_model_dir)
+  print('The given SavedModel contains the following tag-sets:')
+  for tag_set in sorted(tag_sets):
+    print('%r' % ', '.join(sorted(tag_set)))
+
+
+def _show_signature_def_map_keys(saved_model_dir, tag_set):
+  """Prints the keys for each SignatureDef in the SignatureDef map.
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: viewcode
+{
+  "ref": "bb93d96771228278adee16f357f5b86d588887f4",
+  "path": "tensorflow/python/tools/saved_model_cli_test.py",
+  "startline": 360,
+  "endline": 450
+}
+Here are lines 360 through 450.
+
+        'The given SavedModel SignatureDef contains the following input(s):\n'
+        '  inputs[\'x\'] tensor_info:\n'
+        '      dtype: DT_FLOAT\n      shape: (-1, 1)\n      name: x:0\n'
+        'The given SavedModel SignatureDef contains the following output(s):\n'
+        '  outputs[\'y\'] tensor_info:\n'
+        '      dtype: DT_FLOAT\n      shape: (-1, 1)\n      name: y:0\n'
+        'Method name is: tensorflow/serving/predict')
+    self.assertEqual(output, expected_output)
+    self.assertEqual(err.getvalue().strip(), '')
+
+  def testPrintREFTypeTensor(self):
+    ref_tensor_info = meta_graph_pb2.TensorInfo()
+    ref_tensor_info.dtype = types_pb2.DT_FLOAT_REF
+    with captured_output() as (out, err):
+      saved_model_cli._print_tensor_info(ref_tensor_info)
+    self.assertTrue('DT_FLOAT_REF' in out.getvalue().strip())
+    self.assertEqual(err.getvalue().strip(), '')
+
+  def testInputPreProcessFormats(self):
+    input_str = 'input1=/path/file.txt[ab3];input2=file2'
+    input_expr_str = 'input3=np.zeros([2,2]);input4=[4,5]'
+    input_dict = saved_model_cli.preprocess_inputs_arg_string(input_str)
+    input_expr_dict = saved_model_cli.preprocess_input_exprs_arg_string(
+        input_expr_str)
+    self.assertTrue(input_dict['input1'] == ('/path/file.txt', 'ab3'))
+    self.assertTrue(input_dict['input2'] == ('file2', None))
+    print(input_expr_dict['input3'])
+    self.assertAllClose(input_expr_dict['input3'], np.zeros([2, 2]))
+    self.assertAllClose(input_expr_dict['input4'], [4, 5])
+    self.assertTrue(len(input_dict) == 2)
+    self.assertTrue(len(input_expr_dict) == 2)
+
+  def testInputPreProcessExamplesWithStrAndBytes(self):
+    input_examples_str = 'inputs=[{"text":["foo"], "bytes":[b"bar"]}]'
+    input_dict = saved_model_cli.preprocess_input_examples_arg_string(
+        input_examples_str)
+    feature = example_pb2.Example.FromString(input_dict['inputs'][0])
+    self.assertProtoEquals(
+        """
+          features {
+            feature {
+              key: "bytes"
+              value {
+                bytes_list {
+                  value: "bar"
+                }
+              }
+            }
+            feature {
+              key: "text"
+              value {
+                bytes_list {
+                  value: "foo"
+                }
+              }
+            }
+          }
+    """, feature)
+
+  def testInputPreProcessFileNames(self):
+    input_str = (r'inputx=C:\Program Files\data.npz[v:0];'
+                 r'input:0=c:\PROGRA~1\data.npy')
+    input_dict = saved_model_cli.preprocess_inputs_arg_string(input_str)
+    self.assertTrue(input_dict['inputx'] == (r'C:\Program Files\data.npz',
+                                             'v:0'))
+    self.assertTrue(input_dict['input:0'] == (r'c:\PROGRA~1\data.npy', None))
+
+  def testInputPreProcessErrorBadFormat(self):
+    input_str = 'inputx=file[[v1]v2'
+    with self.assertRaises(RuntimeError):
+      saved_model_cli.preprocess_inputs_arg_string(input_str)
+    input_str = 'inputx:file'
+    with self.assertRaises(RuntimeError):
+      saved_model_cli.preprocess_inputs_arg_string(input_str)
+    input_str = 'inputx:np.zeros((5))'
+    with self.assertRaises(RuntimeError):
+      saved_model_cli.preprocess_input_exprs_arg_string(input_str)
+
+  def testInputParserNPY(self):
+    x0 = np.array([[1], [2]])
+    x1 = np.array(range(6)).reshape(2, 3)
+    input0_path = os.path.join(test.get_temp_dir(), 'input0.npy')
+    input1_path = os.path.join(test.get_temp_dir(), 'input1.npy')
+    np.save(input0_path, x0)
+    np.save(input1_path, x1)
+    input_str = 'x0=' + input0_path + '[x0];x1=' + input1_path
+    feed_dict = saved_model_cli.load_inputs_from_input_arg_string(
+        input_str, '', '')
+    self.assertTrue(np.all(feed_dict['x0'] == x0))
+    self.assertTrue(np.all(feed_dict['x1'] == x1))
+
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: viewcode
+{
+  "ref": "bb93d96771228278adee16f357f5b86d588887f4",
+  "path": "tensorflow/python/tools/saved_model_cli.py",
+  "startline": 500,
+  "endline": 690
+}
+Here are lines 500 through 690.
+
+  inputs_raw = inputs_str.split(';')
+  for input_raw in filter(bool, inputs_raw):  # skip empty strings
+    # Format of input=filename[variable_name]'
+    match = re.match(r'([^=]+)=([^\[\]]+)\[([^\[\]]+)\]$', input_raw)
+
+    if match:
+      input_dict[match.group(1)] = match.group(2), match.group(3)
+    else:
+      # Format of input=filename'
+      match = re.match(r'([^=]+)=([^\[\]]+)$', input_raw)
+      if match:
+        input_dict[match.group(1)] = match.group(2), None
+      else:
+        raise RuntimeError(
+            '--inputs "%s" format is incorrect. Please follow'
+            '"<input_key>=<filename>", or'
+            '"<input_key>=<filename>[<variable_name>]"' % input_raw)
+
+  return input_dict
+
+
+def preprocess_input_exprs_arg_string(input_exprs_str):
+  """Parses input arg into dictionary that maps input key to python expression.
+
+  Parses input string in the format of 'input_key=<python expression>' into a
+  dictionary that maps each input_key to its python expression.
+
+  Args:
+    input_exprs_str: A string that specifies python expression for input keys.
+    Each input is separated by semicolon. For each input key:
+        'input_key=<python expression>'
+
+  Returns:
+    A dictionary that maps input keys to their values.
+
+  Raises:
+    RuntimeError: An error when the given input string is in a bad format.
+  """
+  input_dict = {}
+
+  for input_raw in filter(bool, input_exprs_str.split(';')):
+    if '=' not in input_exprs_str:
+      raise RuntimeError('--input_exprs "%s" format is incorrect. Please follow'
+                         '"<input_key>=<python expression>"' % input_exprs_str)
+    input_key, expr = input_raw.split('=', 1)
+    # ast.literal_eval does not work with numpy expressions
+    input_dict[input_key] = eval(expr)  # pylint: disable=eval-used
+  return input_dict
+
+
+def preprocess_input_examples_arg_string(input_examples_str):
+  """Parses input into dict that maps input keys to lists of tf.Example.
+
+  Parses input string in the format of 'input_key1=[{feature_name:
+  feature_list}];input_key2=[{feature_name:feature_list}];' into a dictionary
+  that maps each input_key to its list of serialized tf.Example.
+
+  Args:
+    input_examples_str: A string that specifies a list of dictionaries of
+    feature_names and their feature_lists for each input.
+    Each input is separated by semicolon. For each input key:
+      'input=[{feature_name1: feature_list1, feature_name2:feature_list2}]'
+      items in feature_list can be the type of float, int, long or str.
+
+  Returns:
+    A dictionary that maps input keys to lists of serialized tf.Example.
+
+  Raises:
+    ValueError: An error when the given tf.Example is not a list.
+  """
+  input_dict = preprocess_input_exprs_arg_string(input_examples_str)
+  for input_key, example_list in input_dict.items():
+    if not isinstance(example_list, list):
+      raise ValueError(
+          'tf.Example input must be a list of dictionaries, but "%s" is %s' %
+          (example_list, type(example_list)))
+    input_dict[input_key] = [
+        _create_example_string(example) for example in example_list
+    ]
+  return input_dict
+
+
+def _create_example_string(example_dict):
+  """Create a serialized tf.example from feature dictionary."""
+  example = example_pb2.Example()
+  for feature_name, feature_list in example_dict.items():
+    if not isinstance(feature_list, list):
+      raise ValueError('feature value must be a list, but %s: "%s" is %s' %
+                       (feature_name, feature_list, type(feature_list)))
+    if isinstance(feature_list[0], float):
+      example.features.feature[feature_name].float_list.value.extend(
+          feature_list)
+    elif isinstance(feature_list[0], str):
+      example.features.feature[feature_name].bytes_list.value.extend(
+          [f.encode('utf8') for f in feature_list])
+    elif isinstance(feature_list[0], bytes):
+      example.features.feature[feature_name].bytes_list.value.extend(
+          feature_list)
+    elif isinstance(feature_list[0], six.integer_types):
+      example.features.feature[feature_name].int64_list.value.extend(
+          feature_list)
+    else:
+      raise ValueError(
+          'Type %s for value %s is not supported for tf.train.Feature.' %
+          (type(feature_list[0]), feature_list[0]))
+  return example.SerializeToString()
+
+
+def load_inputs_from_input_arg_string(inputs_str, input_exprs_str,
+                                      input_examples_str):
+  """Parses input arg strings and create inputs feed_dict.
+
+  Parses '--inputs' string for inputs to be loaded from file, and parses
+  '--input_exprs' string for inputs to be evaluated from python expression.
+  '--input_examples' string for inputs to be created from tf.example feature
+  dictionary list.
+
+  Args:
+    inputs_str: A string that specified where to load inputs. Each input is
+        separated by semicolon.
+        * For each input key:
+            '<input_key>=<filename>' or
+            '<input_key>=<filename>[<variable_name>]'
+        * The optional 'variable_name' key will be set to None if not specified.
+        * File specified by 'filename' will be loaded using numpy.load. Inputs
+            can be loaded from only .npy, .npz or pickle files.
+        * The "[variable_name]" key is optional depending on the input file type
+            as descripted in more details below.
+        When loading from a npy file, which always contains a numpy ndarray, the
+        content will be directly assigned to the specified input tensor. If a
+        variable_name is specified, it will be ignored and a warning will be
+        issued.
+        When loading from a npz zip file, user can specify which variable within
+        the zip file to load for the input tensor inside the square brackets. If
+        nothing is specified, this function will check that only one file is
+        included in the zip and load it for the specified input tensor.
+        When loading from a pickle file, if no variable_name is specified in the
+        square brackets, whatever that is inside the pickle file will be passed
+        to the specified input tensor, else SavedModel CLI will assume a
+        dictionary is stored in the pickle file and the value corresponding to
+        the variable_name will be used.
+    input_exprs_str: A string that specifies python expressions for inputs.
+        * In the format of: '<input_key>=<python expression>'.
+        * numpy module is available as np.
+    input_examples_str: A string that specifies tf.Example with dictionary.
+        * In the format of: '<input_key>=<[{feature:value list}]>'
+
+  Returns:
+    A dictionary that maps input tensor keys to numpy ndarrays.
+
+  Raises:
+    RuntimeError: An error when a key is specified, but the input file contains
+        multiple numpy ndarrays, none of which matches the given key.
+    RuntimeError: An error when no key is specified, but the input file contains
+        more than one numpy ndarrays.
+  """
+  tensor_key_feed_dict = {}
+
+  inputs = preprocess_inputs_arg_string(inputs_str)
+  input_exprs = preprocess_input_exprs_arg_string(input_exprs_str)
+  input_examples = preprocess_input_examples_arg_string(input_examples_str)
+
+  for input_tensor_key, (filename, variable_name) in inputs.items():
+    data = np.load(file_io.FileIO(filename, mode='rb'), allow_pickle=True)
+
+    # When a variable_name key is specified for the input file
+    if variable_name:
+      # if file contains a single ndarray, ignore the input name
+      if isinstance(data, np.ndarray):
+        logging.warn(
+            'Input file %s contains a single ndarray. Name key \"%s\" ignored.'
+            % (filename, variable_name))
+        tensor_key_feed_dict[input_tensor_key] = data
+      else:
+        if variable_name in data:
+          tensor_key_feed_dict[input_tensor_key] = data[variable_name]
+        else:
+          raise RuntimeError(
+              'Input file %s does not contain variable with name \"%s\".' %
+              (filename, variable_name))
+    # When no key is specified for the input file.
+    else:
+      # Check if npz file only contains a single numpy ndarray.
+      if isinstance(data, np.lib.npyio.NpzFile):
+        variable_name_list = data.files
+        if len(variable_name_list) != 1:
+          raise RuntimeError(
+              'Input file %s contains more than one ndarrays. Please specify '
+              'the name of ndarray to use.' % filename)
+        tensor_key_feed_dict[input_tensor_key] = data[variable_name_list[0]]
+      else:
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: viewcode
+{
+  "ref": "bb93d96771228278adee16f357f5b86d588887f4",
+  "path": "RELEASE.md",
+  "startline": 235,
+  "endline": 260
+}
+Here are lines 235 through 260.
+
+  * Several changes have been made to `tf.keras.mixed_precision.experimental`. Note that it is now recommended to use the non-experimental `tf.keras.mixed_precision` API.
+   * `AutoCastVariable.dtype` now refers to the actual variable dtype, not the dtype it will be casted to.
+   * When mixed precision is enabled, `tf.keras.layers.Embedding` now outputs a float16 or bfloat16 tensor instead of a float32 tensor.
+   * The property `tf.keras.mixed_precision.experimental.LossScaleOptimizer.loss_scale` is now a tensor, not a `LossScale` object. This means to get a loss scale of a `LossScaleOptimizer` as a tensor, you must now call `opt.loss_scale`instead of `opt.loss_scale()`.
+   * The property `should_cast_variables` has been removed from `tf.keras.mixed_precision.experimental.Policy`
+   * When passing a `tf.mixed_precision.experimental.DynamicLossScale` to `tf.keras.mixed_precision.experimental.LossScaleOptimizer`, the `DynamicLossScale`'s multiplier must be 2.
+   * When passing a `tf.mixed_precision.experimental.DynamicLossScale` to `tf.keras.mixed_precision.experimental.LossScaleOptimizer`, the weights of
+     the `DynanmicLossScale` are copied into the `LossScaleOptimizer` instead of being reused. This means modifying the weights of the `DynamicLossScale` will no longer affect the weights of the LossScaleOptimizer, and vice versa.
+   * The global policy can no longer be set to a non-floating point policy in `tf.keras.mixed_precision.experimental.set_policy`
+   * In `Layer.call`, `AutoCastVariable`s will no longer be casted within `MirroredStrategy.run` or `ReplicaContext.merge_call`. This is because a thread local variable is used to determine whether `AutoCastVariable`s are casted, and those two functions run with a different thread. Note this only applies if one of these two functions is called within `Layer.call`; if one of those two functions calls `Layer.call`, `AutoCastVariable`s will still be casted.
+
+* `tf.data`:
+  * `tf.data.experimental.service.DispatchServer` now takes a config tuple instead of individual arguments. Usages should be updated to `tf.data.experimental.service.DispatchServer(dispatcher_config)`.
+  * `tf.data.experimental.service.WorkerServer` now takes a config tuple instead of individual arguments. Usages should be updated to `tf.data.experimental.service.WorkerServer(worker_config)`.
+
+* `tf.distribute`:
+  * Removes `tf.distribute.Strategy.experimental_make_numpy_dataset`. Please use `tf.data.Dataset.from_tensor_slices` instead.
+  * Renames `experimental_hints` in `tf.distribute.StrategyExtended.reduce_to`, `tf.distribute.StrategyExtended.batch_reduce_to`, `tf.distribute.ReplicaContext.all_reduce` to `options`.
+  * Renames `tf.distribute.experimental.CollectiveHints` to `tf.distribute.experimental.CommunicationOptions`.
+  * Renames `tf.distribute.experimental.CollectiveCommunication` to `tf.distribute.experimental.CommunicationImplementation`.
+  * Renames `tf.distribute.Strategy.experimental_distribute_datasets_from_function` to `distribute_datasets_from_function` as it is no longer experimental.
+  * Removes `tf.distribute.Strategy.experimental_run_v2` method, which was deprecated in TF 2.2.
+
+* `tf.lite`:
+  * `tf.quantization.quantize_and_dequantize_v2` has been introduced, which updates the gradient definition for quantization which is outside the range
+     to be 0. To simulate the V1 the behavior of `tf.quantization.quantize_and_dequantize(...)` use `tf.grad_pass_through(tf.quantization.quantize_and_dequantize_v2)(...)`.
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: viewcode
+{
+  "ref": "bb93d96771228278adee16f357f5b86d588887f4",
+  "path": "tensorflow/python/tools/saved_model_cli.py",
+  "startline": 900,
+  "endline": 950
+}
+Here are lines 900 through 950.
+
+      'run', description=run_msg, formatter_class=argparse.RawTextHelpFormatter)
+  parser_run.add_argument(
+      '--dir',
+      type=str,
+      required=True,
+      help='directory containing the SavedModel to execute')
+  parser_run.add_argument(
+      '--tag_set',
+      type=str,
+      required=True,
+      help='tag-set of graph in SavedModel to load, separated by \',\'')
+  parser_run.add_argument(
+      '--signature_def',
+      type=str,
+      required=True,
+      metavar='SIGNATURE_DEF_KEY',
+      help='key of SignatureDef to run')
+  msg = ('Loading inputs from files, in the format of \'<input_key>=<filename>,'
+         ' or \'<input_key>=<filename>[<variable_name>]\', separated by \';\'.'
+         ' The file format can only be from .npy, .npz or pickle.')
+  parser_run.add_argument('--inputs', type=str, default='', help=msg)
+  msg = ('Specifying inputs by python expressions, in the format of'
+         ' "<input_key>=\'<python expression>\'", separated by \';\'. '
+         'numpy module is available as \'np\'. '
+         'Will override duplicate input keys from --inputs option.')
+  parser_run.add_argument('--input_exprs', type=str, default='', help=msg)
+  msg = (
+      'Specifying tf.Example inputs as list of dictionaries. For example: '
+      '<input_key>=[{feature0:value_list,feature1:value_list}]. Use ";" to '
+      'separate input keys. Will override duplicate input keys from --inputs '
+      'and --input_exprs option.')
+  parser_run.add_argument('--input_examples', type=str, default='', help=msg)
+  parser_run.add_argument(
+      '--outdir',
+      type=str,
+      default=None,
+      help='if specified, output tensor(s) will be saved to given directory')
+  parser_run.add_argument(
+      '--overwrite',
+      action='store_true',
+      help='if set, output file will be overwritten if it already exists.')
+  parser_run.add_argument(
+      '--tf_debug',
+      action='store_true',
+      help='if set, will use TensorFlow Debugger (tfdbg) to watch the '
+           'intermediate Tensors and runtime GraphDefs while running the '
+           'SavedModel.')
+  parser_run.add_argument(
+      '--worker',
+      type=str,
+      default=None,
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tokens used
+input: 1,116
+cache read: 8,704
+cache write: 0
+output: 291
+reasoning output: 0
+
+The target code matches the source patch locations closely. I’m applying the same security behavior: literal-only parsing by default for `--input_examples`, while preserving unsafe eval only for `--input_exprs`.
+
+tool: grep
+{
+  "pattern": "TF SavedModel|Custom gradients are now saved",
+  "path": ".",
+  "include": "RELEASE.md"
+}
+No files found
+
+tokens used
+input: 5,427
+cache read: 9,728
+cache write: 0
+output: 86
+reasoning output: 31
+
+tool: read
+{
+  "filePath": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0070-bb93d9677122\\RELEASE.md",
+  "offset": 200,
+  "limit": 80
+}
+<path>C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0070-bb93d9677122\RELEASE.md</path>
+<type>file</type>
+<content>
+200: * TensorFlow Profiler now supports profiling `MultiWorkerMirroredStrategy` and tracing multiple workers using the [sampling mode API](https://www.tensorflow.org/guide/profiler#profiling_apis).
+201: 
+202: * TFLite Profiler for Android is available. See the detailed [guide](https://www.tensorflow.org/lite/performance/measurement#trace_tensorflow_lite_internals_in_android) to learn more.
+203: 
+204: * TensorFlow pip packages are now built with CUDA11 and cuDNN 8.0.2.
+205: 
+206: ## Breaking Changes
+207: 
+208: * TF Core:
+209:   * Certain float32 ops run in lower precision on Ampere based GPUs, including matmuls and convolutions, due to the use of [TensorFloat-32](https://blogs.nvidia.com/blog/2020/05/14/tensorfloat-32-precision-format/). Specifically, inputs to such ops are rounded from 23 bits of precision to 10
+210:   bits of precision. This is unlikely to cause issues in practice for deep learning models. In some cases, TensorFloat-32 is also used for complex64 ops.
+211:   TensorFloat-32 can be disabled by running `tf.config.experimental.enable_tensor_float_32_execution(False)`.
+212:   * The byte layout for string tensors across the C-API has been updated to match TF Core/C++; i.e., a contiguous array of `tensorflow::tstring`/`TF_TString`s.
+213:   * C-API functions `TF_StringDecode`, `TF_StringEncode`, and `TF_StringEncodedSize` are no longer relevant and have been removed; see `core/platform/ctstring.h` for string access/modification in C.
+214:   * `tensorflow.python`, `tensorflow.core` and `tensorflow.compiler` modules are now hidden. These modules are not part of TensorFlow public API.
+215:   * `tf.raw_ops.Max` and `tf.raw_ops.Min` no longer accept inputs of type `tf.complex64` or `tf.complex128`, because the behavior of these ops is not well defined for complex types.
+216:   * XLA:CPU and XLA:GPU devices are no longer registered by default. Use `TF_XLA_FLAGS=--tf_xla_enable_xla_devices` if you really need them, but this flag will eventually be removed in subsequent releases.
+217: 
+218: * `tf.keras`:
+219:   * The `steps_per_execution` argument in `model.compile()` is no longer experimental; if you were passing `experimental_steps_per_execution`, rename it to `steps_per_execution` in your code. This argument controls the number of batches to run during each `tf.function` call when calling `model.fit()`. Running multiple batches inside a single `tf.function` call can greatly improve performance on TPUs or small models with a large Python overhead.
+220:   * A **major refactoring** of the internals of the Keras Functional API may affect code that
+221:   is relying on certain internal details:
+222:     * Code that uses `isinstance(x, tf.Tensor)` instead of `tf.is_tensor` when checking Keras symbolic inputs/outputs should switch to using `tf.is_tensor`.
+223:     * Code that is overly dependent on the exact names attached to symbolic tensors (e.g. assumes there will be ":0" at the end of the inputs, treats names as unique identifiers instead of using `tensor.ref()`, etc.) may break.
+224:     * Code that uses full path for `get_concrete_function` to trace Keras symbolic inputs directly should switch to building matching `tf.TensorSpec`s directly and tracing the `TensorSpec` objects.
+225:     * Code that relies on the exact number and names of the op layers that TensorFlow operations were converted into may have changed.
+226:     * Code that uses `tf.map_fn`/`tf.cond`/`tf.while_loop`/control flow as op layers and happens to work before TF 2.4. These will explicitly be unsupported now. Converting these ops to Functional API op layers was unreliable before TF 2.4, and prone to erroring incomprehensibly or being silently buggy.
+227:     * Code that directly asserts on a Keras symbolic value in cases where ops like `tf.rank` used to return a static or symbolic value depending on if the input had a fully static shape or not. Now these ops always return symbolic values.
+228:     * Code already susceptible to leaking tensors outside of graphs becomes slightly more likely to do so now.
+229:     * Code that tries directly getting gradients with respect to symbolic Keras inputs/outputs. Use `GradientTape` on the actual Tensors passed to the already-constructed model instead.
+230:     * Code that requires very tricky shape manipulation via converted op layers in order to work, where the Keras symbolic shape inference proves insufficient.
+231:     * Code that tries manually walking a `tf.keras.Model` layer by layer and assumes layers only ever have one positional argument. This assumption doesn't hold true before TF 2.4 either, but is more likely to cause issues now.
+232:     * Code that manually enters `keras.backend.get_graph()` before building a functional model is no longer needed.
+233:     * Start enforcing input shape assumptions when calling Functional API Keras models. This may potentially break some users, in case there is a mismatch between the shape used when creating `Input` objects in a Functional model, and the shape of the data passed to that model. You can fix this mismatch by either calling the model with correctly-shaped data, or by relaxing `Input` shape assumptions (note that you can pass shapes with `None` entries for axes
+234:       that are meant to be dynamic). You can also disable the input checking entirely by setting `model.input_spec = None`.
+235:   * Several changes have been made to `tf.keras.mixed_precision.experimental`. Note that it is now recommended to use the non-experimental `tf.keras.mixed_precision` API.
+236:    * `AutoCastVariable.dtype` now refers to the actual variable dtype, not the dtype it will be casted to.
+237:    * When mixed precision is enabled, `tf.keras.layers.Embedding` now outputs a float16 or bfloat16 tensor instead of a float32 tensor.
+238:    * The property `tf.keras.mixed_precision.experimental.LossScaleOptimizer.loss_scale` is now a tensor, not a `LossScale` object. This means to get a loss scale of a `LossScaleOptimizer` as a tensor, you must now call `opt.loss_scale`instead of `opt.loss_scale()`.
+239:    * The property `should_cast_variables` has been removed from `tf.keras.mixed_precision.experimental.Policy`
+240:    * When passing a `tf.mixed_precision.experimental.DynamicLossScale` to `tf.keras.mixed_precision.experimental.LossScaleOptimizer`, the `DynamicLossScale`'s multiplier must be 2.
+241:    * When passing a `tf.mixed_precision.experimental.DynamicLossScale` to `tf.keras.mixed_precision.experimental.LossScaleOptimizer`, the weights of
+242:      the `DynanmicLossScale` are copied into the `LossScaleOptimizer` instead of being reused. This means modifying the weights of the `DynamicLossScale` will no longer affect the weights of the LossScaleOptimizer, and vice versa.
+243:    * The global policy can no longer be set to a non-floating point policy in `tf.keras.mixed_precision.experimental.set_policy`
+244:    * In `Layer.call`, `AutoCastVariable`s will no longer be casted within `MirroredStrategy.run` or `ReplicaContext.merge_call`. This is because a thread local variable is used to determine whether `AutoCastVariable`s are casted, and those two functions run with a different thread. Note this only applies if one of these two functions is called within `Layer.call`; if one of those two functions calls `Layer.call`, `AutoCastVariable`s will still be casted.
+245: 
+246: * `tf.data`:
+247:   * `tf.data.experimental.service.DispatchServer` now takes a config tuple instead of individual arguments. Usages should be updated to `tf.data.experimental.service.DispatchServer(dispatcher_config)`.
+248:   * `tf.data.experimental.service.WorkerServer` now takes a config tuple instead of individual arguments. Usages should be updated to `tf.data.experimental.service.WorkerServer(worker_config)`.
+249: 
+250: * `tf.distribute`:
+251:   * Removes `tf.distribute.Strategy.experimental_make_numpy_dataset`. Please use `tf.data.Dataset.from_tensor_slices` instead.
+252:   * Renames `experimental_hints` in `tf.distribute.StrategyExtended.reduce_to`, `tf.distribute.StrategyExtended.batch_reduce_to`, `tf.distribute.ReplicaContext.all_reduce` to `options`.
+253:   * Renames `tf.distribute.experimental.CollectiveHints` to `tf.distribute.experimental.CommunicationOptions`.
+254:   * Renames `tf.distribute.experimental.CollectiveCommunication` to `tf.distribute.experimental.CommunicationImplementation`.
+255:   * Renames `tf.distribute.Strategy.experimental_distribute_datasets_from_function` to `distribute_datasets_from_function` as it is no longer experimental.
+256:   * Removes `tf.distribute.Strategy.experimental_run_v2` method, which was deprecated in TF 2.2.
+257: 
+258: * `tf.lite`:
+259:   * `tf.quantization.quantize_and_dequantize_v2` has been introduced, which updates the gradient definition for quantization which is outside the range
+260:      to be 0. To simulate the V1 the behavior of `tf.quantization.quantize_and_dequantize(...)` use `tf.grad_pass_through(tf.quantization.quantize_and_dequantize_v2)(...)`.
+261: 
+262: * Building TensorFlow:
+263:   * Windows platform builds: TensorFlow on Windows under MSVC is now built with `--copt=/experimental:preprocessor --host_copt=/experimental:preprocessor` (see `.bazelrc` for more details). Builds including TensorFlow may fail with unexpected syntax errors if these flags are absent. See also [this thread on SIG Build](https://groups.google.com/a/tensorflow.org/g/build/c/LbAw8RILvTg/m/ttnuhYU2BgAJ).
+264: 
+265: ## Known Caveats
+266:   * `tf.keras.mixed_precision`
+267:     * When using mixed precision, calling `RMSprop.apply_gradients` or `Nadam.apply_gradients` outside a `tf.function` does not work and will raise the AttributeError "Tensor.op is meaningless when eager execution is enabled". See this [issue](https://github.com/tensorflow/tensorflow/issues/45536) for details and a workaround.
+268: 
+269: ## Bug Fixes and Other Changes
+270: 
+271: ### TF Core:
+272:   * Introduces experimental support for a new module named [`tf.experimental.numpy`](https://www.tensorflow.org/api_docs/python/tf/experimental/numpy), which
+273:     is a NumPy-compatible API for writing TF programs. This module provides class `ndarray`, which mimics the `ndarray` class in NumPy, and wraps an immutable `tf.Tensor` under the hood. A subset of NumPy functions (e.g. `numpy.add`) are provided. Their inter-operation with TF facilities is seamless in most cases.
+274:     See [tensorflow/python/ops/numpy_ops/README.md](https://github.com/tensorflow/tensorflow/blob/master/tensorflow/python/ops/numpy_ops/README.md)
+275:     for details of what operations are supported and what are the differences from NumPy.
+276:   * `tf.types.experimental.TensorLike` is a new `Union` type that can be used as type annotation for variables representing a Tensor or a value
+277:     that can be converted to Tensor by `tf.convert_to_tensor`.
+278:   * Calling ops with a python constants or numpy values is now consistent with tf.convert_to_tensor behavior. This avoids operations like
+279:     tf.reshape truncating inputs such as from int64 to int32.
+
+(Showing lines 200-279 of 4430. Use offset=280 to continue.)
+</content>
+
+tokens used
+input: 438
+cache read: 14,848
+cache write: 0
+output: 68
+reasoning output: 22
+
+tool: grep
+{
+  "pattern": "SavedModel",
+  "path": ".",
+  "include": "RELEASE.md"
+}
+Found 35 matches
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0070-bb93d9677122\RELEASE.md:
+  Line 308:   * Now accepts a `root` argument in the initialization, which generates a checkpoint with a root object. This allows users to create a `Checkpoint` object that is compatible with Keras `model.save_weights()` and `model.load_weights`. The checkpoint is also compatible with the checkpoint saved in the `variables/` folder in the SavedModel.
+
+  Line 309:   * When restoring, `save_path` can be a path to a SavedModel. The function will automatically find the checkpoint in the SavedModel.
+
+  Line 359:   * Adds a `save_traces` argument to `model.save`/ `tf.keras.models.save_model` which determines whether the SavedModel format stores the Keras model/layer call functions. The traced functions allow Keras to revive custom models and layers without the original class definition, but if this isn't required the tracing can be disabled with the added option.
+
+  Line 410:   * Fixes segfaults caused by incomplete `SavedModel` validation, ([CVE-2020-15206](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2020-15206))
+
+  Line 467: * Fixes segfaults caused by incomplete `SavedModel` validation
+
+  Line 508: * Fixes segfaults caused by incomplete `SavedModel` validation
+
+  Line 558: * Fixes segfaults caused by incomplete `SavedModel` validation
+
+  Line 604: * Fixes segfaults caused by incomplete `SavedModel` validation
+
+  Line 649: * Fixes segfaults caused by incomplete `SavedModel` validation
+
+  Line 797:     * `@tf.function` from SavedModel no longer ignores args after a `RaggedTensor` when selecting the concrete function to run.
+
+  Line 801:     * Mutable tables now restore checkpointed values when loaded from SavedModel.
+
+  Line 802:     * The user object metadata field in the SavedModel proto has been deprecated as part of the updates to Keras SavedModel. Keras was the only consumer of this field prior to the update.
+
+  Line 975:      * SavedModel uses its own `Model._saved_model_inputs_spec` attr now instead of
+
+  Line 982:   * The SavedModel format now supports all Keras built-in layers (including metrics, preprocessing layers, and stateful RNN layers)
+
+  Line 1350:   * `tf.keras.model.save_model` and `model.save` now defaults to saving a TensorFlow SavedModel.
+
+  Line 1462: *   Unification of exchange formats to SavedModel. All TensorFlow ecosystem
+
+  Line 1464:     Hub) accept SavedModels. Model state should be saved to and restored from
+
+  Line 1465:     SavedModels.
+
+  Line 1495:   Removed the `freeze_graph` command line tool; `SavedModel` should be used in place of frozen graphs.
+
+  Line 1507:   * When saving to SavedModel, Estimators will strip default op attributes. This is almost always the correct behavior, as it is more forwards compatible, but if you require that default attributes to be saved with the model, please use `tf.compat.v1.Estimator`.
+
+  Line 1512:   * `tf.keras.model.save_model` and `model.save` now defaults to saving a TensorFlow SavedModel. HDF5 files are still supported.
+
+  Line 1612:         SavedModel format. The model can be restored using
+
+  Line 2073:     *   Minor change to SavedModels exported from Keras using
+
+  Line 2482: *   Keras models can now be directly exported to the SavedModel
+
+  Line 2610:     *   Added a subclass of Estimator that can be created from a SavedModel
+
+  Line 2611:         (SavedModelEstimator).
+
+  Line 2640:     *   The legacy_init_op argument to SavedModelBuilder methods for adding
+
+  Line 2643:         main_op or legacy_init_op at the time of SavedModel building, whereas
+
+  Line 2697:   * `Estimator`s now use custom savers included in `EstimatorSpec` scaffolds for saving SavedModels during export.
+
+  Line 2834:     *   SavedModelBuilder will now deduplicate asset names that point to files
+
+  Line 2836:         in new asset files included in SavedModels in cases where assets with
+
+  Line 2984: * `tf.estimator.{FinalExporter,LatestExporter}` now export stripped SavedModels. This improves forward compatibility of the SavedModel.
+
+  Line 3557: * TensorForest Estimator now supports SavedModel export for serving.
+
+  Line 3561: * [`SavedModel CLI`](https://www.tensorflow.org/versions/master/guide/saved_model_cli) tool available to inspect and execute MetaGraph in SavedModel
+
+  Line 3705: * Java: Support for loading models exported using the SavedModel API (courtesy @EronWright).
+
+tokens used
+input: 3,204
+cache read: 14,848
+cache write: 0
+output: 31
+reasoning output: 20
+
+tool: read
+{
+  "filePath": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0070-bb93d9677122\\RELEASE.md",
+  "offset": 760,
+  "limit": 60
+}
+<path>C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0070-bb93d9677122\RELEASE.md</path>
+<type>file</type>
+<content>
+760: ## Known Caveats
+761:   * `tf.lite`
+762:     * Keras-based LSTM models must be converted with an explicit batch size in the input layer.
+763: 
+764: ## Bug Fixes and Other Changes
+765: 
+766: ### TF Core:
+767:   * Set `tf2_behavior` to 1 to enable V2 for early loading cases.
+768:   * Add `execute_fn_for_device function` to dynamically choose the implementation based on underlying device placement.
+769:   * Eager:
+770:     * Add `reduce_logsumexp` benchmark with experiment compile.
+771:     * Give `EagerTensor`s a meaningful `__array__` implementation.
+772:     * Add another version of defun matmul for performance analysis.
+773:   * `tf.function`/AutoGraph:
+774:     * `AutoGraph` now includes into TensorFlow loops any variables that are closed over by local functions. Previously, such variables were sometimes incorrectly ignored.
+775:     * functions returned by the `get_concrete_function` method of `tf.function` objects can now be called with arguments consistent with the original arguments or type specs passed to `get_concrete_function`.  This calling convention is now the preferred way to use concrete functions with nested values and composite tensors. Please check the [guide](https://www.tensorflow.org/guide/concrete_function) for more details on `concrete_ function`.
+776:     * Update `tf.function`'s `experimental_relax_shapes` to handle composite tensors appropriately.
+777:     * Optimize `tf.function` invocation, by removing redundant list converter.
+778:     * `tf.function` will retrace when called with a different variable instead of simply using the `dtype` & `shape`.
+779:     * [Improve support](https://github.com/tensorflow/tensorflow/issues/33862) for dynamically-sized TensorArray inside `tf.function`.
+780:   * `tf.math`:
+781:     * Narrow down `argmin`/`argmax` contract to always return the smallest index for ties.
+782:     * `tf.math.reduce_variance` and `tf.math.reduce_std` return correct computation for complex types and no longer support integer types.
+783:     * Add Bessel functions of order 0,1 to `tf.math.special`.
+784:     * `tf.divide` now always returns a tensor to be consistent with documentation and other APIs.
+785:   * `tf.image`:
+786:     * Replaced [`tf.image.non_max_suppression_padded`](https://www.tensorflow.org/versions/r2.3/api_docs/python/tf/image/non_max_suppression_padded?hl=en) with a new implementation that supports batched inputs, which is considerably faster on TPUs and GPUs. Boxes with area=0 will be ignored. Existing usage with single inputs should still work as before.
+787:   * `tf.linalg`
+788:     * Add `tf.linalg.banded_triangular_solve`.
+789:   * `tf.random`:
+790:     * Add `tf.random.stateless_parameterized_truncated_normal`.
+791:   * `tf.ragged`:
+792:     * Add `tf.ragged.cross` and `tf.ragged.cross_hashed` operations.
+793:   * `tf.RaggedTensor`:
+794:     * `RaggedTensor.to_tensor()` now preserves static shape.
+795:     * Add `tf.strings.format()` and `tf.print()` to support RaggedTensors.
+796:   * `tf.saved_model`:
+797:     * `@tf.function` from SavedModel no longer ignores args after a `RaggedTensor` when selecting the concrete function to run.
+798:     * Fix save model issue for ops with a list of functions.
+799:     * Add `tf.saved_model.LoadOptions` with [`experimental_io_device`](https://www.tensorflow.org/versions/r2.3/api_docs/python/tf/saved_model/LoadOptions?hl=en) as arg with default value `None` to choose the I/O device for loading models and weights.
+800:     * Update `tf.saved_model.SaveOptions` with [`experimental_io_device`](https://www.tensorflow.org/versions/r2.3/api_docs/python/tf/saved_model/SaveOptions?hl=en) as arg with default value `None` to choose the I/O device for saving models and weights.
+801:     * Mutable tables now restore checkpointed values when loaded from SavedModel.
+802:     * The user object metadata field in the SavedModel proto has been deprecated as part of the updates to Keras SavedModel. Keras was the only consumer of this field prior to the update.
+803:   * GPU
+804:     * TF 2.3 includes PTX kernels only for [compute capability](https://developer.nvidia.com/cuda-gpus) 7.0 to reduce the TF pip binary size.  Earlier releases included PTX for a variety of older compute capabilities.
+805:     * Remove environmental variable `TF_USE_CUDNN`.
+806:   * Others
+807:     * Retain parent namescope for ops added inside `tf.while_loop`/`tf.cond`/`tf.switch_case`.
+808:     * Update `tf.vectorized_map` to support vectorizing `tf.while_loop` and TensorList operations.
+809:     * `tf.custom_gradient` can now be applied to functions that accept nested structures of `tensors` as inputs (instead of just a list of tensors). Note that Python structures such as tuples and lists now won't be treated as tensors, so if you still want them to be treated that way, you need to wrap them with `tf.convert_to_tensor`.
+810:     * No lowering on gradient case op when input is `DeviceIndex` op.
+811:     * Extend the ragged version of `tf.gather` to support `batch_dims` and `axis` args.
+812:     * Update `tf.map_fn` to support RaggedTensors and SparseTensors.
+813:     * Deprecate `tf.group`. It is not useful in eager mode.
+814:     * Add CPU and GPU implementation of modified variation of [`FTRL`](https://www.tensorflow.org/versions/r2.3/api_docs/python/tf/raw_ops/ApplyFtrl)/[`FTRLV2`](https://www.tensorflow.org/versions/r2.3/api_docs/python/tf/raw_ops/ApplyFtrlV2) that can triggerred by `multiply_linear_by_lr` allowing a learning rate of zero.
+815: 
+816: ### `tf.data`:
+817:   * `tf.data.experimental.dense_to_ragged_batch` works correctly with tuples.
+818:   * `tf.data.experimental.dense_to_ragged_batch` to output variable ragged rank.
+819:   * `tf.data.experimental.cardinality` is now a method on `tf.data.Dataset`.
+
+(Showing lines 760-819 of 4430. Use offset=820 to continue.)
+</content>
+
+tokens used
+input: 1,296
+cache read: 17,920
+cache write: 0
+output: 68
+reasoning output: 50
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/python/tools/saved_model_cli.py\n@@\n import argparse\n+import ast\n import os\n import re\n import sys\n@@\n-def preprocess_input_exprs_arg_string(input_exprs_str):\n+def preprocess_input_exprs_arg_string(input_exprs_str, safe=True):\n@@\n   Args:\n     input_exprs_str: A string that specifies python expression for input keys.\n-    Each input is separated by semicolon. For each input key:\n+      Each input is separated by semicolon. For each input key:\n         'input_key=<python expression>'\n+    safe: Whether to evaluate the python expression as literals or allow\n+      arbitrary calls (e.g. numpy usage).\n@@\n     if '=' not in input_exprs_str:\n       raise RuntimeError('--input_exprs \"%s\" format is incorrect. Please follow'\n                          '\"<input_key>=<python expression>\"' % input_exprs_str)\n     input_key, expr = input_raw.split('=', 1)\n-    # ast.literal_eval does not work with numpy expressions\n-    input_dict[input_key] = eval(expr)  # pylint: disable=eval-used\n+    if safe:\n+      try:\n+        input_dict[input_key] = ast.literal_eval(expr)\n+      except:\n+        raise RuntimeError(\n+            f'Expression \"{expr}\" is not a valid python literal.')\n+    else:\n+      # ast.literal_eval does not work with numpy expressions\n+      input_dict[input_key] = eval(expr)  # pylint: disable=eval-used\n   return input_dict\n@@\n   tensor_key_feed_dict = {}\n \n   inputs = preprocess_inputs_arg_string(inputs_str)\n-  input_exprs = preprocess_input_exprs_arg_string(input_exprs_str)\n+  input_exprs = preprocess_input_exprs_arg_string(input_exprs_str, safe=False)\n   input_examples = preprocess_input_examples_arg_string(input_examples_str)\n@@\n   msg = ('Specifying inputs by python expressions, in the format of'\n          ' \"<input_key>=\\'<python expression>\\'\", separated by \\';\\'. '\n-         'numpy module is available as \\'np\\'. '\n-         'Will override duplicate input keys from --inputs option.')\n+         'numpy module is available as \\'np\\'. Please note that the expression '\n+         'will be evaluated as-is, and is susceptible to code injection. '\n+         'When this is set, the value will override duplicate input keys from '\n+         '--inputs option.')\n*** Update File: tensorflow/python/tools/saved_model_cli_test.py\n@@\n     input_expr_str = 'input3=np.zeros([2,2]);input4=[4,5]'\n     input_dict = saved_model_cli.preprocess_inputs_arg_string(input_str)\n     input_expr_dict = saved_model_cli.preprocess_input_exprs_arg_string(\n-        input_expr_str)\n+        input_expr_str, safe=False)\n@@\n     self.assertProtoEquals(\n         \"\"\"\n@@\n           }\n     \"\"\", feature)\n \n+  def testInputPreprocessExampleWithCodeInjection(self):\n+    input_examples_str = 'inputs=os.system(\"echo hacked\")'\n+    with self.assertRaisesRegex(RuntimeError, 'not a valid python literal.'):\n+      saved_model_cli.preprocess_input_examples_arg_string(input_examples_str)\n+\n   def testInputPreProcessFileNames(self):\n@@\n     with self.assertRaises(RuntimeError):\n       saved_model_cli.preprocess_inputs_arg_string(input_str)\n     input_str = 'inputx:np.zeros((5))'\n-    with self.assertRaises(RuntimeError):\n-      saved_model_cli.preprocess_input_exprs_arg_string(input_str)\n+    with self.assertRaisesRegex(RuntimeError, 'format is incorrect'):\n+      saved_model_cli.preprocess_input_exprs_arg_string(input_str, safe=False)\n*** Update File: RELEASE.md\n@@\n   * `tf.saved_model`:\n+    * The saved_model_cli's `--input_examples` inputs are now restricted to\n+      python literals to avoid code injection.\n     * `@tf.function` from SavedModel no longer ignores args after a `RaggedTensor` when selecting the concrete function to run.\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/python/tools/saved_model_cli.py
+M tensorflow/python/tools/saved_model_cli_test.py
+M RELEASE.md
+
+tokens used
+input: 1,931
+cache read: 18,944
+cache write: 0
+output: 984
+reasoning output: 46
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target saved_model_cli and tests around patched functions",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate uncertain hunks against target base",
+      "status": "pending",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply minimal backport edits",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Review resulting diff",
+      "status": "in_progress",
+      "priority": "high"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target saved_model_cli and tests around patched functions",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate uncertain hunks against target base",
+    "status": "pending",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply minimal backport edits",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Review resulting diff",
+    "status": "in_progress",
+    "priority": "high"
+  }
+]
+
+tokens used
+input: 1,979
+cache read: 19,968
+cache write: 0
+output: 90
+reasoning output: 0
+
+The source and test changes are applied. I’m reviewing the unified diff and checking that the patch applies cleanly to the specified target base.
+
+tool: bash
+{
+  "command": "git diff -- RELEASE.md tensorflow/python/tools/saved_model_cli.py tensorflow/python/tools/saved_model_cli_test.py",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0070-bb93d9677122",
+  "timeout": 120000
+}
+warning: in the working copy of 'RELEASE.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'tensorflow/python/tools/saved_model_cli.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'tensorflow/python/tools/saved_model_cli_test.py', LF will be replaced by CRLF the next time Git touches it
+diff --git a/RELEASE.md b/RELEASE.md
+index 540ff962f3..42a795ba73 100644
+--- a/RELEASE.md
++++ b/RELEASE.md
+@@ -794,6 +794,8 @@ This release contains contributions from many people at Google as well as the fo
+     * `RaggedTensor.to_tensor()` now preserves static shape.
+     * Add `tf.strings.format()` and `tf.print()` to support RaggedTensors.
+   * `tf.saved_model`:
++    * The saved_model_cli's `--input_examples` inputs are now restricted to
++      python literals to avoid code injection.
+     * `@tf.function` from SavedModel no longer ignores args after a `RaggedTensor` when selecting the concrete function to run.
+     * Fix save model issue for ops with a list of functions.
+     * Add `tf.saved_model.LoadOptions` with [`experimental_io_device`](https://www.tensorflow.org/versions/r2.3/api_docs/python/tf/saved_model/LoadOptions?hl=en) as arg with default value `None` to choose the I/O device for loading models and weights.
+diff --git a/tensorflow/python/tools/saved_model_cli.py b/tensorflow/python/tools/saved_model_cli.py
+index 124686dff1..c828718889 100644
+--- a/tensorflow/python/tools/saved_model_cli.py
++++ b/tensorflow/python/tools/saved_model_cli.py
+@@ -24,6 +24,7 @@ from __future__ import division
+ from __future__ import print_function
+ 
+ import argparse
++import ast
+ import os
+ import re
+ import sys
+@@ -518,7 +519,7 @@ def preprocess_inputs_arg_string(inputs_str):
+   return input_dict
+ 
+ 
+-def preprocess_input_exprs_arg_string(input_exprs_str):
++def preprocess_input_exprs_arg_string(input_exprs_str, safe=True):
+   """Parses input arg into dictionary that maps input key to python expression.
+ 
+   Parses input string in the format of 'input_key=<python expression>' into a
+@@ -526,8 +527,10 @@ def preprocess_input_exprs_arg_string(input_exprs_str):
+ 
+   Args:
+     input_exprs_str: A string that specifies python expression for input keys.
+-    Each input is separated by semicolon. For each input key:
++      Each input is separated by semicolon. For each input key:
+         'input_key=<python expression>'
++    safe: Whether to evaluate the python expression as literals or allow
++      arbitrary calls (e.g. numpy usage).
+ 
+   Returns:
+     A dictionary that maps input keys to their values.
+@@ -542,8 +545,15 @@ def preprocess_input_exprs_arg_string(input_exprs_str):
+       raise RuntimeError('--input_exprs "%s" format is incorrect. Please follow'
+                          '"<input_key>=<python expression>"' % input_exprs_str)
+     input_key, expr = input_raw.split('=', 1)
+-    # ast.literal_eval does not work with numpy expressions
+-    input_dict[input_key] = eval(expr)  # pylint: disable=eval-used
++    if safe:
++      try:
++        input_dict[input_key] = ast.literal_eval(expr)
++      except:
++        raise RuntimeError(
++            f'Expression "{expr}" is not a valid python literal.')
++    else:
++      # ast.literal_eval does not work with numpy expressions
++      input_dict[input_key] = eval(expr)  # pylint: disable=eval-used
+   return input_dict
+ 
+ 
+@@ -656,7 +666,7 @@ def load_inputs_from_input_arg_string(inputs_str, input_exprs_str,
+   tensor_key_feed_dict = {}
+ 
+   inputs = preprocess_inputs_arg_string(inputs_str)
+-  input_exprs = preprocess_input_exprs_arg_string(input_exprs_str)
++  input_exprs = preprocess_input_exprs_arg_string(input_exprs_str, safe=False)
+   input_examples = preprocess_input_examples_arg_string(input_examples_str)
+ 
+   for input_tensor_key, (filename, variable_name) in inputs.items():
+@@ -920,8 +930,10 @@ def add_run_subparser(subparsers):
+   parser_run.add_argument('--inputs', type=str, default='', help=msg)
+   msg = ('Specifying inputs by python expressions, in the format of'
+          ' "<input_key>=\'<python expression>\'", separated by \';\'. '
+-         'numpy module is available as \'np\'. '
+-         'Will override duplicate input keys from --inputs option.')
++         'numpy module is available as \'np\'. Please note that the expression '
++         'will be evaluated as-is, and is susceptible to code injection. '
++         'When this is set, the value will override duplicate input keys from '
++         '--inputs option.')
+   parser_run.add_argument('--input_exprs', type=str, default='', help=msg)
+   msg = (
+       'Specifying tf.Example inputs as list of dictionaries. For example: '
+diff --git a/tensorflow/python/tools/saved_model_cli_test.py b/tensorflow/python/tools/saved_model_cli_test.py
+index 2580cbd73c..df43ba0bbb 100644
+--- a/tensorflow/python/tools/saved_model_cli_test.py
++++ b/tensorflow/python/tools/saved_model_cli_test.py
+@@ -380,7 +380,7 @@ Defined Functions:
+     input_expr_str = 'input3=np.zeros([2,2]);input4=[4,5]'
+     input_dict = saved_model_cli.preprocess_inputs_arg_string(input_str)
+     input_expr_dict = saved_model_cli.preprocess_input_exprs_arg_string(
+-        input_expr_str)
++        input_expr_str, safe=False)
+     self.assertTrue(input_dict['input1'] == ('/path/file.txt', 'ab3'))
+     self.assertTrue(input_dict['input2'] == ('file2', None))
+     print(input_expr_dict['input3'])
+@@ -416,6 +416,11 @@ Defined Functions:
+           }
+     """, feature)
+ 
++  def testInputPreprocessExampleWithCodeInjection(self):
++    input_examples_str = 'inputs=os.system("echo hacked")'
++    with self.assertRaisesRegex(RuntimeError, 'not a valid python literal.'):
++      saved_model_cli.preprocess_input_examples_arg_string(input_examples_str)
++
+   def testInputPreProcessFileNames(self):
+     input_str = (r'inputx=C:\Program Files\data.npz[v:0];'
+                  r'input:0=c:\PROGRA~1\data.npy')
+@@ -432,8 +437,8 @@ Defined Functions:
+     with self.assertRaises(RuntimeError):
+       saved_model_cli.preprocess_inputs_arg_string(input_str)
+     input_str = 'inputx:np.zeros((5))'
+-    with self.assertRaises(RuntimeError):
+-      saved_model_cli.preprocess_input_exprs_arg_string(input_str)
++    with self.assertRaisesRegex(RuntimeError, 'format is incorrect'):
++      saved_model_cli.preprocess_input_exprs_arg_string(input_str, safe=False)
+ 
+   def testInputParserNPY(self):
+     x0 = np.array([[1], [2]])
+
+tokens used
+input: 1,182
+cache read: 20,992
+cache write: 0
+output: 122
+reasoning output: 28
+
+tool: validate
+{
+  "ref": "bb93d96771228278adee16f357f5b86d588887f4",
+  "mode": "hunk",
+  "patch": "diff --git a/RELEASE.md b/RELEASE.md\nindex 540ff962f3..42a795ba73 100644\n--- a/RELEASE.md\n+++ b/RELEASE.md\n@@ -794,6 +794,8 @@ This release contains contributions from many people at Google as well as the fo\n     * `RaggedTensor.to_tensor()` now preserves static shape.\n     * Add `tf.strings.format()` and `tf.print()` to support RaggedTensors.\n   * `tf.saved_model`:\n+    * The saved_model_cli's `--input_examples` inputs are now restricted to\n+      python literals to avoid code injection.\n     * `@tf.function` from SavedModel no longer ignores args after a `RaggedTensor` when selecting the concrete function to run.\n     * Fix save model issue for ops with a list of functions.\n     * Add `tf.saved_model.LoadOptions` with [`experimental_io_device`](https://www.tensorflow.org/versions/r2.3/api_docs/python/tf/saved_model/LoadOptions?hl=en) as arg with default value `None` to choose the I/O device for loading models and weights.\ndiff --git a/tensorflow/python/tools/saved_model_cli.py b/tensorflow/python/tools/saved_model_cli.py\nindex 124686dff1..c828718889 100644\n--- a/tensorflow/python/tools/saved_model_cli.py\n+++ b/tensorflow/python/tools/saved_model_cli.py\n@@ -24,6 +24,7 @@ from __future__ import division\n from __future__ import print_function\n \n import argparse\n+import ast\n import os\n import re\n import sys\n@@ -518,7 +519,7 @@ def preprocess_inputs_arg_string(inputs_str):\n   return input_dict\n \n \n-def preprocess_input_exprs_arg_string(input_exprs_str):\n+def preprocess_input_exprs_arg_string(input_exprs_str, safe=True):\n   \"\"\"Parses input arg into dictionary that maps input key to python expression.\n \n   Parses input string in the format of 'input_key=<python expression>' into a\n@@ -526,8 +527,10 @@ def preprocess_input_exprs_arg_string(input_exprs_str):\n \n   Args:\n     input_exprs_str: A string that specifies python expression for input keys.\n-    Each input is separated by semicolon. For each input key:\n+      Each input is separated by semicolon. For each input key:\n         'input_key=<python expression>'\n+    safe: Whether to evaluate the python expression as literals or allow\n+      arbitrary calls (e.g. numpy usage).\n \n   Returns:\n     A dictionary that maps input keys to their values.\n@@ -542,8 +545,15 @@ def preprocess_input_exprs_arg_string(input_exprs_str):\n       raise RuntimeError('--input_exprs \"%s\" format is incorrect. Please follow'\n                          '\"<input_key>=<python expression>\"' % input_exprs_str)\n     input_key, expr = input_raw.split('=', 1)\n-    # ast.literal_eval does not work with numpy expressions\n-    input_dict[input_key] = eval(expr)  # pylint: disable=eval-used\n+    if safe:\n+      try:\n+        input_dict[input_key] = ast.literal_eval(expr)\n+      except:\n+        raise RuntimeError(\n+            f'Expression \"{expr}\" is not a valid python literal.')\n+    else:\n+      # ast.literal_eval does not work with numpy expressions\n+      input_dict[input_key] = eval(expr)  # pylint: disable=eval-used\n   return input_dict\n \n \n@@ -656,7 +666,7 @@ def load_inputs_from_input_arg_string(inputs_str, input_exprs_str,\n   tensor_key_feed_dict = {}\n \n   inputs = preprocess_inputs_arg_string(inputs_str)\n-  input_exprs = preprocess_input_exprs_arg_string(input_exprs_str)\n+  input_exprs = preprocess_input_exprs_arg_string(input_exprs_str, safe=False)\n   input_examples = preprocess_input_examples_arg_string(input_examples_str)\n \n   for input_tensor_key, (filename, variable_name) in inputs.items():\n@@ -920,8 +930,10 @@ def add_run_subparser(subparsers):\n   parser_run.add_argument('--inputs', type=str, default='', help=msg)\n   msg = ('Specifying inputs by python expressions, in the format of'\n          ' \"<input_key>=\\'<python expression>\\'\", separated by \\';\\'. '\n-         'numpy module is available as \\'np\\'. '\n-         'Will override duplicate input keys from --inputs option.')\n+         'numpy module is available as \\'np\\'. Please note that the expression '\n+         'will be evaluated as-is, and is susceptible to code injection. '\n+         'When this is set, the value will override duplicate input keys from '\n+         '--inputs option.')\n   parser_run.add_argument('--input_exprs', type=str, default='', help=msg)\n   msg = (\n       'Specifying tf.Example inputs as list of dictionaries. For example: '\ndiff --git a/tensorflow/python/tools/saved_model_cli_test.py b/tensorflow/python/tools/saved_model_cli_test.py\nindex 2580cbd73c..df43ba0bbb 100644\n--- a/tensorflow/python/tools/saved_model_cli_test.py\n+++ b/tensorflow/python/tools/saved_model_cli_test.py\n@@ -380,7 +380,7 @@ Defined Functions:\n     input_expr_str = 'input3=np.zeros([2,2]);input4=[4,5]'\n     input_dict = saved_model_cli.preprocess_inputs_arg_string(input_str)\n     input_expr_dict = saved_model_cli.preprocess_input_exprs_arg_string(\n-        input_expr_str)\n+        input_expr_str, safe=False)\n     self.assertTrue(input_dict['input1'] == ('/path/file.txt', 'ab3'))\n     self.assertTrue(input_dict['input2'] == ('file2', None))\n     print(input_expr_dict['input3'])\n@@ -416,6 +416,11 @@ Defined Functions:\n           }\n     \"\"\", feature)\n \n+  def testInputPreprocessExampleWithCodeInjection(self):\n+    input_examples_str = 'inputs=os.system(\"echo hacked\")'\n+    with self.assertRaisesRegex(RuntimeError, 'not a valid python literal.'):\n+      saved_model_cli.preprocess_input_examples_arg_string(input_examples_str)\n+\n   def testInputPreProcessFileNames(self):\n     input_str = (r'inputx=C:\\Program Files\\data.npz[v:0];'\n                  r'input:0=c:\\PROGRA~1\\data.npy')\n@@ -432,8 +437,8 @@ Defined Functions:\n     with self.assertRaises(RuntimeError):\n       saved_model_cli.preprocess_inputs_arg_string(input_str)\n     input_str = 'inputx:np.zeros((5))'\n-    with self.assertRaises(RuntimeError):\n-      saved_model_cli.preprocess_input_exprs_arg_string(input_str)\n+    with self.assertRaisesRegex(RuntimeError, 'format is incorrect'):\n+      saved_model_cli.preprocess_input_exprs_arg_string(input_str, safe=False)\n \n   def testInputParserNPY(self):\n     x0 = np.array([[1], [2]])\n"
+}
+Patch applied successfully
+
+tokens used
+input: 1,931
+cache read: 22,016
+cache write: 0
+output: 1,702
+reasoning output: 32
+
+The backport diff applies cleanly to `bb93d96771228278adee16f357f5b86d588887f4` in hunk validation mode.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target saved_model_cli and tests around patched functions",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate uncertain hunks against target base",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply minimal backport edits",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Review resulting diff",
+      "status": "completed",
+      "priority": "high"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target saved_model_cli and tests around patched functions",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate uncertain hunks against target base",
+    "status": "completed",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply minimal backport edits",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Review resulting diff",
+    "status": "completed",
+    "priority": "high"
+  }
+]
+
+tokens used
+input: 2,654
+cache read: 23,040
+cache write: 0
+output: 133
+reasoning output: 0
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/RELEASE.md b/RELEASE.md
+    index 540ff962f3..42a795ba73 100644
+    --- a/RELEASE.md
+    +++ b/RELEASE.md
+    @@ -794,6 +794,8 @@ This release contains contributions from many people at Google as well as the fo
+         * `RaggedTensor.to_tensor()` now preserves static shape.
+         * Add `tf.strings.format()` and `tf.print()` to support RaggedTensors.
+       * `tf.saved_model`:
+    +    * The saved_model_cli's `--input_examples` inputs are now restricted to
+    +      python literals to avoid code injection.
+         * `@tf.function` from SavedModel no longer ignores args after a `RaggedTensor` when selecting the concrete function to run.
+         * Fix save model issue for ops with a list of functions.
+         * Add `tf.saved_model.LoadOptions` with [`experimental_io_device`](https://www.tensorflow.org/versions/r2.3/api_docs/python/tf/saved_model/LoadOptions?hl=en) as arg with default value `None` to choose the I/O device for loading models and weights.
+    diff --git a/tensorflow/python/tools/saved_model_cli.py b/tensorflow/python/tools/saved_model_cli.py
+    index 124686dff1..c828718889 100644
+    --- a/tensorflow/python/tools/saved_model_cli.py
+    +++ b/tensorflow/python/tools/saved_model_cli.py
+    @@ -24,6 +24,7 @@ from __future__ import division
+     from __future__ import print_function
+     
+     import argparse
+    +import ast
+     import os
+     import re
+     import sys
+    @@ -518,7 +519,7 @@ def preprocess_inputs_arg_string(inputs_str):
+       return input_dict
+     
+     
+    -def preprocess_input_exprs_arg_string(input_exprs_str):
+    +def preprocess_input_exprs_arg_string(input_exprs_str, safe=True):
+       """Parses input arg into dictionary that maps input key to python expression.
+     
+       Parses input string in the format of 'input_key=<python expression>' into a
+    @@ -526,8 +527,10 @@ def preprocess_input_exprs_arg_string(input_exprs_str):
+     
+       Args:
+         input_exprs_str: A string that specifies python expression for input keys.
+    -    Each input is separated by semicolon. For each input key:
+    +      Each input is separated by semicolon. For each input key:
+             'input_key=<python expression>'
+    +    safe: Whether to evaluate the python expression as literals or allow
+    +      arbitrary calls (e.g. numpy usage).
+     
+       Returns:
+         A dictionary that maps input keys to their values.
+    @@ -542,8 +545,15 @@ def preprocess_input_exprs_arg_string(input_exprs_str):
+           raise RuntimeError('--input_exprs "%s" format is incorrect. Please follow'
+                              '"<input_key>=<python expression>"' % input_exprs_str)
+         input_key, expr = input_raw.split('=', 1)
+    -    # ast.literal_eval does not work with numpy expressions
+    -    input_dict[input_key] = eval(expr)  # pylint: disable=eval-used
+    +    if safe:
+    +      try:
+    +        input_dict[input_key] = ast.literal_eval(expr)
+    +      except:
+    +        raise RuntimeError(
+    +            f'Expression "{expr}" is not a valid python literal.')
+    +    else:
+    +      # ast.literal_eval does not work with numpy expressions
+    +      input_dict[input_key] = eval(expr)  # pylint: disable=eval-used
+       return input_dict
+     
+     
+    @@ -656,7 +666,7 @@ def load_inputs_from_input_arg_string(inputs_str, input_exprs_str,
+       tensor_key_feed_dict = {}
+     
+       inputs = preprocess_inputs_arg_string(inputs_str)
+    -  input_exprs = preprocess_input_exprs_arg_string(input_exprs_str)
+    +  input_exprs = preprocess_input_exprs_arg_string(input_exprs_str, safe=False)
+       input_examples = preprocess_input_examples_arg_string(input_examples_str)
+     
+       for input_tensor_key, (filename, variable_name) in inputs.items():
+    @@ -920,8 +930,10 @@ def add_run_subparser(subparsers):
+       parser_run.add_argument('--inputs', type=str, default='', help=msg)
+       msg = ('Specifying inputs by python expressions, in the format of'
+              ' "<input_key>=\'<python expression>\'", separated by \';\'. '
+    -         'numpy module is available as \'np\'. '
+    -         'Will override duplicate input keys from --inputs option.')
+    +         'numpy module is available as \'np\'. Please note that the expression '
+    +         'will be evaluated as-is, and is susceptible to code injection. '
+    +         'When this is set, the value will override duplicate input keys from '
+    +         '--inputs option.')
+       parser_run.add_argument('--input_exprs', type=str, default='', help=msg)
+       msg = (
+           'Specifying tf.Example inputs as list of dictionaries. For example: '
+    diff --git a/tensorflow/python/tools/saved_model_cli_test.py b/tensorflow/python/tools/saved_model_cli_test.py
+    index 2580cbd73c..df43ba0bbb 100644
+    --- a/tensorflow/python/tools/saved_model_cli_test.py
+    +++ b/tensorflow/python/tools/saved_model_cli_test.py
+    @@ -380,7 +380,7 @@ Defined Functions:
+         input_expr_str = 'input3=np.zeros([2,2]);input4=[4,5]'
+         input_dict = saved_model_cli.preprocess_inputs_arg_string(input_str)
+         input_expr_dict = saved_model_cli.preprocess_input_exprs_arg_string(
+    -        input_expr_str)
+    +        input_expr_str, safe=False)
+         self.assertTrue(input_dict['input1'] == ('/path/file.txt', 'ab3'))
+         self.assertTrue(input_dict['input2'] == ('file2', None))
+         print(input_expr_dict['input3'])
+    @@ -416,6 +416,11 @@ Defined Functions:
+               }
+         """, feature)
+     
+    +  def testInputPreprocessExampleWithCodeInjection(self):
+    +    input_examples_str = 'inputs=os.system("echo hacked")'
+    +    with self.assertRaisesRegex(RuntimeError, 'not a valid python literal.'):
+    +      saved_model_cli.preprocess_input_examples_arg_string(input_examples_str)
+    +
+       def testInputPreProcessFileNames(self):
+         input_str = (r'inputx=C:\Program Files\data.npz[v:0];'
+                      r'input:0=c:\PROGRA~1\data.npy')
+    @@ -432,8 +437,8 @@ Defined Functions:
+         with self.assertRaises(RuntimeError):
+           saved_model_cli.preprocess_inputs_arg_string(input_str)
+         input_str = 'inputx:np.zeros((5))'
+    -    with self.assertRaises(RuntimeError):
+    -      saved_model_cli.preprocess_input_exprs_arg_string(input_str)
+    +    with self.assertRaisesRegex(RuntimeError, 'format is incorrect'):
+    +      saved_model_cli.preprocess_input_exprs_arg_string(input_str, safe=False)
+     
+       def testInputParserNPY(self):
+         x0 = np.array([[1], [2]])
+  notes: >
+    Backported the saved_model_cli input_examples literal-only parsing fix, preserved unsafe eval for input_exprs, updated tests and release notes, and validated the patch hunks against the target base.
+```
+
+tokens used
+input: 875
+cache read: 25,088
+cache write: 0
+output: 1,662
+reasoning output: 19

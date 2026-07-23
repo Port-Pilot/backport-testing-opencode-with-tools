@@ -1,0 +1,606 @@
+I’ll locate the older 2.3.4 implementation of the MKL per-channel requantization kernel, compare the surrounding validation logic to the supplied newer patch, then apply the minimal equivalent checks.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target-side MKL requantization range per-channel code",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Map supplied newer hunk to older TensorFlow 2.3.4 context",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "content": "Apply minimal source backport",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "content": "Validate hunk applicability and inspect final diff",
+      "status": "pending",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target-side MKL requantization range per-channel code",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Map supplied newer hunk to older TensorFlow 2.3.4 context",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "content": "Apply minimal source backport",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "content": "Validate hunk applicability and inspect final diff",
+    "status": "pending",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 3,916
+cache read: 4,608
+cache write: 0
+output: 154
+reasoning output: 0
+
+tool: glob
+{
+  "pattern": "tensorflow/core/kernels/mkl/*requantization*per_channel*"
+}
+No files found
+
+tool: locate_symbol
+{
+  "ref": "6c1eb9637e0218d2d04c72c8838e17e72ebd00d5",
+  "symbol": "MklRequantizationRangePerChannelOp"
+}
+tensorflow/core/kernels/mkl_requantization_range_per_channel_op.cc:39
+tensorflow/core/kernels/mkl_requantization_range_per_channel_op.cc:41
+tensorflow/core/kernels/mkl_requantization_range_per_channel_op.cc:129
+
+tool: grep
+{
+  "pattern": "class MklRequantizationRangePerChannelOp|input_max has incorrect size",
+  "path": "tensorflow/core/kernels/mkl",
+  "include": "*.cc"
+}
+Found 3 matches
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0212-6c1eb9637e02\tensorflow\core\kernels\mkl_requantization_range_per_channel_op.cc:
+  Line 39: class MklRequantizationRangePerChannelOp : public OpKernel {
+
+  Line 58:         errors::InvalidArgument("input_max has incorrect size, expected ",
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0212-6c1eb9637e02\tensorflow\core\kernels\mkl_requantize_per_channel_op.cc:
+  Line 77:           errors::InvalidArgument("input_max has incorrect size, expected ",
+
+tokens used
+input: 1,151
+cache read: 7,680
+cache write: 0
+output: 142
+reasoning output: 0
+
+The target release keeps this kernel directly under `tensorflow/core/kernels/` rather than `tensorflow/core/kernels/mkl/`; the vulnerable validation block is present with matching structure.
+
+tool: viewcode
+{
+  "ref": "6c1eb9637e0218d2d04c72c8838e17e72ebd00d5",
+  "path": "tensorflow/core/kernels/mkl_requantization_range_per_channel_op.cc",
+  "startline": 1,
+  "endline": 110
+}
+Here are lines 1 through 110.
+
+/* Copyright 2019 The TensorFlow Authors. All Rights Reserved.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+==============================================================================*/
+
+// See docs in ../ops/array_ops.cc.
+#ifdef INTEL_MKL
+#define EIGEN_USE_THREADS
+
+#include <math.h>
+
+#include <limits>
+
+#include "third_party/eigen3/unsupported/Eigen/CXX11/Tensor"
+#include "tensorflow/core/framework/op.h"
+#include "tensorflow/core/framework/op_kernel.h"
+#include "tensorflow/core/framework/type_traits.h"
+#include "tensorflow/core/framework/types.h"
+#include "tensorflow/core/kernels/meta_support.h"
+#include "tensorflow/core/kernels/no_op.h"
+#include "tensorflow/core/lib/core/errors.h"
+#include "tensorflow/core/util/mkl_threadpool.h"
+#include "tensorflow/core/util/mkl_util.h"
+
+namespace tensorflow {
+
+typedef Eigen::ThreadPoolDevice CPUDevice;
+
+class MklRequantizationRangePerChannelOp : public OpKernel {
+ public:
+  explicit MklRequantizationRangePerChannelOp(OpKernelConstruction* ctx)
+      : OpKernel(ctx) {
+    OP_REQUIRES_OK(ctx, ctx->GetAttr("clip_value_max", &clip_value_max_));
+  }
+
+  void Compute(OpKernelContext* ctx) override {
+    const Tensor& input = ctx->input(kInputTensorIndex);
+    const Tensor& input_min = ctx->input(kInputMinIndex);
+    const Tensor& input_max = ctx->input(kInputMaxIndex);
+
+    const size_t depth = input_max.NumElements();
+    OP_REQUIRES(
+        ctx, input_min.dim_size(0) == depth,
+        errors::InvalidArgument("input_min has incorrect size, expected ",
+                                depth, " was ", input_min.dim_size(0)));
+    OP_REQUIRES(
+        ctx, input_max.dim_size(0) == depth,
+        errors::InvalidArgument("input_max has incorrect size, expected ",
+                                depth, " was ", input_max.dim_size(0)));
+
+    const float* input_min_data = input_min.flat<float>().data();
+    const float* input_max_data = input_max.flat<float>().data();
+    std::vector<float> ranges(depth);
+    bool is_non_negative = true;
+    Eigen::array<int, 2> shuffling({1, 0});
+    auto input_matrix = input.flat_inner_dims<qint32>();
+
+    // TODO: verify performance of not transposing and finding the min max
+    // directly from input_matrix vs the one presented below of transposing and
+    // using the transposed matrix as the transposing operation in itself might
+    // be more costly.
+    // Note that this operation is a calibration step for quantization and will
+    // cease to exist in the final inference graph(will exist as a const node).
+    auto transposed_input = input_matrix.shuffle(shuffling);
+
+    // Find the ranges of each channel in parallel.
+    float out_min_max = std::numeric_limits<float>::min();
+
+#ifndef ENABLE_MKLDNN_THREADPOOL
+#pragma omp parallel for reduction(max : out_min_max)
+#endif  // !ENABLE_MKLDNN_THREADPOOL
+    // TODO: Add eigen parallel_for
+    for (size_t i = 0; i < depth; ++i) {
+      Eigen::Tensor<qint32, 0, Eigen::RowMajor> min =
+          transposed_input.chip<0>(i).minimum();
+      Eigen::Tensor<qint32, 0, Eigen::RowMajor> max =
+          transposed_input.chip<0>(i).maximum();
+      const int32_t min_per_channel = min();
+      const int32_t max_per_channel = max();
+      const int32_t abs_max =
+          std::max(std::abs(min_per_channel), std::abs(max_per_channel));
+      float scale =
+          std::max(std::abs(input_min_data[i]), std::abs(input_max_data[i]));
+      ranges[i] =
+          scale * static_cast<float>(abs_max) / static_cast<float>(1L << 31);
+      if (min_per_channel < 0) is_non_negative = false;
+
+      // Thread-local out_min_max.
+      out_min_max = std::max(out_min_max, ranges[i]);
+    }
+
+    // All local out_min_max gets max-reduced into one global out_min_max at
+    // the end of the loop by specifying reduction(max:out_min_max) along with
+    // omp parallel for.
+
+    // Fixing max to clip_value_max_ (example 6.0 to support relu6)
+    if (out_min_max > clip_value_max_) out_min_max = clip_value_max_;
+
+    Tensor* output_min = nullptr;
+    Tensor* output_max = nullptr;
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: viewcode
+{
+  "ref": "6c1eb9637e0218d2d04c72c8838e17e72ebd00d5",
+  "path": "tensorflow/core/kernels/mkl_requantize_per_channel_op.cc",
+  "startline": 50,
+  "endline": 100
+}
+Here are lines 50 through 100.
+
+    try {
+      const Tensor& input = ctx->input(kInputTensorIndex);
+      const Tensor& input_min_vec = ctx->input(kInputMinVecIndex);
+      float* input_min_vec_data = (float*)const_cast<void*>(
+          static_cast<const void*>(input_min_vec.flat<float>().data()));
+      const Tensor& input_max_vec = ctx->input(kInputMaxVecIndex);
+      float* input_max_vec_data = (float*)const_cast<void*>(
+          static_cast<const void*>(input_max_vec.flat<float>().data()));
+
+      const Tensor& input_requested_min = ctx->input(this->kRequestMinIndex);
+      const float input_requested_min_float =
+          input_requested_min.flat<float>()(0);
+      const Tensor& input_requested_max = ctx->input(this->kRequestMaxIndex);
+      const float input_requested_max_float =
+          input_requested_max.flat<float>()(0);
+
+      size_t depth = input_min_vec.NumElements();
+      OP_REQUIRES(
+          ctx, input.dims() == 4,
+          errors::InvalidArgument("Current RequantizePerChannel operator"
+                                  "supports 4D tensors only."));
+      OP_REQUIRES(
+          ctx, input_min_vec.dim_size(0) == depth,
+          errors::InvalidArgument("input_min has incorrect size, expected ",
+                                  depth, " was ", input_min_vec.dim_size(0)));
+      OP_REQUIRES(
+          ctx, input_max_vec.dim_size(0) == depth,
+          errors::InvalidArgument("input_max has incorrect size, expected ",
+                                  depth, " was ", input_max_vec.dim_size(0)));
+
+      if (out_type_ == DT_QINT8) DCHECK(input_requested_min_float < 0.0f);
+
+      const float factor = (out_type_ == DT_QINT8) ? 127.0f : 255.0f;
+      const float requested_min_max =
+          std::max(std::abs(input_requested_min_float),
+                   std::abs(input_requested_max_float));
+      Tensor* output = nullptr;
+      OP_REQUIRES_OK(ctx, ctx->allocate_output(kOutputTensorIndex,
+                                               input.shape(), &output));
+
+      std::vector<float> scales(depth);
+      for (int i = 0; i < depth; ++i) {
+        float min_max_from_vec = std::max(std::abs(input_min_vec_data[i]),
+                                          std::abs(input_max_vec_data[i]));
+        scales[i] = factor * (min_max_from_vec / requested_min_max /
+                              static_cast<float>(1L << 31));
+      }
+
+      mkldnn::primitive_attr reorder_attr;
+      reorder_attr.set_output_scales(2, scales);
+
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: git_show
+{
+  "ref": "9e62869465573cb2d9b5053f1fa02a81fce21d69",
+  "context": "OP_REQUIRES(\n        ctx, input_min.NumElements() == depth,\n        errors::InvalidArgument(\"input_min must have the same number of \"\n                                \"elements as input_max, got \",\n                                input_min.NumElements(), \" and \", depth));"
+}
+commit 9e62869465573cb2d9b5053f1fa02a81fce21d69
+Author: Mihai Maruseac <mihaimaruseac@google.com>
+Date:   Thu Jul 29 16:29:20 2021 -0700
+
+    Add more validation to `RequantizationRangePerChannel`.
+    
+    PiperOrigin-RevId: 387693946
+    Change-Id: Ife8dcbdb021bec4787eef6a4361dd08f17c14bd6
+
+ .../kernels/mkl/mkl_requantization_range_per_channel_op.cc | 14 ++++++++++++++
+ 1 file changed, 14 insertions(+)
+This commit shows that there is a high probability that this code is new, so the corresponding code segment cannot be found in the old version.
+You can call `viewcode` and `locate_symbol` to further check the results step by step. For newly introduced code, we consider that this hunk `need not ported`.
+
+tokens used
+input: 534
+cache read: 8,704
+cache write: 0
+output: 295
+reasoning output: 0
+
+I’m applying the supplied validation additions to the older file path, preserving the target file’s existing style and variable names.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target-side MKL requantization range per-channel code",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Map supplied newer hunk to older TensorFlow 2.3.4 context",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Apply minimal source backport",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Validate hunk applicability and inspect final diff",
+      "status": "pending",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target-side MKL requantization range per-channel code",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Map supplied newer hunk to older TensorFlow 2.3.4 context",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Apply minimal source backport",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Validate hunk applicability and inspect final diff",
+    "status": "pending",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 2,764
+cache read: 8,704
+cache write: 0
+output: 139
+reasoning output: 15
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/kernels/mkl_requantization_range_per_channel_op.cc\n@@\n     OP_REQUIRES(\n         ctx, input_max.dim_size(0) == depth,\n         errors::InvalidArgument(\"input_max has incorrect size, expected \",\n                                 depth, \" was \", input_max.dim_size(0)));\n+    OP_REQUIRES(\n+        ctx, input_min.NumElements() == depth,\n+        errors::InvalidArgument(\"input_min must have the same number of \"\n+                                \"elements as input_max, got \",\n+                                input_min.NumElements(), \" and \", depth));\n+    OP_REQUIRES(ctx, input.NumElements() > 0,\n+                errors::InvalidArgument(\"input must not be empty\"));\n+    OP_REQUIRES(ctx, input.dims() == 4,\n+                errors::InvalidArgument(\"input must be in NHWC format\"));\n+    OP_REQUIRES(\n+        ctx, input.dim_size(3) == depth,\n+        errors::InvalidArgument(\n+            \"input must have same number of channels as length of input_min: \",\n+            input.dim_size(3), \" vs \", depth));\n \n     const float* input_min_data = input_min.flat<float>().data();\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/kernels/mkl_requantization_range_per_channel_op.cc
+
+tokens used
+input: 1,023
+cache read: 10,752
+cache write: 0
+output: 321
+reasoning output: 0
+
+The source edit is in place. I’ll run hunk validation against the target base and inspect the resulting diff without running full builds.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target-side MKL requantization range per-channel code",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Map supplied newer hunk to older TensorFlow 2.3.4 context",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Apply minimal source backport",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate hunk applicability and inspect final diff",
+      "status": "in_progress",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target-side MKL requantization range per-channel code",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Map supplied newer hunk to older TensorFlow 2.3.4 context",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Apply minimal source backport",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate hunk applicability and inspect final diff",
+    "status": "in_progress",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 1,377
+cache read: 10,752
+cache write: 0
+output: 142
+reasoning output: 25
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/kernels/mkl_requantization_range_per_channel_op.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0212-6c1eb9637e02"
+}
+warning: in the working copy of 'tensorflow/core/kernels/mkl_requantization_range_per_channel_op.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/kernels/mkl_requantization_range_per_channel_op.cc b/tensorflow/core/kernels/mkl_requantization_range_per_channel_op.cc
+index 0cd4843c0d..bb1045c7f5 100644
+--- a/tensorflow/core/kernels/mkl_requantization_range_per_channel_op.cc
++++ b/tensorflow/core/kernels/mkl_requantization_range_per_channel_op.cc
+@@ -57,6 +57,20 @@ class MklRequantizationRangePerChannelOp : public OpKernel {
+         ctx, input_max.dim_size(0) == depth,
+         errors::InvalidArgument("input_max has incorrect size, expected ",
+                                 depth, " was ", input_max.dim_size(0)));
++    OP_REQUIRES(
++        ctx, input_min.NumElements() == depth,
++        errors::InvalidArgument("input_min must have the same number of "
++                                "elements as input_max, got ",
++                                input_min.NumElements(), " and ", depth));
++    OP_REQUIRES(ctx, input.NumElements() > 0,
++                errors::InvalidArgument("input must not be empty"));
++    OP_REQUIRES(ctx, input.dims() == 4,
++                errors::InvalidArgument("input must be in NHWC format"));
++    OP_REQUIRES(
++        ctx, input.dim_size(3) == depth,
++        errors::InvalidArgument(
++            "input must have same number of channels as length of input_min: ",
++            input.dim_size(3), " vs ", depth));
+ 
+     const float* input_min_data = input_min.flat<float>().data();
+     const float* input_max_data = input_max.flat<float>().data();
+
+tokens used
+input: 673
+cache read: 11,776
+cache write: 0
+output: 77
+reasoning output: 0
+
+tool: validate
+{
+  "ref": "6c1eb9637e0218d2d04c72c8838e17e72ebd00d5",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/mkl_requantization_range_per_channel_op.cc b/tensorflow/core/kernels/mkl_requantization_range_per_channel_op.cc\nindex 0cd4843c0d..bb1045c7f5 100644\n--- a/tensorflow/core/kernels/mkl_requantization_range_per_channel_op.cc\n+++ b/tensorflow/core/kernels/mkl_requantization_range_per_channel_op.cc\n@@ -57,6 +57,20 @@ class MklRequantizationRangePerChannelOp : public OpKernel {\n         ctx, input_max.dim_size(0) == depth,\n         errors::InvalidArgument(\"input_max has incorrect size, expected \",\n                                 depth, \" was \", input_max.dim_size(0)));\n+    OP_REQUIRES(\n+        ctx, input_min.NumElements() == depth,\n+        errors::InvalidArgument(\"input_min must have the same number of \"\n+                                \"elements as input_max, got \",\n+                                input_min.NumElements(), \" and \", depth));\n+    OP_REQUIRES(ctx, input.NumElements() > 0,\n+                errors::InvalidArgument(\"input must not be empty\"));\n+    OP_REQUIRES(ctx, input.dims() == 4,\n+                errors::InvalidArgument(\"input must be in NHWC format\"));\n+    OP_REQUIRES(\n+        ctx, input.dim_size(3) == depth,\n+        errors::InvalidArgument(\n+            \"input must have same number of channels as length of input_min: \",\n+            input.dim_size(3), \" vs \", depth));\n \n     const float* input_min_data = input_min.flat<float>().data();\n     const float* input_max_data = input_max.flat<float>().data();"
+}
+This patch does not apply to the target TensorFlow ref.
+Git apply output:
+error: corrupt patch at line 25
+Touched files:
+- tensorflow/core/kernels/mkl_requantization_range_per_channel_op.cc
+Fix the patch context against the older TensorFlow version, then run validate again in hunk mode.
+
+tokens used
+input: 1,165
+cache read: 11,776
+cache write: 0
+output: 458
+reasoning output: 11
+
+The first validation input was malformed rather than a source mismatch. I’ll re-run validation with a complete hunk context.
+
+tool: validate
+{
+  "ref": "6c1eb9637e0218d2d04c72c8838e17e72ebd00d5",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/mkl_requantization_range_per_channel_op.cc b/tensorflow/core/kernels/mkl_requantization_range_per_channel_op.cc\n--- a/tensorflow/core/kernels/mkl_requantization_range_per_channel_op.cc\n+++ b/tensorflow/core/kernels/mkl_requantization_range_per_channel_op.cc\n@@ -53,12 +53,26 @@ class MklRequantizationRangePerChannelOp : public OpKernel {\n     OP_REQUIRES(\n         ctx, input_min.dim_size(0) == depth,\n         errors::InvalidArgument(\"input_min has incorrect size, expected \",\n                                 depth, \" was \", input_min.dim_size(0)));\n     OP_REQUIRES(\n         ctx, input_max.dim_size(0) == depth,\n         errors::InvalidArgument(\"input_max has incorrect size, expected \",\n                                 depth, \" was \", input_max.dim_size(0)));\n+    OP_REQUIRES(\n+        ctx, input_min.NumElements() == depth,\n+        errors::InvalidArgument(\"input_min must have the same number of \"\n+                                \"elements as input_max, got \",\n+                                input_min.NumElements(), \" and \", depth));\n+    OP_REQUIRES(ctx, input.NumElements() > 0,\n+                errors::InvalidArgument(\"input must not be empty\"));\n+    OP_REQUIRES(ctx, input.dims() == 4,\n+                errors::InvalidArgument(\"input must be in NHWC format\"));\n+    OP_REQUIRES(\n+        ctx, input.dim_size(3) == depth,\n+        errors::InvalidArgument(\n+            \"input must have same number of channels as length of input_min: \",\n+            input.dim_size(3), \" vs \", depth));\n \n     const float* input_min_data = input_min.flat<float>().data();\n     const float* input_max_data = input_max.flat<float>().data();\n     std::vector<float> ranges(depth);\n"
+}
+Patch applied successfully
+
+tokens used
+input: 684
+cache read: 12,800
+cache write: 0
+output: 541
+reasoning output: 50
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target-side MKL requantization range per-channel code",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Map supplied newer hunk to older TensorFlow 2.3.4 context",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Apply minimal source backport",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate hunk applicability and inspect final diff",
+      "status": "completed",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target-side MKL requantization range per-channel code",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Map supplied newer hunk to older TensorFlow 2.3.4 context",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Apply minimal source backport",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate hunk applicability and inspect final diff",
+    "status": "completed",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 1,288
+cache read: 12,800
+cache write: 0
+output: 107
+reasoning output: 37
+
+Applied the backport to `tensorflow/core/kernels/mkl_requantization_range_per_channel_op.cc` and validated the hunk against the target base commit.
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/kernels/mkl_requantization_range_per_channel_op.cc b/tensorflow/core/kernels/mkl_requantization_range_per_channel_op.cc
+    index 0cd4843c0d..bb1045c7f5 100644
+    --- a/tensorflow/core/kernels/mkl_requantization_range_per_channel_op.cc
+    +++ b/tensorflow/core/kernels/mkl_requantization_range_per_channel_op.cc
+    @@ -57,6 +57,20 @@ class MklRequantizationRangePerChannelOp : public OpKernel {
+             ctx, input_max.dim_size(0) == depth,
+             errors::InvalidArgument("input_max has incorrect size, expected ",
+                                     depth, " was ", input_max.dim_size(0)));
+    +    OP_REQUIRES(
+    +        ctx, input_min.NumElements() == depth,
+    +        errors::InvalidArgument("input_min must have the same number of "
+    +                                "elements as input_max, got ",
+    +                                input_min.NumElements(), " and ", depth));
+    +    OP_REQUIRES(ctx, input.NumElements() > 0,
+    +                errors::InvalidArgument("input must not be empty"));
+    +    OP_REQUIRES(ctx, input.dims() == 4,
+    +                errors::InvalidArgument("input must be in NHWC format"));
+    +    OP_REQUIRES(
+    +        ctx, input.dim_size(3) == depth,
+    +        errors::InvalidArgument(
+    +            "input must have same number of channels as length of input_min: ",
+    +            input.dim_size(3), " vs ", depth));
+     
+         const float* input_min_data = input_min.flat<float>().data();
+         const float* input_max_data = input_max.flat<float>().data();
+  notes: >
+    Added the missing input_min element count, non-empty input, rank-4 NHWC, and channel-depth validation checks to the older MKL per-channel requantization range kernel.
+```
+
+tokens used
+input: 560
+cache read: 13,824
+cache write: 0
+output: 481
+reasoning output: 0

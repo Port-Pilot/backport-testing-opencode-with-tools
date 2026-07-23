@@ -1,0 +1,641 @@
+I’ll inspect the target Go tensor implementation and verify whether the newer patch applies directly or needs context adjustment before editing.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target TensorFlow 2.5.1 tensor.go context",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Validate and apply minimal backport hunks",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "content": "Review resulting diff",
+      "status": "pending",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target TensorFlow 2.5.1 tensor.go context",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Validate and apply minimal backport hunks",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "content": "Review resulting diff",
+    "status": "pending",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 4,668
+cache read: 4,608
+cache write: 0
+output: 108
+reasoning output: 0
+
+tool: viewcode
+{
+  "ref": "e7f9e85c764b69ca817c95d09312d3216b6ed9ce",
+  "path": "tensorflow/go/tensor.go",
+  "startline": 70,
+  "endline": 145
+}
+Here are lines 70 through 145.
+
+// Tensor holds a multi-dimensional array of elements of a single data type.
+type Tensor struct {
+	c     *C.TF_Tensor
+	shape []int64
+}
+
+// NewTensor converts from a Go value to a Tensor. Valid values are scalars,
+// slices, and arrays. Every element of a slice must have the same length so
+// that the resulting Tensor has a valid shape.
+func NewTensor(value interface{}) (*Tensor, error) {
+	val := reflect.ValueOf(value)
+	shape, dataType, err := shapeAndDataTypeOf(val)
+	if err != nil {
+		return nil, err
+	}
+	nflattened := numElements(shape)
+	nbytes := TypeOf(dataType, nil).Size() * uintptr(nflattened)
+	if dataType == String {
+		nbytes = uintptr(nflattened) * C.sizeof_TF_TString
+	}
+	var shapePtr *C.int64_t
+	if len(shape) > 0 {
+		shapePtr = (*C.int64_t)(unsafe.Pointer(&shape[0]))
+	}
+	t := &Tensor{
+		c:     C.TF_AllocateTensor(C.TF_DataType(dataType), shapePtr, C.int(len(shape)), C.size_t(nbytes)),
+		shape: shape,
+	}
+
+	raw := tensorData(t.c)
+
+	runtime.SetFinalizer(t, func(t *Tensor) {
+		if dataType == String {
+			t.clearTStrings(raw, nflattened)
+		}
+
+		t.finalize()
+	})
+
+	buf := bytes.NewBuffer(raw[:0:len(raw)])
+
+	if isAllArray(val.Type()) {
+		// We have arrays all the way down, or just primitive types. We can
+		// just copy the memory in as it is all contiguous.
+		if err := copyPtr(buf, unpackEFace(value).data, int(val.Type().Size())); err != nil {
+			return nil, err
+		}
+	} else {
+		// When there are slices involved the memory for each leaf slice may
+		// not be contiguous with the others or in the order we might
+		// expect, so we need to work our way down to each slice of
+		// primitives and copy them individually
+		if err := encodeTensorWithSlices(buf, val, shape); err != nil {
+			return nil, err
+		}
+	}
+
+	if uintptr(buf.Len()) != nbytes {
+		return nil, bug("NewTensor incorrectly calculated the size of a tensor with type %v and shape %v as %v bytes instead of %v", dataType, shape, nbytes, buf.Len())
+	}
+	return t, nil
+}
+
+// isAllArray returns true if type is a primitive type or an array of primitive
+// types or an array of ... etc.. When this is true the data we want is
+// contiguous in RAM.
+func isAllArray(typ reflect.Type) bool {
+	switch typ.Kind() {
+	case reflect.String:
+		return false
+	case reflect.Slice:
+		return false
+	case reflect.Array:
+		return isAllArray(typ.Elem())
+	default:
+		// We know the type is slices/arrays of slices/arrays of primitive types.
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: viewcode
+{
+  "ref": "e7f9e85c764b69ca817c95d09312d3216b6ed9ce",
+  "path": "tensorflow/go/tensor.go",
+  "startline": 470,
+  "endline": 560
+}
+Here are lines 470 through 560.
+
+	n := int64(1)
+	for _, d := range shape {
+		n *= d
+	}
+	return n
+}
+
+// sizeVarUint determines how many bytes it would take to encode the int v as
+// an unsigned varint
+func sizeVarUint(v uint64) int {
+	if v < 0x80 {
+		return 1
+	}
+	bits := bits.Len64(v)
+	return (bits + 6) / 7
+}
+
+// encodeTensorWithSlices writes v to the specified buffer using the format specified in
+// c_api.h. Use stringEncoder for String tensors.
+func encodeTensorWithSlices(w *bytes.Buffer, v reflect.Value, shape []int64) error {
+	// If current dimension is a slice, verify that it has the expected size
+	// Go's type system makes that guarantee for arrays.
+	if v.Kind() == reflect.Slice {
+		expected := int(shape[0])
+		if v.Len() != expected {
+			return fmt.Errorf("mismatched slice lengths: %d and %d", v.Len(), expected)
+		}
+	} else if v.Kind() == reflect.String {
+		s := v.Interface().(string)
+		var tstr C.TF_TString
+		C.toNewTString(s, &tstr)
+		ptr := unsafe.Pointer(&tstr)
+		return copyPtr(w, ptr, C.sizeof_TF_TString)
+	} else if v.Kind() != reflect.Array {
+		return fmt.Errorf("unsupported type %v", v.Type())
+	}
+
+	// Once we have just a single dimension we can just copy the data
+	if len(shape) == 1 && v.Len() > 0 && v.Index(0).Kind() != reflect.String {
+		elt := v.Index(0)
+		if !elt.CanAddr() {
+			panic("cannot take address")
+		}
+		ptr := unsafe.Pointer(elt.Addr().Pointer())
+		return copyPtr(w, ptr, v.Len()*int(elt.Type().Size()))
+	}
+
+	subShape := shape[1:]
+	for i := 0; i < v.Len(); i++ {
+		err := encodeTensorWithSlices(w, v.Index(i), subShape)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// It isn't safe to use reflect.SliceHeader as it uses a uintptr for Data and
+// this is not inspected by the garbage collector
+type sliceHeader struct {
+	Data unsafe.Pointer
+	Len  int
+	Cap  int
+}
+
+// copyPtr copies the backing data for a slice or array directly into w. Note
+// we don't need to worry about byte ordering because we want the natural byte
+// order for the machine we're running on.
+func copyPtr(w *bytes.Buffer, ptr unsafe.Pointer, l int) error {
+	// Convert our slice header into a []byte so we can call w.Write
+	b := *(*[]byte)(unsafe.Pointer(&sliceHeader{
+		Data: ptr,
+		Len:  l,
+		Cap:  l,
+	}))
+	_, err := w.Write(b)
+	return err
+}
+
+func bug(format string, args ...interface{}) error {
+	return fmt.Errorf("BUG: Please report at https://github.com/tensorflow/tensorflow/issues with the note: Go TensorFlow %v: %v", Version(), fmt.Sprintf(format, args...))
+}
+
+func isTensorSerializable(dataType DataType) error {
+	// For numeric types, the serialized Tensor matches the in-memory
+	// representation.  See the implementation of Tensor::AsProtoContent in
+	// https://www.tensorflow.org/code/tensorflow/core/framework/tensor.cc
+	//
+	// The more appropriate way to be in sync with Tensor::AsProtoContent
+	// would be to have the TensorFlow C library export functions for
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: locate_symbol
+{
+  "ref": "e7f9e85c764b69ca817c95d09312d3216b6ed9ce",
+  "symbol": "encodeTensorWithSlices"
+}
+tensorflow/go/tensor.go:122
+tensorflow/go/tensor.go:489
+tensorflow/go/tensor.go:519
+
+tokens used
+input: 792
+cache read: 8,704
+cache write: 0
+output: 178
+reasoning output: 0
+
+The target code matches the newer patch’s structure, so this can be backported directly with only the intended Go API signature/counting changes.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target TensorFlow 2.5.1 tensor.go context",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate and apply minimal backport hunks",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Review resulting diff",
+      "status": "pending",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target TensorFlow 2.5.1 tensor.go context",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate and apply minimal backport hunks",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Review resulting diff",
+    "status": "pending",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 2,538
+cache read: 8,704
+cache write: 0
+output: 115
+reasoning output: 36
+
+I’m validating the adapted hunk against the specified target base before applying it to the worktree.
+
+tool: validate
+{
+  "ref": "e7f9e85c764b69ca817c95d09312d3216b6ed9ce",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/go/tensor.go b/tensorflow/go/tensor.go\n--- a/tensorflow/go/tensor.go\n+++ b/tensorflow/go/tensor.go\n@@ -98,9 +98,9 @@ func NewTensor(value interface{}) (*Tensor, error) {\n \n \traw := tensorData(t.c)\n \n-\truntime.SetFinalizer(t, func(t *Tensor) {\n+\tdefer runtime.SetFinalizer(t, func(t *Tensor) {\n \t\tif dataType == String {\n-\t\t\tt.clearTStrings(raw, nflattened)\n+\t\t\tt.clearTStrings(raw, int64(nbytes/C.sizeof_TF_TString))\n \t\t}\n \n \t\tt.finalize()\n@@ -111,7 +111,7 @@ func NewTensor(value interface{}) (*Tensor, error) {\n \tif isAllArray(val.Type()) {\n \t\t// We have arrays all the way down, or just primitive types. We can\n \t\t// just copy the memory in as it is all contiguous.\n-\t\tif err := copyPtr(buf, unpackEFace(value).data, int(val.Type().Size())); err != nil {\n+\t\tif _, err := copyPtr(buf, unpackEFace(value).data, int(val.Type().Size())); err != nil {\n \t\t\treturn nil, err\n \t\t}\n \t} else {\n@@ -119,7 +119,10 @@ func NewTensor(value interface{}) (*Tensor, error) {\n \t\t// not be contiguous with the others or in the order we might\n \t\t// expect, so we need to work our way down to each slice of\n \t\t// primitives and copy them individually\n-\t\tif err := encodeTensorWithSlices(buf, val, shape); err != nil {\n+\t\tif n, err := encodeTensorWithSlices(buf, val, shape); err != nil {\n+\t\t\t// Set nbytes to count of bytes written for deferred call to\n+\t\t\t// runtime.SetFinalizer\n+\t\t\tnbytes = uintptr(n)\n \t\t\treturn nil, err\n \t\t}\n \t}\n@@ -486,13 +489,13 @@ func sizeVarUint(v uint64) int {\n \n // encodeTensorWithSlices writes v to the specified buffer using the format specified in\n // c_api.h. Use stringEncoder for String tensors.\n-func encodeTensorWithSlices(w *bytes.Buffer, v reflect.Value, shape []int64) error {\n+func encodeTensorWithSlices(w *bytes.Buffer, v reflect.Value, shape []int64) (int, error) {\n \t// If current dimension is a slice, verify that it has the expected size\n \t// Go's type system makes that guarantee for arrays.\n \tif v.Kind() == reflect.Slice {\n \t\texpected := int(shape[0])\n \t\tif v.Len() != expected {\n-\t\t\treturn fmt.Errorf(\"mismatched slice lengths: %d and %d\", v.Len(), expected)\n+\t\t\treturn 0, fmt.Errorf(\"mismatched slice lengths: %d and %d\", v.Len(), expected)\n \t\t}\n \t} else if v.Kind() == reflect.String {\n \t\ts := v.Interface().(string)\n@@ -501,7 +504,7 @@ func encodeTensorWithSlices(w *bytes.Buffer, v reflect.Value, shape []int64) err\n \t\tptr := unsafe.Pointer(&tstr)\n \t\treturn copyPtr(w, ptr, C.sizeof_TF_TString)\n \t} else if v.Kind() != reflect.Array {\n-\t\treturn fmt.Errorf(\"unsupported type %v\", v.Type())\n+\t\treturn 0, fmt.Errorf(\"unsupported type %v\", v.Type())\n \t}\n \n \t// Once we have just a single dimension we can just copy the data\n@@ -514,15 +517,17 @@ func encodeTensorWithSlices(w *bytes.Buffer, v reflect.Value, shape []int64) err\n \t\treturn copyPtr(w, ptr, v.Len()*int(elt.Type().Size()))\n \t}\n \n+\tn := 0\n \tsubShape := shape[1:]\n \tfor i := 0; i < v.Len(); i++ {\n-\t\terr := encodeTensorWithSlices(w, v.Index(i), subShape)\n+\t\tj, err := encodeTensorWithSlices(w, v.Index(i), subShape)\n \t\tif err != nil {\n-\t\t\treturn err\n+\t\t\treturn n + j, err\n \t\t}\n+\t\tn += j\n \t}\n \n-\treturn nil\n+\treturn n, nil\n }\n \n // It isn't safe to use reflect.SliceHeader as it uses a uintptr for Data and\n@@ -536,15 +541,14 @@ type sliceHeader struct {\n // copyPtr copies the backing data for a slice or array directly into w. Note\n // we don't need to worry about byte ordering because we want the natural byte\n // order for the machine we're running on.\n-func copyPtr(w *bytes.Buffer, ptr unsafe.Pointer, l int) error {\n+func copyPtr(w *bytes.Buffer, ptr unsafe.Pointer, l int) (int, error) {\n \t// Convert our slice header into a []byte so we can call w.Write\n \tb := *(*[]byte)(unsafe.Pointer(&sliceHeader{\n \t\tData: ptr,\n \t\tLen:  l,\n \t\tCap:  l,\n \t}))\n-\t_, err := w.Write(b)\n-\treturn err\n+\treturn w.Write(b)\n }\n \n func bug(format string, args ...interface{}) error {\n"
+}
+Patch applied successfully
+
+tokens used
+input: 753
+cache read: 10,752
+cache write: 0
+output: 1,377
+reasoning output: 13
+
+Validation succeeded. I’m applying the same minimal source change now.
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/go/tensor.go\n@@\n-\truntime.SetFinalizer(t, func(t *Tensor) {\n+\tdefer runtime.SetFinalizer(t, func(t *Tensor) {\n \t\tif dataType == String {\n-\t\t\tt.clearTStrings(raw, nflattened)\n+\t\t\tt.clearTStrings(raw, int64(nbytes/C.sizeof_TF_TString))\n \t\t}\n \n \t\tt.finalize()\n@@\n-\t\tif err := copyPtr(buf, unpackEFace(value).data, int(val.Type().Size())); err != nil {\n+\t\tif _, err := copyPtr(buf, unpackEFace(value).data, int(val.Type().Size())); err != nil {\n \t\t\treturn nil, err\n \t\t}\n \t} else {\n@@\n-\t\tif err := encodeTensorWithSlices(buf, val, shape); err != nil {\n+\t\tif n, err := encodeTensorWithSlices(buf, val, shape); err != nil {\n+\t\t\t// Set nbytes to count of bytes written for deferred call to\n+\t\t\t// runtime.SetFinalizer\n+\t\t\tnbytes = uintptr(n)\n \t\t\treturn nil, err\n \t\t}\n \t}\n@@\n-func encodeTensorWithSlices(w *bytes.Buffer, v reflect.Value, shape []int64) error {\n+func encodeTensorWithSlices(w *bytes.Buffer, v reflect.Value, shape []int64) (int, error) {\n \t// If current dimension is a slice, verify that it has the expected size\n \t// Go's type system makes that guarantee for arrays.\n \tif v.Kind() == reflect.Slice {\n \t\texpected := int(shape[0])\n \t\tif v.Len() != expected {\n-\t\t\treturn fmt.Errorf(\"mismatched slice lengths: %d and %d\", v.Len(), expected)\n+\t\t\treturn 0, fmt.Errorf(\"mismatched slice lengths: %d and %d\", v.Len(), expected)\n \t\t}\n \t} else if v.Kind() == reflect.String {\n \t\ts := v.Interface().(string)\n@@\n \t\tptr := unsafe.Pointer(&tstr)\n \t\treturn copyPtr(w, ptr, C.sizeof_TF_TString)\n \t} else if v.Kind() != reflect.Array {\n-\t\treturn fmt.Errorf(\"unsupported type %v\", v.Type())\n+\t\treturn 0, fmt.Errorf(\"unsupported type %v\", v.Type())\n \t}\n@@\n-\tsubShape := shape[1:]\n+\tn := 0\n+\tsubShape := shape[1:]\n \tfor i := 0; i < v.Len(); i++ {\n-\t\terr := encodeTensorWithSlices(w, v.Index(i), subShape)\n+\t\tj, err := encodeTensorWithSlices(w, v.Index(i), subShape)\n \t\tif err != nil {\n-\t\t\treturn err\n+\t\t\treturn n + j, err\n \t\t}\n+\t\tn += j\n \t}\n \n-\treturn nil\n+\treturn n, nil\n }\n@@\n-func copyPtr(w *bytes.Buffer, ptr unsafe.Pointer, l int) error {\n+func copyPtr(w *bytes.Buffer, ptr unsafe.Pointer, l int) (int, error) {\n \t// Convert our slice header into a []byte so we can call w.Write\n \tb := *(*[]byte)(unsafe.Pointer(&sliceHeader{\n \t\tData: ptr,\n@@\n-\t_, err := w.Write(b)\n-\treturn err\n+\treturn w.Write(b)\n }\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/go/tensor.go
+
+tokens used
+input: 2,156
+cache read: 10,752
+cache write: 0
+output: 893
+reasoning output: 0
+
+I’ll format the touched Go file and review the resulting diff; no full build will be run.
+
+tool: bash
+{
+  "command": "gofmt -w \"tensorflow/go/tensor.go\"",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0029-e7f9e85c764b",
+  "timeout": 120000
+}
+gofmt : The term 'gofmt' is not recognized as the name of a cmdlet, function, script file, or operable program. Check 
+the spelling of the name, or if a path was included, verify that the path is correct and try again.
+At line:1 char:1
++ gofmt -w "tensorflow/go/tensor.go"
++ ~~~~~
+    + CategoryInfo          : ObjectNotFound: (gofmt:String) [], CommandNotFoundException
+    + FullyQualifiedErrorId : CommandNotFoundException
+
+tokens used
+input: 1,025
+cache read: 12,800
+cache write: 0
+output: 106
+reasoning output: 42
+
+`gofmt` is not available in this environment, so I’m reviewing the diff manually for formatting and content.
+
+tool: bash
+{
+  "command": "git diff -- \"tensorflow/go/tensor.go\"",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0029-e7f9e85c764b",
+  "timeout": 120000
+}
+warning: in the working copy of 'tensorflow/go/tensor.go', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/go/tensor.go b/tensorflow/go/tensor.go
+index cfb389d472..0983e0411f 100644
+--- a/tensorflow/go/tensor.go
++++ b/tensorflow/go/tensor.go
+@@ -98,9 +98,9 @@ func NewTensor(value interface{}) (*Tensor, error) {
+ 
+ 	raw := tensorData(t.c)
+ 
+-	runtime.SetFinalizer(t, func(t *Tensor) {
++	defer runtime.SetFinalizer(t, func(t *Tensor) {
+ 		if dataType == String {
+-			t.clearTStrings(raw, nflattened)
++			t.clearTStrings(raw, int64(nbytes/C.sizeof_TF_TString))
+ 		}
+ 
+ 		t.finalize()
+@@ -111,7 +111,7 @@ func NewTensor(value interface{}) (*Tensor, error) {
+ 	if isAllArray(val.Type()) {
+ 		// We have arrays all the way down, or just primitive types. We can
+ 		// just copy the memory in as it is all contiguous.
+-		if err := copyPtr(buf, unpackEFace(value).data, int(val.Type().Size())); err != nil {
++		if _, err := copyPtr(buf, unpackEFace(value).data, int(val.Type().Size())); err != nil {
+ 			return nil, err
+ 		}
+ 	} else {
+@@ -119,7 +119,10 @@ func NewTensor(value interface{}) (*Tensor, error) {
+ 		// not be contiguous with the others or in the order we might
+ 		// expect, so we need to work our way down to each slice of
+ 		// primitives and copy them individually
+-		if err := encodeTensorWithSlices(buf, val, shape); err != nil {
++		if n, err := encodeTensorWithSlices(buf, val, shape); err != nil {
++			// Set nbytes to count of bytes written for deferred call to
++			// runtime.SetFinalizer
++			nbytes = uintptr(n)
+ 			return nil, err
+ 		}
+ 	}
+@@ -486,13 +489,13 @@ func sizeVarUint(v uint64) int {
+ 
+ // encodeTensorWithSlices writes v to the specified buffer using the format specified in
+ // c_api.h. Use stringEncoder for String tensors.
+-func encodeTensorWithSlices(w *bytes.Buffer, v reflect.Value, shape []int64) error {
++func encodeTensorWithSlices(w *bytes.Buffer, v reflect.Value, shape []int64) (int, error) {
+ 	// If current dimension is a slice, verify that it has the expected size
+ 	// Go's type system makes that guarantee for arrays.
+ 	if v.Kind() == reflect.Slice {
+ 		expected := int(shape[0])
+ 		if v.Len() != expected {
+-			return fmt.Errorf("mismatched slice lengths: %d and %d", v.Len(), expected)
++			return 0, fmt.Errorf("mismatched slice lengths: %d and %d", v.Len(), expected)
+ 		}
+ 	} else if v.Kind() == reflect.String {
+ 		s := v.Interface().(string)
+@@ -501,7 +504,7 @@ func encodeTensorWithSlices(w *bytes.Buffer, v reflect.Value, shape []int64) err
+ 		ptr := unsafe.Pointer(&tstr)
+ 		return copyPtr(w, ptr, C.sizeof_TF_TString)
+ 	} else if v.Kind() != reflect.Array {
+-		return fmt.Errorf("unsupported type %v", v.Type())
++		return 0, fmt.Errorf("unsupported type %v", v.Type())
+ 	}
+ 
+ 	// Once we have just a single dimension we can just copy the data
+@@ -514,15 +517,17 @@ func encodeTensorWithSlices(w *bytes.Buffer, v reflect.Value, shape []int64) err
+ 		return copyPtr(w, ptr, v.Len()*int(elt.Type().Size()))
+ 	}
+ 
++	n := 0
+ 	subShape := shape[1:]
+ 	for i := 0; i < v.Len(); i++ {
+-		err := encodeTensorWithSlices(w, v.Index(i), subShape)
++		j, err := encodeTensorWithSlices(w, v.Index(i), subShape)
+ 		if err != nil {
+-			return err
++			return n + j, err
+ 		}
++		n += j
+ 	}
+ 
+-	return nil
++	return n, nil
+ }
+ 
+ // It isn't safe to use reflect.SliceHeader as it uses a uintptr for Data and
+@@ -536,15 +541,14 @@ type sliceHeader struct {
+ // copyPtr copies the backing data for a slice or array directly into w. Note
+ // we don't need to worry about byte ordering because we want the natural byte
+ // order for the machine we're running on.
+-func copyPtr(w *bytes.Buffer, ptr unsafe.Pointer, l int) error {
++func copyPtr(w *bytes.Buffer, ptr unsafe.Pointer, l int) (int, error) {
+ 	// Convert our slice header into a []byte so we can call w.Write
+ 	b := *(*[]byte)(unsafe.Pointer(&sliceHeader{
+ 		Data: ptr,
+ 		Len:  l,
+ 		Cap:  l,
+ 	}))
+-	_, err := w.Write(b)
+-	return err
++	return w.Write(b)
+ }
+ 
+ func bug(format string, args ...interface{}) error {
+
+tool: bash
+{
+  "command": "git status --short",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0029-e7f9e85c764b",
+  "timeout": 120000
+}
+ M tensorflow/go/tensor.go
+
+tokens used
+input: 1,300
+cache read: 12,800
+cache write: 0
+output: 189
+reasoning output: 13
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target TensorFlow 2.5.1 tensor.go context",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate and apply minimal backport hunks",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Review resulting diff",
+      "status": "completed",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target TensorFlow 2.5.1 tensor.go context",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate and apply minimal backport hunks",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Review resulting diff",
+    "status": "completed",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 1,694
+cache read: 13,824
+cache write: 0
+output: 79
+reasoning output: 47
+
+Applied the security backport to `tensorflow/go/tensor.go`. The hunk validated against `e7f9e85c764b69ca817c95d09312d3216b6ed9ce`. `gofmt` was not available in the environment, but the diff matches Go formatting.
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/go/tensor.go b/tensorflow/go/tensor.go
+    index cfb389d472..0983e0411f 100644
+    --- a/tensorflow/go/tensor.go
+    +++ b/tensorflow/go/tensor.go
+    @@ -98,9 +98,9 @@ func NewTensor(value interface{}) (*Tensor, error) {
+     
+     	raw := tensorData(t.c)
+     
+    -	runtime.SetFinalizer(t, func(t *Tensor) {
+    +	defer runtime.SetFinalizer(t, func(t *Tensor) {
+     		if dataType == String {
+    -			t.clearTStrings(raw, nflattened)
+    +			t.clearTStrings(raw, int64(nbytes/C.sizeof_TF_TString))
+     		}
+     
+     		t.finalize()
+    @@ -111,7 +111,7 @@ func NewTensor(value interface{}) (*Tensor, error) {
+     	if isAllArray(val.Type()) {
+     		// We have arrays all the way down, or just primitive types. We can
+     		// just copy the memory in as it is all contiguous.
+    -		if err := copyPtr(buf, unpackEFace(value).data, int(val.Type().Size())); err != nil {
+    +		if _, err := copyPtr(buf, unpackEFace(value).data, int(val.Type().Size())); err != nil {
+     			return nil, err
+     		}
+     	} else {
+    @@ -119,7 +119,10 @@ func NewTensor(value interface{}) (*Tensor, error) {
+     		// not be contiguous with the others or in the order we might
+     		// expect, so we need to work our way down to each slice of
+     		// primitives and copy them individually
+    -		if err := encodeTensorWithSlices(buf, val, shape); err != nil {
+    +		if n, err := encodeTensorWithSlices(buf, val, shape); err != nil {
+    +			// Set nbytes to count of bytes written for deferred call to
+    +			// runtime.SetFinalizer
+    +			nbytes = uintptr(n)
+     			return nil, err
+     		}
+     	}
+    @@ -486,13 +489,13 @@ func sizeVarUint(v uint64) int {
+     
+     // encodeTensorWithSlices writes v to the specified buffer using the format specified in
+     // c_api.h. Use stringEncoder for String tensors.
+    -func encodeTensorWithSlices(w *bytes.Buffer, v reflect.Value, shape []int64) error {
+    +func encodeTensorWithSlices(w *bytes.Buffer, v reflect.Value, shape []int64) (int, error) {
+     	// If current dimension is a slice, verify that it has the expected size
+     	// Go's type system makes that guarantee for arrays.
+     	if v.Kind() == reflect.Slice {
+     		expected := int(shape[0])
+     		if v.Len() != expected {
+    -			return fmt.Errorf("mismatched slice lengths: %d and %d", v.Len(), expected)
+    +			return 0, fmt.Errorf("mismatched slice lengths: %d and %d", v.Len(), expected)
+     		}
+     	} else if v.Kind() == reflect.String {
+     		s := v.Interface().(string)
+    @@ -501,7 +504,7 @@ func encodeTensorWithSlices(w *bytes.Buffer, v reflect.Value, shape []int64) err
+     		ptr := unsafe.Pointer(&tstr)
+     		return copyPtr(w, ptr, C.sizeof_TF_TString)
+     	} else if v.Kind() != reflect.Array {
+    -		return fmt.Errorf("unsupported type %v", v.Type())
+    +		return 0, fmt.Errorf("unsupported type %v", v.Type())
+     	}
+     
+     	// Once we have just a single dimension we can just copy the data
+    @@ -514,15 +517,17 @@ func encodeTensorWithSlices(w *bytes.Buffer, v reflect.Value, shape []int64) err
+     		return copyPtr(w, ptr, v.Len()*int(elt.Type().Size()))
+     	}
+     
+    +	n := 0
+     	subShape := shape[1:]
+     	for i := 0; i < v.Len(); i++ {
+    -		err := encodeTensorWithSlices(w, v.Index(i), subShape)
+    +		j, err := encodeTensorWithSlices(w, v.Index(i), subShape)
+     		if err != nil {
+    -			return err
+    +			return n + j, err
+     		}
+    +		n += j
+     	}
+     
+    -	return nil
+    +	return n, nil
+     }
+     
+     // It isn't safe to use reflect.SliceHeader as it uses a uintptr for Data and
+    @@ -536,15 +541,14 @@ type sliceHeader struct {
+     // copyPtr copies the backing data for a slice or array directly into w. Note
+     // we don't need to worry about byte ordering because we want the natural byte
+     // order for the machine we're running on.
+    -func copyPtr(w *bytes.Buffer, ptr unsafe.Pointer, l int) error {
+    +func copyPtr(w *bytes.Buffer, ptr unsafe.Pointer, l int) (int, error) {
+     	// Convert our slice header into a []byte so we can call w.Write
+     	b := *(*[]byte)(unsafe.Pointer(&sliceHeader{
+     		Data: ptr,
+     		Len:  l,
+     		Cap:  l,
+     	}))
+    -	_, err := w.Write(b)
+    -	return err
+    +	return w.Write(b)
+     }
+  notes: >
+    Backported the TensorFlow Go string tensor finalizer fix by deferring finalizer installation and tracking bytes successfully written before encode errors.
+```
+
+tokens used
+input: 907
+cache read: 14,848
+cache write: 0
+output: 1,339
+reasoning output: 0

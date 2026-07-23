@@ -1,0 +1,316 @@
+I’ll inspect the target-side `ragged_gather_op.cc` around `RaggedGatherOpBase::Compute`, compare it to the provided source hunk, then apply the minimal guard additions if the code shape matches.
+
+tool: viewcode
+{
+  "ref": "b7f78808c68e52882a85c8c198f12cfaad3d352c",
+  "path": "tensorflow/core/kernels/ragged_gather_op.cc",
+  "startline": 1,
+  "endline": 130
+}
+Here are lines 1 through 130.
+
+/* Copyright 2018 The TensorFlow Authors. All Rights Reserved.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+==============================================================================*/
+#include <limits>
+#include <memory>
+#include <string>
+#include <vector>
+
+#include "tensorflow/core/framework/op_kernel.h"
+#include "tensorflow/core/framework/register_types.h"
+#include "tensorflow/core/framework/tensor.h"
+#include "tensorflow/core/framework/tensor_shape.h"
+#include "tensorflow/core/util/util.h"
+
+namespace tensorflow {
+
+namespace {
+
+// For each slice in `(start, limit)` in `value_slices`, append
+// `params_dense_values_in[start:limit] to `values_out`.  `value_size` indicates
+// the number of scalars contained in each value params_dense_values_in[i].
+template <typename VALUE_TYPE, typename SPLITS_TYPE>
+void WriteValueSlices(
+    const Tensor& params_dense_values_in,
+    const std::vector<std::pair<SPLITS_TYPE, SPLITS_TYPE>>& value_slices,
+    SPLITS_TYPE value_size, Tensor* values_out) {
+  const auto& params_dense_values =
+      params_dense_values_in.flat_outer_dims<VALUE_TYPE, 2>();
+  auto values = values_out->flat_outer_dims<VALUE_TYPE, 2>();
+  int out_pos = 0;
+  for (const auto& slice : value_slices) {
+    for (int i = slice.first; i < slice.second; ++i) {
+      for (int j = 0; j < value_size; ++j) {
+        values(out_pos, j) = params_dense_values(i, j);
+      }
+      ++out_pos;
+    }
+  }
+}
+
+}  // namespace
+
+template <typename INDEX_TYPE, typename SPLITS_TYPE>
+class RaggedGatherOpBase : public OpKernel {
+ public:
+  using OpKernel::OpKernel;
+
+  void Compute(OpKernelContext* context) override {
+    // Get the input Tensors.
+    OpInputList params_nested_splits_in;
+    OP_REQUIRES_OK(context, context->input_list("params_nested_splits",
+                                                &params_nested_splits_in));
+    const Tensor& params_dense_values_in =
+        context->input(params_nested_splits_in.size());
+    const Tensor& indices_in =
+        context->input(params_nested_splits_in.size() + 1);
+
+    DCHECK_GT(params_nested_splits_in.size(), 0);  // Enforced by REGISTER_OP.
+    SPLITS_TYPE num_params = params_nested_splits_in[0].dim_size(0) - 1;
+    OP_REQUIRES_OK(context, ValidateIndices(indices_in, num_params));
+
+    OP_REQUIRES(context, params_dense_values_in.dims() > 0,
+                errors::InvalidArgument("params.rank must be nonzero"));
+    SPLITS_TYPE num_params_dense_values = params_dense_values_in.dim_size(0);
+
+    // Calculate the `splits`, and store the value slices that we need to
+    // copy in `value_slices`.
+    std::vector<std::pair<SPLITS_TYPE, SPLITS_TYPE>> value_slices;
+    SPLITS_TYPE num_values = 0;
+    std::vector<std::vector<SPLITS_TYPE>> out_splits;
+    OP_REQUIRES_OK(context, MakeSplits(indices_in, params_nested_splits_in,
+                                       num_params_dense_values, &out_splits,
+                                       &value_slices, &num_values));
+
+    // Write the output tensors.
+    OP_REQUIRES_OK(context, WriteSplits(out_splits, context));
+    OP_REQUIRES_OK(context,
+                   WriteValues(params_dense_values_in, value_slices,
+                               out_splits.size(), num_values, context));
+  }
+
+ private:
+  using ConstFlatType = typename TTypes<SPLITS_TYPE>::ConstFlat;
+
+  // Check if any indices are out-of-bounds.
+  ::tensorflow::Status ValidateIndices(const Tensor& indices_in,
+                                       SPLITS_TYPE num_params) {
+    const auto& indices = indices_in.flat<INDEX_TYPE>();
+    for (SPLITS_TYPE i = 0; i < indices.size(); ++i) {
+      SPLITS_TYPE index = indices(i);
+      if (index < 0 || index >= num_params) {
+        return errors::InvalidArgument(
+            "indices", SliceDebugString(indices_in.shape(), i), " = ", index,
+            " is not in [0, ", num_params, ")");
+      }
+    }
+    return ::tensorflow::Status::OK();
+  }
+
+  // Construct the `splits` output tensors, encoded using a nested vector.
+  // Also find the slices of values that need to be copied, and store them
+  // in `value_slices`.  The total number of values that will be copied (which
+  // we need for allocating the output values tensor) is stored in `num_values`.
+  ::tensorflow::Status MakeSplits(
+      const Tensor& indices_in, const OpInputList& params_nested_splits_in,
+      SPLITS_TYPE num_params_dense_values,
+      std::vector<std::vector<SPLITS_TYPE>>* out_splits,
+      std::vector<std::pair<SPLITS_TYPE, SPLITS_TYPE>>* value_slices,
+      SPLITS_TYPE* num_values) {
+    *num_values = 0;
+    value_slices->clear();
+
+    int num_splits = indices_in.dims() - 1 + params_nested_splits_in.size();
+    out_splits->assign(num_splits, {0});
+
+    // Get Eigen tensors.
+    const auto& indices = indices_in.flat<INDEX_TYPE>();
+    std::vector<ConstFlatType> params_nested_splits;
+    params_nested_splits.reserve(params_nested_splits_in.size());
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: locate_symbol
+{
+  "ref": "b7f78808c68e52882a85c8c198f12cfaad3d352c",
+  "symbol": "RaggedGatherOpBase"
+}
+tensorflow/core/kernels/ragged_gather_op.cc:55
+tensorflow/core/kernels/ragged_gather_op.cc:266
+tensorflow/core/kernels/ragged_gather_op.cc:268
+
+tokens used
+input: 3,866
+cache read: 4,608
+cache write: 0
+output: 183
+reasoning output: 0
+
+The target code matches the provided hunk directly. I’m adding runtime `OP_REQUIRES` checks for an empty `params_nested_splits` list and scalar split tensors, replacing the debug-only size assertion as in the security fix.
+
+tool: validate
+{
+  "ref": "b7f78808c68e52882a85c8c198f12cfaad3d352c",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/ragged_gather_op.cc b/tensorflow/core/kernels/ragged_gather_op.cc\n--- a/tensorflow/core/kernels/ragged_gather_op.cc\n+++ b/tensorflow/core/kernels/ragged_gather_op.cc\n@@ -58,15 +58,21 @@ class RaggedGatherOpBase : public OpKernel {\n \n   void Compute(OpKernelContext* context) override {\n     // Get the input Tensors.\n+\n     OpInputList params_nested_splits_in;\n     OP_REQUIRES_OK(context, context->input_list(\"params_nested_splits\",\n                                                 &params_nested_splits_in));\n+    OP_REQUIRES(\n+        context, params_nested_splits_in.size() > 0,\n+        errors::InvalidArgument(\"params_nested_splits must be non empty\"));\n+\n     const Tensor& params_dense_values_in =\n         context->input(params_nested_splits_in.size());\n     const Tensor& indices_in =\n         context->input(params_nested_splits_in.size() + 1);\n \n-    DCHECK_GT(params_nested_splits_in.size(), 0);  // Enforced by REGISTER_OP.\n+    OP_REQUIRES(context, params_nested_splits_in[0].dims() > 0,\n+                errors::InvalidArgument(\"Split tensors must not be scalars\"));\n     SPLITS_TYPE num_params = params_nested_splits_in[0].dim_size(0) - 1;\n     OP_REQUIRES_OK(context, ValidateIndices(indices_in, num_params));\n"
+}
+This patch does not apply to the target TensorFlow ref.
+Git apply output:
+error: corrupt patch at line 26
+Touched files:
+- tensorflow/core/kernels/ragged_gather_op.cc
+Fix the patch context against the older TensorFlow version, then run validate again in hunk mode.
+
+tokens used
+input: 2,337
+cache read: 7,680
+cache write: 0
+output: 460
+reasoning output: 18
+
+tool: validate
+{
+  "ref": "b7f78808c68e52882a85c8c198f12cfaad3d352c",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/ragged_gather_op.cc b/tensorflow/core/kernels/ragged_gather_op.cc\nindex 3bf82cba050..d6d51c770b 100644\n--- a/tensorflow/core/kernels/ragged_gather_op.cc\n+++ b/tensorflow/core/kernels/ragged_gather_op.cc\n@@ -57,17 +57,23 @@ class RaggedGatherOpBase : public OpKernel {\n \n   void Compute(OpKernelContext* context) override {\n     // Get the input Tensors.\n+\n     OpInputList params_nested_splits_in;\n     OP_REQUIRES_OK(context, context->input_list(\"params_nested_splits\",\n                                                 &params_nested_splits_in));\n+    OP_REQUIRES(\n+        context, params_nested_splits_in.size() > 0,\n+        errors::InvalidArgument(\"params_nested_splits must be non empty\"));\n+\n     const Tensor& params_dense_values_in =\n         context->input(params_nested_splits_in.size());\n     const Tensor& indices_in =\n         context->input(params_nested_splits_in.size() + 1);\n \n-    DCHECK_GT(params_nested_splits_in.size(), 0);  // Enforced by REGISTER_OP.\n+    OP_REQUIRES(context, params_nested_splits_in[0].dims() > 0,\n+                errors::InvalidArgument(\"Split tensors must not be scalars\"));\n     SPLITS_TYPE num_params = params_nested_splits_in[0].dim_size(0) - 1;\n     OP_REQUIRES_OK(context, ValidateIndices(indices_in, num_params));\n \n     OP_REQUIRES(context, params_dense_values_in.dims() > 0,\n"
+}
+This patch does not apply to the target TensorFlow ref.
+Git apply output:
+error: corrupt patch at line 29
+Touched files:
+- tensorflow/core/kernels/ragged_gather_op.cc
+Fix the patch context against the older TensorFlow version, then run validate again in hunk mode.
+
+tokens used
+input: 838
+cache read: 9,728
+cache write: 0
+output: 446
+reasoning output: 34
+
+The validator rejected my hand-written hunk as malformed, not because the code location differs. Since the viewed target source is an exact match, I’m applying the same minimal source edit directly and will inspect the resulting diff.
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/kernels/ragged_gather_op.cc\n@@\n   void Compute(OpKernelContext* context) override {\n     // Get the input Tensors.\n+\n     OpInputList params_nested_splits_in;\n     OP_REQUIRES_OK(context, context->input_list(\"params_nested_splits\",\n                                                 &params_nested_splits_in));\n+    OP_REQUIRES(\n+        context, params_nested_splits_in.size() > 0,\n+        errors::InvalidArgument(\"params_nested_splits must be non empty\"));\n+\n     const Tensor& params_dense_values_in =\n         context->input(params_nested_splits_in.size());\n     const Tensor& indices_in =\n         context->input(params_nested_splits_in.size() + 1);\n \n-    DCHECK_GT(params_nested_splits_in.size(), 0);  // Enforced by REGISTER_OP.\n+    OP_REQUIRES(context, params_nested_splits_in[0].dims() > 0,\n+                errors::InvalidArgument(\"Split tensors must not be scalars\"));\n     SPLITS_TYPE num_params = params_nested_splits_in[0].dim_size(0) - 1;\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/kernels/ragged_gather_op.cc
+
+tokens used
+input: 1,389
+cache read: 9,728
+cache write: 0
+output: 345
+reasoning output: 211
+
+The source change is applied. I’m checking the working diff and running a hunk validation with a generated diff to confirm it applies to the target base.
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/kernels/ragged_gather_op.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0108-b7f78808c68e",
+  "timeout": 120000
+}
+warning: in the working copy of 'tensorflow/core/kernels/ragged_gather_op.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/kernels/ragged_gather_op.cc b/tensorflow/core/kernels/ragged_gather_op.cc
+index 88c0d1ebd6..5939b4120b 100644
+--- a/tensorflow/core/kernels/ragged_gather_op.cc
++++ b/tensorflow/core/kernels/ragged_gather_op.cc
+@@ -58,15 +58,21 @@ class RaggedGatherOpBase : public OpKernel {
+ 
+   void Compute(OpKernelContext* context) override {
+     // Get the input Tensors.
++
+     OpInputList params_nested_splits_in;
+     OP_REQUIRES_OK(context, context->input_list("params_nested_splits",
+                                                 &params_nested_splits_in));
++    OP_REQUIRES(
++        context, params_nested_splits_in.size() > 0,
++        errors::InvalidArgument("params_nested_splits must be non empty"));
++
+     const Tensor& params_dense_values_in =
+         context->input(params_nested_splits_in.size());
+     const Tensor& indices_in =
+         context->input(params_nested_splits_in.size() + 1);
+ 
+-    DCHECK_GT(params_nested_splits_in.size(), 0);  // Enforced by REGISTER_OP.
++    OP_REQUIRES(context, params_nested_splits_in[0].dims() > 0,
++                errors::InvalidArgument("Split tensors must not be scalars"));
+     SPLITS_TYPE num_params = params_nested_splits_in[0].dim_size(0) - 1;
+     OP_REQUIRES_OK(context, ValidateIndices(indices_in, num_params));
+
+tokens used
+input: 951
+cache read: 10,752
+cache write: 0
+output: 116
+reasoning output: 0
+
+tool: validate
+{
+  "ref": "b7f78808c68e52882a85c8c198f12cfaad3d352c",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/ragged_gather_op.cc b/tensorflow/core/kernels/ragged_gather_op.cc\nindex 88c0d1ebd6..5939b4120b 100644\n--- a/tensorflow/core/kernels/ragged_gather_op.cc\n+++ b/tensorflow/core/kernels/ragged_gather_op.cc\n@@ -58,15 +58,21 @@ class RaggedGatherOpBase : public OpKernel {\n \n   void Compute(OpKernelContext* context) override {\n     // Get the input Tensors.\n+\n     OpInputList params_nested_splits_in;\n     OP_REQUIRES_OK(context, context->input_list(\"params_nested_splits\",\n                                                 &params_nested_splits_in));\n+    OP_REQUIRES(\n+        context, params_nested_splits_in.size() > 0,\n+        errors::InvalidArgument(\"params_nested_splits must be non empty\"));\n+\n     const Tensor& params_dense_values_in =\n         context->input(params_nested_splits_in.size());\n     const Tensor& indices_in =\n         context->input(params_nested_splits_in.size() + 1);\n \n-    DCHECK_GT(params_nested_splits_in.size(), 0);  // Enforced by REGISTER_OP.\n+    OP_REQUIRES(context, params_nested_splits_in[0].dims() > 0,\n+                errors::InvalidArgument(\"Split tensors must not be scalars\"));\n     SPLITS_TYPE num_params = params_nested_splits_in[0].dim_size(0) - 1;\n     OP_REQUIRES_OK(context, ValidateIndices(indices_in, num_params));\n \n"
+}
+Patch applied successfully
+
+tokens used
+input: 1,457
+cache read: 10,752
+cache write: 0
+output: 428
+reasoning output: 66
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/kernels/ragged_gather_op.cc b/tensorflow/core/kernels/ragged_gather_op.cc
+    index 88c0d1ebd6..5939b4120b 100644
+    --- a/tensorflow/core/kernels/ragged_gather_op.cc
+    +++ b/tensorflow/core/kernels/ragged_gather_op.cc
+    @@ -58,15 +58,21 @@ class RaggedGatherOpBase : public OpKernel {
+     
+       void Compute(OpKernelContext* context) override {
+         // Get the input Tensors.
+    +
+         OpInputList params_nested_splits_in;
+         OP_REQUIRES_OK(context, context->input_list("params_nested_splits",
+                                                     &params_nested_splits_in));
+    +    OP_REQUIRES(
+    +        context, params_nested_splits_in.size() > 0,
+    +        errors::InvalidArgument("params_nested_splits must be non empty"));
+    +
+         const Tensor& params_dense_values_in =
+             context->input(params_nested_splits_in.size());
+         const Tensor& indices_in =
+             context->input(params_nested_splits_in.size() + 1);
+     
+    -    DCHECK_GT(params_nested_splits_in.size(), 0);  // Enforced by REGISTER_OP.
+    +    OP_REQUIRES(context, params_nested_splits_in[0].dims() > 0,
+    +                errors::InvalidArgument("Split tensors must not be scalars"));
+         SPLITS_TYPE num_params = params_nested_splits_in[0].dim_size(0) - 1;
+         OP_REQUIRES_OK(context, ValidateIndices(indices_in, num_params));
+     
+  notes: >
+    Added runtime validation for empty params_nested_splits and scalar split tensors in RaggedGather; hunk validation against the target base succeeded.
+```
+
+tokens used
+input: 940
+cache read: 11,776
+cache write: 0
+output: 414
+reasoning output: 19

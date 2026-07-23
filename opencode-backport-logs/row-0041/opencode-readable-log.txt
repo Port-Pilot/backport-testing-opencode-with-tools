@@ -1,0 +1,168 @@
+I’ll locate the matching `FunctionInstantiationHelper` code in the target checkout, validate the minimal hunk against the target base, then apply only that source change.
+
+tool: viewcode
+{
+  "ref": "b2b3444b71ea99685edafa7731fb7ba57939f437",
+  "path": "tensorflow/core/framework/function.cc",
+  "startline": 160,
+  "endline": 205
+}
+Here are lines 160 through 205.
+
+// A helper class for instantiating functions. This contains shared information
+// like the resulting graph and node name index.
+class FunctionInstantiationHelper {
+ public:
+  FunctionInstantiationHelper(GetFunctionSignature get_function,
+                              InstantiationResult* result)
+      : get_function_(std ::move(get_function)), result_(*result) {
+    result_.nodes.clear();
+  }
+
+  // Builds index for nodes that can be used as node's input arguments.
+  // `resource_arg_unique_id`: if non-negative, will be populated to the
+  // "_resource_arg_unique_id" attribute of the arg node.
+  Status BuildInputArgIndex(const OpDef::ArgDef& arg_def, AttrSlice attr_values,
+                            const FunctionDef::ArgAttrs* arg_attrs,
+                            bool ints_on_device, int64 resource_arg_unique_id) {
+    bool is_type_list;
+    DataTypeVector dtypes;
+    TF_RETURN_IF_ERROR(
+        ArgNumType(attr_values, arg_def, &is_type_list, &dtypes));
+    CHECK_GE(dtypes.size(), size_t{1});
+    int arg_index = result_.nodes.size();
+    TF_RETURN_IF_ERROR(
+        AddItem(arg_def.name(), {true, arg_index, 0, is_type_list, dtypes}));
+    // Creates dtypes.size() nodes in the graph.
+    for (size_t i = 0; i < dtypes.size(); ++i) {
+      TF_RETURN_IF_ERROR(AddItem(strings::StrCat(arg_def.name(), ":", i),
+                                 {true, arg_index, 0, false, {dtypes[i]}}));
+      DCHECK_EQ(arg_index, result_.nodes.size());
+      string name = arg_def.name();
+      if (dtypes.size() > 1) {
+        strings::StrAppend(&name, "_", i);
+      }
+      NodeDef* gnode = AddNode(name);
+      if (ints_on_device && dtypes[i] == DataType::DT_INT32) {
+        gnode->set_op(FunctionLibraryDefinition::kDeviceArgOp);
+      } else {
+        gnode->set_op(FunctionLibraryDefinition::kArgOp);
+      }
+      DataType dtype = arg_def.is_ref() ? MakeRefType(dtypes[i]) : dtypes[i];
+      AddAttr("T", dtype, gnode);
+      AddAttr("index", arg_index, gnode);
+      if (resource_arg_unique_id >= 0) {
+        AddAttr("_resource_arg_unique_id", resource_arg_unique_id, gnode);
+      }
+      if (arg_attrs) {
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: locate_symbol
+{
+  "ref": "b2b3444b71ea99685edafa7731fb7ba57939f437",
+  "symbol": "FunctionInstantiationHelper"
+}
+tensorflow/core/framework/function.cc:162
+tensorflow/core/framework/function.cc:164
+tensorflow/core/framework/function.cc:731
+
+tokens used
+input: 8,295
+cache read: 0
+cache write: 0
+output: 153
+reasoning output: 0
+
+The target code matches the newer patch location directly; the unsafe `CHECK_GE` is present in `tensorflow/core/framework/function.cc`. I’m validating the single replacement hunk before editing.
+
+tool: validate
+{
+  "ref": "b2b3444b71ea99685edafa7731fb7ba57939f437",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/framework/function.cc b/tensorflow/core/framework/function.cc\n--- a/tensorflow/core/framework/function.cc\n+++ b/tensorflow/core/framework/function.cc\n@@ -178,7 +178,9 @@ class FunctionInstantiationHelper {\n     DataTypeVector dtypes;\n     TF_RETURN_IF_ERROR(\n         ArgNumType(attr_values, arg_def, &is_type_list, &dtypes));\n-    CHECK_GE(dtypes.size(), size_t{1});\n+    if (dtypes.size() < size_t{1}) {\n+      return errors::Internal(\"Expected a list of at least one dtype\");\n+    }\n     int arg_index = result_.nodes.size();\n     TF_RETURN_IF_ERROR(\n         AddItem(arg_def.name(), {true, arg_index, 0, is_type_list, dtypes}));\n"
+}
+Patch applied successfully
+
+tokens used
+input: 1,369
+cache read: 7,680
+cache write: 0
+output: 282
+reasoning output: 20
+
+The hunk applies cleanly to the target base. I’m applying the minimal source edit now.
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/framework/function.cc\n@@\n     DataTypeVector dtypes;\n     TF_RETURN_IF_ERROR(\n         ArgNumType(attr_values, arg_def, &is_type_list, &dtypes));\n-    CHECK_GE(dtypes.size(), size_t{1});\n+    if (dtypes.size() < size_t{1}) {\n+      return errors::Internal(\"Expected a list of at least one dtype\");\n+    }\n     int arg_index = result_.nodes.size();\n     TF_RETURN_IF_ERROR(\n         AddItem(arg_def.name(), {true, arg_index, 0, is_type_list, dtypes}));\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/framework/function.cc
+
+tokens used
+input: 660
+cache read: 8,704
+cache write: 0
+output: 202
+reasoning output: 8
+
+The source edit is applied. I’m checking the resulting diff to confirm only the intended change is present.
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/framework/function.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0041-b2b3444b71ea"
+}
+warning: in the working copy of 'tensorflow/core/framework/function.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/framework/function.cc b/tensorflow/core/framework/function.cc
+index b84cfa3115..c702d0fb52 100644
+--- a/tensorflow/core/framework/function.cc
++++ b/tensorflow/core/framework/function.cc
+@@ -177,7 +177,9 @@ class FunctionInstantiationHelper {
+     DataTypeVector dtypes;
+     TF_RETURN_IF_ERROR(
+         ArgNumType(attr_values, arg_def, &is_type_list, &dtypes));
+-    CHECK_GE(dtypes.size(), size_t{1});
++    if (dtypes.size() < size_t{1}) {
++      return errors::Internal("Expected a list of at least one dtype");
++    }
+     int arg_index = result_.nodes.size();
+     TF_RETURN_IF_ERROR(
+         AddItem(arg_def.name(), {true, arg_index, 0, is_type_list, dtypes}));
+
+tokens used
+input: 894
+cache read: 8,704
+cache write: 0
+output: 97
+reasoning output: 14
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/framework/function.cc b/tensorflow/core/framework/function.cc
+    index b84cfa3115..c702d0fb52 100644
+    --- a/tensorflow/core/framework/function.cc
+    +++ b/tensorflow/core/framework/function.cc
+    @@ -177,7 +177,9 @@ class FunctionInstantiationHelper {
+         DataTypeVector dtypes;
+         TF_RETURN_IF_ERROR(
+             ArgNumType(attr_values, arg_def, &is_type_list, &dtypes));
+    -    CHECK_GE(dtypes.size(), size_t{1});
+    +    if (dtypes.size() < size_t{1}) {
+    +      return errors::Internal("Expected a list of at least one dtype");
+    +    }
+         int arg_index = result_.nodes.size();
+         TF_RETURN_IF_ERROR(
+             AddItem(arg_def.name(), {true, arg_index, 0, is_type_list, dtypes}));
+  notes: >
+    Replaced the crashing dtype-list CHECK with an Internal error return in FunctionInstantiationHelper; hunk validation succeeded.
+```
+
+tokens used
+input: 1,235
+cache read: 8,704
+cache write: 0
+output: 251
+reasoning output: 43

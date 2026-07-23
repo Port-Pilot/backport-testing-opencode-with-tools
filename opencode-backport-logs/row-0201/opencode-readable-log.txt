@@ -1,0 +1,554 @@
+I’ll locate the target implementation of `ToTFRecordOp` in the checked-out 2.3.4 tree, compare its local context to the provided 2.7.0 hunk, then apply only the equivalent validation checks.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target ToTFRecordOp context in TensorFlow 2.3.4",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Validate adapted hunk against target base",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "content": "Apply minimal backport changes",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "content": "Review resulting diff",
+      "status": "pending",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target ToTFRecordOp context in TensorFlow 2.3.4",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Validate adapted hunk against target base",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "content": "Apply minimal backport changes",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "content": "Review resulting diff",
+    "status": "pending",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 3,938
+cache read: 4,608
+cache write: 0
+output: 152
+reasoning output: 0
+
+tool: viewcode
+{
+  "ref": "6a2b0f3d4addeef2f7b00f690ec705064e1dd946",
+  "path": "tensorflow/core/kernels/data/experimental/to_tf_record_op.cc",
+  "startline": 1,
+  "endline": 150
+}
+This file only has 118 lines. Here are lines 1 through 118.
+
+/* Copyright 2018 The TensorFlow Authors. All Rights Reserved.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+==============================================================================*/
+#include "tensorflow/core/framework/dataset.h"
+#include "tensorflow/core/framework/function_handle_cache.h"
+#include "tensorflow/core/framework/op_kernel.h"
+#include "tensorflow/core/framework/resource_mgr.h"
+#include "tensorflow/core/kernels/data/dataset_utils.h"
+#include "tensorflow/core/kernels/ops_util.h"
+#include "tensorflow/core/lib/core/threadpool.h"
+#include "tensorflow/core/lib/io/record_writer.h"
+#include "tensorflow/core/platform/file_system.h"
+#include "tensorflow/core/platform/resource.h"
+
+namespace tensorflow {
+namespace data {
+namespace experimental {
+namespace {
+
+class ToTFRecordOp : public AsyncOpKernel {
+ public:
+  explicit ToTFRecordOp(OpKernelConstruction* ctx)
+      : AsyncOpKernel(ctx),
+        background_worker_(ctx->env(), "tf_data_to_tf_record") {}
+
+  template <typename T>
+  Status ParseScalarArgument(OpKernelContext* ctx,
+                             const StringPiece& argument_name, T* output) {
+    const Tensor* argument_t;
+    TF_RETURN_IF_ERROR(ctx->input(argument_name, &argument_t));
+    if (!TensorShapeUtils::IsScalar(argument_t->shape())) {
+      return errors::InvalidArgument(argument_name, " must be a scalar");
+    }
+    *output = argument_t->scalar<T>()();
+    return Status::OK();
+  }
+
+  void ComputeAsync(OpKernelContext* ctx, DoneCallback done) override {
+    // The call to `iterator->GetNext()` may block and depend on an inter-op
+    // thread pool thread, so we issue the call using a background thread.
+    background_worker_.Schedule([this, ctx, done = std::move(done)]() {
+      OP_REQUIRES_OK_ASYNC(ctx, DoCompute(ctx), done);
+      done();
+    });
+  }
+
+ private:
+  Status DoCompute(OpKernelContext* ctx) {
+    tensorflow::ResourceTagger tag(kTFDataResourceTag,
+                                   ctx->op_kernel().type_string());
+    tstring filename;
+    TF_RETURN_IF_ERROR(
+        ParseScalarArgument<tstring>(ctx, "filename", &filename));
+    tstring compression_type;
+    TF_RETURN_IF_ERROR(ParseScalarArgument<tstring>(ctx, "compression_type",
+                                                    &compression_type));
+    std::unique_ptr<WritableFile> file;
+    TF_RETURN_IF_ERROR(ctx->env()->NewWritableFile(filename, &file));
+    auto writer = absl::make_unique<io::RecordWriter>(
+        file.get(),
+        io::RecordWriterOptions::CreateRecordWriterOptions(compression_type));
+
+    DatasetBase* dataset;
+    TF_RETURN_IF_ERROR(GetDatasetFromVariantTensor(ctx->input(0), &dataset));
+
+    IteratorContext::Params params(ctx);
+    FunctionHandleCache function_handle_cache(params.flr);
+    params.function_handle_cache = &function_handle_cache;
+    ResourceMgr resource_mgr;
+    params.resource_mgr = &resource_mgr;
+    CancellationManager cancellation_manager(ctx->cancellation_manager());
+    params.cancellation_manager = &cancellation_manager;
+
+    IteratorContext iter_ctx(std::move(params));
+    std::unique_ptr<IteratorBase> iterator;
+    TF_RETURN_IF_ERROR(dataset->MakeIterator(
+        &iter_ctx, /*parent=*/nullptr, "ToTFRecordOpIterator", &iterator));
+
+    std::vector<Tensor> components;
+    components.reserve(dataset->output_dtypes().size());
+    bool end_of_sequence;
+    do {
+      TF_RETURN_IF_ERROR(
+          iterator->GetNext(&iter_ctx, &components, &end_of_sequence));
+
+      if (!end_of_sequence) {
+        TF_RETURN_IF_ERROR(
+            writer->WriteRecord(components[0].scalar<tstring>()()));
+      }
+      components.clear();
+    } while (!end_of_sequence);
+    return Status::OK();
+  }
+
+  BackgroundWorker background_worker_;
+};
+
+REGISTER_KERNEL_BUILDER(Name("DatasetToTFRecord").Device(DEVICE_CPU),
+                        ToTFRecordOp);
+REGISTER_KERNEL_BUILDER(
+    Name("ExperimentalDatasetToTFRecord").Device(DEVICE_CPU), ToTFRecordOp);
+
+}  // namespace
+}  // namespace experimental
+}  // namespace data
+}  // namespace tensorflow
+
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: locate_symbol
+{
+  "ref": "6a2b0f3d4addeef2f7b00f690ec705064e1dd946",
+  "symbol": "ToTFRecordOp"
+}
+tensorflow/core/kernels/data/experimental/to_tf_record_op.cc:31
+tensorflow/core/kernels/data/experimental/to_tf_record_op.cc:33
+tensorflow/core/kernels/data/experimental/to_tf_record_op.cc:110
+tensorflow/core/kernels/data/experimental/to_tf_record_op.cc:112
+
+tokens used
+input: 1,161
+cache read: 7,680
+cache write: 0
+output: 129
+reasoning output: 0
+
+The target file has the same vulnerable assumption: it reserves based on `dataset->output_dtypes().size()` but always writes `components[0]` as a scalar string. I’m adapting the new fix to the older code’s `dataset` variable and iterator setup.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target ToTFRecordOp context in TensorFlow 2.3.4",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate adapted hunk against target base",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Apply minimal backport changes",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "content": "Review resulting diff",
+      "status": "pending",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target ToTFRecordOp context in TensorFlow 2.3.4",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate adapted hunk against target base",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Apply minimal backport changes",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "content": "Review resulting diff",
+    "status": "pending",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 1,343
+cache read: 8,704
+cache write: 0
+output: 160
+reasoning output: 69
+
+tool: validate
+{
+  "ref": "6a2b0f3d4addeef2f7b00f690ec705064e1dd946",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/data/experimental/to_tf_record_op.cc b/tensorflow/core/kernels/data/experimental/to_tf_record_op.cc\n--- a/tensorflow/core/kernels/data/experimental/to_tf_record_op.cc\n+++ b/tensorflow/core/kernels/data/experimental/to_tf_record_op.cc\n@@ -18,6 +18,7 @@ limitations under the License.\n #include \"tensorflow/core/framework/function_handle_cache.h\"\n #include \"tensorflow/core/framework/op_kernel.h\"\n #include \"tensorflow/core/framework/resource_mgr.h\"\n+#include \"tensorflow/core/framework/types.h\"\n #include \"tensorflow/core/kernels/data/dataset_utils.h\"\n #include \"tensorflow/core/kernels/ops_util.h\"\n #include \"tensorflow/core/lib/core/threadpool.h\"\n@@ -84,8 +85,20 @@ class ToTFRecordOp : public AsyncOpKernel {\n     TF_RETURN_IF_ERROR(dataset->MakeIterator(\n         &iter_ctx, /*parent=*/nullptr, \"ToTFRecordOpIterator\", &iterator));\n \n+    const int num_output_dtypes = dataset->output_dtypes().size();\n+    if (num_output_dtypes != 1) {\n+      return errors::InvalidArgument(\n+          \"ToTFRecordOp currently only support datasets of 1 single column, \",\n+          \"but got \", num_output_dtypes);\n+    }\n+    const DataType dt = dataset->output_dtypes()[0];\n+    if (dt != DT_STRING) {\n+      return errors::InvalidArgument(\n+          \"ToTFRecordOp currently only supports DT_STRING dataypes, but got \",\n+          DataTypeString(dt));\n+    }\n     std::vector<Tensor> components;\n-    components.reserve(dataset->output_dtypes().size());\n+    components.reserve(num_output_dtypes);\n     bool end_of_sequence;\n     do {\n       TF_RETURN_IF_ERROR(\n"
+}
+Patch applied successfully
+
+tokens used
+input: 691
+cache read: 9,728
+cache write: 0
+output: 477
+reasoning output: 0
+
+The adapted hunk applies cleanly to the target base. I’ll update the source file now with the same validation logic and include.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target ToTFRecordOp context in TensorFlow 2.3.4",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate adapted hunk against target base",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Apply minimal backport changes",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Review resulting diff",
+      "status": "pending",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target ToTFRecordOp context in TensorFlow 2.3.4",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate adapted hunk against target base",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Apply minimal backport changes",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Review resulting diff",
+    "status": "pending",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 1,181
+cache read: 9,728
+cache write: 0
+output: 130
+reasoning output: 0
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/kernels/data/experimental/to_tf_record_op.cc\n@@\n #include \"tensorflow/core/framework/function_handle_cache.h\"\n #include \"tensorflow/core/framework/op_kernel.h\"\n #include \"tensorflow/core/framework/resource_mgr.h\"\n+#include \"tensorflow/core/framework/types.h\"\n #include \"tensorflow/core/kernels/data/dataset_utils.h\"\n #include \"tensorflow/core/kernels/ops_util.h\"\n #include \"tensorflow/core/lib/core/threadpool.h\"\n@@\n     TF_RETURN_IF_ERROR(dataset->MakeIterator(\n         &iter_ctx, /*parent=*/nullptr, \"ToTFRecordOpIterator\", &iterator));\n \n+    const int num_output_dtypes = dataset->output_dtypes().size();\n+    if (num_output_dtypes != 1) {\n+      return errors::InvalidArgument(\n+          \"ToTFRecordOp currently only support datasets of 1 single column, \",\n+          \"but got \", num_output_dtypes);\n+    }\n+    const DataType dt = dataset->output_dtypes()[0];\n+    if (dt != DT_STRING) {\n+      return errors::InvalidArgument(\n+          \"ToTFRecordOp currently only supports DT_STRING dataypes, but got \",\n+          DataTypeString(dt));\n+    }\n     std::vector<Tensor> components;\n-    components.reserve(dataset->output_dtypes().size());\n+    components.reserve(num_output_dtypes);\n     bool end_of_sequence;\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/kernels/data/experimental/to_tf_record_op.cc
+
+tokens used
+input: 430
+cache read: 10,752
+cache write: 0
+output: 359
+reasoning output: 0
+
+The backport is applied. I’m checking the final diff to confirm only the intended file and hunk changed.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target ToTFRecordOp context in TensorFlow 2.3.4",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate adapted hunk against target base",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Apply minimal backport changes",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Review resulting diff",
+      "status": "in_progress",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target ToTFRecordOp context in TensorFlow 2.3.4",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate adapted hunk against target base",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Apply minimal backport changes",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Review resulting diff",
+    "status": "in_progress",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 820
+cache read: 10,752
+cache write: 0
+output: 126
+reasoning output: 0
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/kernels/data/experimental/to_tf_record_op.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0201-6a2b0f3d4add"
+}
+warning: in the working copy of 'tensorflow/core/kernels/data/experimental/to_tf_record_op.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/kernels/data/experimental/to_tf_record_op.cc b/tensorflow/core/kernels/data/experimental/to_tf_record_op.cc
+index bfa894cd47..56401bb91f 100644
+--- a/tensorflow/core/kernels/data/experimental/to_tf_record_op.cc
++++ b/tensorflow/core/kernels/data/experimental/to_tf_record_op.cc
+@@ -16,6 +16,7 @@ limitations under the License.
+ #include "tensorflow/core/framework/function_handle_cache.h"
+ #include "tensorflow/core/framework/op_kernel.h"
+ #include "tensorflow/core/framework/resource_mgr.h"
++#include "tensorflow/core/framework/types.h"
+ #include "tensorflow/core/kernels/data/dataset_utils.h"
+ #include "tensorflow/core/kernels/ops_util.h"
+ #include "tensorflow/core/lib/core/threadpool.h"
+@@ -87,8 +88,20 @@ class ToTFRecordOp : public AsyncOpKernel {
+     TF_RETURN_IF_ERROR(dataset->MakeIterator(
+         &iter_ctx, /*parent=*/nullptr, "ToTFRecordOpIterator", &iterator));
+ 
++    const int num_output_dtypes = dataset->output_dtypes().size();
++    if (num_output_dtypes != 1) {
++      return errors::InvalidArgument(
++          "ToTFRecordOp currently only support datasets of 1 single column, ",
++          "but got ", num_output_dtypes);
++    }
++    const DataType dt = dataset->output_dtypes()[0];
++    if (dt != DT_STRING) {
++      return errors::InvalidArgument(
++          "ToTFRecordOp currently only supports DT_STRING dataypes, but got ",
++          DataTypeString(dt));
++    }
+     std::vector<Tensor> components;
+-    components.reserve(dataset->output_dtypes().size());
++    components.reserve(num_output_dtypes);
+     bool end_of_sequence;
+     do {
+       TF_RETURN_IF_ERROR(
+
+tokens used
+input: 1,089
+cache read: 10,752
+cache write: 0
+output: 77
+reasoning output: 0
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target ToTFRecordOp context in TensorFlow 2.3.4",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate adapted hunk against target base",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Apply minimal backport changes",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Review resulting diff",
+      "status": "completed",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target ToTFRecordOp context in TensorFlow 2.3.4",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate adapted hunk against target base",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Apply minimal backport changes",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Review resulting diff",
+    "status": "completed",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 592
+cache read: 11,776
+cache write: 0
+output: 97
+reasoning output: 31
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/kernels/data/experimental/to_tf_record_op.cc b/tensorflow/core/kernels/data/experimental/to_tf_record_op.cc
+    index bfa894cd47..56401bb91f 100644
+    --- a/tensorflow/core/kernels/data/experimental/to_tf_record_op.cc
+    +++ b/tensorflow/core/kernels/data/experimental/to_tf_record_op.cc
+    @@ -16,6 +16,7 @@ limitations under the License.
+     #include "tensorflow/core/framework/function_handle_cache.h"
+     #include "tensorflow/core/framework/op_kernel.h"
+     #include "tensorflow/core/framework/resource_mgr.h"
+    +#include "tensorflow/core/framework/types.h"
+     #include "tensorflow/core/kernels/data/dataset_utils.h"
+     #include "tensorflow/core/kernels/ops_util.h"
+     #include "tensorflow/core/lib/core/threadpool.h"
+    @@ -87,8 +88,20 @@ class ToTFRecordOp : public AsyncOpKernel {
+         TF_RETURN_IF_ERROR(dataset->MakeIterator(
+             &iter_ctx, /*parent=*/nullptr, "ToTFRecordOpIterator", &iterator));
+     
+    +    const int num_output_dtypes = dataset->output_dtypes().size();
+    +    if (num_output_dtypes != 1) {
+    +      return errors::InvalidArgument(
+    +          "ToTFRecordOp currently only support datasets of 1 single column, ",
+    +          "but got ", num_output_dtypes);
+    +    }
+    +    const DataType dt = dataset->output_dtypes()[0];
+    +    if (dt != DT_STRING) {
+    +      return errors::InvalidArgument(
+    +          "ToTFRecordOp currently only supports DT_STRING dataypes, but got ",
+    +          DataTypeString(dt));
+    +    }
+         std::vector<Tensor> components;
+    -    components.reserve(dataset->output_dtypes().size());
+    +    components.reserve(num_output_dtypes);
+         bool end_of_sequence;
+         do {
+           TF_RETURN_IF_ERROR(
+  notes: >
+    Backported the ToTFRecordOp output column count and DT_STRING validation to the TensorFlow 2.3.4 target implementation.
+```
+
+tokens used
+input: 862
+cache read: 11,776
+cache write: 0
+output: 486
+reasoning output: 0

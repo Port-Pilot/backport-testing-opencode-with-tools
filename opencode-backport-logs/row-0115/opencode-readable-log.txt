@@ -1,0 +1,551 @@
+I’ll inspect the target-side `SparseAddOp` implementation and verify whether the new hunk maps directly before editing.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target SparseAddOp context",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Validate the minimal backport hunk against target base",
+      "status": "pending",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply source changes in checkout",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "content": "Review final diff",
+      "status": "pending",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target SparseAddOp context",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Validate the minimal backport hunk against target base",
+    "status": "pending",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply source changes in checkout",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "content": "Review final diff",
+    "status": "pending",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 3,779
+cache read: 4,608
+cache write: 0
+output: 120
+reasoning output: 0
+
+tool: viewcode
+{
+  "ref": "7a5dd0aa176dbf81742f84b44aeb0948fa2d8f20",
+  "path": "tensorflow/core/kernels/sparse_add_op.cc",
+  "startline": 1,
+  "endline": 140
+}
+Here are lines 1 through 140.
+
+/* Copyright 2016 The TensorFlow Authors. All Rights Reserved.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+==============================================================================*/
+
+#include "tensorflow/core/framework/op_kernel.h"
+#include "tensorflow/core/framework/register_types.h"
+#include "tensorflow/core/framework/tensor.h"
+#include "tensorflow/core/framework/tensor_util.h"
+#include "tensorflow/core/framework/types.h"
+#include "tensorflow/core/util/sparse/sparse_tensor.h"
+
+namespace tensorflow {
+
+template <typename T, typename Treal>
+class SparseAddOp : public OpKernel {
+ public:
+  explicit SparseAddOp(OpKernelConstruction *ctx) : OpKernel(ctx) {}
+
+  void Compute(OpKernelContext *ctx) override {
+    // (0) validations
+    const Tensor *a_indices, *b_indices, *a_values_t, *b_values_t, *a_shape,
+        *b_shape, *thresh_t;
+
+    OP_REQUIRES_OK(ctx, ctx->input("a_indices", &a_indices));
+    OP_REQUIRES_OK(ctx, ctx->input("b_indices", &b_indices));
+    OP_REQUIRES(ctx,
+                TensorShapeUtils::IsMatrix(a_indices->shape()) &&
+                    TensorShapeUtils::IsMatrix(b_indices->shape()),
+                errors::InvalidArgument(
+                    "Input indices should be matrices but received shapes: ",
+                    a_indices->shape().DebugString(), " and ",
+                    b_indices->shape().DebugString()));
+    const int64 a_nnz = a_indices->dim_size(0);
+    const int64 b_nnz = b_indices->dim_size(0);
+
+    OP_REQUIRES_OK(ctx, ctx->input("a_values", &a_values_t));
+    OP_REQUIRES_OK(ctx, ctx->input("b_values", &b_values_t));
+
+    OP_REQUIRES(ctx,
+                TensorShapeUtils::IsVector(a_values_t->shape()) &&
+                    TensorShapeUtils::IsVector(b_values_t->shape()),
+                errors::InvalidArgument(
+                    "Input values should be vectors but received shapes: ",
+                    a_values_t->shape().DebugString(), " and ",
+                    b_values_t->shape().DebugString()));
+    auto a_values = ctx->input(1).vec<T>();
+    auto b_values = ctx->input(4).vec<T>();
+    OP_REQUIRES(
+        ctx, a_values.size() == a_nnz && b_values.size() == b_nnz,
+        errors::InvalidArgument("Expected ", a_nnz, " and ", b_nnz,
+                                " non-empty input values, got ",
+                                a_values.size(), " and ", b_values.size()));
+
+    OP_REQUIRES_OK(ctx, ctx->input("a_shape", &a_shape));
+    OP_REQUIRES_OK(ctx, ctx->input("b_shape", &b_shape));
+    OP_REQUIRES(ctx,
+                TensorShapeUtils::IsVector(a_shape->shape()) &&
+                    TensorShapeUtils::IsVector(b_shape->shape()),
+                errors::InvalidArgument(
+                    "Input shapes should be a vector but received shapes ",
+                    a_shape->shape().DebugString(), " and ",
+                    b_shape->shape().DebugString()));
+    OP_REQUIRES(
+        ctx, a_shape->IsSameSize(*b_shape),
+        errors::InvalidArgument(
+            "Operands do not have the same ranks; got shapes: ",
+            a_shape->SummarizeValue(10), " and ", b_shape->SummarizeValue(10)));
+    const auto a_shape_flat = a_shape->flat<int64>();
+    const auto b_shape_flat = b_shape->flat<int64>();
+    for (int i = 0; i < a_shape->NumElements(); ++i) {
+      OP_REQUIRES(ctx, a_shape_flat(i) == b_shape_flat(i),
+                  errors::InvalidArgument(
+                      "Operands' shapes do not match: got ", a_shape_flat(i),
+                      " and ", b_shape_flat(i), " for dimension ", i));
+    }
+
+    OP_REQUIRES_OK(ctx, ctx->input("thresh", &thresh_t));
+    OP_REQUIRES(ctx, TensorShapeUtils::IsScalar(thresh_t->shape()),
+                errors::InvalidArgument(
+                    "The magnitude threshold must be a scalar: got shape ",
+                    thresh_t->shape().DebugString()));
+    // std::abs() so that it works for complex{64,128} values as well
+    const Treal thresh = thresh_t->scalar<Treal>()();
+
+    // (1) do a pass over inputs, and append values and indices to vectors
+    auto a_indices_mat = a_indices->matrix<int64>();
+    auto b_indices_mat = b_indices->matrix<int64>();
+    std::vector<std::pair<bool, int64>> entries_to_copy;  // from_a?, idx
+    entries_to_copy.reserve(a_nnz + b_nnz);
+    std::vector<T> out_values;
+    const int num_dims = a_shape->dim_size(0);
+
+    // The input and output sparse tensors are assumed to be ordered along
+    // increasing dimension number.
+    int64 i = 0, j = 0;
+    T s;
+    while (i < a_nnz && j < b_nnz) {
+      switch (sparse::DimComparator::cmp(a_indices_mat, b_indices_mat, i, j,
+                                         num_dims)) {
+        case -1:
+          entries_to_copy.emplace_back(true, i);
+          out_values.push_back(a_values(i));
+          ++i;
+          break;
+        case 0:
+          s = a_values(i) + b_values(j);
+          if (thresh <= std::abs(s)) {
+            entries_to_copy.emplace_back(true, i);
+            out_values.push_back(s);
+          }
+          ++i;
+          ++j;
+          break;
+        case 1:
+          entries_to_copy.emplace_back(false, j);
+          out_values.push_back(b_values(j));
+          ++j;
+          break;
+      }
+    }
+
+#define HANDLE_LEFTOVERS(A_OR_B, IDX, IS_A)     \
+  while (IDX < A_OR_B##_nnz) {                  \
+    entries_to_copy.emplace_back(IS_A, IDX);    \
+    out_values.push_back(A_OR_B##_values(IDX)); \
+    ++IDX;                                      \
+  }
+
+    // at most one of these calls appends new values
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: locate_symbol
+{
+  "ref": "7a5dd0aa176dbf81742f84b44aeb0948fa2d8f20",
+  "symbol": "SparseAddOp"
+}
+tensorflow/core/kernels/sparse_add_op.cc:26
+tensorflow/core/kernels/sparse_add_op.cc:28
+tensorflow/core/kernels/sparse_add_op.cc:170
+
+tokens used
+input: 963
+cache read: 7,680
+cache write: 0
+output: 125
+reasoning output: 0
+
+The target file has the same implementation shape as the source patch, so the backport is the same minimal validation: include `op_requires.h` and reject zero-rank `a_shape` before comparing sparse indices.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target SparseAddOp context",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate the minimal backport hunk against target base",
+      "status": "in_progress",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply source changes in checkout",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "content": "Review final diff",
+      "status": "pending",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target SparseAddOp context",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate the minimal backport hunk against target base",
+    "status": "in_progress",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply source changes in checkout",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "content": "Review final diff",
+    "status": "pending",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 2,578
+cache read: 7,680
+cache write: 0
+output: 141
+reasoning output: 38
+
+tool: validate
+{
+  "ref": "7a5dd0aa176dbf81742f84b44aeb0948fa2d8f20",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/sparse_add_op.cc b/tensorflow/core/kernels/sparse_add_op.cc\nindex 0cf40a709a39a7..346206365af8d5 100644\n--- a/tensorflow/core/kernels/sparse_add_op.cc\n+++ b/tensorflow/core/kernels/sparse_add_op.cc\n@@ -14,6 +14,7 @@ limitations under the License.\n ==============================================================================*/\n \n #include \"tensorflow/core/framework/op_kernel.h\"\n+#include \"tensorflow/core/framework/op_requires.h\"\n #include \"tensorflow/core/framework/register_types.h\"\n #include \"tensorflow/core/framework/tensor.h\"\n #include \"tensorflow/core/framework/tensor_util.h\"\n@@ -101,6 +102,10 @@ class SparseAddOp : public OpKernel {\n     std::vector<T> out_values;\n     const int num_dims = a_shape->dim_size(0);\n \n+    OP_REQUIRES(ctx, num_dims > 0,\n+                errors::InvalidArgument(\"Invalid input_a shape. Received: \",\n+                                        a_shape->DebugString()));\n+\n     // The input and output sparse tensors are assumed to be ordered along\n     // increasing dimension number.\n     int64 i = 0, j = 0;\n"
+}
+Patch applied successfully
+
+tokens used
+input: 845
+cache read: 9,728
+cache write: 0
+output: 335
+reasoning output: 0
+
+The hunk validates cleanly against the target base. I’m applying exactly that source change now.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target SparseAddOp context",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate the minimal backport hunk against target base",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply source changes in checkout",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Review final diff",
+      "status": "pending",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target SparseAddOp context",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate the minimal backport hunk against target base",
+    "status": "completed",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply source changes in checkout",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Review final diff",
+    "status": "pending",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 1,193
+cache read: 9,728
+cache write: 0
+output: 117
+reasoning output: 0
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/kernels/sparse_add_op.cc\n@@\n #include \"tensorflow/core/framework/op_kernel.h\"\n+#include \"tensorflow/core/framework/op_requires.h\"\n #include \"tensorflow/core/framework/register_types.h\"\n #include \"tensorflow/core/framework/tensor.h\"\n #include \"tensorflow/core/framework/tensor_util.h\"\n@@\n     std::vector<T> out_values;\n     const int num_dims = a_shape->dim_size(0);\n \n+    OP_REQUIRES(ctx, num_dims > 0,\n+                errors::InvalidArgument(\"Invalid input_a shape. Received: \",\n+                                        a_shape->DebugString()));\n+\n     // The input and output sparse tensors are assumed to be ordered along\n     // increasing dimension number.\n     int64 i = 0, j = 0;\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/kernels/sparse_add_op.cc
+
+tokens used
+input: 422
+cache read: 10,752
+cache write: 0
+output: 209
+reasoning output: 0
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target SparseAddOp context",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate the minimal backport hunk against target base",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply source changes in checkout",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Review final diff",
+      "status": "in_progress",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target SparseAddOp context",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate the minimal backport hunk against target base",
+    "status": "completed",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply source changes in checkout",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Review final diff",
+    "status": "in_progress",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 659
+cache read: 10,752
+cache write: 0
+output: 89
+reasoning output: 0
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/kernels/sparse_add_op.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0115-7a5dd0aa176d"
+}
+warning: in the working copy of 'tensorflow/core/kernels/sparse_add_op.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/kernels/sparse_add_op.cc b/tensorflow/core/kernels/sparse_add_op.cc
+index d16317af67..87a17b0882 100644
+--- a/tensorflow/core/kernels/sparse_add_op.cc
++++ b/tensorflow/core/kernels/sparse_add_op.cc
+@@ -14,6 +14,7 @@ limitations under the License.
+ ==============================================================================*/
+ 
+ #include "tensorflow/core/framework/op_kernel.h"
++#include "tensorflow/core/framework/op_requires.h"
+ #include "tensorflow/core/framework/register_types.h"
+ #include "tensorflow/core/framework/tensor.h"
+ #include "tensorflow/core/framework/tensor_util.h"
+@@ -101,6 +102,10 @@ class SparseAddOp : public OpKernel {
+     std::vector<T> out_values;
+     const int num_dims = a_shape->dim_size(0);
+ 
++    OP_REQUIRES(ctx, num_dims > 0,
++                errors::InvalidArgument("Invalid input_a shape. Received: ",
++                                        a_shape->DebugString()));
++
+     // The input and output sparse tensors are assumed to be ordered along
+     // increasing dimension number.
+     int64 i = 0, j = 0;
+
+tokens used
+input: 884
+cache read: 10,752
+cache write: 0
+output: 72
+reasoning output: 0
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target SparseAddOp context",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate the minimal backport hunk against target base",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply source changes in checkout",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Review final diff",
+      "status": "completed",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target SparseAddOp context",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate the minimal backport hunk against target base",
+    "status": "completed",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply source changes in checkout",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Review final diff",
+    "status": "completed",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 1,257
+cache read: 10,752
+cache write: 0
+output: 90
+reasoning output: 14
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/kernels/sparse_add_op.cc b/tensorflow/core/kernels/sparse_add_op.cc
+    index d16317af67..87a17b0882 100644
+    --- a/tensorflow/core/kernels/sparse_add_op.cc
+    +++ b/tensorflow/core/kernels/sparse_add_op.cc
+    @@ -14,6 +14,7 @@ limitations under the License.
+     ==============================================================================*/
+     
+     #include "tensorflow/core/framework/op_kernel.h"
+    +#include "tensorflow/core/framework/op_requires.h"
+     #include "tensorflow/core/framework/register_types.h"
+     #include "tensorflow/core/framework/tensor.h"
+     #include "tensorflow/core/framework/tensor_util.h"
+    @@ -101,6 +102,10 @@ class SparseAddOp : public OpKernel {
+         std::vector<T> out_values;
+         const int num_dims = a_shape->dim_size(0);
+     
+    +    OP_REQUIRES(ctx, num_dims > 0,
+    +                errors::InvalidArgument("Invalid input_a shape. Received: ",
+    +                                        a_shape->DebugString()));
+    +
+         // The input and output sparse tensors are assumed to be ordered along
+         // increasing dimension number.
+         int64 i = 0, j = 0;
+  notes: >
+    Added the SparseAdd zero-rank input_a shape validation from the source security fix; the hunk validated cleanly against the target base.
+```
+
+tokens used
+input: 472
+cache read: 11,776
+cache write: 0
+output: 330
+reasoning output: 0

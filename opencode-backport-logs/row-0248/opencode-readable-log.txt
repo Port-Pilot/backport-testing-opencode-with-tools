@@ -1,0 +1,228 @@
+I’ll inspect the target-side `constant_folding.cc` around `IsSimplifiableReshape`, then validate and apply the minimal equivalent hunk.
+
+tool: viewcode
+{
+  "ref": "b2b3444b71ea99685edafa7731fb7ba57939f437",
+  "path": "tensorflow/core/grappler/optimizers/constant_folding.cc",
+  "startline": 1650,
+  "endline": 1735
+}
+Here are lines 1650 through 1735.
+
+    if (fanout.empty()) nodes_to_delete.push_back(i);
+  }
+  EraseNodesFromGraph(std::move(nodes_to_delete), output);
+
+  for (int i = 0; i < graph_->node_size(); ++i) {
+    NodeDef* node = graph_->mutable_node(i);
+    // If no fetch nodes is provided, we conservatively
+    // move all nodes in the original graph to the output, in case users need
+    // to fetch their values.
+    const auto& fanout = node_map_->GetOutputs(node->name());
+    if (!fanout.empty() || !has_fetch_ ||
+        nodes_to_preserve_.find(node->name()) != nodes_to_preserve_.end()) {
+      *(output->add_node()) = std::move(*node);
+    }
+  }
+  return Status::OK();
+}
+
+bool ConstantFolding::IsSimplifiableReshape(
+    const NodeDef& node, const GraphProperties& properties) const {
+  if (!IsReshape(node)) {
+    return false;
+  }
+  CHECK_LE(2, node.input_size());
+  const NodeDef* new_shape = node_map_->GetNode(node.input(1));
+  if (!IsReallyConstant(*new_shape)) {
+    return false;
+  }
+  TensorVector outputs;
+  auto outputs_cleanup = gtl::MakeCleanup([&outputs] {
+    for (const auto& output : outputs) {
+      delete output.tensor;
+    }
+  });
+
+  Status s = EvaluateNode(*new_shape, TensorVector(), &outputs);
+  if (!s.ok()) {
+    return false;
+  }
+  CHECK_EQ(1, outputs.size());
+
+  const std::vector<OpInfo::TensorProperties>& props =
+      properties.GetInputProperties(node.name());
+  if (props.empty()) {
+    return false;
+  }
+  const OpInfo::TensorProperties& prop = props[0];
+  if (prop.dtype() == DT_INVALID) {
+    return false;
+  }
+  const PartialTensorShape shape(prop.shape());
+  if (!shape.IsFullyDefined()) {
+    return false;
+  }
+
+  PartialTensorShape new_dims;
+  if (outputs[0]->dtype() == DT_INT32) {
+    std::vector<int32> shp;
+    for (int i = 0; i < outputs[0]->NumElements(); ++i) {
+      int32 dim = outputs[0]->flat<int32>()(i);
+      shp.push_back(dim);
+    }
+    TF_CHECK_OK(TensorShapeUtils::MakeShape(shp, &new_dims));
+  } else {
+    std::vector<int64> shp;
+    for (int i = 0; i < outputs[0]->NumElements(); ++i) {
+      int64 dim = outputs[0]->flat<int64>()(i);
+      shp.push_back(dim);
+    }
+    TF_CHECK_OK(TensorShapeUtils::MakeShape(shp, &new_dims));
+  }
+
+  return shape.IsCompatibleWith(new_dims);
+}
+
+#define IS_VALUE_CASE(DTYPE, VALUE)                   \
+  case DTYPE:                                         \
+    return AllValuesAre<EnumToDataType<DTYPE>::Type>( \
+        node.attr().at("value").tensor(), EnumToDataType<DTYPE>::Type(VALUE))
+
+#define IS_ONES_CASE(TYPE) IS_VALUE_CASE(TYPE, 1)
+#define IS_ZEROS_CASE(TYPE) IS_VALUE_CASE(TYPE, 0)
+
+bool ConstantFolding::IsOnes(const NodeDef& node) const {
+  if (feed_nodes_.find(node.name()) != feed_nodes_.end()) {
+    return false;
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: locate_symbol
+{
+  "ref": "b2b3444b71ea99685edafa7731fb7ba57939f437",
+  "symbol": "ConstantFolding::IsSimplifiableReshape"
+}
+tensorflow/core/grappler/optimizers/constant_folding.cc:1668
+
+tokens used
+input: 3,848
+cache read: 4,608
+cache write: 0
+output: 166
+reasoning output: 0
+
+The equivalent target code exists, but the older API returns `bool` instead of `Status`, so the correct backport is to replace the two fatal `CHECK`s with `false` returns rather than error statuses.
+
+tool: validate
+{
+  "ref": "b2b3444b71ea99685edafa7731fb7ba57939f437",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/grappler/optimizers/constant_folding.cc b/tensorflow/core/grappler/optimizers/constant_folding.cc\n--- a/tensorflow/core/grappler/optimizers/constant_folding.cc\n+++ b/tensorflow/core/grappler/optimizers/constant_folding.cc\n@@ -1673,7 +1673,9 @@ bool ConstantFolding::IsSimplifiableReshape(\n   if (!IsReshape(node)) {\n     return false;\n   }\n-  CHECK_LE(2, node.input_size());\n+  if (2 > node.input_size()) {\n+    return false;\n+  }\n   const NodeDef* new_shape = node_map_->GetNode(node.input(1));\n   if (!IsReallyConstant(*new_shape)) {\n     return false;\n@@ -1688,7 +1690,9 @@ bool ConstantFolding::IsSimplifiableReshape(\n   if (!s.ok()) {\n     return false;\n   }\n-  CHECK_EQ(1, outputs.size());\n+  if (outputs.size() != 1) {\n+    return false;\n+  }\n \n   const std::vector<OpInfo::TensorProperties>& props =\n       properties.GetInputProperties(node.name());\n"
+}
+Patch applied successfully
+
+tokens used
+input: 1,753
+cache read: 7,680
+cache write: 0
+output: 386
+reasoning output: 108
+
+The hunk validates cleanly against the target base. I’m applying only that source change now.
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/grappler/optimizers/constant_folding.cc\n@@\n   if (!IsReshape(node)) {\n     return false;\n   }\n-  CHECK_LE(2, node.input_size());\n+  if (2 > node.input_size()) {\n+    return false;\n+  }\n   const NodeDef* new_shape = node_map_->GetNode(node.input(1));\n   if (!IsReallyConstant(*new_shape)) {\n     return false;\n@@\n   if (!s.ok()) {\n     return false;\n   }\n-  CHECK_EQ(1, outputs.size());\n+  if (outputs.size() != 1) {\n+    return false;\n+  }\n \n   const std::vector<OpInfo::TensorProperties>& props =\n       properties.GetInputProperties(node.name());\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/grappler/optimizers/constant_folding.cc
+
+tokens used
+input: 1,236
+cache read: 8,704
+cache write: 0
+output: 245
+reasoning output: 0
+
+I’ll capture the resulting diff to confirm only the intended file changed.
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/grappler/optimizers/constant_folding.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0248-b2b3444b71ea"
+}
+warning: in the working copy of 'tensorflow/core/grappler/optimizers/constant_folding.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/grappler/optimizers/constant_folding.cc b/tensorflow/core/grappler/optimizers/constant_folding.cc
+index df4cc54757..9dc97639ce 100644
+--- a/tensorflow/core/grappler/optimizers/constant_folding.cc
++++ b/tensorflow/core/grappler/optimizers/constant_folding.cc
+@@ -1670,7 +1670,9 @@ bool ConstantFolding::IsSimplifiableReshape(
+   if (!IsReshape(node)) {
+     return false;
+   }
+-  CHECK_LE(2, node.input_size());
++  if (2 > node.input_size()) {
++    return false;
++  }
+   const NodeDef* new_shape = node_map_->GetNode(node.input(1));
+   if (!IsReallyConstant(*new_shape)) {
+     return false;
+@@ -1686,7 +1688,9 @@ bool ConstantFolding::IsSimplifiableReshape(
+   if (!s.ok()) {
+     return false;
+   }
+-  CHECK_EQ(1, outputs.size());
++  if (outputs.size() != 1) {
++    return false;
++  }
+ 
+   const std::vector<OpInfo::TensorProperties>& props =
+       properties.GetInputProperties(node.name());
+
+tokens used
+input: 489
+cache read: 9,728
+cache write: 0
+output: 98
+reasoning output: 14
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/grappler/optimizers/constant_folding.cc b/tensorflow/core/grappler/optimizers/constant_folding.cc
+    index df4cc54757..9dc97639ce 100644
+    --- a/tensorflow/core/grappler/optimizers/constant_folding.cc
+    +++ b/tensorflow/core/grappler/optimizers/constant_folding.cc
+    @@ -1670,7 +1670,9 @@ bool ConstantFolding::IsSimplifiableReshape(
+       if (!IsReshape(node)) {
+         return false;
+       }
+    -  CHECK_LE(2, node.input_size());
+    +  if (2 > node.input_size()) {
+    +    return false;
+    +  }
+       const NodeDef* new_shape = node_map_->GetNode(node.input(1));
+       if (!IsReallyConstant(*new_shape)) {
+         return false;
+    @@ -1686,7 +1688,9 @@ bool ConstantFolding::IsSimplifiableReshape(
+       if (!s.ok()) {
+         return false;
+       }
+    -  CHECK_EQ(1, outputs.size());
+    +  if (outputs.size() != 1) {
+    +    return false;
+    +  }
+     
+       const std::vector<OpInfo::TensorProperties>& props =
+           properties.GetInputProperties(node.name());
+  notes: >
+    Replaced fatal CHECKs in the older bool-returning IsSimplifiableReshape with safe false returns to avoid denial-of-service crashes.
+```
+
+tokens used
+input: 926
+cache read: 9,728
+cache write: 0
+output: 346
+reasoning output: 0

@@ -1,0 +1,1419 @@
+I’ll inspect the target-side files around each patched location, then apply the minimal equivalent changes without using the held-out backport commit.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target TensorSlice and TensorSliceReader code contexts",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Apply BuildTensorSlice validation and reader integration",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "content": "Add corresponding focused tests where target test helpers exist",
+      "status": "pending",
+      "priority": "medium"
+    },
+    {
+      "content": "Verify resulting diff and hunk applicability where useful",
+      "status": "pending",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target TensorSlice and TensorSliceReader code contexts",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Apply BuildTensorSlice validation and reader integration",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "content": "Add corresponding focused tests where target test helpers exist",
+    "status": "pending",
+    "priority": "medium"
+  },
+  {
+    "content": "Verify resulting diff and hunk applicability where useful",
+    "status": "pending",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 5,400
+cache read: 4,608
+cache write: 0
+output: 135
+reasoning output: 0
+
+tool: viewcode
+{
+  "ref": "4ed5dd431277feb6eb42955c4f97cc6cf90fdab4",
+  "path": "tensorflow/core/framework/tensor_slice.cc",
+  "startline": 1,
+  "endline": 110
+}
+Here are lines 1 through 110.
+
+/* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+==============================================================================*/
+
+#include "tensorflow/core/framework/tensor_slice.h"
+#include <vector>
+#include "tensorflow/core/lib/core/errors.h"
+#include "tensorflow/core/lib/strings/numbers.h"
+#include "tensorflow/core/lib/strings/str_util.h"
+#include "tensorflow/core/lib/strings/strcat.h"
+#include "tensorflow/core/platform/logging.h"
+
+namespace tensorflow {
+
+TensorSlice::TensorSlice(int dim) { SetFullSlice(dim); }
+
+TensorSlice::TensorSlice(const TensorSliceProto& proto) {
+  starts_.reserve(proto.extent_size());
+  lengths_.reserve(proto.extent_size());
+  for (const auto& e : proto.extent()) {
+    starts_.push_back(e.start());
+    lengths_.push_back(GetExtentLength(e));
+  }
+}
+
+TensorSlice::TensorSlice(
+    std::initializer_list<std::pair<int64, int64>> extents) {
+  starts_.reserve(extents.size());
+  lengths_.reserve(extents.size());
+  for (const auto& e : extents) {
+    starts_.push_back(e.first);
+    lengths_.push_back(e.second);
+  }
+}
+
+Status TensorSlice::Parse(const string& str, TensorSlice* slice) {
+  std::vector<string> items = str_util::Split(str, ':', str_util::SkipEmpty());
+  slice->starts_.reserve(items.size());
+  slice->lengths_.reserve(items.size());
+  for (const string& x : items) {
+    int64 s, l;
+    if (x == "-") {
+      // "everything"
+      s = 0;
+      l = kFullExtent;
+    } else {
+      std::vector<string> sl = str_util::Split(x, ',', str_util::SkipEmpty());
+      if (sl.size() != 2 || !strings::safe_strto64(sl[0], &s) ||
+          !strings::safe_strto64(sl[1], &l)) {
+        return errors::InvalidArgument(
+            "Expected a pair of numbers or '-' "
+            "but got '",
+            x, "': string = ", str);
+      }
+      if (s < 0 || l <= 0) {
+        return errors::InvalidArgument(
+            "Expected non-negative start and "
+            "positive length but got start = ",
+            s, ", length = ", l, ": string = ", str);
+      }
+    }
+    slice->starts_.push_back(s);
+    slice->lengths_.push_back(l);
+  }
+
+  return Status::OK();
+}
+
+void TensorSlice::Clear() {
+  starts_.clear();
+  lengths_.clear();
+}
+
+bool TensorSlice::IsFull() const {
+  for (int d = 0; d < dims(); ++d) {
+    if (!IsFullAt(d)) return false;
+  }
+  return true;
+}
+
+void TensorSlice::SetFullSlice(int dim) {
+  Clear();
+  starts_.reserve(dim);
+  lengths_.reserve(dim);
+  for (int d = 0; d < dim; ++d) {
+    starts_.push_back(0);
+    lengths_.push_back(kFullExtent);
+  }
+}
+
+void TensorSlice::Extend(int dim) {
+  int old_dim = dims();
+  DCHECK_LE(old_dim, dim);
+  starts_.resize(dim);
+  lengths_.resize(dim);
+  for (int d = old_dim; d < dim; ++d) {
+    starts_[d] = 0;
+    lengths_[d] = kFullExtent;
+  }
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: viewcode
+{
+  "ref": "4ed5dd431277feb6eb42955c4f97cc6cf90fdab4",
+  "path": "tensorflow/core/framework/tensor_slice.h",
+  "startline": 1,
+  "endline": 90
+}
+Here are lines 1 through 90.
+
+/* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+==============================================================================*/
+
+#ifndef TENSORFLOW_CORE_FRAMEWORK_TENSOR_SLICE_H_
+#define TENSORFLOW_CORE_FRAMEWORK_TENSOR_SLICE_H_
+
+#include <string>
+#include "third_party/eigen3/unsupported/Eigen/CXX11/Tensor"
+#include "tensorflow/core/framework/tensor_shape.h"
+#include "tensorflow/core/framework/tensor_slice.pb.h"
+#include "tensorflow/core/lib/core/status.h"
+#include "tensorflow/core/lib/core/stringpiece.h"
+#include "tensorflow/core/lib/gtl/inlined_vector.h"
+#include "tensorflow/core/platform/logging.h"
+
+namespace tensorflow {
+
+// A tensor slice represents a slice of a given tensor. It is represented by a
+// list of (start, length) pairs, where the size of the list is the rank of the
+// tensor.
+
+class TensorSlice {
+ public:
+  // Construct a tensor slice: you have a number of ways:
+  // -- creating an empty slice
+  // -- from just a dimension (in this case it will create a full slice)
+  // -- from an array of pairs of integers.
+  // -- from a TensorSliceProto protocol buffer
+  // -- from a string format of "start,length:start,length..." where each
+  //    "start,length" pair represents the slice on one dimension. We allow a
+  //    special "-" that means "everything for this dimension". One such example
+  //    is:  0,10:-:14,1:-:-
+  TensorSlice() {}
+  explicit TensorSlice(int dim);
+  explicit TensorSlice(const TensorSliceProto& proto);
+  explicit TensorSlice(std::initializer_list<std::pair<int64, int64>> extents);
+
+  static Status Parse(const string& str, TensorSlice* output);
+  static TensorSlice ParseOrDie(const string& str) {
+    TensorSlice ret;
+    Status s = Parse(str, &ret);
+    if (!s.ok()) {
+      LOG(FATAL) << "Could not parse TensorSlice";
+    }
+    return ret;
+  }
+
+  void Clear();
+
+  // Accessors
+  int dims() const { return starts_.size(); }
+
+  int64 start(int d) const {
+    DCHECK_GE(d, 0);
+    DCHECK_LT(d, dims());
+    return starts_[d];
+  }
+
+  int64 length(int d) const {
+    DCHECK_GE(d, 0);
+    DCHECK_LT(d, dims());
+    return lengths_[d];
+  }
+
+  int64 end(int d) const {
+    DCHECK_GE(d, 0);
+    DCHECK_LT(d, dims());
+    return start(d) + length(d);
+  }
+
+  void set_start(int d, int64 x) {
+    DCHECK_GE(d, 0);
+    DCHECK_LT(d, dims());
+    DCHECK_GE(x, 0);
+    starts_[d] = x;
+  }
+
+  void set_length(int d, int64 x) {
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: viewcode
+{
+  "ref": "4ed5dd431277feb6eb42955c4f97cc6cf90fdab4",
+  "path": "tensorflow/core/util/tensor_slice_reader.cc",
+  "startline": 145,
+  "endline": 195
+}
+Here are lines 145 through 195.
+
+  }
+  string value;
+  SavedTensorSlices sts;
+  const string fname = fnames_[shard];
+  VLOG(1) << "Reading meta data from file " << fname << "...";
+  Table* table;
+  Status s = open_function_(fname, &table);
+  if (!s.ok()) {
+    status_ = errors::DataLoss("Unable to open table file ", fname, ": ",
+                               s.ToString());
+    return;
+  }
+  sss_[shard].reset(table);
+  if (!(table->Get(kSavedTensorSlicesKey, &value) &&
+        ParseProtoUnlimited(&sts, value))) {
+    status_ = errors::Internal(
+        "Failed to find the saved tensor slices at the beginning of the "
+        "checkpoint file: ",
+        fname);
+    return;
+  }
+  status_ = CheckVersions(sts.meta().versions(), TF_CHECKPOINT_VERSION,
+                          TF_CHECKPOINT_VERSION_MIN_PRODUCER, "Checkpoint",
+                          "checkpoint");
+  if (!status_.ok()) return;
+  for (const SavedSliceMeta& ssm : sts.meta().tensor()) {
+    TensorShape ssm_shape;
+    status_ = TensorShape::BuildTensorShapeBase(ssm.shape(), &ssm_shape);
+    if (!status_.ok()) return;
+    for (const TensorSliceProto& tsp : ssm.slice()) {
+      TensorSlice ss_slice(tsp);
+      status_ = RegisterTensorSlice(ssm.name(), ssm_shape, ssm.type(), fname,
+                                    ss_slice, &tensors_);
+      if (!status_.ok()) return;
+    }
+  }
+}
+
+void TensorSliceReader::LoadAllShards() const {
+  VLOG(1) << "Loading all shards for " << filepattern_;
+  for (size_t i = 0; i < fnames_.size() && status_.ok(); ++i) {
+    LoadShard(i);
+  }
+  all_shards_loaded_ = true;
+}
+
+const TensorSliceSet* TensorSliceReader::FindTensorSlice(
+    const string& name, const TensorSlice& slice,
+    std::vector<std::pair<TensorSlice, string>>* details) const {
+  const TensorSliceSet* tss = gtl::FindPtrOrNull(tensors_, name);
+  if (tss && !tss->QueryMeta(slice, details)) {
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: viewcode
+{
+  "ref": "4ed5dd431277feb6eb42955c4f97cc6cf90fdab4",
+  "path": "tensorflow/core/framework/tensor_slice_test.cc",
+  "startline": 1,
+  "endline": 155
+}
+Here are lines 1 through 155.
+
+/* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+==============================================================================*/
+
+#include "tensorflow/core/framework/tensor_slice.h"
+
+#include "tensorflow/core/lib/core/status_test_util.h"
+#include "tensorflow/core/platform/logging.h"
+#include "tensorflow/core/platform/protobuf.h"
+#include "tensorflow/core/platform/test.h"
+
+namespace tensorflow {
+namespace {
+
+// Basic tests
+TEST(TensorSliceTest, Basic) {
+  {
+    // Repeatedly setting FullSlice should work.
+    TensorSlice s(3);
+    EXPECT_EQ("-:-:-", s.DebugString());
+    EXPECT_TRUE(s.IsFull());
+
+    s.SetFullSlice(4);
+    EXPECT_EQ("-:-:-:-", s.DebugString());
+    EXPECT_TRUE(s.IsFull());
+  }
+}
+
+// Testing for serialization and parsing for the string format of slices.
+TEST(TensorSliceTest, Serialization) {
+  // Serialization
+  {
+    TensorSlice s({{0, -1}, {0, 10}, {14, 1}, {0, -1}});
+    EXPECT_EQ("-:0,10:14,1:-", s.DebugString());
+    EXPECT_TRUE(!s.IsFull());
+  }
+
+  {
+    TensorSliceProto proto;
+    // Define ptxt outside ASSERT_TRUE call to work around bug in some
+    // versions of gcc that breaks when you use raw string literals
+    // inside macro expansions.
+    //   See: https://gcc.gnu.org/bugzilla/show_bug.cgi?id=55971
+    const char* ptxt = R"PROTO(
+      extent { }
+      extent { start: 0 length: 10 }
+      extent { start: 14 length: 1 }
+      extent { }
+    )PROTO";
+    ASSERT_TRUE(protobuf::TextFormat::ParseFromString(ptxt, &proto));
+    TensorSlice s(proto);
+    EXPECT_EQ("-:0,10:14,1:-", s.DebugString());
+    EXPECT_TRUE(!s.IsFull());
+  }
+
+  // Parsing
+  {
+    TensorSlice s = TensorSlice::ParseOrDie("-:-:1,3:4,5");
+    TensorSliceProto proto;
+    s.AsProto(&proto);
+    EXPECT_EQ(
+        "extent { } "
+        "extent { } "
+        "extent { start: 1 length: 3 } "
+        "extent { start: 4 length: 5 }",
+        proto.ShortDebugString());
+    EXPECT_TRUE(!s.IsFull());
+  }
+
+  // Failed parsing
+  {
+    TensorSlice slice;
+    Status s = TensorSlice::Parse("-:-:1,3:4:5", &slice);
+    EXPECT_EQ(
+        "Invalid argument: "
+        "Expected a pair of numbers or '-' but got '4': "
+        "string = -:-:1,3:4:5",
+        s.ToString());
+  }
+  {
+    TensorSlice slice;
+    Status s = TensorSlice::Parse("-:-1,3", &slice);
+    EXPECT_EQ(
+        "Invalid argument: "
+        "Expected non-negative start and positive length but got "
+        "start = -1, length = 3: string = -:-1,3",
+        s.ToString());
+  }
+
+  // int64 parsing
+  {
+    TensorSlice s =
+        TensorSlice::ParseOrDie("9223372036854775807,9223372036854775807");
+    TensorSliceProto proto;
+    s.AsProto(&proto);
+    EXPECT_EQ(
+        "extent { start: 9223372036854775807 length: 9223372036854775807 }",
+        proto.ShortDebugString());
+    EXPECT_TRUE(!s.IsFull());
+  }
+
+  // int64 parsing failure
+  {
+    TensorSlice slice;
+    Status s =
+        TensorSlice::Parse("19223372036854775808,19223372036854775808", &slice);
+    EXPECT_EQ(
+        "Invalid argument: Expected a pair of numbers or '-' but got "
+        "'19223372036854775808,19223372036854775808': string = "
+        "19223372036854775808,19223372036854775808",
+        s.ToString());
+  }
+}
+
+// Testing the slice intersection
+TEST(TensorSliceTest, Intersection) {
+  // "EVERYTHING" intersects with everything
+  {
+    TensorSlice a = TensorSlice::ParseOrDie("-:-");
+    TensorSlice b = TensorSlice::ParseOrDie("1,2:3,4");
+    TensorSlice c;
+    EXPECT_TRUE(a.Intersect(b, &c));
+    EXPECT_EQ("1,2:3,4", c.DebugString());
+  }
+
+  {
+    TensorSlice a = TensorSlice::ParseOrDie("-:-");
+    TensorSlice b = TensorSlice::ParseOrDie("1,2:3,4");
+    TensorSlice c;
+    EXPECT_TRUE(b.Intersect(a, &c));
+    EXPECT_EQ("1,2:3,4", c.DebugString());
+  }
+
+  // Overlap at all dimensions
+  {
+    TensorSlice a = TensorSlice::ParseOrDie("1,5:2,6:3,7:5,10");
+    TensorSlice b = TensorSlice::ParseOrDie("1,2:3,4:9,10:12,1");
+    TensorSlice c;
+    EXPECT_TRUE(a.Intersect(b, &c));
+    EXPECT_EQ("1,2:3,4:9,1:12,1", c.DebugString());
+  }
+
+  // A mixture of everything and non-trivial slices
+  {
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: viewcode
+{
+  "ref": "4ed5dd431277feb6eb42955c4f97cc6cf90fdab4",
+  "path": "tensorflow/core/util/tensor_slice_reader_test.cc",
+  "startline": 380,
+  "endline": 455
+}
+Here are lines 380 through 455.
+
+  // unset (invalid) type.
+  EXPECT_TRUE(reader.HasTensor("test", nullptr, nullptr));
+  std::unique_ptr<Tensor> tensor;
+  EXPECT_FALSE(reader.GetTensor("test", &tensor).ok());
+}
+
+TEST(TensorSliceReaderTest, UnsupportedTensorType) {
+  const string fname = io::JoinPath(testing::TmpDir(), "int32_ref_checkpoint");
+  TensorSliceWriter writer(fname, CreateTableTensorSliceBuilder);
+  const int32 data[] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9};
+  TensorShape shape({4, 5});
+  TensorSlice slice = TensorSlice::ParseOrDie("0,2:-");
+  TF_CHECK_OK(writer.Add("test", shape, slice, data));
+  TF_CHECK_OK(writer.Finish());
+
+  MutateSavedTensorSlices(fname, [](SavedTensorSlices sts) {
+    if (sts.has_meta()) {
+      for (auto& tensor : *sts.mutable_meta()->mutable_tensor()) {
+        tensor.set_type(DT_INT32_REF);
+      }
+    }
+    return sts.SerializeAsString();
+  });
+
+  TensorSliceReader reader(fname, OpenTableTensorSliceReader);
+  TF_CHECK_OK(reader.status());
+
+  // The tensor should be present, but loading it should fail due to the
+  // unsupported type.
+  EXPECT_TRUE(reader.HasTensor("test", nullptr, nullptr));
+  std::unique_ptr<Tensor> tensor;
+  EXPECT_FALSE(reader.GetTensor("test", &tensor).ok());
+}
+
+TEST(TensorSliceReaderTest, NegativeTensorShapeDimension) {
+  const string fname =
+      io::JoinPath(testing::TmpDir(), "negative_dim_checkpoint");
+  TensorSliceWriter writer(fname, CreateTableTensorSliceBuilder);
+  const int32 data[] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9};
+  TF_CHECK_OK(writer.Add("test", TensorShape({4, 5}),
+                         TensorSlice::ParseOrDie("0,2:-"), data));
+  TF_CHECK_OK(writer.Finish());
+
+  MutateSavedTensorSlices(fname, [](SavedTensorSlices sts) {
+    if (sts.has_meta()) {
+      for (auto& tensor : *sts.mutable_meta()->mutable_tensor()) {
+        for (auto& dim : *tensor.mutable_shape()->mutable_dim()) {
+          dim.set_size(-dim.size());
+        }
+      }
+    }
+    return sts.SerializeAsString();
+  });
+
+  TensorSliceReader reader(fname, OpenTableTensorSliceReader);
+  // The negative dimension should cause loading to fail.
+  EXPECT_FALSE(reader.status().ok());
+}
+
+void CachedTensorSliceReaderTesterHelper(
+    const TensorSliceWriter::CreateBuilderFunction& create_function,
+    const TensorSliceReader::OpenTableFunction& open_function) {
+  const string fname_base = io::JoinPath(testing::TmpDir(), "float_checkpoint");
+
+  TensorShape shape({4, 5});
+
+  // File #0 contains a slice that is the top two rows:
+  //
+  //   0   1   2   3   4
+  //   5   6   7   8   9
+  //   .   .   .   .   .
+  //   .   .   .   .   .
+  {
+    const string fname = strings::StrCat(fname_base, "_0");
+    TensorSliceWriter writer(fname, create_function);
+    const float data[] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9};
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tokens used
+input: 563
+cache read: 9,728
+cache write: 0
+output: 299
+reasoning output: 0
+
+The target release has the same affected constructor and reader loading path, so the security check can be backported directly by adding a validated factory and using it for checkpoint slice metadata.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target TensorSlice and TensorSliceReader code contexts",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Apply BuildTensorSlice validation and reader integration",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Add corresponding focused tests where target test helpers exist",
+      "status": "pending",
+      "priority": "medium"
+    },
+    {
+      "content": "Verify resulting diff and hunk applicability where useful",
+      "status": "pending",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target TensorSlice and TensorSliceReader code contexts",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Apply BuildTensorSlice validation and reader integration",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Add corresponding focused tests where target test helpers exist",
+    "status": "pending",
+    "priority": "medium"
+  },
+  {
+    "content": "Verify resulting diff and hunk applicability where useful",
+    "status": "pending",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 5,122
+cache read: 9,728
+cache write: 0
+output: 145
+reasoning output: 90
+
+I’m applying the minimal source edits now: introduce `TensorSlice::BuildTensorSlice`, route checkpoint loading through it, and add the two regression tests from the source patch adapted to this tree’s existing test context.
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/framework/tensor_slice.cc\n@@\n #include \"tensorflow/core/framework/tensor_slice.h\"\n+\n+#include <limits>\n #include <vector>\n+\n #include \"tensorflow/core/lib/core/errors.h\"\n #include \"tensorflow/core/lib/strings/numbers.h\"\n #include \"tensorflow/core/lib/strings/str_util.h\"\n@@\n TensorSlice::TensorSlice(\n     std::initializer_list<std::pair<int64, int64>> extents) {\n   starts_.reserve(extents.size());\n   lengths_.reserve(extents.size());\n@@\n   }\n }\n \n+Status TensorSlice::BuildTensorSlice(const TensorSliceProto& proto,\n+                                     TensorSlice* output) {\n+  output->Clear();\n+  output->starts_.reserve(proto.extent_size());\n+  output->lengths_.reserve(proto.extent_size());\n+  for (const auto& e : proto.extent()) {\n+    int64_t l = GetExtentLength(e);\n+    if (e.start() != 0 || l != kFullExtent) {\n+      if (e.start() < 0 || l <= 0) {\n+        return errors::InvalidArgument(\n+            \"Expected non-negative start and positive length but got start = \",\n+            e.start(), \", length = \", l, \": extent = \", e.ShortDebugString());\n+      }\n+      // Calculating the extent end must not cause signed integer overflow.\n+      if (static_cast<uint64_t>(e.start()) + static_cast<uint64_t>(e.length()) >\n+          std::numeric_limits<int64_t>::max()) {\n+        return errors::InvalidArgument(\n+            \"Extent end exceeds the maximum possible size: extent = \",\n+            e.ShortDebugString());\n+      }\n+    }\n+    output->starts_.push_back(e.start());\n+    output->lengths_.push_back(l);\n+  }\n+\n+  return Status::OK();\n+}\n+\n Status TensorSlice::Parse(const string& str, TensorSlice* slice) {\n   std::vector<string> items = str_util::Split(str, ':', str_util::SkipEmpty());\n   slice->starts_.reserve(items.size());\n*** Update File: tensorflow/core/framework/tensor_slice.h\n@@\n   TensorSlice() {}\n   explicit TensorSlice(int dim);\n   explicit TensorSlice(const TensorSliceProto& proto);\n   explicit TensorSlice(std::initializer_list<std::pair<int64, int64>> extents);\n \n+  // This factory methods should be used instead of the constructor that takes a\n+  // `TensorSliceProto` if calling code cannot validate that the sizes specify a\n+  // valid `TensorSlice`.\n+  static Status BuildTensorSlice(const TensorSliceProto& proto,\n+                                 TensorSlice* output);\n+\n   static Status Parse(const string& str, TensorSlice* output);\n   static TensorSlice ParseOrDie(const string& str) {\n     TensorSlice ret;\n*** Update File: tensorflow/core/util/tensor_slice_reader.cc\n@@\n     status_ = TensorShape::BuildTensorShapeBase(ssm.shape(), &ssm_shape);\n     if (!status_.ok()) return;\n     for (const TensorSliceProto& tsp : ssm.slice()) {\n-      TensorSlice ss_slice(tsp);\n+      TensorSlice ss_slice;\n+      status_ = TensorSlice::BuildTensorSlice(tsp, &ss_slice);\n+      if (!status_.ok()) return;\n       status_ = RegisterTensorSlice(ssm.name(), ssm_shape, ssm.type(), fname,\n                                     ss_slice, &tensors_);\n       if (!status_.ok()) return;\n*** Update File: tensorflow/core/framework/tensor_slice_test.cc\n@@\n #include \"tensorflow/core/framework/tensor_slice.h\"\n \n+#include <limits>\n+\n #include \"tensorflow/core/lib/core/status_test_util.h\"\n #include \"tensorflow/core/platform/logging.h\"\n #include \"tensorflow/core/platform/protobuf.h\"\n@@\n   }\n }\n \n+// Testing `BuildTensorSlice` with valid and invalid input protos.\n+TEST(TensorSliceTest, BuildTensorSlice) {\n+  TensorSliceProto proto;\n+  TensorSlice({{0, -1}, {0, 10}, {14, 1}}).AsProto(&proto);\n+  TensorSlice s;\n+\n+  // Successful building.\n+  {\n+    TF_ASSERT_OK(TensorSlice::BuildTensorSlice(proto, &s));\n+    EXPECT_EQ(\"-:0,10:14,1\", s.DebugString());\n+  }\n+\n+  // Failed building due to negative extent start.\n+  {\n+    TensorSliceProto invalid_proto = proto;\n+    invalid_proto.mutable_extent(0)->set_start(-1);\n+    EXPECT_FALSE(TensorSlice::BuildTensorSlice(invalid_proto, &s).ok());\n+  }\n+\n+  // Failed building due to negative extent length.\n+  {\n+    TensorSliceProto invalid_proto = proto;\n+    invalid_proto.mutable_extent(2)->set_length(-1);\n+    EXPECT_FALSE(TensorSlice::BuildTensorSlice(invalid_proto, &s).ok());\n+  }\n+\n+  // Failed building due to missing extent length.\n+  {\n+    TensorSliceProto invalid_proto = proto;\n+    invalid_proto.mutable_extent(2)->clear_length();\n+    EXPECT_FALSE(TensorSlice::BuildTensorSlice(invalid_proto, &s).ok());\n+  }\n+\n+  // Failed building due to extent end overflowing.\n+  {\n+    TensorSliceProto invalid_proto = proto;\n+    invalid_proto.mutable_extent(2)->set_length(\n+        std::numeric_limits<int64_t>::max());\n+    EXPECT_FALSE(TensorSlice::BuildTensorSlice(invalid_proto, &s).ok());\n+  }\n+}\n+\n // Testing the slice intersection\n TEST(TensorSliceTest, Intersection) {\n   // \"EVERYTHING\" intersects with everything\n*** Update File: tensorflow/core/util/tensor_slice_reader_test.cc\n@@\n TEST(TensorSliceReaderTest, NegativeTensorShapeDimension) {\n   const string fname =\n       io::JoinPath(testing::TmpDir(), \"negative_dim_checkpoint\");\n   TensorSliceWriter writer(fname, CreateTableTensorSliceBuilder);\n@@\n   // The negative dimension should cause loading to fail.\n   EXPECT_FALSE(reader.status().ok());\n }\n \n+TEST(TensorSliceReaderTest, InvalidTensorSlice) {\n+  const string fname =\n+      io::JoinPath(testing::TmpDir(), \"invalid_slice_checkpoint\");\n+  TensorSliceWriter writer(fname, CreateTableTensorSliceBuilder);\n+  const int32 data[] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9};\n+  TF_CHECK_OK(writer.Add(\"test\", TensorShape({4, 5}),\n+                         TensorSlice::ParseOrDie(\"0,2:-\"), data));\n+  TF_CHECK_OK(writer.Finish());\n+\n+  MutateSavedTensorSlices(fname, [](SavedTensorSlices sts) {\n+    if (sts.has_meta()) {\n+      for (auto& tensor : *sts.mutable_meta()->mutable_tensor()) {\n+        tensor.mutable_slice(0)->mutable_extent(0)->set_length(-10);\n+      }\n+    }\n+    return sts.SerializeAsString();\n+  });\n+\n+  TensorSliceReader reader(fname, OpenTableTensorSliceReader);\n+  // The negative exent length should cause loading to fail.\n+  EXPECT_FALSE(reader.status().ok());\n+}\n+\n void CachedTensorSliceReaderTesterHelper(\n     const TensorSliceWriter::CreateBuilderFunction& create_function,\n     const TensorSliceReader::OpenTableFunction& open_function) {\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/framework/tensor_slice.cc
+M tensorflow/core/framework/tensor_slice.h
+M tensorflow/core/util/tensor_slice_reader.cc
+M tensorflow/core/framework/tensor_slice_test.cc
+M tensorflow/core/util/tensor_slice_reader_test.cc
+
+tokens used
+input: 1,409
+cache read: 13,824
+cache write: 0
+output: 1,878
+reasoning output: 0
+
+The patch is applied. I’m checking the resulting diff and doing lightweight validation rather than running full TensorFlow builds.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target TensorSlice and TensorSliceReader code contexts",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Apply BuildTensorSlice validation and reader integration",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Add corresponding focused tests where target test helpers exist",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "content": "Verify resulting diff and hunk applicability where useful",
+      "status": "in_progress",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target TensorSlice and TensorSliceReader code contexts",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Apply BuildTensorSlice validation and reader integration",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Add corresponding focused tests where target test helpers exist",
+    "status": "completed",
+    "priority": "medium"
+  },
+  {
+    "content": "Verify resulting diff and hunk applicability where useful",
+    "status": "in_progress",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 2,329
+cache read: 14,848
+cache write: 0
+output: 131
+reasoning output: 0
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/framework/tensor_slice.cc tensorflow/core/framework/tensor_slice.h tensorflow/core/framework/tensor_slice_test.cc tensorflow/core/util/tensor_slice_reader.cc tensorflow/core/util/tensor_slice_reader_test.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0087-4ed5dd431277",
+  "timeout": 120000
+}
+warning: in the working copy of 'tensorflow/core/framework/tensor_slice.cc', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'tensorflow/core/framework/tensor_slice.h', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'tensorflow/core/framework/tensor_slice_test.cc', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'tensorflow/core/util/tensor_slice_reader.cc', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'tensorflow/core/util/tensor_slice_reader_test.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/framework/tensor_slice.cc b/tensorflow/core/framework/tensor_slice.cc
+index 975e1e2e24..7041b01115 100644
+--- a/tensorflow/core/framework/tensor_slice.cc
++++ b/tensorflow/core/framework/tensor_slice.cc
+@@ -14,7 +14,10 @@ limitations under the License.
+ ==============================================================================*/
+ 
+ #include "tensorflow/core/framework/tensor_slice.h"
++
++#include <limits>
+ #include <vector>
++
+ #include "tensorflow/core/lib/core/errors.h"
+ #include "tensorflow/core/lib/strings/numbers.h"
+ #include "tensorflow/core/lib/strings/str_util.h"
+@@ -44,6 +47,34 @@ TensorSlice::TensorSlice(
+   }
+ }
+ 
++Status TensorSlice::BuildTensorSlice(const TensorSliceProto& proto,
++                                     TensorSlice* output) {
++  output->Clear();
++  output->starts_.reserve(proto.extent_size());
++  output->lengths_.reserve(proto.extent_size());
++  for (const auto& e : proto.extent()) {
++    int64_t l = GetExtentLength(e);
++    if (e.start() != 0 || l != kFullExtent) {
++      if (e.start() < 0 || l <= 0) {
++        return errors::InvalidArgument(
++            "Expected non-negative start and positive length but got start = ",
++            e.start(), ", length = ", l, ": extent = ", e.ShortDebugString());
++      }
++      // Calculating the extent end must not cause signed integer overflow.
++      if (static_cast<uint64_t>(e.start()) + static_cast<uint64_t>(e.length()) >
++          std::numeric_limits<int64_t>::max()) {
++        return errors::InvalidArgument(
++            "Extent end exceeds the maximum possible size: extent = ",
++            e.ShortDebugString());
++      }
++    }
++    output->starts_.push_back(e.start());
++    output->lengths_.push_back(l);
++  }
++
++  return Status::OK();
++}
++
+ Status TensorSlice::Parse(const string& str, TensorSlice* slice) {
+   std::vector<string> items = str_util::Split(str, ':', str_util::SkipEmpty());
+   slice->starts_.reserve(items.size());
+diff --git a/tensorflow/core/framework/tensor_slice.h b/tensorflow/core/framework/tensor_slice.h
+index 82f21fb17e..4c27956945 100644
+--- a/tensorflow/core/framework/tensor_slice.h
++++ b/tensorflow/core/framework/tensor_slice.h
+@@ -47,6 +47,12 @@ class TensorSlice {
+   explicit TensorSlice(const TensorSliceProto& proto);
+   explicit TensorSlice(std::initializer_list<std::pair<int64, int64>> extents);
+ 
++  // This factory methods should be used instead of the constructor that takes a
++  // `TensorSliceProto` if calling code cannot validate that the sizes specify a
++  // valid `TensorSlice`.
++  static Status BuildTensorSlice(const TensorSliceProto& proto,
++                                 TensorSlice* output);
++
+   static Status Parse(const string& str, TensorSlice* output);
+   static TensorSlice ParseOrDie(const string& str) {
+     TensorSlice ret;
+diff --git a/tensorflow/core/framework/tensor_slice_test.cc b/tensorflow/core/framework/tensor_slice_test.cc
+index 54e680484e..69b7c7cd08 100644
+--- a/tensorflow/core/framework/tensor_slice_test.cc
++++ b/tensorflow/core/framework/tensor_slice_test.cc
+@@ -15,6 +15,8 @@ limitations under the License.
+ 
+ #include "tensorflow/core/framework/tensor_slice.h"
+ 
++#include <limits>
++
+ #include "tensorflow/core/lib/core/status_test_util.h"
+ #include "tensorflow/core/platform/logging.h"
+ #include "tensorflow/core/platform/protobuf.h"
+@@ -123,6 +125,48 @@ TEST(TensorSliceTest, Serialization) {
+   }
+ }
+ 
++// Testing `BuildTensorSlice` with valid and invalid input protos.
++TEST(TensorSliceTest, BuildTensorSlice) {
++  TensorSliceProto proto;
++  TensorSlice({{0, -1}, {0, 10}, {14, 1}}).AsProto(&proto);
++  TensorSlice s;
++
++  // Successful building.
++  {
++    TF_ASSERT_OK(TensorSlice::BuildTensorSlice(proto, &s));
++    EXPECT_EQ("-:0,10:14,1", s.DebugString());
++  }
++
++  // Failed building due to negative extent start.
++  {
++    TensorSliceProto invalid_proto = proto;
++    invalid_proto.mutable_extent(0)->set_start(-1);
++    EXPECT_FALSE(TensorSlice::BuildTensorSlice(invalid_proto, &s).ok());
++  }
++
++  // Failed building due to negative extent length.
++  {
++    TensorSliceProto invalid_proto = proto;
++    invalid_proto.mutable_extent(2)->set_length(-1);
++    EXPECT_FALSE(TensorSlice::BuildTensorSlice(invalid_proto, &s).ok());
++  }
++
++  // Failed building due to missing extent length.
++  {
++    TensorSliceProto invalid_proto = proto;
++    invalid_proto.mutable_extent(2)->clear_length();
++    EXPECT_FALSE(TensorSlice::BuildTensorSlice(invalid_proto, &s).ok());
++  }
++
++  // Failed building due to extent end overflowing.
++  {
++    TensorSliceProto invalid_proto = proto;
++    invalid_proto.mutable_extent(2)->set_length(
++        std::numeric_limits<int64_t>::max());
++    EXPECT_FALSE(TensorSlice::BuildTensorSlice(invalid_proto, &s).ok());
++  }
++}
++
+ // Testing the slice intersection
+ TEST(TensorSliceTest, Intersection) {
+   // "EVERYTHING" intersects with everything
+diff --git a/tensorflow/core/util/tensor_slice_reader.cc b/tensorflow/core/util/tensor_slice_reader.cc
+index da5ac17ee0..fd98d1b404 100644
+--- a/tensorflow/core/util/tensor_slice_reader.cc
++++ b/tensorflow/core/util/tensor_slice_reader.cc
+@@ -172,7 +172,9 @@ void TensorSliceReader::LoadShard(int shard) const {
+     status_ = TensorShape::BuildTensorShapeBase(ssm.shape(), &ssm_shape);
+     if (!status_.ok()) return;
+     for (const TensorSliceProto& tsp : ssm.slice()) {
+-      TensorSlice ss_slice(tsp);
++      TensorSlice ss_slice;
++      status_ = TensorSlice::BuildTensorSlice(tsp, &ss_slice);
++      if (!status_.ok()) return;
+       status_ = RegisterTensorSlice(ssm.name(), ssm_shape, ssm.type(), fname,
+                                     ss_slice, &tensors_);
+       if (!status_.ok()) return;
+diff --git a/tensorflow/core/util/tensor_slice_reader_test.cc b/tensorflow/core/util/tensor_slice_reader_test.cc
+index 55ab961183..e32af89ea5 100644
+--- a/tensorflow/core/util/tensor_slice_reader_test.cc
++++ b/tensorflow/core/util/tensor_slice_reader_test.cc
+@@ -436,6 +436,29 @@ TEST(TensorSliceReaderTest, NegativeTensorShapeDimension) {
+   EXPECT_FALSE(reader.status().ok());
+ }
+ 
++TEST(TensorSliceReaderTest, InvalidTensorSlice) {
++  const string fname =
++      io::JoinPath(testing::TmpDir(), "invalid_slice_checkpoint");
++  TensorSliceWriter writer(fname, CreateTableTensorSliceBuilder);
++  const int32 data[] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9};
++  TF_CHECK_OK(writer.Add("test", TensorShape({4, 5}),
++                         TensorSlice::ParseOrDie("0,2:-"), data));
++  TF_CHECK_OK(writer.Finish());
++
++  MutateSavedTensorSlices(fname, [](SavedTensorSlices sts) {
++    if (sts.has_meta()) {
++      for (auto& tensor : *sts.mutable_meta()->mutable_tensor()) {
++        tensor.mutable_slice(0)->mutable_extent(0)->set_length(-10);
++      }
++    }
++    return sts.SerializeAsString();
++  });
++
++  TensorSliceReader reader(fname, OpenTableTensorSliceReader);
++  // The negative exent length should cause loading to fail.
++  EXPECT_FALSE(reader.status().ok());
++}
++
+ void CachedTensorSliceReaderTesterHelper(
+     const TensorSliceWriter::CreateBuilderFunction& create_function,
+     const TensorSliceReader::OpenTableFunction& open_function) {
+
+tool: bash
+{
+  "command": "git status --short",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0087-4ed5dd431277",
+  "timeout": 120000
+}
+ M tensorflow/core/framework/tensor_slice.cc
+ M tensorflow/core/framework/tensor_slice.h
+ M tensorflow/core/framework/tensor_slice_test.cc
+ M tensorflow/core/util/tensor_slice_reader.cc
+ M tensorflow/core/util/tensor_slice_reader_test.cc
+
+tokens used
+input: 560
+cache read: 16,896
+cache write: 0
+output: 184
+reasoning output: 0
+
+tool: bash
+{
+  "command": "git diff --check",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0087-4ed5dd431277",
+  "timeout": 120000
+}
+warning: in the working copy of 'tensorflow/core/framework/tensor_slice.cc', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'tensorflow/core/framework/tensor_slice.h', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'tensorflow/core/framework/tensor_slice_test.cc', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'tensorflow/core/util/tensor_slice_reader.cc', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'tensorflow/core/util/tensor_slice_reader_test.cc', LF will be replaced by CRLF the next time Git touches it
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/framework/tensor_slice.cc tensorflow/core/framework/tensor_slice.h tensorflow/core/framework/tensor_slice_test.cc tensorflow/core/util/tensor_slice_reader.cc tensorflow/core/util/tensor_slice_reader_test.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0087-4ed5dd431277",
+  "timeout": 120000
+}
+warning: in the working copy of 'tensorflow/core/framework/tensor_slice.cc', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'tensorflow/core/framework/tensor_slice.h', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'tensorflow/core/framework/tensor_slice_test.cc', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'tensorflow/core/util/tensor_slice_reader.cc', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'tensorflow/core/util/tensor_slice_reader_test.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/framework/tensor_slice.cc b/tensorflow/core/framework/tensor_slice.cc
+index 975e1e2e24..7041b01115 100644
+--- a/tensorflow/core/framework/tensor_slice.cc
++++ b/tensorflow/core/framework/tensor_slice.cc
+@@ -14,7 +14,10 @@ limitations under the License.
+ ==============================================================================*/
+ 
+ #include "tensorflow/core/framework/tensor_slice.h"
++
++#include <limits>
+ #include <vector>
++
+ #include "tensorflow/core/lib/core/errors.h"
+ #include "tensorflow/core/lib/strings/numbers.h"
+ #include "tensorflow/core/lib/strings/str_util.h"
+@@ -44,6 +47,34 @@ TensorSlice::TensorSlice(
+   }
+ }
+ 
++Status TensorSlice::BuildTensorSlice(const TensorSliceProto& proto,
++                                     TensorSlice* output) {
++  output->Clear();
++  output->starts_.reserve(proto.extent_size());
++  output->lengths_.reserve(proto.extent_size());
++  for (const auto& e : proto.extent()) {
++    int64_t l = GetExtentLength(e);
++    if (e.start() != 0 || l != kFullExtent) {
++      if (e.start() < 0 || l <= 0) {
++        return errors::InvalidArgument(
++            "Expected non-negative start and positive length but got start = ",
++            e.start(), ", length = ", l, ": extent = ", e.ShortDebugString());
++      }
++      // Calculating the extent end must not cause signed integer overflow.
++      if (static_cast<uint64_t>(e.start()) + static_cast<uint64_t>(e.length()) >
++          std::numeric_limits<int64_t>::max()) {
++        return errors::InvalidArgument(
++            "Extent end exceeds the maximum possible size: extent = ",
++            e.ShortDebugString());
++      }
++    }
++    output->starts_.push_back(e.start());
++    output->lengths_.push_back(l);
++  }
++
++  return Status::OK();
++}
++
+ Status TensorSlice::Parse(const string& str, TensorSlice* slice) {
+   std::vector<string> items = str_util::Split(str, ':', str_util::SkipEmpty());
+   slice->starts_.reserve(items.size());
+diff --git a/tensorflow/core/framework/tensor_slice.h b/tensorflow/core/framework/tensor_slice.h
+index 82f21fb17e..4c27956945 100644
+--- a/tensorflow/core/framework/tensor_slice.h
++++ b/tensorflow/core/framework/tensor_slice.h
+@@ -47,6 +47,12 @@ class TensorSlice {
+   explicit TensorSlice(const TensorSliceProto& proto);
+   explicit TensorSlice(std::initializer_list<std::pair<int64, int64>> extents);
+ 
++  // This factory methods should be used instead of the constructor that takes a
++  // `TensorSliceProto` if calling code cannot validate that the sizes specify a
++  // valid `TensorSlice`.
++  static Status BuildTensorSlice(const TensorSliceProto& proto,
++                                 TensorSlice* output);
++
+   static Status Parse(const string& str, TensorSlice* output);
+   static TensorSlice ParseOrDie(const string& str) {
+     TensorSlice ret;
+diff --git a/tensorflow/core/framework/tensor_slice_test.cc b/tensorflow/core/framework/tensor_slice_test.cc
+index 54e680484e..69b7c7cd08 100644
+--- a/tensorflow/core/framework/tensor_slice_test.cc
++++ b/tensorflow/core/framework/tensor_slice_test.cc
+@@ -15,6 +15,8 @@ limitations under the License.
+ 
+ #include "tensorflow/core/framework/tensor_slice.h"
+ 
++#include <limits>
++
+ #include "tensorflow/core/lib/core/status_test_util.h"
+ #include "tensorflow/core/platform/logging.h"
+ #include "tensorflow/core/platform/protobuf.h"
+@@ -123,6 +125,48 @@ TEST(TensorSliceTest, Serialization) {
+   }
+ }
+ 
++// Testing `BuildTensorSlice` with valid and invalid input protos.
++TEST(TensorSliceTest, BuildTensorSlice) {
++  TensorSliceProto proto;
++  TensorSlice({{0, -1}, {0, 10}, {14, 1}}).AsProto(&proto);
++  TensorSlice s;
++
++  // Successful building.
++  {
++    TF_ASSERT_OK(TensorSlice::BuildTensorSlice(proto, &s));
++    EXPECT_EQ("-:0,10:14,1", s.DebugString());
++  }
++
++  // Failed building due to negative extent start.
++  {
++    TensorSliceProto invalid_proto = proto;
++    invalid_proto.mutable_extent(0)->set_start(-1);
++    EXPECT_FALSE(TensorSlice::BuildTensorSlice(invalid_proto, &s).ok());
++  }
++
++  // Failed building due to negative extent length.
++  {
++    TensorSliceProto invalid_proto = proto;
++    invalid_proto.mutable_extent(2)->set_length(-1);
++    EXPECT_FALSE(TensorSlice::BuildTensorSlice(invalid_proto, &s).ok());
++  }
++
++  // Failed building due to missing extent length.
++  {
++    TensorSliceProto invalid_proto = proto;
++    invalid_proto.mutable_extent(2)->clear_length();
++    EXPECT_FALSE(TensorSlice::BuildTensorSlice(invalid_proto, &s).ok());
++  }
++
++  // Failed building due to extent end overflowing.
++  {
++    TensorSliceProto invalid_proto = proto;
++    invalid_proto.mutable_extent(2)->set_length(
++        std::numeric_limits<int64_t>::max());
++    EXPECT_FALSE(TensorSlice::BuildTensorSlice(invalid_proto, &s).ok());
++  }
++}
++
+ // Testing the slice intersection
+ TEST(TensorSliceTest, Intersection) {
+   // "EVERYTHING" intersects with everything
+diff --git a/tensorflow/core/util/tensor_slice_reader.cc b/tensorflow/core/util/tensor_slice_reader.cc
+index da5ac17ee0..fd98d1b404 100644
+--- a/tensorflow/core/util/tensor_slice_reader.cc
++++ b/tensorflow/core/util/tensor_slice_reader.cc
+@@ -172,7 +172,9 @@ void TensorSliceReader::LoadShard(int shard) const {
+     status_ = TensorShape::BuildTensorShapeBase(ssm.shape(), &ssm_shape);
+     if (!status_.ok()) return;
+     for (const TensorSliceProto& tsp : ssm.slice()) {
+-      TensorSlice ss_slice(tsp);
++      TensorSlice ss_slice;
++      status_ = TensorSlice::BuildTensorSlice(tsp, &ss_slice);
++      if (!status_.ok()) return;
+       status_ = RegisterTensorSlice(ssm.name(), ssm_shape, ssm.type(), fname,
+                                     ss_slice, &tensors_);
+       if (!status_.ok()) return;
+diff --git a/tensorflow/core/util/tensor_slice_reader_test.cc b/tensorflow/core/util/tensor_slice_reader_test.cc
+index 55ab961183..e32af89ea5 100644
+--- a/tensorflow/core/util/tensor_slice_reader_test.cc
++++ b/tensorflow/core/util/tensor_slice_reader_test.cc
+@@ -436,6 +436,29 @@ TEST(TensorSliceReaderTest, NegativeTensorShapeDimension) {
+   EXPECT_FALSE(reader.status().ok());
+ }
+ 
++TEST(TensorSliceReaderTest, InvalidTensorSlice) {
++  const string fname =
++      io::JoinPath(testing::TmpDir(), "invalid_slice_checkpoint");
++  TensorSliceWriter writer(fname, CreateTableTensorSliceBuilder);
++  const int32 data[] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9};
++  TF_CHECK_OK(writer.Add("test", TensorShape({4, 5}),
++                         TensorSlice::ParseOrDie("0,2:-"), data));
++  TF_CHECK_OK(writer.Finish());
++
++  MutateSavedTensorSlices(fname, [](SavedTensorSlices sts) {
++    if (sts.has_meta()) {
++      for (auto& tensor : *sts.mutable_meta()->mutable_tensor()) {
++        tensor.mutable_slice(0)->mutable_extent(0)->set_length(-10);
++      }
++    }
++    return sts.SerializeAsString();
++  });
++
++  TensorSliceReader reader(fname, OpenTableTensorSliceReader);
++  // The negative exent length should cause loading to fail.
++  EXPECT_FALSE(reader.status().ok());
++}
++
+ void CachedTensorSliceReaderTesterHelper(
+     const TensorSliceWriter::CreateBuilderFunction& create_function,
+     const TensorSliceReader::OpenTableFunction& open_function) {
+
+tokens used
+input: 2,844
+cache read: 16,896
+cache write: 0
+output: 186
+reasoning output: 128
+
+`git diff --check` passed; only Git’s line-ending warnings were emitted.
+
+tool: validate
+{
+  "ref": "4ed5dd431277feb6eb42955c4f97cc6cf90fdab4",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/framework/tensor_slice.cc b/tensorflow/core/framework/tensor_slice.cc\nindex 975e1e2e24..7041b01115 100644\n--- a/tensorflow/core/framework/tensor_slice.cc\n+++ b/tensorflow/core/framework/tensor_slice.cc\n@@ -14,7 +14,10 @@ limitations under the License.\n ==============================================================================*/\n \n #include \"tensorflow/core/framework/tensor_slice.h\"\n+\n+#include <limits>\n #include <vector>\n+\n #include \"tensorflow/core/lib/core/errors.h\"\n #include \"tensorflow/core/lib/strings/numbers.h\"\n #include \"tensorflow/core/lib/strings/str_util.h\"\n@@ -44,6 +47,34 @@ TensorSlice::TensorSlice(\n   }\n }\n \n+Status TensorSlice::BuildTensorSlice(const TensorSliceProto& proto,\n+                                     TensorSlice* output) {\n+  output->Clear();\n+  output->starts_.reserve(proto.extent_size());\n+  output->lengths_.reserve(proto.extent_size());\n+  for (const auto& e : proto.extent()) {\n+    int64_t l = GetExtentLength(e);\n+    if (e.start() != 0 || l != kFullExtent) {\n+      if (e.start() < 0 || l <= 0) {\n+        return errors::InvalidArgument(\n+            \"Expected non-negative start and positive length but got start = \",\n+            e.start(), \", length = \", l, \": extent = \", e.ShortDebugString());\n+      }\n+      // Calculating the extent end must not cause signed integer overflow.\n+      if (static_cast<uint64_t>(e.start()) + static_cast<uint64_t>(e.length()) >\n+          std::numeric_limits<int64_t>::max()) {\n+        return errors::InvalidArgument(\n+            \"Extent end exceeds the maximum possible size: extent = \",\n+            e.ShortDebugString());\n+      }\n+    }\n+    output->starts_.push_back(e.start());\n+    output->lengths_.push_back(l);\n+  }\n+\n+  return Status::OK();\n+}\n+\n Status TensorSlice::Parse(const string& str, TensorSlice* slice) {\n   std::vector<string> items = str_util::Split(str, ':', str_util::SkipEmpty());\n   slice->starts_.reserve(items.size());\ndiff --git a/tensorflow/core/framework/tensor_slice.h b/tensorflow/core/framework/tensor_slice.h\nindex 82f21fb17e..4c27956945 100644\n--- a/tensorflow/core/framework/tensor_slice.h\n+++ b/tensorflow/core/framework/tensor_slice.h\n@@ -47,6 +47,12 @@ class TensorSlice {\n   explicit TensorSlice(const TensorSliceProto& proto);\n   explicit TensorSlice(std::initializer_list<std::pair<int64, int64>> extents);\n \n+  // This factory methods should be used instead of the constructor that takes a\n+  // `TensorSliceProto` if calling code cannot validate that the sizes specify a\n+  // valid `TensorSlice`.\n+  static Status BuildTensorSlice(const TensorSliceProto& proto,\n+                                 TensorSlice* output);\n+\n   static Status Parse(const string& str, TensorSlice* output);\n   static TensorSlice ParseOrDie(const string& str) {\n     TensorSlice ret;\ndiff --git a/tensorflow/core/framework/tensor_slice_test.cc b/tensorflow/core/framework/tensor_slice_test.cc\nindex 54e680484e..69b7c7cd08 100644\n--- a/tensorflow/core/framework/tensor_slice_test.cc\n+++ b/tensorflow/core/framework/tensor_slice_test.cc\n@@ -15,6 +15,8 @@ limitations under the License.\n \n #include \"tensorflow/core/framework/tensor_slice.h\"\n \n+#include <limits>\n+\n #include \"tensorflow/core/lib/core/status_test_util.h\"\n #include \"tensorflow/core/platform/logging.h\"\n #include \"tensorflow/core/platform/protobuf.h\"\n@@ -123,6 +125,48 @@ TEST(TensorSliceTest, Serialization) {\n   }\n }\n \n+// Testing `BuildTensorSlice` with valid and invalid input protos.\n+TEST(TensorSliceTest, BuildTensorSlice) {\n+  TensorSliceProto proto;\n+  TensorSlice({{0, -1}, {0, 10}, {14, 1}}).AsProto(&proto);\n+  TensorSlice s;\n+\n+  // Successful building.\n+  {\n+    TF_ASSERT_OK(TensorSlice::BuildTensorSlice(proto, &s));\n+    EXPECT_EQ(\"-:0,10:14,1\", s.DebugString());\n+  }\n+\n+  // Failed building due to negative extent start.\n+  {\n+    TensorSliceProto invalid_proto = proto;\n+    invalid_proto.mutable_extent(0)->set_start(-1);\n+    EXPECT_FALSE(TensorSlice::BuildTensorSlice(invalid_proto, &s).ok());\n+  }\n+\n+  // Failed building due to negative extent length.\n+  {\n+    TensorSliceProto invalid_proto = proto;\n+    invalid_proto.mutable_extent(2)->set_length(-1);\n+    EXPECT_FALSE(TensorSlice::BuildTensorSlice(invalid_proto, &s).ok());\n+  }\n+\n+  // Failed building due to missing extent length.\n+  {\n+    TensorSliceProto invalid_proto = proto;\n+    invalid_proto.mutable_extent(2)->clear_length();\n+    EXPECT_FALSE(TensorSlice::BuildTensorSlice(invalid_proto, &s).ok());\n+  }\n+\n+  // Failed building due to extent end overflowing.\n+  {\n+    TensorSliceProto invalid_proto = proto;\n+    invalid_proto.mutable_extent(2)->set_length(\n+        std::numeric_limits<int64_t>::max());\n+    EXPECT_FALSE(TensorSlice::BuildTensorSlice(invalid_proto, &s).ok());\n+  }\n+}\n+\n // Testing the slice intersection\n TEST(TensorSliceTest, Intersection) {\n   // \"EVERYTHING\" intersects with everything\ndiff --git a/tensorflow/core/util/tensor_slice_reader.cc b/tensorflow/core/util/tensor_slice_reader.cc\nindex da5ac17ee0..fd98d1b404 100644\n--- a/tensorflow/core/util/tensor_slice_reader.cc\n+++ b/tensorflow/core/util/tensor_slice_reader.cc\n@@ -172,7 +172,9 @@ void TensorSliceReader::LoadShard(int shard) const {\n     status_ = TensorShape::BuildTensorShapeBase(ssm.shape(), &ssm_shape);\n     if (!status_.ok()) return;\n     for (const TensorSliceProto& tsp : ssm.slice()) {\n-      TensorSlice ss_slice(tsp);\n+      TensorSlice ss_slice;\n+      status_ = TensorSlice::BuildTensorSlice(tsp, &ss_slice);\n+      if (!status_.ok()) return;\n       status_ = RegisterTensorSlice(ssm.name(), ssm_shape, ssm.type(), fname,\n                                     ss_slice, &tensors_);\n       if (!status_.ok()) return;\ndiff --git a/tensorflow/core/util/tensor_slice_reader_test.cc b/tensorflow/core/util/tensor_slice_reader_test.cc\nindex 55ab961183..e32af89ea5 100644\n--- a/tensorflow/core/util/tensor_slice_reader_test.cc\n+++ b/tensorflow/core/util/tensor_slice_reader_test.cc\n@@ -436,6 +436,29 @@ TEST(TensorSliceReaderTest, NegativeTensorShapeDimension) {\n   EXPECT_FALSE(reader.status().ok());\n }\n \n+TEST(TensorSliceReaderTest, InvalidTensorSlice) {\n+  const string fname =\n+      io::JoinPath(testing::TmpDir(), \"invalid_slice_checkpoint\");\n+  TensorSliceWriter writer(fname, CreateTableTensorSliceBuilder);\n+  const int32 data[] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9};\n+  TF_CHECK_OK(writer.Add(\"test\", TensorShape({4, 5}),\n+                         TensorSlice::ParseOrDie(\"0,2:-\"), data));\n+  TF_CHECK_OK(writer.Finish());\n+\n+  MutateSavedTensorSlices(fname, [](SavedTensorSlices sts) {\n+    if (sts.has_meta()) {\n+      for (auto& tensor : *sts.mutable_meta()->mutable_tensor()) {\n+        tensor.mutable_slice(0)->mutable_extent(0)->set_length(-10);\n+      }\n+    }\n+    return sts.SerializeAsString();\n+  });\n+\n+  TensorSliceReader reader(fname, OpenTableTensorSliceReader);\n+  // The negative exent length should cause loading to fail.\n+  EXPECT_FALSE(reader.status().ok());\n+}\n+\n void CachedTensorSliceReaderTesterHelper(\n     const TensorSliceWriter::CreateBuilderFunction& create_function,\n     const TensorSliceReader::OpenTableFunction& open_function) {\n"
+}
+Patch applied successfully
+
+tokens used
+input: 3,315
+cache read: 18,944
+cache write: 0
+output: 2,146
+reasoning output: 60
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target TensorSlice and TensorSliceReader code contexts",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Apply BuildTensorSlice validation and reader integration",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Add corresponding focused tests where target test helpers exist",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "content": "Verify resulting diff and hunk applicability where useful",
+      "status": "completed",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target TensorSlice and TensorSliceReader code contexts",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Apply BuildTensorSlice validation and reader integration",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Add corresponding focused tests where target test helpers exist",
+    "status": "completed",
+    "priority": "medium"
+  },
+  {
+    "content": "Verify resulting diff and hunk applicability where useful",
+    "status": "completed",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 2,462
+cache read: 22,016
+cache write: 0
+output: 102
+reasoning output: 55
+
+Applied the TensorSlice validation backport and checkpoint reader integration. Verified with `git diff --check` and `validate(..., mode="hunk")`; no full build was run.
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/framework/tensor_slice.cc b/tensorflow/core/framework/tensor_slice.cc
+    index 975e1e2e24..7041b01115 100644
+    --- a/tensorflow/core/framework/tensor_slice.cc
+    +++ b/tensorflow/core/framework/tensor_slice.cc
+    @@ -14,7 +14,10 @@ limitations under the License.
+     ==============================================================================*/
+     
+     #include "tensorflow/core/framework/tensor_slice.h"
+    +
+    +#include <limits>
+     #include <vector>
+    +
+     #include "tensorflow/core/lib/core/errors.h"
+     #include "tensorflow/core/lib/strings/numbers.h"
+     #include "tensorflow/core/lib/strings/str_util.h"
+    @@ -44,6 +47,34 @@ TensorSlice::TensorSlice(
+       }
+     }
+     
+    +Status TensorSlice::BuildTensorSlice(const TensorSliceProto& proto,
+    +                                     TensorSlice* output) {
+    +  output->Clear();
+    +  output->starts_.reserve(proto.extent_size());
+    +  output->lengths_.reserve(proto.extent_size());
+    +  for (const auto& e : proto.extent()) {
+    +    int64_t l = GetExtentLength(e);
+    +    if (e.start() != 0 || l != kFullExtent) {
+    +      if (e.start() < 0 || l <= 0) {
+    +        return errors::InvalidArgument(
+    +            "Expected non-negative start and positive length but got start = ",
+    +            e.start(), ", length = ", l, ": extent = ", e.ShortDebugString());
+    +      }
+    +      // Calculating the extent end must not cause signed integer overflow.
+    +      if (static_cast<uint64_t>(e.start()) + static_cast<uint64_t>(e.length()) >
+    +          std::numeric_limits<int64_t>::max()) {
+    +        return errors::InvalidArgument(
+    +            "Extent end exceeds the maximum possible size: extent = ",
+    +            e.ShortDebugString());
+    +      }
+    +    }
+    +    output->starts_.push_back(e.start());
+    +    output->lengths_.push_back(l);
+    +  }
+    +
+    +  return Status::OK();
+    +}
+    +
+     Status TensorSlice::Parse(const string& str, TensorSlice* slice) {
+       std::vector<string> items = str_util::Split(str, ':', str_util::SkipEmpty());
+       slice->starts_.reserve(items.size());
+    diff --git a/tensorflow/core/framework/tensor_slice.h b/tensorflow/core/framework/tensor_slice.h
+    index 82f21fb17e..4c27956945 100644
+    --- a/tensorflow/core/framework/tensor_slice.h
+    +++ b/tensorflow/core/framework/tensor_slice.h
+    @@ -47,6 +47,12 @@ class TensorSlice {
+       explicit TensorSlice(const TensorSliceProto& proto);
+       explicit TensorSlice(std::initializer_list<std::pair<int64, int64>> extents);
+     
+    +  // This factory methods should be used instead of the constructor that takes a
+    +  // `TensorSliceProto` if calling code cannot validate that the sizes specify a
+    +  // valid `TensorSlice`.
+    +  static Status BuildTensorSlice(const TensorSliceProto& proto,
+    +                                 TensorSlice* output);
+    +
+       static Status Parse(const string& str, TensorSlice* output);
+       static TensorSlice ParseOrDie(const string& str) {
+         TensorSlice ret;
+    diff --git a/tensorflow/core/framework/tensor_slice_test.cc b/tensorflow/core/framework/tensor_slice_test.cc
+    index 54e680484e..69b7c7cd08 100644
+    --- a/tensorflow/core/framework/tensor_slice_test.cc
+    +++ b/tensorflow/core/framework/tensor_slice_test.cc
+    @@ -15,6 +15,8 @@ limitations under the License.
+     
+     #include "tensorflow/core/framework/tensor_slice.h"
+     
+    +#include <limits>
+    +
+     #include "tensorflow/core/lib/core/status_test_util.h"
+     #include "tensorflow/core/platform/logging.h"
+     #include "tensorflow/core/platform/protobuf.h"
+    @@ -123,6 +125,48 @@ TEST(TensorSliceTest, Serialization) {
+       }
+     }
+     
+    +// Testing `BuildTensorSlice` with valid and invalid input protos.
+    +TEST(TensorSliceTest, BuildTensorSlice) {
+    +  TensorSliceProto proto;
+    +  TensorSlice({{0, -1}, {0, 10}, {14, 1}}).AsProto(&proto);
+    +  TensorSlice s;
+    +
+    +  // Successful building.
+    +  {
+    +    TF_ASSERT_OK(TensorSlice::BuildTensorSlice(proto, &s));
+    +    EXPECT_EQ("-:0,10:14,1", s.DebugString());
+    +  }
+    +
+    +  // Failed building due to negative extent start.
+    +  {
+    +    TensorSliceProto invalid_proto = proto;
+    +    invalid_proto.mutable_extent(0)->set_start(-1);
+    +    EXPECT_FALSE(TensorSlice::BuildTensorSlice(invalid_proto, &s).ok());
+    +  }
+    +
+    +  // Failed building due to negative extent length.
+    +  {
+    +    TensorSliceProto invalid_proto = proto;
+    +    invalid_proto.mutable_extent(2)->set_length(-1);
+    +    EXPECT_FALSE(TensorSlice::BuildTensorSlice(invalid_proto, &s).ok());
+    +  }
+    +
+    +  // Failed building due to missing extent length.
+    +  {
+    +    TensorSliceProto invalid_proto = proto;
+    +    invalid_proto.mutable_extent(2)->clear_length();
+    +    EXPECT_FALSE(TensorSlice::BuildTensorSlice(invalid_proto, &s).ok());
+    +  }
+    +
+    +  // Failed building due to extent end overflowing.
+    +  {
+    +    TensorSliceProto invalid_proto = proto;
+    +    invalid_proto.mutable_extent(2)->set_length(
+    +        std::numeric_limits<int64_t>::max());
+    +    EXPECT_FALSE(TensorSlice::BuildTensorSlice(invalid_proto, &s).ok());
+    +  }
+    +}
+    +
+     // Testing the slice intersection
+     TEST(TensorSliceTest, Intersection) {
+       // "EVERYTHING" intersects with everything
+    diff --git a/tensorflow/core/util/tensor_slice_reader.cc b/tensorflow/core/util/tensor_slice_reader.cc
+    index da5ac17ee0..fd98d1b404 100644
+    --- a/tensorflow/core/util/tensor_slice_reader.cc
+    +++ b/tensorflow/core/util/tensor_slice_reader.cc
+    @@ -172,7 +172,9 @@ void TensorSliceReader::LoadShard(int shard) const {
+         status_ = TensorShape::BuildTensorShapeBase(ssm.shape(), &ssm_shape);
+         if (!status_.ok()) return;
+         for (const TensorSliceProto& tsp : ssm.slice()) {
+    -      TensorSlice ss_slice(tsp);
+    +      TensorSlice ss_slice;
+    +      status_ = TensorSlice::BuildTensorSlice(tsp, &ss_slice);
+    +      if (!status_.ok()) return;
+           status_ = RegisterTensorSlice(ssm.name(), ssm_shape, ssm.type(), fname,
+                                         ss_slice, &tensors_);
+           if (!status_.ok()) return;
+    diff --git a/tensorflow/core/util/tensor_slice_reader_test.cc b/tensorflow/core/util/tensor_slice_reader_test.cc
+    index 55ab961183..e32af89ea5 100644
+    --- a/tensorflow/core/util/tensor_slice_reader_test.cc
+    +++ b/tensorflow/core/util/tensor_slice_reader_test.cc
+    @@ -436,6 +436,29 @@ TEST(TensorSliceReaderTest, NegativeTensorShapeDimension) {
+       EXPECT_FALSE(reader.status().ok());
+     }
+     
+    +TEST(TensorSliceReaderTest, InvalidTensorSlice) {
+    +  const string fname =
+    +      io::JoinPath(testing::TmpDir(), "invalid_slice_checkpoint");
+    +  TensorSliceWriter writer(fname, CreateTableTensorSliceBuilder);
+    +  const int32 data[] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9};
+    +  TF_CHECK_OK(writer.Add("test", TensorShape({4, 5}),
+    +                         TensorSlice::ParseOrDie("0,2:-"), data));
+    +  TF_CHECK_OK(writer.Finish());
+    +
+    +  MutateSavedTensorSlices(fname, [](SavedTensorSlices sts) {
+    +    if (sts.has_meta()) {
+    +      for (auto& tensor : *sts.mutable_meta()->mutable_tensor()) {
+    +        tensor.mutable_slice(0)->mutable_extent(0)->set_length(-10);
+    +      }
+    +    }
+    +    return sts.SerializeAsString();
+    +  });
+    +
+    +  TensorSliceReader reader(fname, OpenTableTensorSliceReader);
+    +  // The negative exent length should cause loading to fail.
+    +  EXPECT_FALSE(reader.status().ok());
+    +}
+    +
+     void CachedTensorSliceReaderTesterHelper(
+         const TensorSliceWriter::CreateBuilderFunction& create_function,
+         const TensorSliceReader::OpenTableFunction& open_function) {
+  notes: >
+    Backported validated TensorSliceProto construction and used it when loading checkpoint slice metadata, with focused regression tests.
+```
+
+tokens used
+input: 718
+cache read: 24,064
+cache write: 0
+output: 2,120
+reasoning output: 0

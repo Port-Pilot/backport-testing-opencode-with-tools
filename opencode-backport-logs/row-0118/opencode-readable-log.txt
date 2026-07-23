@@ -1,0 +1,176 @@
+I’ll inspect the target-side implementation around `RaggedTensorToTensorBaseOp::Compute`, confirm the patch context matches this base, validate the minimal hunk, then apply only that source change.
+
+tool: viewcode
+{
+  "ref": "a5d613d23c2aa234d370d04b19ccabe3824c284d",
+  "path": "tensorflow/core/kernels/ragged_tensor_to_tensor_op.cc",
+  "startline": 320,
+  "endline": 370
+}
+Here are lines 320 through 370.
+
+            "Unsupported partition type:",
+            RowPartitionTypeToString(partition_type));
+    }
+  }
+
+  Status GetFirstDimensionSize(OpKernelContext* context, INDEX_TYPE* result) {
+    const Tensor first_partition_tensor =
+        context->input(kFirstPartitionInputIndex);
+    const RowPartitionType first_partition_type = row_partition_types_[0];
+    switch (first_partition_type) {
+      case RowPartitionType::FIRST_DIM_SIZE:
+        *result = first_partition_tensor.scalar<INDEX_TYPE>()();
+        return Status::OK();
+      case RowPartitionType::VALUE_ROWIDS:
+        return errors::InvalidArgument(
+            "Cannot handle VALUE_ROWIDS in first dimension.");
+      case RowPartitionType::ROW_SPLITS:
+        *result = first_partition_tensor.shape().dim_size(0) - 1;
+        return Status::OK();
+      default:
+        return errors::InvalidArgument(
+            "Cannot handle type ",
+            RowPartitionTypeToString(first_partition_type));
+    }
+  }
+
+  void Compute(OpKernelContext* context) override {
+    INDEX_TYPE first_dimension;
+    OP_REQUIRES_OK(context, GetFirstDimensionSize(context, &first_dimension));
+    vector<INDEX_TYPE> output_size;
+    OP_REQUIRES_OK(context,
+                   CalculateOutputSize(first_dimension, context, &output_size));
+    vector<INDEX_TYPE> multiplier;
+    multiplier.resize(ragged_rank_ + 1);
+
+    multiplier[multiplier.size() - 1] = 1;
+    for (int i = multiplier.size() - 2; i >= 0; --i) {
+      multiplier[i] = multiplier[i + 1] * output_size[i + 1];
+    }
+    // Full size of the tensor.
+    TensorShape output_shape;
+    OP_REQUIRES_OK(context,
+                   TensorShapeUtils::MakeShape(output_size, &output_shape));
+    Tensor* output_tensor = nullptr;
+
+    OP_REQUIRES_OK(context,
+                   context->allocate_output(0, output_shape, &output_tensor));
+    const INDEX_TYPE full_size = multiplier[0] * output_size[0];
+    if (full_size > 0) {
+      vector<INDEX_TYPE> output_index, new_output_index;
+      int nvals = context->input(kValueInputIndex).shape().dim_size(0);
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: locate_symbol
+{
+  "ref": "a5d613d23c2aa234d370d04b19ccabe3824c284d",
+  "symbol": "RaggedTensorToTensorBaseOp"
+}
+tensorflow/core/kernels/ragged_tensor_to_tensor_op.cc:56
+tensorflow/core/kernels/ragged_tensor_to_tensor_op.cc:61
+tensorflow/core/kernels/ragged_tensor_to_tensor_op.cc:434
+tensorflow/core/kernels/ragged_tensor_to_tensor_op.cc:437
+
+tokens used
+input: 3,723
+cache read: 4,608
+cache write: 0
+output: 177
+reasoning output: 0
+
+The target code has the same vulnerable path: `Compute` calls `GetFirstDimensionSize`, which immediately reads `first_partition_tensor.scalar<INDEX_TYPE>()()` for `FIRST_DIM_SIZE` without first checking that the input tensor is non-empty. I’m applying the source patch unchanged at the equivalent location.
+
+tool: validate
+{
+  "ref": "a5d613d23c2aa234d370d04b19ccabe3824c284d",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/ragged_tensor_to_tensor_op.cc b/tensorflow/core/kernels/ragged_tensor_to_tensor_op.cc\n--- a/tensorflow/core/kernels/ragged_tensor_to_tensor_op.cc\n+++ b/tensorflow/core/kernels/ragged_tensor_to_tensor_op.cc\n@@ -345,6 +345,11 @@ class RaggedTensorToTensorBaseOp : public OpKernel {\n \n   void Compute(OpKernelContext* context) override {\n     INDEX_TYPE first_dimension;\n+    const Tensor first_partition_tensor =\n+        context->input(kFirstPartitionInputIndex);\n+    OP_REQUIRES(context, first_partition_tensor.NumElements() > 0,\n+                errors::InvalidArgument(\"Invalid first partition input. Tensor \"\n+                                        \"requires at least one element.\"));\n     OP_REQUIRES_OK(context, GetFirstDimensionSize(context, &first_dimension));\n     vector<INDEX_TYPE> output_size;\n     OP_REQUIRES_OK(context,\n"
+}
+Patch applied successfully
+
+tokens used
+input: 4,484
+cache read: 4,608
+cache write: 0
+output: 338
+reasoning output: 17
+
+Hunk validation succeeded against the target base. I’m now updating the checked-out source file with the validated guard.
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/kernels/ragged_tensor_to_tensor_op.cc\n@@\n   void Compute(OpKernelContext* context) override {\n     INDEX_TYPE first_dimension;\n+    const Tensor first_partition_tensor =\n+        context->input(kFirstPartitionInputIndex);\n+    OP_REQUIRES(context, first_partition_tensor.NumElements() > 0,\n+                errors::InvalidArgument(\"Invalid first partition input. Tensor \"\n+                                        \"requires at least one element.\"));\n     OP_REQUIRES_OK(context, GetFirstDimensionSize(context, &first_dimension));\n     vector<INDEX_TYPE> output_size;\n     OP_REQUIRES_OK(context,\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/kernels/ragged_tensor_to_tensor_op.cc
+
+tokens used
+input: 756
+cache read: 8,704
+cache write: 0
+output: 202
+reasoning output: 0
+
+The source change is applied. I’m checking the resulting diff to ensure only the intended file and hunk changed.
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/kernels/ragged_tensor_to_tensor_op.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0118-a5d613d23c2a"
+}
+warning: in the working copy of 'tensorflow/core/kernels/ragged_tensor_to_tensor_op.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/kernels/ragged_tensor_to_tensor_op.cc b/tensorflow/core/kernels/ragged_tensor_to_tensor_op.cc
+index ca9e1836c8..4a29cab52b 100644
+--- a/tensorflow/core/kernels/ragged_tensor_to_tensor_op.cc
++++ b/tensorflow/core/kernels/ragged_tensor_to_tensor_op.cc
+@@ -345,6 +345,11 @@ class RaggedTensorToTensorBaseOp : public OpKernel {
+ 
+   void Compute(OpKernelContext* context) override {
+     INDEX_TYPE first_dimension;
++    const Tensor first_partition_tensor =
++        context->input(kFirstPartitionInputIndex);
++    OP_REQUIRES(context, first_partition_tensor.NumElements() > 0,
++                errors::InvalidArgument("Invalid first partition input. Tensor "
++                                        "requires at least one element."));
+     OP_REQUIRES_OK(context, GetFirstDimensionSize(context, &first_dimension));
+     vector<INDEX_TYPE> output_size;
+     OP_REQUIRES_OK(context,
+
+tokens used
+input: 2,013
+cache read: 7,680
+cache write: 0
+output: 107
+reasoning output: 14
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/kernels/ragged_tensor_to_tensor_op.cc b/tensorflow/core/kernels/ragged_tensor_to_tensor_op.cc
+    index ca9e1836c8..4a29cab52b 100644
+    --- a/tensorflow/core/kernels/ragged_tensor_to_tensor_op.cc
+    +++ b/tensorflow/core/kernels/ragged_tensor_to_tensor_op.cc
+    @@ -345,6 +345,11 @@ class RaggedTensorToTensorBaseOp : public OpKernel {
+     
+       void Compute(OpKernelContext* context) override {
+         INDEX_TYPE first_dimension;
+    +    const Tensor first_partition_tensor =
+    +        context->input(kFirstPartitionInputIndex);
+    +    OP_REQUIRES(context, first_partition_tensor.NumElements() > 0,
+    +                errors::InvalidArgument("Invalid first partition input. Tensor "
+    +                                        "requires at least one element."));
+         OP_REQUIRES_OK(context, GetFirstDimensionSize(context, &first_dimension));
+         vector<INDEX_TYPE> output_size;
+         OP_REQUIRES_OK(context,
+  notes: >
+    Added validation that the first partition input is non-empty before computing the first ragged dimension.
+```
+
+tokens used
+input: 1,379
+cache read: 8,704
+cache write: 0
+output: 278
+reasoning output: 0

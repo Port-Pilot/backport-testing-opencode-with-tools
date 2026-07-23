@@ -1,0 +1,632 @@
+I’ll locate the target implementation of the TFLite maximum/minimum kernel and compare it to the provided hunk, then apply the minimal short-circuit fix only if the equivalent code exists.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target maximum_minimum Eval implementation",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Validate the adapted hunk against target base",
+      "status": "pending",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply minimal source change in checkout",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "content": "Review resulting diff for correctness",
+      "status": "pending",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target maximum_minimum Eval implementation",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Validate the adapted hunk against target base",
+    "status": "pending",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply minimal source change in checkout",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "content": "Review resulting diff for correctness",
+    "status": "pending",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 4,231
+cache read: 4,608
+cache write: 0
+output: 137
+reasoning output: 0
+
+tool: viewcode
+{
+  "ref": "47612cd69a2fdd76156360ca9102816e156f7e5c",
+  "path": "tensorflow/lite/kernels/maximum_minimum.cc",
+  "startline": 120,
+  "endline": 210
+}
+This file only has 158 lines. Here are lines 120 through 158.
+
+      default:
+        context->ReportError(context,
+                             "Type %d is currently not supported by Maximum.",
+                             op_context.output->type);
+        return kTfLiteError;
+    }
+  } else {
+    context->ReportError(context,
+                         "Type %d is currently not supported by Maximum.",
+                         op_context.output->type);
+    return kTfLiteError;
+  }
+  return kTfLiteOk;
+}
+
+}  // namespace maximum_minimum
+
+TfLiteRegistration* Register_MAXIMUM_REF() {
+  static TfLiteRegistration r = {
+      nullptr, nullptr, maximum_minimum::Prepare,
+      maximum_minimum::Eval<maximum_minimum::kReference,
+                            maximum_minimum::MaximumOp>};
+  return &r;
+}
+
+TfLiteRegistration* Register_MINIMUM_REF() {
+  static TfLiteRegistration r = {
+      nullptr, nullptr, maximum_minimum::Prepare,
+      maximum_minimum::Eval<maximum_minimum::kReference,
+                            maximum_minimum::MinimumOp>};
+  return &r;
+}
+TfLiteRegistration* Register_MAXIMUM() { return Register_MAXIMUM_REF(); }
+TfLiteRegistration* Register_MINIMUM() { return Register_MINIMUM_REF(); }
+
+}  // namespace builtin
+}  // namespace ops
+}  // namespace tflite
+
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: locate_symbol
+{
+  "ref": "47612cd69a2fdd76156360ca9102816e156f7e5c",
+  "symbol": "Eval"
+}
+tensorflow/core/platform/mutex.h:128
+tensorflow/lite/delegates/flex/kernel.cc:513
+tensorflow/lite/experimental/kernels/ctc_beam_search_decoder.cc:162
+tensorflow/lite/experimental/kernels/unidirectional_sequence_gru.cc:209
+tensorflow/lite/experimental/micro/kernels/add.cc:178
+tensorflow/lite/experimental/micro/kernels/arg_min_max.cc:51
+tensorflow/lite/experimental/micro/kernels/ceil.cc:45
+tensorflow/lite/experimental/micro/kernels/cmsis-nn/conv.cc:272
+tensorflow/lite/experimental/micro/kernels/cmsis-nn/depthwise_conv.cc:280
+tensorflow/lite/experimental/micro/kernels/cmsis-nn/fully_connected.cc:179
+tensorflow/lite/experimental/micro/kernels/conv.cc:203
+tensorflow/lite/experimental/micro/kernels/depthwise_conv.cc:196
+tensorflow/lite/experimental/micro/kernels/dequantize.cc:43
+tensorflow/lite/experimental/micro/kernels/floor.cc:29
+tensorflow/lite/experimental/micro/kernels/fully_connected.cc:166
+tensorflow/lite/experimental/micro/kernels/logistic.cc:38
+tensorflow/lite/experimental/micro/kernels/maximum_minimum.cc:82
+tensorflow/lite/experimental/micro/kernels/neg.cc:30
+tensorflow/lite/experimental/micro/kernels/pack.cc:75
+tensorflow/lite/experimental/micro/kernels/portable_optimized/depthwise_conv.cc:439
+
+tokens used
+input: 410
+cache read: 8,704
+cache write: 0
+output: 118
+reasoning output: 0
+
+tool: viewcode
+{
+  "ref": "47612cd69a2fdd76156360ca9102816e156f7e5c",
+  "path": "tensorflow/lite/kernels/maximum_minimum.cc",
+  "startline": 1,
+  "endline": 158
+}
+Here are lines 1 through 158.
+
+/* Copyright 2018 The TensorFlow Authors. All Rights Reserved.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+==============================================================================*/
+#include <string.h>
+#include <vector>
+#include "tensorflow/lite/c/builtin_op_data.h"
+#include "tensorflow/lite/c/c_api_internal.h"
+#include "tensorflow/lite/kernels/internal/reference/reference_ops.h"
+#include "tensorflow/lite/kernels/internal/tensor.h"
+#include "tensorflow/lite/kernels/kernel_util.h"
+#include "tensorflow/lite/kernels/op_macros.h"
+
+namespace tflite {
+namespace ops {
+namespace builtin {
+namespace maximum_minimum {
+
+// This file has a reference implementation of TFMaximum/TFMinimum.
+enum KernelType {
+  kReference,
+};
+
+constexpr int kInputTensor1 = 0;
+constexpr int kInputTensor2 = 1;
+constexpr int kOutputTensor = 0;
+
+struct OpContext {
+  OpContext(TfLiteContext* context, TfLiteNode* node) {
+    input1 = GetInput(context, node, kInputTensor1);
+    input2 = GetInput(context, node, kInputTensor2);
+    output = GetOutput(context, node, kOutputTensor);
+  }
+  const TfLiteTensor* input1;
+  const TfLiteTensor* input2;
+  TfLiteTensor* output;
+};
+
+TfLiteStatus Prepare(TfLiteContext* context, TfLiteNode* node) {
+  TF_LITE_ENSURE_EQ(context, NumInputs(node), 2);
+  TF_LITE_ENSURE_EQ(context, NumOutputs(node), 1);
+
+  OpContext op_context(context, node);
+  TF_LITE_ENSURE_EQ(context, op_context.input1->type, op_context.input2->type);
+  op_context.output->type = op_context.input1->type;
+
+  bool requires_broadcast =
+      !HaveSameShapes(op_context.input1, op_context.input2);
+
+  TfLiteIntArray* output_size = nullptr;
+  if (requires_broadcast) {
+    TF_LITE_ENSURE_OK(
+        context, CalculateShapeForBroadcast(context, op_context.input1,
+                                            op_context.input2, &output_size));
+  } else {
+    output_size = TfLiteIntArrayCopy(op_context.input1->dims);
+  }
+
+  return context->ResizeTensor(context, op_context.output, output_size);
+}
+
+struct MaximumOp {
+  template <typename data_type>
+  static data_type op(data_type el1, data_type el2) {
+    return el1 > el2 ? el1 : el2;
+  }
+};
+
+struct MinimumOp {
+  template <typename data_type>
+  static data_type op(data_type el1, data_type el2) {
+    return el1 < el2 ? el1 : el2;
+  }
+};
+
+template <typename data_type, typename op_type>
+void TFLiteOperation(TfLiteContext* context, TfLiteNode* node,
+                     const OpContext& op_context) {
+  reference_ops::MaximumMinimumBroadcast4DSlow(
+      GetTensorShape(op_context.input1),
+      GetTensorData<data_type>(op_context.input1),
+      GetTensorShape(op_context.input2),
+      GetTensorData<data_type>(op_context.input2),
+      GetTensorShape(op_context.output),
+      GetTensorData<data_type>(op_context.output),
+      op_type::template op<data_type>);
+}
+
+template <KernelType kernel_type, typename OpType>
+TfLiteStatus Eval(TfLiteContext* context, TfLiteNode* node) {
+  OpContext op_context(context, node);
+
+  if (kernel_type == kReference) {
+    switch (op_context.output->type) {
+      case kTfLiteFloat32:
+        TFLiteOperation<float, OpType>(context, node, op_context);
+        break;
+      case kTfLiteUInt8:
+        TFLiteOperation<uint8_t, OpType>(context, node, op_context);
+        break;
+      case kTfLiteInt8:
+        TFLiteOperation<int8_t, OpType>(context, node, op_context);
+        break;
+      case kTfLiteInt32:
+        TFLiteOperation<int32_t, OpType>(context, node, op_context);
+        break;
+      case kTfLiteInt64:
+        TFLiteOperation<int64_t, OpType>(context, node, op_context);
+        break;
+      default:
+        context->ReportError(context,
+                             "Type %d is currently not supported by Maximum.",
+                             op_context.output->type);
+        return kTfLiteError;
+    }
+  } else {
+    context->ReportError(context,
+                         "Type %d is currently not supported by Maximum.",
+                         op_context.output->type);
+    return kTfLiteError;
+  }
+  return kTfLiteOk;
+}
+
+}  // namespace maximum_minimum
+
+TfLiteRegistration* Register_MAXIMUM_REF() {
+  static TfLiteRegistration r = {
+      nullptr, nullptr, maximum_minimum::Prepare,
+      maximum_minimum::Eval<maximum_minimum::kReference,
+                            maximum_minimum::MaximumOp>};
+  return &r;
+}
+
+TfLiteRegistration* Register_MINIMUM_REF() {
+  static TfLiteRegistration r = {
+      nullptr, nullptr, maximum_minimum::Prepare,
+      maximum_minimum::Eval<maximum_minimum::kReference,
+                            maximum_minimum::MinimumOp>};
+  return &r;
+}
+TfLiteRegistration* Register_MAXIMUM() { return Register_MAXIMUM_REF(); }
+TfLiteRegistration* Register_MINIMUM() { return Register_MINIMUM_REF(); }
+
+}  // namespace builtin
+}  // namespace ops
+}  // namespace tflite
+
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tokens used
+input: 1,179
+cache read: 8,704
+cache write: 0
+output: 64
+reasoning output: 10
+
+The target file has the same `Eval` logic but an older shape: it still gates on `kernel_type == kReference`, uses `TFLiteOperation<T, OpType>`, and does not have the newer `int16` case. I’m applying only the empty-input short-circuit before dispatch, preserving the older dispatch structure.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target maximum_minimum Eval implementation",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate the adapted hunk against target base",
+      "status": "in_progress",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply minimal source change in checkout",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "content": "Review resulting diff for correctness",
+      "status": "pending",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target maximum_minimum Eval implementation",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate the adapted hunk against target base",
+    "status": "in_progress",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply minimal source change in checkout",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "content": "Review resulting diff for correctness",
+    "status": "pending",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 6,644
+cache read: 4,608
+cache write: 0
+output: 169
+reasoning output: 57
+
+tool: validate
+{
+  "ref": "47612cd69a2fdd76156360ca9102816e156f7e5c",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/lite/kernels/maximum_minimum.cc b/tensorflow/lite/kernels/maximum_minimum.cc\nindex 00000000000000..00000000000000 100644\n--- a/tensorflow/lite/kernels/maximum_minimum.cc\n+++ b/tensorflow/lite/kernels/maximum_minimum.cc\n@@ -97,6 +97,12 @@ template <KernelType kernel_type, typename OpType>\n TfLiteStatus Eval(TfLiteContext* context, TfLiteNode* node) {\n   OpContext op_context(context, node);\n \n+  // If inputs have no element, shortcircuit.\n+  if (NumElements(op_context.input1) == 0 ||\n+      NumElements(op_context.input2) == 0) {\n+    return kTfLiteOk;\n+  }\n+\n   if (kernel_type == kReference) {\n     switch (op_context.output->type) {\n       case kTfLiteFloat32:\n"
+}
+Patch applied successfully
+
+tokens used
+input: 864
+cache read: 10,752
+cache write: 0
+output: 268
+reasoning output: 0
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target maximum_minimum Eval implementation",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate the adapted hunk against target base",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply minimal source change in checkout",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Review resulting diff for correctness",
+      "status": "pending",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target maximum_minimum Eval implementation",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate the adapted hunk against target base",
+    "status": "completed",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply minimal source change in checkout",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Review resulting diff for correctness",
+    "status": "pending",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 1,145
+cache read: 10,752
+cache write: 0
+output: 91
+reasoning output: 0
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/lite/kernels/maximum_minimum.cc\n@@\n TfLiteStatus Eval(TfLiteContext* context, TfLiteNode* node) {\n   OpContext op_context(context, node);\n \n+  // If inputs have no element, shortcircuit.\n+  if (NumElements(op_context.input1) == 0 ||\n+      NumElements(op_context.input2) == 0) {\n+    return kTfLiteOk;\n+  }\n+\n   if (kernel_type == kReference) {\n     switch (op_context.output->type) {\n       case kTfLiteFloat32:\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/lite/kernels/maximum_minimum.cc
+
+tokens used
+input: 350
+cache read: 11,776
+cache write: 0
+output: 166
+reasoning output: 0
+
+The adapted hunk validated against the target base and has been applied to the checkout. I’ll review the final diff now.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target maximum_minimum Eval implementation",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate the adapted hunk against target base",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply minimal source change in checkout",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Review resulting diff for correctness",
+      "status": "in_progress",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target maximum_minimum Eval implementation",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate the adapted hunk against target base",
+    "status": "completed",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply minimal source change in checkout",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Review resulting diff for correctness",
+    "status": "in_progress",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 545
+cache read: 11,776
+cache write: 0
+output: 123
+reasoning output: 0
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/lite/kernels/maximum_minimum.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0134-47612cd69a2f",
+  "timeout": 120000
+}
+warning: in the working copy of 'tensorflow/lite/kernels/maximum_minimum.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/lite/kernels/maximum_minimum.cc b/tensorflow/lite/kernels/maximum_minimum.cc
+index 76e51d1874..690d9568c4 100644
+--- a/tensorflow/lite/kernels/maximum_minimum.cc
++++ b/tensorflow/lite/kernels/maximum_minimum.cc
+@@ -100,6 +100,12 @@ template <KernelType kernel_type, typename OpType>
+ TfLiteStatus Eval(TfLiteContext* context, TfLiteNode* node) {
+   OpContext op_context(context, node);
+ 
++  // If inputs have no element, shortcircuit.
++  if (NumElements(op_context.input1) == 0 ||
++      NumElements(op_context.input2) == 0) {
++    return kTfLiteOk;
++  }
++
+   if (kernel_type == kReference) {
+     switch (op_context.output->type) {
+       case kTfLiteFloat32:
+
+tokens used
+input: 806
+cache read: 11,776
+cache write: 0
+output: 77
+reasoning output: 0
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target maximum_minimum Eval implementation",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate the adapted hunk against target base",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply minimal source change in checkout",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Review resulting diff for correctness",
+      "status": "completed",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target maximum_minimum Eval implementation",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate the adapted hunk against target base",
+    "status": "completed",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply minimal source change in checkout",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Review resulting diff for correctness",
+    "status": "completed",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 3,185
+cache read: 9,728
+cache write: 0
+output: 92
+reasoning output: 13
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/lite/kernels/maximum_minimum.cc b/tensorflow/lite/kernels/maximum_minimum.cc
+    index 76e51d1874..690d9568c4 100644
+    --- a/tensorflow/lite/kernels/maximum_minimum.cc
+    +++ b/tensorflow/lite/kernels/maximum_minimum.cc
+    @@ -100,6 +100,12 @@ template <KernelType kernel_type, typename OpType>
+     TfLiteStatus Eval(TfLiteContext* context, TfLiteNode* node) {
+       OpContext op_context(context, node);
+     
+    +  // If inputs have no element, shortcircuit.
+    +  if (NumElements(op_context.input1) == 0 ||
+    +      NumElements(op_context.input2) == 0) {
+    +    return kTfLiteOk;
+    +  }
+    +
+       if (kernel_type == kReference) {
+         switch (op_context.output->type) {
+           case kTfLiteFloat32:
+  notes: >
+    Added the empty-input short-circuit to the older maximum/minimum Eval implementation while preserving its existing dispatch structure.
+```
+
+tokens used
+input: 355
+cache read: 12,800
+cache write: 0
+output: 271
+reasoning output: 0

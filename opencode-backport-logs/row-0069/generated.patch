@@ -1,0 +1,222 @@
+diff --git a/tensorflow/core/grappler/costs/BUILD b/tensorflow/core/grappler/costs/BUILD
+index 9204607f38..7aee7ec48c 100644
+--- a/tensorflow/core/grappler/costs/BUILD
++++ b/tensorflow/core/grappler/costs/BUILD
+@@ -338,6 +338,7 @@ cc_library(
+         "//tensorflow/core:lib",
+         "//tensorflow/core:protos_all_cc",
+         "//tensorflow/core/grappler/clusters:utils",
++        "//tensorflow/stream_executor/lib",
+     ] + tf_protos_grappler(),
+ )
+ 
+diff --git a/tensorflow/core/grappler/costs/op_level_cost_estimator.cc b/tensorflow/core/grappler/costs/op_level_cost_estimator.cc
+index 009f2471d3..a7a16740dc 100644
+--- a/tensorflow/core/grappler/costs/op_level_cost_estimator.cc
++++ b/tensorflow/core/grappler/costs/op_level_cost_estimator.cc
+@@ -2121,7 +2121,7 @@ OpInfo::TensorProperties OpLevelCostEstimator::DescribeTensor(
+ }
+ 
+ /* static */
+-OpLevelCostEstimator::ConvolutionDimensions
++stream_executor::port::StatusOr<OpLevelCostEstimator::ConvolutionDimensions>
+ OpLevelCostEstimator::OpDimensionsFromInputs(
+     const TensorShapeProto& original_image_shape, const OpInfo& op_info,
+     bool* found_unknown_shapes) {
+@@ -2158,6 +2158,11 @@ OpLevelCostEstimator::OpDimensionsFromInputs(
+   std::vector<int64> strides = GetStrides(op_info);
+   int64 sx = strides[x_index];
+   int64 sy = strides[y_index];
++  if (sx == 0 || sy == 0) {
++    return errors::InvalidArgument(
++        "Stride must be > 0 for Height and Width, but got (", sy, ", ", sx,
++        ")");
++  }
+   const auto padding = GetPadding(op_info);
+ 
+   int64 ox = GetOutputSize(ix, kx, sx, padding);
+@@ -2174,8 +2179,10 @@ Status OpLevelCostEstimator::PredictMaxPool(const OpContext& op_context,
+   bool found_unknown_shapes = false;
+   const auto& op_info = op_context.op_info;
+   // x: op_info.inputs(0)
+-  ConvolutionDimensions dims = OpDimensionsFromInputs(
+-      op_info.inputs(0).shape(), op_info, &found_unknown_shapes);
++  auto dims_or = OpDimensionsFromInputs(op_info.inputs(0).shape(), op_info,
++                                        &found_unknown_shapes);
++  if (!dims_or.ok()) return dims_or.status();
++  ConvolutionDimensions dims = dims_or.ValueOrDie();
+   // kx * ky - 1 comparisons per output (kx * xy > 1)
+   // or 1 copy per output (kx * k1 = 1).
+   int per_output_ops = dims.kx * dims.ky == 1 ? 1 : dims.kx * dims.ky - 1;
+@@ -2215,8 +2222,10 @@ Status OpLevelCostEstimator::PredictMaxPoolGrad(const OpContext& op_context,
+                                    op_info.ShortDebugString());
+   }
+ 
+-  ConvolutionDimensions dims = OpDimensionsFromInputs(
+-      op_info.inputs(0).shape(), op_info, &found_unknown_shapes);
++  auto dims_or = OpDimensionsFromInputs(op_info.inputs(0).shape(), op_info,
++                                        &found_unknown_shapes);
++  if (!dims_or.ok()) return dims_or.status();
++  ConvolutionDimensions dims = dims_or.ValueOrDie();
+ 
+   int64 ops = 0;
+   if (dims.kx == 1 && dims.ky == 1) {
+@@ -2291,8 +2300,10 @@ Status OpLevelCostEstimator::PredictAvgPool(const OpContext& op_context,
+   bool found_unknown_shapes = false;
+   const auto& op_info = op_context.op_info;
+   // x: op_info.inputs(0)
+-  ConvolutionDimensions dims = OpDimensionsFromInputs(
+-      op_info.inputs(0).shape(), op_info, &found_unknown_shapes);
++  auto dims_or = OpDimensionsFromInputs(op_info.inputs(0).shape(), op_info,
++                                        &found_unknown_shapes);
++  if (!dims_or.ok()) return dims_or.status();
++  ConvolutionDimensions dims = dims_or.ValueOrDie();
+ 
+   // kx * ky - 1 additions and 1 multiplication per output.
+   int64 ops = dims.batch * dims.ox * dims.oy * dims.oz * dims.kx * dims.ky;
+@@ -2348,8 +2359,9 @@ Status OpLevelCostEstimator::PredictAvgPoolGrad(const OpContext& op_context,
+     found_unknown_shapes = true;
+   }
+ 
+-  ConvolutionDimensions dims =
+-      OpDimensionsFromInputs(x_shape, op_info, &found_unknown_shapes);
++  auto dims_or = OpDimensionsFromInputs(x_shape, op_info, &found_unknown_shapes);
++  if (!dims_or.ok()) return dims_or.status();
++  ConvolutionDimensions dims = dims_or.ValueOrDie();
+ 
+   int64 ops = 0;
+   if (dims.kx <= dims.sx && dims.ky <= dims.sy) {
+@@ -2375,8 +2387,10 @@ Status OpLevelCostEstimator::PredictFusedBatchNorm(
+   // offset: op_info.inputs(2)
+   // mean: op_info.inputs(3)  --> only for inference
+   // variance: op_info.inputs(4) --> only for inference
+-  ConvolutionDimensions dims = OpDimensionsFromInputs(
+-      op_info.inputs(0).shape(), op_info, &found_unknown_shapes);
++  auto dims_or = OpDimensionsFromInputs(op_info.inputs(0).shape(), op_info,
++                                        &found_unknown_shapes);
++  if (!dims_or.ok()) return dims_or.status();
++  ConvolutionDimensions dims = dims_or.ValueOrDie();
+   const bool is_training = IsTraining(op_info);
+ 
+   int64 ops = 0;
+@@ -2425,8 +2439,10 @@ Status OpLevelCostEstimator::PredictFusedBatchNormGrad(
+   // scale: op_info.inputs(2)
+   // mean: op_info.inputs(3)
+   // variance or inverse of variance: op_info.inputs(4)
+-  ConvolutionDimensions dims = OpDimensionsFromInputs(
+-      op_info.inputs(1).shape(), op_info, &found_unknown_shapes);
++  auto dims_or = OpDimensionsFromInputs(op_info.inputs(1).shape(), op_info,
++                                        &found_unknown_shapes);
++  if (!dims_or.ok()) return dims_or.status();
++  ConvolutionDimensions dims = dims_or.ValueOrDie();
+ 
+   int64 ops = 0;
+   const auto rsqrt_cost = Eigen::internal::functor_traits<
+diff --git a/tensorflow/core/grappler/costs/op_level_cost_estimator.h b/tensorflow/core/grappler/costs/op_level_cost_estimator.h
+index 54382927f7..4341f49fd1 100644
+--- a/tensorflow/core/grappler/costs/op_level_cost_estimator.h
++++ b/tensorflow/core/grappler/costs/op_level_cost_estimator.h
+@@ -23,6 +23,7 @@ limitations under the License.
+ #include "tensorflow/core/grappler/costs/op_performance_data.pb.h"
+ #include "tensorflow/core/lib/core/status.h"
+ #include "tensorflow/core/util/padding.h"
++#include "tensorflow/stream_executor/lib/statusor.h"
+ 
+ namespace tensorflow {
+ namespace grappler {
+@@ -290,7 +291,8 @@ class OpLevelCostEstimator {
+       bool* found_unknown_shapes);
+ 
+   // For Pooling, FusedBatchNorm, and their grad ops.
+-  static ConvolutionDimensions OpDimensionsFromInputs(
++  static stream_executor::port::StatusOr<ConvolutionDimensions>
++  OpDimensionsFromInputs(
+       const TensorShapeProto& original_image_shape, const OpInfo& op_info,
+       bool* found_unknown_shapes);
+ 
+diff --git a/tensorflow/core/grappler/costs/op_level_cost_estimator_test.cc b/tensorflow/core/grappler/costs/op_level_cost_estimator_test.cc
+index 23373d3dc1..45a53c450d 100644
+--- a/tensorflow/core/grappler/costs/op_level_cost_estimator_test.cc
++++ b/tensorflow/core/grappler/costs/op_level_cost_estimator_test.cc
+@@ -558,9 +558,11 @@ class OpLevelCostEstimatorTest : public ::testing::Test {
+     }
+ 
+     bool found_unknown_shapes;
+-    auto dims = OpLevelCostEstimator::OpDimensionsFromInputs(
++    auto dims_or = OpLevelCostEstimator::OpDimensionsFromInputs(
+         op_context.op_info.inputs(0).shape(), op_context.op_info,
+         &found_unknown_shapes);
++    TF_ASSERT_OK(dims_or.status());
++    auto dims = dims_or.ValueOrDie();
+     Padding padding_enum;
+     if (padding == "VALID") {
+       padding_enum = Padding::VALID;
+@@ -581,6 +583,38 @@ class OpLevelCostEstimatorTest : public ::testing::Test {
+     EXPECT_EQ(padding_enum, dims.padding);
+   }
+ 
++  stream_executor::port::StatusOr<OpLevelCostEstimator::ConvolutionDimensions>
++  CallOpDimensionsFromInputs(const int n, const int h, const int w, const int c,
++                             const int kx, const int ky, const int sx,
++                             const int sy, const string& data_format,
++                             const string& padding) {
++    OpContext op_context;
++
++    const std::vector<int> x = {n, h, w, c};
++    const std::vector<int> ksize = {1, kx, ky, 1};
++    std::vector<int> strides;
++    if (data_format == "NHWC") {
++      strides = {1, sy, sx, 1};
++    } else {
++      strides = {1, 1, sy, sx};
++    }
++
++    auto& op_info = op_context.op_info;
++    SetCpuDevice(&op_info);
++    op_info.set_op("MaxPool");
++
++    DescribeTensor4D(x[0], x[1], x[2], x[3], op_info.add_inputs());
++    auto* attr = op_info.mutable_attr();
++    SetAttrValue(data_format, &(*attr)["data_format"]);
++    SetAttrValue(padding, &(*attr)["padding"]);
++    SetAttrValue(strides, &(*attr)["strides"]);
++    SetAttrValue(ksize, &(*attr)["ksize"]);
++    bool found_unknown_shapes;
++    return OpLevelCostEstimator::OpDimensionsFromInputs(
++        op_context.op_info.inputs(0).shape(), op_context.op_info,
++        &found_unknown_shapes);
++  }
++
+   OpLevelCostEstimator estimator_;
+ };
+ 
+@@ -1383,6 +1417,29 @@ TEST_F(OpLevelCostEstimatorTest, OpDimensionsFromInputs) {
+   }
+ }
+ 
++TEST_F(OpLevelCostEstimatorTest, OpDimensionsFromInputsError) {
++  std::vector<string> paddings = {"VALID", "SAME"};
++  std::vector<string> formats = {"NHWC", "NCHW"};
++  for (const auto& p : paddings) {
++    for (const auto& f : formats) {
++      // n, h, w, c, kx, ky, sx, sy, data_format, padding.
++      auto dims_or =
++          CallOpDimensionsFromInputs(10, 14, 14, 3840, 3, 3, 0, 2, f, p);
++      EXPECT_FALSE(dims_or.ok());
++      EXPECT_EQ(error::INVALID_ARGUMENT, dims_or.status().code());
++      EXPECT_EQ("Stride must be > 0 for Height and Width, but got (2, 0)",
++                dims_or.status().error_message());
++
++      dims_or =
++          CallOpDimensionsFromInputs(10, 14, 14, 3840, 3, 3, 2, 0, f, p);
++      EXPECT_FALSE(dims_or.ok());
++      EXPECT_EQ(error::INVALID_ARGUMENT, dims_or.status().code());
++      EXPECT_EQ("Stride must be > 0 for Height and Width, but got (0, 2)",
++                dims_or.status().error_message());
++    }
++  }
++}
++
+ TEST_F(OpLevelCostEstimatorTest, PredictMaxPool) {
+   auto predict_max_pool = [this](const int n, const int in, const int c,
+                                  const int k, const int s,

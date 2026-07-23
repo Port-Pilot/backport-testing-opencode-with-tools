@@ -1,0 +1,14 @@
+diff --git a/tensorflow/lite/kernels/gather_nd.cc b/tensorflow/lite/kernels/gather_nd.cc
+index 20e98652ee57ec..b8698b3ea2021b 100644
+--- a/tensorflow/lite/kernels/gather_nd.cc
++++ b/tensorflow/lite/kernels/gather_nd.cc
+@@ -130,6 +130,9 @@ TfLiteStatus Eval(TfLiteContext* context, TfLiteNode* node) {
+   const TfLiteTensor* indices = GetInput(context, node, kIndices);
+   TfLiteTensor* output = GetOutput(context, node, kOutputTensor);
+ 
++  // Prevent division by 0 in the helper
++  TF_LITE_ENSURE(context, NumElements(params) > 0);
++
+   switch (indices->type) {
+     case kTfLiteInt32:
+       return EvalGatherNd<int32_t>(context, params, indices, output);

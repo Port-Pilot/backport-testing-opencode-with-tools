@@ -1,0 +1,382 @@
+I’ll locate the older 2.4.3 implementation of `QuantizeAndDequantizeV4GradientOp`, compare its context to the supplied hunk, then apply the minimal axis validation if the same vulnerability exists.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target-side quantize/dequantize gradient code",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Validate and apply minimal backport hunk",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "content": "Review final diff and report YAML result",
+      "status": "pending",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target-side quantize/dequantize gradient code",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Validate and apply minimal backport hunk",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "content": "Review final diff and report YAML result",
+    "status": "pending",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 3,804
+cache read: 4,608
+cache write: 0
+output: 132
+reasoning output: 0
+
+tool: viewcode
+{
+  "ref": "5f4d2035579ec63b0e9e94dcc15e9d0bc5cce9e6",
+  "path": "tensorflow/core/kernels/quantize_and_dequantize_op.cc",
+  "startline": 120,
+  "endline": 210
+}
+Here are lines 120 through 210.
+
+      f(ctx->eigen_device<Device>(), input.flat<T>(), signed_input_, num_bits_,
+        range_given_, &input_min_tensor, &input_max_tensor, round_mode_,
+        narrow_range_, output->flat<T>());
+    } else {
+      functor::QuantizeAndDequantizePerChannelFunctor<Device, T> f;
+      f(ctx->eigen_device<Device>(),
+        input.template flat_inner_outer_dims<T, 3>(axis_ - 1), signed_input_,
+        num_bits_, range_given_, &input_min_tensor, &input_max_tensor,
+        round_mode_, narrow_range_,
+        output->template flat_inner_outer_dims<T, 3>(axis_ - 1));
+    }
+  }
+
+ private:
+  int num_bits_;
+  int axis_;
+  QuantizerRoundMode round_mode_;
+  bool signed_input_;
+  bool range_given_;
+  bool narrow_range_;
+};
+
+// Implementation of QuantizeAndDequantizeV4GradientOp.
+// When back-propagating the error through a quantized layer, the following
+// paper gives evidence that clipped-ReLU is better than non-clipped:
+// "Deep Learning with Low Precision by Half-wave Gaussian Quantization"
+// http://zpascal.net/cvpr2017/Cai_Deep_Learning_With_CVPR_2017_paper.pdf
+template <typename Device, typename T>
+class QuantizeAndDequantizeV4GradientOp : public OpKernel {
+ public:
+  explicit QuantizeAndDequantizeV4GradientOp(OpKernelConstruction* ctx)
+      : OpKernel::OpKernel(ctx) {
+    OP_REQUIRES_OK(ctx, ctx->GetAttr("axis", &axis_));
+  }
+
+  void Compute(OpKernelContext* ctx) override {
+    const Tensor& gradient = ctx->input(0);
+    const Tensor& input = ctx->input(1);
+    Tensor* input_backprop = nullptr;
+    OP_REQUIRES_OK(ctx,
+                   ctx->allocate_output(0, input.shape(), &input_backprop));
+
+    OP_REQUIRES(
+        ctx, input.IsSameSize(gradient),
+        errors::InvalidArgument("gradient and input must be the same size"));
+    const int depth = (axis_ == -1) ? 1 : input.dim_size(axis_);
+    const Tensor& input_min_tensor = ctx->input(2);
+    OP_REQUIRES(ctx,
+                input_min_tensor.dims() == 0 || input_min_tensor.dims() == 1,
+                errors::InvalidArgument(
+                    "Input min tensor must have dimension 1. Recieved ",
+                    input_min_tensor.dims(), "."));
+    const Tensor& input_max_tensor = ctx->input(3);
+    OP_REQUIRES(ctx,
+                input_max_tensor.dims() == 0 || input_max_tensor.dims() == 1,
+                errors::InvalidArgument(
+                    "Input max tensor must have dimension 1. Recieved ",
+                    input_max_tensor.dims(), "."));
+    if (axis_ != -1) {
+      OP_REQUIRES(
+          ctx, input_min_tensor.dim_size(0) == depth,
+          errors::InvalidArgument("min has incorrect size, expected ", depth,
+                                  " was ", input_min_tensor.dim_size(0)));
+      OP_REQUIRES(
+          ctx, input_max_tensor.dim_size(0) == depth,
+          errors::InvalidArgument("max has incorrect size, expected ", depth,
+                                  " was ", input_max_tensor.dim_size(0)));
+    }
+
+    TensorShape min_max_shape(input_min_tensor.shape());
+    Tensor* input_min_backprop;
+    OP_REQUIRES_OK(ctx,
+                   ctx->allocate_output(1, min_max_shape, &input_min_backprop));
+
+    Tensor* input_max_backprop;
+    OP_REQUIRES_OK(ctx,
+                   ctx->allocate_output(2, min_max_shape, &input_max_backprop));
+
+    if (axis_ == -1) {
+      functor::QuantizeAndDequantizeOneScaleGradientFunctor<Device, T> f;
+      f(ctx->eigen_device<Device>(), gradient.template flat<T>(),
+        input.template flat<T>(), input_min_tensor.scalar<T>(),
+        input_max_tensor.scalar<T>(), input_backprop->template flat<T>(),
+        input_min_backprop->template scalar<T>(),
+        input_max_backprop->template scalar<T>());
+    } else {
+      functor::QuantizeAndDequantizePerChannelGradientFunctor<Device, T> f;
+      f(ctx->eigen_device<Device>(),
+        gradient.template flat_inner_outer_dims<T, 3>(axis_ - 1),
+        input.template flat_inner_outer_dims<T, 3>(axis_ - 1),
+        &input_min_tensor, &input_max_tensor,
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: locate_symbol
+{
+  "ref": "5f4d2035579ec63b0e9e94dcc15e9d0bc5cce9e6",
+  "symbol": "QuantizeAndDequantizeV4GradientOp"
+}
+tensorflow/core/kernels/quantize_and_dequantize_op.cc:148
+tensorflow/core/kernels/quantize_and_dequantize_op.cc:150
+tensorflow/core/kernels/quantize_and_dequantize_op.cc:444
+tensorflow/core/kernels/quantize_and_dequantize_op.cc:479
+
+tokens used
+input: 977
+cache read: 7,680
+cache write: 0
+output: 142
+reasoning output: 0
+
+The target implementation matches the supplied newer hunk shape: it allocates `input_backprop` and then uses `axis_` in `input.dim_size(axis_)` without first bounding it. I’m going to add the same two `OP_REQUIRES` checks immediately after allocation.
+
+tool: validate
+{
+  "ref": "5f4d2035579ec63b0e9e94dcc15e9d0bc5cce9e6",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/quantize_and_dequantize_op.cc b/tensorflow/core/kernels/quantize_and_dequantize_op.cc\n--- a/tensorflow/core/kernels/quantize_and_dequantize_op.cc\n+++ b/tensorflow/core/kernels/quantize_and_dequantize_op.cc\n@@ -158,6 +158,13 @@ class QuantizeAndDequantizeV4GradientOp : public OpKernel {\n     Tensor* input_backprop = nullptr;\n     OP_REQUIRES_OK(ctx,\n                    ctx->allocate_output(0, input.shape(), &input_backprop));\n+    OP_REQUIRES(\n+        ctx, axis_ >= -1,\n+        errors::InvalidArgument(\"Axis must be at least -1. Found \", axis_));\n+    OP_REQUIRES(ctx, (axis_ == -1 || axis_ < input.shape().dims()),\n+                errors::InvalidArgument(\n+                    \"Axis should be -1 or 0 or a positive value less than \",\n+                    input.shape().dims(), \"but given axis value was \", axis_));\n \n     OP_REQUIRES(\n         ctx, input.IsSameSize(gradient),"
+}
+This patch does not apply to the target TensorFlow ref.
+Git apply output:
+error: corrupt patch at line 17
+Touched files:
+- tensorflow/core/kernels/quantize_and_dequantize_op.cc
+Fix the patch context against the older TensorFlow version, then run validate again in hunk mode.
+
+tokens used
+input: 2,209
+cache read: 7,680
+cache write: 0
+output: 390
+reasoning output: 39
+
+tool: validate
+{
+  "ref": "5f4d2035579ec63b0e9e94dcc15e9d0bc5cce9e6",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/quantize_and_dequantize_op.cc b/tensorflow/core/kernels/quantize_and_dequantize_op.cc\nindex 0000000..0000000 100644\n--- a/tensorflow/core/kernels/quantize_and_dequantize_op.cc\n+++ b/tensorflow/core/kernels/quantize_and_dequantize_op.cc\n@@ -158,6 +158,13 @@ class QuantizeAndDequantizeV4GradientOp : public OpKernel {\n     Tensor* input_backprop = nullptr;\n     OP_REQUIRES_OK(ctx,\n                    ctx->allocate_output(0, input.shape(), &input_backprop));\n+    OP_REQUIRES(\n+        ctx, axis_ >= -1,\n+        errors::InvalidArgument(\"Axis must be at least -1. Found \", axis_));\n+    OP_REQUIRES(ctx, (axis_ == -1 || axis_ < input.shape().dims()),\n+                errors::InvalidArgument(\n+                    \"Axis should be -1 or 0 or a positive value less than \",\n+                    input.shape().dims(), \"but given axis value was \", axis_));\n \n     OP_REQUIRES(\n         ctx, input.IsSameSize(gradient),\n"
+}
+Patch applied successfully
+
+tokens used
+input: 663
+cache read: 9,728
+cache write: 0
+output: 340
+reasoning output: 200
+
+The backport hunk validates cleanly against the target base. Applying it now to the working tree.
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/kernels/quantize_and_dequantize_op.cc\n@@\n     Tensor* input_backprop = nullptr;\n     OP_REQUIRES_OK(ctx,\n                    ctx->allocate_output(0, input.shape(), &input_backprop));\n+    OP_REQUIRES(\n+        ctx, axis_ >= -1,\n+        errors::InvalidArgument(\"Axis must be at least -1. Found \", axis_));\n+    OP_REQUIRES(ctx, (axis_ == -1 || axis_ < input.shape().dims()),\n+                errors::InvalidArgument(\n+                    \"Axis should be -1 or 0 or a positive value less than \",\n+                    input.shape().dims(), \"but given axis value was \", axis_));\n \n     OP_REQUIRES(\n         ctx, input.IsSameSize(gradient),\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/kernels/quantize_and_dequantize_op.cc
+
+tokens used
+input: 1,216
+cache read: 9,728
+cache write: 0
+output: 248
+reasoning output: 0
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target-side quantize/dequantize gradient code",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate and apply minimal backport hunk",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Review final diff and report YAML result",
+      "status": "in_progress",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target-side quantize/dequantize gradient code",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate and apply minimal backport hunk",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Review final diff and report YAML result",
+    "status": "in_progress",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 472
+cache read: 10,752
+cache write: 0
+output: 79
+reasoning output: 0
+
+I’ll review the resulting diff to ensure only the intended TensorFlow kernel file changed.
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/kernels/quantize_and_dequantize_op.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0198-5f4d2035579e"
+}
+warning: in the working copy of 'tensorflow/core/kernels/quantize_and_dequantize_op.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/kernels/quantize_and_dequantize_op.cc b/tensorflow/core/kernels/quantize_and_dequantize_op.cc
+index 540d900f9f..d63a49a04b 100644
+--- a/tensorflow/core/kernels/quantize_and_dequantize_op.cc
++++ b/tensorflow/core/kernels/quantize_and_dequantize_op.cc
+@@ -158,6 +158,13 @@ class QuantizeAndDequantizeV4GradientOp : public OpKernel {
+     Tensor* input_backprop = nullptr;
+     OP_REQUIRES_OK(ctx,
+                    ctx->allocate_output(0, input.shape(), &input_backprop));
++    OP_REQUIRES(
++        ctx, axis_ >= -1,
++        errors::InvalidArgument("Axis must be at least -1. Found ", axis_));
++    OP_REQUIRES(ctx, (axis_ == -1 || axis_ < input.shape().dims()),
++                errors::InvalidArgument(
++                    "Axis should be -1 or 0 or a positive value less than ",
++                    input.shape().dims(), "but given axis value was ", axis_));
+ 
+     OP_REQUIRES(
+         ctx, input.IsSameSize(gradient),
+
+tool: bash
+{
+  "command": "git status --short",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0198-5f4d2035579e"
+}
+ M tensorflow/core/kernels/quantize_and_dequantize_op.cc
+
+tokens used
+input: 664
+cache read: 10,752
+cache write: 0
+output: 176
+reasoning output: 0
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target-side quantize/dequantize gradient code",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate and apply minimal backport hunk",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Review final diff and report YAML result",
+      "status": "completed",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target-side quantize/dequantize gradient code",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate and apply minimal backport hunk",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Review final diff and report YAML result",
+    "status": "completed",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 155
+cache read: 11,776
+cache write: 0
+output: 80
+reasoning output: 21
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/kernels/quantize_and_dequantize_op.cc b/tensorflow/core/kernels/quantize_and_dequantize_op.cc
+    index 540d900f9f..d63a49a04b 100644
+    --- a/tensorflow/core/kernels/quantize_and_dequantize_op.cc
+    +++ b/tensorflow/core/kernels/quantize_and_dequantize_op.cc
+    @@ -158,6 +158,13 @@ class QuantizeAndDequantizeV4GradientOp : public OpKernel {
+         Tensor* input_backprop = nullptr;
+         OP_REQUIRES_OK(ctx,
+                        ctx->allocate_output(0, input.shape(), &input_backprop));
+    +    OP_REQUIRES(
+    +        ctx, axis_ >= -1,
+    +        errors::InvalidArgument("Axis must be at least -1. Found ", axis_));
+    +    OP_REQUIRES(ctx, (axis_ == -1 || axis_ < input.shape().dims()),
+    +                errors::InvalidArgument(
+    +                    "Axis should be -1 or 0 or a positive value less than ",
+    +                    input.shape().dims(), "but given axis value was ", axis_));
+     
+         OP_REQUIRES(
+             ctx, input.IsSameSize(gradient),
+  notes: >
+    Added the V4 gradient axis bounds checks from the 2.7.0-rc0 security fix to the matching TensorFlow 2.4.3 kernel; the hunk was validated against the target base.
+```
+
+tokens used
+input: 374
+cache read: 11,776
+cache write: 0
+output: 351
+reasoning output: 0

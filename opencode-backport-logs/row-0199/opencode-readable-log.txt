@@ -1,0 +1,668 @@
+I’ll inspect the target-side source and test context for the two hunks, then apply the minimal matching changes without using the held-out backport commit.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target implementation and tests around sparse tensor slice dataset",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Validate target hunks against base context",
+      "status": "pending",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply minimal backport changes",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "content": "Review resulting diff",
+      "status": "pending",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target implementation and tests around sparse tensor slice dataset",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Validate target hunks against base context",
+    "status": "pending",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply minimal backport changes",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "content": "Review resulting diff",
+    "status": "pending",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 4,232
+cache read: 4,608
+cache write: 0
+output: 128
+reasoning output: 0
+
+tool: viewcode
+{
+  "ref": "d32f2dfbca835bc48c066f4b4ecc6bb93c0f22bd",
+  "path": "tensorflow/python/data/kernel_tests/from_sparse_tensor_slices_test.py",
+  "startline": 90,
+  "endline": 150
+}
+Here are lines 90 through 150.
+
+      # pylint: enable=g-complex-comprehension
+      dense_shape = np.array([len(slices), max(len(s) for s in slices) + 1])
+      # Test with sparse tensor in the reverse order, which is not
+      # currently supported.
+      reverse_order_indices = indices[::-1, :]
+      reverse_order_values = values[::-1]
+      sparse_feed = sparse_tensor.SparseTensorValue(
+          reverse_order_indices, reverse_order_values, dense_shape)
+      with self.assertRaises(errors.UnimplementedError):
+        sess.run(init_op, feed_dict={st: sparse_feed})
+
+  @combinations.generate(combinations.combine(tf_api_version=1, mode=["graph"]))
+  def testEmptySparseTensorSlices(self):
+    """Test a dataset based on slices of an empty `tf.sparse.SparseTensor`."""
+    st = array_ops.sparse_placeholder(dtypes.float64)
+    iterator = dataset_ops.make_initializable_iterator(
+        dataset_ops.Dataset.from_sparse_tensor_slices(st))
+    init_op = iterator.initializer
+    get_next = sparse_tensor.SparseTensor(*iterator.get_next())
+
+    with self.cached_session() as sess:
+      # Test with an empty sparse tensor.
+      empty_indices = np.empty((0, 4), dtype=np.int64)
+      empty_values = np.empty((0,), dtype=np.float64)
+      empty_dense_shape = [0, 4, 37, 9]
+      sparse_feed = sparse_tensor.SparseTensorValue(empty_indices, empty_values,
+                                                    empty_dense_shape)
+      sess.run(init_op, feed_dict={st: sparse_feed})
+      with self.assertRaises(errors.OutOfRangeError):
+        sess.run(get_next)
+
+  @combinations.generate(combinations.combine(tf_api_version=2, mode=["eager"]))
+  def testFromSparseTensorSlicesError(self):
+    with self.assertRaises(AttributeError):
+      dataset_ops.Dataset.from_sparse_tensor_slices(None)
+
+
+class FromSparseTensorSlicesCheckpointTest(
+    checkpoint_test_base.CheckpointTestBase, parameterized.TestCase):
+
+  def _build_sparse_tensor_slice_dataset(self, slices):
+    # pylint: disable=g-complex-comprehension
+    indices = np.array(
+        [[i, j] for i in range(len(slices)) for j in range(len(slices[i]))],
+        dtype=np.int64)
+    values = np.array([val for s in slices for val in s], dtype=np.float64)
+    # pylint: enable=g-complex-comprehension
+    dense_shape = np.array(
+        [len(slices), max(len(s) for s in slices) + 1], dtype=np.int64)
+    sparse_components = sparse_tensor.SparseTensor(indices, values, dense_shape)
+    return dataset_ops.Dataset.from_sparse_tensor_slices(sparse_components)
+
+  @combinations.generate(
+      combinations.times(test_base.v1_only_combinations(),
+                         checkpoint_test_base.default_test_combinations()))
+  def test(self, verify_fn):
+    slices = [[1., 2., 3.], [1.], [1.], [1., 2.], [], [1., 2.], [], [], []]
+
+    verify_fn(
+        self,
+        lambda: self._build_sparse_tensor_slice_dataset(slices),
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: viewcode
+{
+  "ref": "d32f2dfbca835bc48c066f4b4ecc6bb93c0f22bd",
+  "path": "tensorflow/core/kernels/data/sparse_tensor_slice_dataset_op.cc",
+  "startline": 210,
+  "endline": 275
+}
+Here are lines 210 through 275.
+
+    sparse::GroupIterable group_iterable_ TF_GUARDED_BY(mu_);
+    sparse::GroupIterable::IteratorStep iter_ TF_GUARDED_BY(mu_);
+    int64 i_ TF_GUARDED_BY(mu_) = 0;
+    const int64 kNextNonEmptyUnknown = -1;
+    int64 next_non_empty_i_ TF_GUARDED_BY(mu_) = kNextNonEmptyUnknown;
+    Tensor next_indices_ TF_GUARDED_BY(mu_);
+    Tensor next_values_ TF_GUARDED_BY(mu_);
+  };
+
+  const sparse::SparseTensor sparse_tensor_;
+  const DataTypeVector dtypes_;
+  const std::vector<PartialTensorShape> shapes_;
+};
+
+template <typename T>
+class SparseTensorSliceDatasetOp : public DatasetOpKernel {
+ public:
+  explicit SparseTensorSliceDatasetOp(OpKernelConstruction* ctx)
+      : DatasetOpKernel(ctx) {}
+
+  void MakeDataset(OpKernelContext* ctx, DatasetBase** output) override {
+    // Create a new SparseTensorSliceDatasetOp::Dataset, insert it in
+    // the step container, and return it as the output.
+    const Tensor* indices;
+    OP_REQUIRES_OK(ctx, ctx->input("indices", &indices));
+    const Tensor* values;
+    OP_REQUIRES_OK(ctx, ctx->input("values", &values));
+    const Tensor* dense_shape;
+    OP_REQUIRES_OK(ctx, ctx->input("dense_shape", &dense_shape));
+
+    OP_REQUIRES(ctx, TensorShapeUtils::IsMatrix(indices->shape()),
+                errors::InvalidArgument(
+                    "Input indices should be a matrix but received shape ",
+                    indices->shape().DebugString()));
+    OP_REQUIRES(ctx, TensorShapeUtils::IsVector(values->shape()),
+                errors::InvalidArgument(
+                    "Input values should be a vector but received shape ",
+                    indices->shape().DebugString()));
+    OP_REQUIRES(ctx, TensorShapeUtils::IsVector(dense_shape->shape()),
+                errors::InvalidArgument(
+                    "Input shape should be a vector but received shape ",
+                    dense_shape->shape().DebugString()));
+
+    // We currently ensure that `sparse_tensor` is ordered in the
+    // batch dimension.
+    // TODO(mrry): Investigate ways to avoid this unconditional check
+    // if we can be sure that the sparse tensor was produced in an
+    // appropriate order (e.g. by `tf.parse_example()` or a Dataset
+    // that batches elements into rows of a SparseTensor).
+    int64 previous_batch_index = -1;
+    for (int64 i = 0; i < indices->dim_size(0); ++i) {
+      int64 next_batch_index = indices->matrix<int64>()(i, 0);
+      OP_REQUIRES(
+          ctx, next_batch_index >= previous_batch_index,
+          errors::Unimplemented("The SparseTensor must be ordered in the batch "
+                                "dimension; handling arbitrarily ordered input "
+                                "is not currently supported."));
+      previous_batch_index = next_batch_index;
+    }
+    gtl::InlinedVector<int64, 8> std_order(dense_shape->NumElements(), 0);
+    sparse::SparseTensor tensor;
+    OP_REQUIRES_OK(
+        ctx, sparse::SparseTensor::Create(
+                 *indices, *values, TensorShape(dense_shape->vec<int64>()),
+                 std_order, &tensor));
+    *output = new Dataset<T>(ctx, std::move(tensor));
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: locate_symbol
+{
+  "ref": "d32f2dfbca835bc48c066f4b4ecc6bb93c0f22bd",
+  "symbol": "SparseTensorSliceDatasetOp"
+}
+tensorflow/core/kernels/data/sparse_tensor_slice_dataset_op.cc:225
+tensorflow/core/kernels/data/sparse_tensor_slice_dataset_op.cc:227
+tensorflow/core/kernels/data/sparse_tensor_slice_dataset_op.cc:54
+tensorflow/core/kernels/data/sparse_tensor_slice_dataset_op.cc:285
+
+tokens used
+input: 4,497
+cache read: 4,608
+cache write: 0
+output: 193
+reasoning output: 0
+
+tool: viewcode
+{
+  "ref": "d32f2dfbca835bc48c066f4b4ecc6bb93c0f22bd",
+  "path": "tensorflow/python/data/kernel_tests/from_sparse_tensor_slices_test.py",
+  "startline": 1,
+  "endline": 35
+}
+Here are lines 1 through 35.
+
+# Copyright 2017 The TensorFlow Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+"""Tests for `tf.data.Dataset.from_sparse_tensor_slices()`."""
+from __future__ import absolute_import
+from __future__ import division
+from __future__ import print_function
+
+from absl.testing import parameterized
+import numpy as np
+
+from tensorflow.python.data.kernel_tests import checkpoint_test_base
+from tensorflow.python.data.kernel_tests import test_base
+from tensorflow.python.data.ops import dataset_ops
+from tensorflow.python.framework import combinations
+from tensorflow.python.framework import dtypes
+from tensorflow.python.framework import errors
+from tensorflow.python.framework import sparse_tensor
+from tensorflow.python.ops import array_ops
+from tensorflow.python.platform import test
+
+
+class FromSparseTensorSlicesTest(test_base.DatasetTestBase,
+                                 parameterized.TestCase):
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: viewcode
+{
+  "ref": "d32f2dfbca835bc48c066f4b4ecc6bb93c0f22bd",
+  "path": "tensorflow/core/kernels/data/sparse_tensor_slice_dataset_op.cc",
+  "startline": 1,
+  "endline": 30
+}
+Here are lines 1 through 30.
+
+/* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+==============================================================================*/
+#include <numeric>
+
+#include "tensorflow/core/framework/dataset.h"
+#include "tensorflow/core/framework/partial_tensor_shape.h"
+#include "tensorflow/core/framework/register_types.h"
+#include "tensorflow/core/framework/tensor.h"
+#include "tensorflow/core/util/sparse/sparse_tensor.h"
+
+namespace tensorflow {
+namespace data {
+namespace {
+
+// See documentation in ../../ops/dataset_ops.cc for a high-level
+// description of the following op.
+
+template <typename T>
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tokens used
+input: 2,145
+cache read: 8,704
+cache write: 0
+output: 148
+reasoning output: 15
+
+The target code has the same op and test layout. One surrounding line differs from the newer patch’s context, so I’ll validate a target-specific hunk before editing.
+
+tool: validate
+{
+  "ref": "d32f2dfbca835bc48c066f4b4ecc6bb93c0f22bd",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/data/sparse_tensor_slice_dataset_op.cc b/tensorflow/core/kernels/data/sparse_tensor_slice_dataset_op.cc\n--- a/tensorflow/core/kernels/data/sparse_tensor_slice_dataset_op.cc\n+++ b/tensorflow/core/kernels/data/sparse_tensor_slice_dataset_op.cc\n@@ -240,6 +240,17 @@ class SparseTensorSliceDatasetOp : public DatasetOpKernel {\n                 errors::InvalidArgument(\n                     \"Input indices should be a matrix but received shape \",\n                     indices->shape().DebugString()));\n+\n+    const auto num_indices = indices->NumElements();\n+    const auto num_values = values->NumElements();\n+    if (num_indices == 0 || num_values == 0) {\n+      OP_REQUIRES(ctx, num_indices == num_values,\n+                  errors::InvalidArgument(\n+                      \"If indices or values are empty, the other one must also \"\n+                      \"be. Got indices of shape \",\n+                      indices->shape().DebugString(), \" and values of shape \",\n+                      values->shape().DebugString()));\n+    }\n     OP_REQUIRES(ctx, TensorShapeUtils::IsVector(values->shape()),\n                 errors::InvalidArgument(\n                     \"Input values should be a vector but received shape \",\n"
+}
+Patch applied successfully
+
+tokens used
+input: 844
+cache read: 10,752
+cache write: 0
+output: 391
+reasoning output: 76
+
+tool: validate
+{
+  "ref": "d32f2dfbca835bc48c066f4b4ecc6bb93c0f22bd",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/python/data/kernel_tests/from_sparse_tensor_slices_test.py b/tensorflow/python/data/kernel_tests/from_sparse_tensor_slices_test.py\n--- a/tensorflow/python/data/kernel_tests/from_sparse_tensor_slices_test.py\n+++ b/tensorflow/python/data/kernel_tests/from_sparse_tensor_slices_test.py\n@@ -118,6 +118,26 @@ def testEmptySparseTensorSlices(self):\n       with self.assertRaises(errors.OutOfRangeError):\n         sess.run(get_next)\n \n+  @combinations.generate(combinations.combine(tf_api_version=1, mode=[\"graph\"]))\n+  def testEmptySparseTensorSlicesInvalid(self):\n+    \"\"\"Test a dataset based on invalid `tf.sparse.SparseTensor`.\"\"\"\n+    st = array_ops.sparse_placeholder(dtypes.float64)\n+    iterator = dataset_ops.make_initializable_iterator(\n+        dataset_ops.Dataset.from_sparse_tensor_slices(st))\n+    init_op = iterator.initializer\n+\n+    with self.cached_session() as sess:\n+      # Test with an empty sparse tensor but with non empty values.\n+      empty_indices = np.empty((0, 4), dtype=np.int64)\n+      non_empty_values = [1, 2, 3, 4]\n+      empty_dense_shape = [0, 4, 37, 9]\n+      sparse_feed = sparse_tensor.SparseTensorValue(empty_indices,\n+                                                    non_empty_values,\n+                                                    empty_dense_shape)\n+      # Here, we expect the test to fail when running the feed.\n+      with self.assertRaises(errors.InvalidArgumentError):\n+        sess.run(init_op, feed_dict={st: sparse_feed})\n+\n   @combinations.generate(combinations.combine(tf_api_version=2, mode=[\"eager\"]))\n   def testFromSparseTensorSlicesError(self):\n     with self.assertRaises(AttributeError):\n"
+}
+Patch applied successfully
+
+tokens used
+input: 1,324
+cache read: 10,752
+cache write: 0
+output: 477
+reasoning output: 0
+
+Both target-specific hunks apply cleanly. I’m applying only the guard from the security fix plus its regression test.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target implementation and tests around sparse tensor slice dataset",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate target hunks against base context",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply minimal backport changes",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Review resulting diff",
+      "status": "pending",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target implementation and tests around sparse tensor slice dataset",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate target hunks against base context",
+    "status": "completed",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply minimal backport changes",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Review resulting diff",
+    "status": "pending",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 7,958
+cache read: 4,608
+cache write: 0
+output: 121
+reasoning output: 0
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/kernels/data/sparse_tensor_slice_dataset_op.cc\n@@\n     OP_REQUIRES(ctx, TensorShapeUtils::IsMatrix(indices->shape()),\n                 errors::InvalidArgument(\n                     \"Input indices should be a matrix but received shape \",\n                     indices->shape().DebugString()));\n+\n+    const auto num_indices = indices->NumElements();\n+    const auto num_values = values->NumElements();\n+    if (num_indices == 0 || num_values == 0) {\n+      OP_REQUIRES(ctx, num_indices == num_values,\n+                  errors::InvalidArgument(\n+                      \"If indices or values are empty, the other one must also \"\n+                      \"be. Got indices of shape \",\n+                      indices->shape().DebugString(), \" and values of shape \",\n+                      values->shape().DebugString()));\n+    }\n     OP_REQUIRES(ctx, TensorShapeUtils::IsVector(values->shape()),\n                 errors::InvalidArgument(\n                     \"Input values should be a vector but received shape \",\n*** Update File: tensorflow/python/data/kernel_tests/from_sparse_tensor_slices_test.py\n@@\n       with self.assertRaises(errors.OutOfRangeError):\n         sess.run(get_next)\n \n+  @combinations.generate(combinations.combine(tf_api_version=1, mode=[\"graph\"]))\n+  def testEmptySparseTensorSlicesInvalid(self):\n+    \"\"\"Test a dataset based on invalid `tf.sparse.SparseTensor`.\"\"\"\n+    st = array_ops.sparse_placeholder(dtypes.float64)\n+    iterator = dataset_ops.make_initializable_iterator(\n+        dataset_ops.Dataset.from_sparse_tensor_slices(st))\n+    init_op = iterator.initializer\n+\n+    with self.cached_session() as sess:\n+      # Test with an empty sparse tensor but with non empty values.\n+      empty_indices = np.empty((0, 4), dtype=np.int64)\n+      non_empty_values = [1, 2, 3, 4]\n+      empty_dense_shape = [0, 4, 37, 9]\n+      sparse_feed = sparse_tensor.SparseTensorValue(empty_indices,\n+                                                    non_empty_values,\n+                                                    empty_dense_shape)\n+      # Here, we expect the test to fail when running the feed.\n+      with self.assertRaises(errors.InvalidArgumentError):\n+        sess.run(init_op, feed_dict={st: sparse_feed})\n+\n   @combinations.generate(combinations.combine(tf_api_version=2, mode=[\"eager\"]))\n   def testFromSparseTensorSlicesError(self):\n     with self.assertRaises(AttributeError):\n       dataset_ops.Dataset.from_sparse_tensor_slices(None)\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/kernels/data/sparse_tensor_slice_dataset_op.cc
+M tensorflow/python/data/kernel_tests/from_sparse_tensor_slices_test.py
+
+tokens used
+input: 4,120
+cache read: 8,704
+cache write: 0
+output: 644
+reasoning output: 0
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target implementation and tests around sparse tensor slice dataset",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate target hunks against base context",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply minimal backport changes",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Review resulting diff",
+      "status": "in_progress",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target implementation and tests around sparse tensor slice dataset",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate target hunks against base context",
+    "status": "completed",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply minimal backport changes",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Review resulting diff",
+    "status": "in_progress",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 1,737
+cache read: 11,776
+cache write: 0
+output: 90
+reasoning output: 0
+
+The source edit is complete. I’ll review the resulting diff for scope and formatting; no full build will be run per constraints.
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/kernels/data/sparse_tensor_slice_dataset_op.cc tensorflow/python/data/kernel_tests/from_sparse_tensor_slices_test.py",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0199-d32f2dfbca83"
+}
+warning: in the working copy of 'tensorflow/core/kernels/data/sparse_tensor_slice_dataset_op.cc', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'tensorflow/python/data/kernel_tests/from_sparse_tensor_slices_test.py', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/kernels/data/sparse_tensor_slice_dataset_op.cc b/tensorflow/core/kernels/data/sparse_tensor_slice_dataset_op.cc
+index 9efc9fddf5..7cd31cc618 100644
+--- a/tensorflow/core/kernels/data/sparse_tensor_slice_dataset_op.cc
++++ b/tensorflow/core/kernels/data/sparse_tensor_slice_dataset_op.cc
+@@ -241,6 +241,17 @@ class SparseTensorSliceDatasetOp : public DatasetOpKernel {
+                 errors::InvalidArgument(
+                     "Input indices should be a matrix but received shape ",
+                     indices->shape().DebugString()));
++
++    const auto num_indices = indices->NumElements();
++    const auto num_values = values->NumElements();
++    if (num_indices == 0 || num_values == 0) {
++      OP_REQUIRES(ctx, num_indices == num_values,
++                  errors::InvalidArgument(
++                      "If indices or values are empty, the other one must also "
++                      "be. Got indices of shape ",
++                      indices->shape().DebugString(), " and values of shape ",
++                      values->shape().DebugString()));
++    }
+     OP_REQUIRES(ctx, TensorShapeUtils::IsVector(values->shape()),
+                 errors::InvalidArgument(
+                     "Input values should be a vector but received shape ",
+diff --git a/tensorflow/python/data/kernel_tests/from_sparse_tensor_slices_test.py b/tensorflow/python/data/kernel_tests/from_sparse_tensor_slices_test.py
+index 25ecbf2068..8f93530010 100644
+--- a/tensorflow/python/data/kernel_tests/from_sparse_tensor_slices_test.py
++++ b/tensorflow/python/data/kernel_tests/from_sparse_tensor_slices_test.py
+@@ -118,6 +118,26 @@ class FromSparseTensorSlicesTest(test_base.DatasetTestBase,
+       with self.assertRaises(errors.OutOfRangeError):
+         sess.run(get_next)
+ 
++  @combinations.generate(combinations.combine(tf_api_version=1, mode=["graph"]))
++  def testEmptySparseTensorSlicesInvalid(self):
++    """Test a dataset based on invalid `tf.sparse.SparseTensor`."""
++    st = array_ops.sparse_placeholder(dtypes.float64)
++    iterator = dataset_ops.make_initializable_iterator(
++        dataset_ops.Dataset.from_sparse_tensor_slices(st))
++    init_op = iterator.initializer
++
++    with self.cached_session() as sess:
++      # Test with an empty sparse tensor but with non empty values.
++      empty_indices = np.empty((0, 4), dtype=np.int64)
++      non_empty_values = [1, 2, 3, 4]
++      empty_dense_shape = [0, 4, 37, 9]
++      sparse_feed = sparse_tensor.SparseTensorValue(empty_indices,
++                                                    non_empty_values,
++                                                    empty_dense_shape)
++      # Here, we expect the test to fail when running the feed.
++      with self.assertRaises(errors.InvalidArgumentError):
++        sess.run(init_op, feed_dict={st: sparse_feed})
++
+   @combinations.generate(combinations.combine(tf_api_version=2, mode=["eager"]))
+   def testFromSparseTensorSlicesError(self):
+     with self.assertRaises(AttributeError):
+
+tokens used
+input: 1,964
+cache read: 11,776
+cache write: 0
+output: 119
+reasoning output: 0
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target implementation and tests around sparse tensor slice dataset",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate target hunks against base context",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply minimal backport changes",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Review resulting diff",
+      "status": "completed",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target implementation and tests around sparse tensor slice dataset",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate target hunks against base context",
+    "status": "completed",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply minimal backport changes",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Review resulting diff",
+    "status": "completed",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 1,832
+cache read: 12,800
+cache write: 0
+output: 91
+reasoning output: 19
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/kernels/data/sparse_tensor_slice_dataset_op.cc b/tensorflow/core/kernels/data/sparse_tensor_slice_dataset_op.cc
+    index 9efc9fddf5..7cd31cc618 100644
+    --- a/tensorflow/core/kernels/data/sparse_tensor_slice_dataset_op.cc
+    +++ b/tensorflow/core/kernels/data/sparse_tensor_slice_dataset_op.cc
+    @@ -241,6 +241,17 @@ class SparseTensorSliceDatasetOp : public DatasetOpKernel {
+                     errors::InvalidArgument(
+                         "Input indices should be a matrix but received shape ",
+                         indices->shape().DebugString()));
+    +
+    +    const auto num_indices = indices->NumElements();
+    +    const auto num_values = values->NumElements();
+    +    if (num_indices == 0 || num_values == 0) {
+    +      OP_REQUIRES(ctx, num_indices == num_values,
+    +                  errors::InvalidArgument(
+    +                      "If indices or values are empty, the other one must also "
+    +                      "be. Got indices of shape ",
+    +                      indices->shape().DebugString(), " and values of shape ",
+    +                      values->shape().DebugString()));
+    +    }
+         OP_REQUIRES(ctx, TensorShapeUtils::IsVector(values->shape()),
+                     errors::InvalidArgument(
+                         "Input values should be a vector but received shape ",
+    diff --git a/tensorflow/python/data/kernel_tests/from_sparse_tensor_slices_test.py b/tensorflow/python/data/kernel_tests/from_sparse_tensor_slices_test.py
+    index 25ecbf2068..8f93530010 100644
+    --- a/tensorflow/python/data/kernel_tests/from_sparse_tensor_slices_test.py
+    +++ b/tensorflow/python/data/kernel_tests/from_sparse_tensor_slices_test.py
+    @@ -118,6 +118,26 @@ class FromSparseTensorSlicesTest(test_base.DatasetTestBase,
+           with self.assertRaises(errors.OutOfRangeError):
+             sess.run(get_next)
+     
+    +  @combinations.generate(combinations.combine(tf_api_version=1, mode=["graph"]))
+    +  def testEmptySparseTensorSlicesInvalid(self):
+    +    """Test a dataset based on invalid `tf.sparse.SparseTensor`."""
+    +    st = array_ops.sparse_placeholder(dtypes.float64)
+    +    iterator = dataset_ops.make_initializable_iterator(
+    +        dataset_ops.Dataset.from_sparse_tensor_slices(st))
+    +    init_op = iterator.initializer
+    +
+    +    with self.cached_session() as sess:
+    +      # Test with an empty sparse tensor but with non empty values.
+    +      empty_indices = np.empty((0, 4), dtype=np.int64)
+    +      non_empty_values = [1, 2, 3, 4]
+    +      empty_dense_shape = [0, 4, 37, 9]
+    +      sparse_feed = sparse_tensor.SparseTensorValue(empty_indices,
+    +                                                    non_empty_values,
+    +                                                    empty_dense_shape)
+    +      # Here, we expect the test to fail when running the feed.
+    +      with self.assertRaises(errors.InvalidArgumentError):
+    +        sess.run(init_op, feed_dict={st: sparse_feed})
+    +
+       @combinations.generate(combinations.combine(tf_api_version=2, mode=["eager"]))
+       def testFromSparseTensorSlicesError(self):
+         with self.assertRaises(AttributeError):
+  notes: >
+    Backported the empty indices/values consistency check for SparseTensorSliceDataset and added the corresponding regression test.
+```
+
+tokens used
+input: 3,102
+cache read: 11,776
+cache write: 0
+output: 782
+reasoning output: 0

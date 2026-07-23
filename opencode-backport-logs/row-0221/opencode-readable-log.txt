@@ -1,0 +1,264 @@
+I’ll locate the matching `PrepareImpl` implementation in the target checkout, verify the older context, then apply the minimal guard against a zero filter input dimension.
+
+tool: viewcode
+{
+  "ref": "0a3a3a33f5fe8630e85234f33276e3dbe4d7da46",
+  "path": "tensorflow/lite/kernels/fully_connected.cc",
+  "startline": 190,
+  "endline": 250
+}
+Here are lines 190 through 250.
+
+    TF_LITE_ENSURE_STATUS(GetQuantizedConvolutionMultipler(
+        context, input, filter, bias, output, &real_multiplier));
+    int exponent;
+    QuantizeMultiplier(real_multiplier, &data->output_multiplier, &exponent);
+    data->output_shift = exponent;
+    TF_LITE_ENSURE_STATUS(CalculateActivationRangeQuantized(
+        context, params->activation, output, &data->output_activation_min,
+        &data->output_activation_max));
+  }
+
+  if (input->type == kTfLiteInt16 && output->type == kTfLiteInt16) {
+    TF_LITE_ENSURE_EQ(context, input->params.zero_point, 0);
+    TF_LITE_ENSURE_EQ(context, output->params.zero_point, 0);
+  }
+
+  // If we have to perform on-the-fly quantization (with quantized weights and
+  // float inputs) first we need to quantize the inputs. Allocate a temporary
+  // buffer to store the intermediate quantized values.
+  // Additionally, we allocate a temporary buffer to store the accumulated
+  // quantized values prior to multiplication by the scaling factor.
+  if (input->type == kTfLiteFloat32 &&
+      (filter->type == kTfLiteUInt8 || filter->type == kTfLiteInt8)) {
+    TfLiteIntArrayFree(node->temporaries);
+    data->compute_row_sums = true;
+    node->temporaries = TfLiteIntArrayCreate(5);
+    node->temporaries->data[0] = data->scratch_tensor_index;
+
+    TfLiteTensor* input_quantized = GetTemporary(context, node, /*index=*/0);
+    input_quantized->type = filter->type;
+    input_quantized->allocation_type = kTfLiteArenaRw;
+
+    TfLiteIntArray* input_quantized_size = TfLiteIntArrayCopy(input->dims);
+    TF_LITE_ENSURE_OK(context, context->ResizeTensor(context, input_quantized,
+                                                     input_quantized_size));
+
+    node->temporaries->data[1] = data->scratch_tensor_index + 1;
+    TfLiteTensor* scaling_factors = GetTemporary(context, node, /*index=*/1);
+    scaling_factors->type = kTfLiteFloat32;
+    scaling_factors->allocation_type = kTfLiteArenaRw;
+
+    int scaling_dims[1] = {batch_size};
+    if (!TfLiteIntArrayEqualsArray(scaling_factors->dims, 1, scaling_dims)) {
+      TfLiteIntArray* scaling_factors_size = TfLiteIntArrayCreate(1);
+      scaling_factors_size->data[0] = batch_size;
+      TF_LITE_ENSURE_OK(context, context->ResizeTensor(context, scaling_factors,
+                                                       scaling_factors_size));
+    }
+
+    node->temporaries->data[2] = data->scratch_tensor_index + 2;
+    TfLiteTensor* accum_scratch = GetTemporary(context, node, /*index=*/2);
+    accum_scratch->type = kTfLiteInt32;
+    accum_scratch->allocation_type = kTfLiteArenaRw;
+    int accum_scratch_dims[2] = {num_units, batch_size};
+    if (!TfLiteIntArrayEqualsArray(accum_scratch->dims, 2,
+                                   accum_scratch_dims)) {
+      TfLiteIntArray* accum_size = TfLiteIntArrayCreate(2);
+      accum_size->data[0] = num_units;
+      accum_size->data[1] = batch_size;
+      TF_LITE_ENSURE_OK(
+          context, context->ResizeTensor(context, accum_scratch, accum_size));
+    }
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: locate_symbol
+{
+  "ref": "0a3a3a33f5fe8630e85234f33276e3dbe4d7da46",
+  "symbol": "PrepareImpl"
+}
+tensorflow/lite/kernels/fully_connected.cc:146
+tensorflow/lite/kernels/fully_connected.cc:318
+
+tokens used
+input: 3,685
+cache read: 4,608
+cache write: 0
+output: 167
+reasoning output: 0
+
+The target file contains the same function and surrounding temporary-buffer logic; I’m checking the exact lines where `batch_size` is computed so the hunk matches the older release cleanly.
+
+tool: viewcode
+{
+  "ref": "0a3a3a33f5fe8630e85234f33276e3dbe4d7da46",
+  "path": "tensorflow/lite/kernels/fully_connected.cc",
+  "startline": 140,
+  "endline": 190
+}
+Here are lines 140 through 190.
+
+}
+
+void Free(TfLiteContext* context, void* buffer) {
+  delete reinterpret_cast<OpData*>(buffer);
+}
+
+TfLiteStatus PrepareImpl(TfLiteContext* context, TfLiteNode* node) {
+  auto* params =
+      reinterpret_cast<TfLiteFullyConnectedParams*>(node->builtin_data);
+  OpData* data = reinterpret_cast<OpData*>(node->user_data);
+  // Check we have all the inputs and outputs we need.
+  TF_LITE_ENSURE(context, node->inputs->size == 2 || node->inputs->size == 3);
+  // Shuffled formats need a workspace to store the shuffled input activations.
+  const int expected_outputs_count =
+      params->weights_format == kTfLiteFullyConnectedWeightsFormatDefault ? 1
+                                                                          : 2;
+  TF_LITE_ENSURE_EQ(context, node->outputs->size, expected_outputs_count);
+
+  const TfLiteTensor* input = GetInput(context, node, kInputTensor);
+  const TfLiteTensor* filter = GetInput(context, node, kWeightsTensor);
+  const TfLiteTensor* bias =
+      (node->inputs->size == 3)
+          ? GetOptionalInputTensor(context, node, kBiasTensor)
+          : nullptr;
+  TfLiteTensor* output = GetOutput(context, node, kOutputTensor);
+
+  // Check proper datatype match among all Input Tensors
+  TF_LITE_ENSURE_STATUS(
+      CheckTypes(context, input, filter, bias, output, params));
+
+  // Check all the parameters of tensor match within themselves and match the
+  // input configuration.
+  int input_size = 1;
+  for (int i = 0; i < input->dims->size; i++) {
+    input_size *= input->dims->data[i];
+  }
+
+  TF_LITE_ENSURE_EQ(context, NumDimensions(filter), 2);
+  const int batch_size = input_size / filter->dims->data[1];
+  const int num_units = filter->dims->data[0];
+
+  if (bias) {
+    TF_LITE_ENSURE_EQ(context, NumElements(bias), SizeOfDimension(filter, 0));
+  }
+
+  // Note that quantized inference requires that all tensors have their
+  // parameters set. This is usually done during quantized training.
+  if (input->type == kTfLiteUInt8 || input->type == kTfLiteInt8 ||
+      input->type == kTfLiteInt16) {
+    double real_multiplier = 0.0;
+    TF_LITE_ENSURE_STATUS(GetQuantizedConvolutionMultipler(
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: git_show
+{
+  "ref": "718721986aa137691ee23f03638867151f74935f",
+  "context": "TF_LITE_ENSURE_EQ(context, NumDimensions(filter), 2);\n  const int batch_size = input_size / filter->dims->data[1];\n  const int num_units = filter->dims->data[0];"
+}
+commit 718721986aa137691ee23f03638867151f74935f
+Author: Mihai Maruseac <mihaimaruseac@google.com>
+Date:   Fri Jul 16 06:49:45 2021 -0700
+
+    Prevent division by 0 in `fully_connected.cc`
+    
+    PiperOrigin-RevId: 385137282
+    Change-Id: If201e69b6e0048f0be001330b4b977e2b46db2cb
+
+ tensorflow/lite/kernels/fully_connected.cc | 1 +
+ 1 file changed, 1 insertion(+)
+This commit shows that there is a high probability that this code is new, so the corresponding code segment cannot be found in the old version.
+You can call `viewcode` and `locate_symbol` to further check the results step by step. For newly introduced code, we consider that this hunk `need not ported`.
+
+tokens used
+input: 1,619
+cache read: 7,680
+cache write: 0
+output: 211
+reasoning output: 9
+
+The vulnerable division is present in the target release with identical context, so the backport is a one-line input-dimension check before computing `batch_size`.
+
+tool: validate
+{
+  "ref": "0a3a3a33f5fe8630e85234f33276e3dbe4d7da46",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/lite/kernels/fully_connected.cc b/tensorflow/lite/kernels/fully_connected.cc\n--- a/tensorflow/lite/kernels/fully_connected.cc\n+++ b/tensorflow/lite/kernels/fully_connected.cc\n@@ -172,6 +172,7 @@ TfLiteStatus PrepareImpl(TfLiteContext* context, TfLiteNode* node) {\n   }\n \n   TF_LITE_ENSURE_EQ(context, NumDimensions(filter), 2);\n+  TF_LITE_ENSURE(context, filter->dims->data[1] != 0);\n   const int batch_size = input_size / filter->dims->data[1];\n   const int num_units = filter->dims->data[0];\n \n"
+}
+Patch applied successfully
+
+tokens used
+input: 1,615
+cache read: 8,704
+cache write: 0
+output: 260
+reasoning output: 37
+
+Validation against the target base succeeds; I’m applying the same guarded check to the working tree.
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/lite/kernels/fully_connected.cc\n@@\n   }\n \n   TF_LITE_ENSURE_EQ(context, NumDimensions(filter), 2);\n+  TF_LITE_ENSURE(context, filter->dims->data[1] != 0);\n   const int batch_size = input_size / filter->dims->data[1];\n   const int num_units = filter->dims->data[0];\n \n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/lite/kernels/fully_connected.cc
+
+tokens used
+input: 901
+cache read: 9,728
+cache write: 0
+output: 153
+reasoning output: 11
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/lite/kernels/fully_connected.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0221-0a3a3a33f5fe",
+  "timeout": 120000
+}
+warning: in the working copy of 'tensorflow/lite/kernels/fully_connected.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/lite/kernels/fully_connected.cc b/tensorflow/lite/kernels/fully_connected.cc
+index 9cbbcae9c5..7fbbf9983a 100644
+--- a/tensorflow/lite/kernels/fully_connected.cc
++++ b/tensorflow/lite/kernels/fully_connected.cc
+@@ -175,6 +175,7 @@ TfLiteStatus PrepareImpl(TfLiteContext* context, TfLiteNode* node) {
+   }
+ 
+   TF_LITE_ENSURE_EQ(context, NumDimensions(filter), 2);
++  TF_LITE_ENSURE(context, filter->dims->data[1] != 0);
+   const int batch_size = input_size / filter->dims->data[1];
+   const int num_units = filter->dims->data[0];
+
+tokens used
+input: 1,093
+cache read: 9,728
+cache write: 0
+output: 81
+reasoning output: 13
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/lite/kernels/fully_connected.cc b/tensorflow/lite/kernels/fully_connected.cc
+    index 9cbbcae9c5..7fbbf9983a 100644
+    --- a/tensorflow/lite/kernels/fully_connected.cc
+    +++ b/tensorflow/lite/kernels/fully_connected.cc
+    @@ -175,6 +175,7 @@ TfLiteStatus PrepareImpl(TfLiteContext* context, TfLiteNode* node) {
+       }
+     
+       TF_LITE_ENSURE_EQ(context, NumDimensions(filter), 2);
+    +  TF_LITE_ENSURE(context, filter->dims->data[1] != 0);
+       const int batch_size = input_size / filter->dims->data[1];
+       const int num_units = filter->dims->data[0];
+     
+  notes: >
+    Added the missing zero-dimension guard before the fully_connected batch_size division; hunk validation against the target base succeeded.
+```
+
+tokens used
+input: 387
+cache read: 10,752
+cache write: 0
+output: 240
+reasoning output: 13

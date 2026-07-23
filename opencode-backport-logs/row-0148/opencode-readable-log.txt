@@ -1,0 +1,323 @@
+I’ll locate the target implementation of `ReverseSequenceOp`, verify the constructor context against the supplied source hunk, then apply the minimal guard checks only if they are absent.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target ReverseSequenceOp context",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Validate and apply minimal backport hunk",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "content": "Review resulting diff for final YAML",
+      "status": "pending",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target ReverseSequenceOp context",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Validate and apply minimal backport hunk",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "content": "Review resulting diff for final YAML",
+    "status": "pending",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 3,715
+cache read: 4,608
+cache write: 0
+output: 116
+reasoning output: 0
+
+tool: viewcode
+{
+  "ref": "47612cd69a2fdd76156360ca9102816e156f7e5c",
+  "path": "tensorflow/core/kernels/reverse_sequence_op.cc",
+  "startline": 90,
+  "endline": 150
+}
+Here are lines 90 through 150.
+
+
+  OP_REQUIRES(context, seq_lens.NumElements() == input.dim_size(batch_dim),
+              errors::InvalidArgument("len(seq_lens) != input.dims(", batch_dim,
+                                      "), ", "(", seq_lens.NumElements(),
+                                      " vs. ", input.dim_size(batch_dim), ")"));
+}
+
+template <>
+void CheckErrors<GPUDevice, int32>(OpKernelContext* context, int batch_dim,
+                                   int seq_dim) {
+  CheckErrorsGPU(context, batch_dim, seq_dim);
+}
+
+template <>
+void CheckErrors<GPUDevice, int64>(OpKernelContext* context, int batch_dim,
+                                   int seq_dim) {
+  CheckErrorsGPU(context, batch_dim, seq_dim);
+}
+
+template <typename Device, typename T, typename Tlen>
+class ReverseSequenceOp : public OpKernel {
+ public:
+  explicit ReverseSequenceOp(OpKernelConstruction* context)
+      : OpKernel(context) {
+    OP_REQUIRES_OK(context, context->GetAttr("batch_dim", &batch_dim_));
+    OP_REQUIRES_OK(context, context->GetAttr("seq_dim", &seq_dim_));
+  }
+
+  void Compute(OpKernelContext* context) override {
+    const Tensor& input = context->input(0);
+    const Tensor& seq_lens = context->input(1);
+
+    // Preliminary validation of sizes.
+    OP_REQUIRES(context, TensorShapeUtils::IsVector(seq_lens.shape()),
+                errors::InvalidArgument("seq_lens input must be 1-dim, not ",
+                                        seq_lens.dims()));
+
+    auto seq_lens_t = seq_lens.vec<Tlen>();
+
+    CheckErrors<Device, Tlen>(context, batch_dim_, seq_dim_);
+    if (!context->status().ok()) return;
+
+    const int input_dims = input.dims();
+
+    Tensor* output = nullptr;
+    OP_REQUIRES_OK(context,
+                   context->allocate_output(0, input.shape(), &output));
+
+#define HANDLE_DIM(NDIM)                                                      \
+  case NDIM:                                                                  \
+    functor::ReverseSequence<Device, T, Tlen, NDIM>::Compute(                 \
+        context->eigen_device<Device>(), input.tensor<T, NDIM>(), batch_dim_, \
+        seq_dim_, seq_lens_t, output->tensor<T, NDIM>());                     \
+    break;
+
+    switch (input_dims) {
+      HANDLE_DIM(2);
+      HANDLE_DIM(3);
+      HANDLE_DIM(4);
+      HANDLE_DIM(5);
+
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: locate_symbol
+{
+  "ref": "47612cd69a2fdd76156360ca9102816e156f7e5c",
+  "symbol": "ReverseSequenceOp"
+}
+tensorflow/compiler/tf2xla/kernels/reverse_sequence_op.cc:28
+tensorflow/core/kernels/reverse_sequence_op.cc:110
+tensorflow/compiler/tf2xla/kernels/reverse_sequence_op.cc:30
+tensorflow/core/kernels/reverse_sequence_op.cc:112
+tensorflow/compiler/tf2xla/kernels/reverse_sequence_op.cc:130
+tensorflow/core/kernels/reverse_sequence_op.cc:154
+tensorflow/core/kernels/reverse_sequence_op.cc:163
+tensorflow/core/kernels/reverse_sequence_op.cc:171
+tensorflow/core/kernels/reverse_sequence_op.cc:214
+
+tokens used
+input: 867
+cache read: 7,680
+cache write: 0
+output: 119
+reasoning output: 0
+
+The target file has the same constructor shape and the missing validation is absent, so I’m applying the supplied checks directly after attribute reads.
+
+tool: validate
+{
+  "ref": "47612cd69a2fdd76156360ca9102816e156f7e5c",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/reverse_sequence_op.cc b/tensorflow/core/kernels/reverse_sequence_op.cc\n--- a/tensorflow/core/kernels/reverse_sequence_op.cc\n+++ b/tensorflow/core/kernels/reverse_sequence_op.cc\n@@ -113,6 +113,10 @@ class ReverseSequenceOp : public OpKernel {\n       : OpKernel(context) {\n     OP_REQUIRES_OK(context, context->GetAttr(\"batch_dim\", &batch_dim_));\n     OP_REQUIRES_OK(context, context->GetAttr(\"seq_dim\", &seq_dim_));\n+    OP_REQUIRES(context, batch_dim_ >= 0,\n+                errors::InvalidArgument(\"Invalid batch_dim \", batch_dim_));\n+    OP_REQUIRES(context, seq_dim_ >= 0,\n+                errors::InvalidArgument(\"Invalid seq_dim \", seq_dim_));\n   }\n \n   void Compute(OpKernelContext* context) override {\n"
+}
+Patch applied successfully
+
+tokens used
+input: 4,747
+cache read: 4,608
+cache write: 0
+output: 297
+reasoning output: 12
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/kernels/reverse_sequence_op.cc\n@@\n   explicit ReverseSequenceOp(OpKernelConstruction* context)\n       : OpKernel(context) {\n     OP_REQUIRES_OK(context, context->GetAttr(\"batch_dim\", &batch_dim_));\n     OP_REQUIRES_OK(context, context->GetAttr(\"seq_dim\", &seq_dim_));\n+    OP_REQUIRES(context, batch_dim_ >= 0,\n+                errors::InvalidArgument(\"Invalid batch_dim \", batch_dim_));\n+    OP_REQUIRES(context, seq_dim_ >= 0,\n+                errors::InvalidArgument(\"Invalid seq_dim \", seq_dim_));\n   }\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/kernels/reverse_sequence_op.cc
+
+tokens used
+input: 1,997
+cache read: 7,680
+cache write: 0
+output: 179
+reasoning output: 0
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target ReverseSequenceOp context",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate and apply minimal backport hunk",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Review resulting diff for final YAML",
+      "status": "in_progress",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target ReverseSequenceOp context",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate and apply minimal backport hunk",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Review resulting diff for final YAML",
+    "status": "in_progress",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 9,884
+cache read: 0
+cache write: 0
+output: 74
+reasoning output: 0
+
+The hunk validated cleanly against the target base and has been applied. I’m checking the final diff now.
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/kernels/reverse_sequence_op.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0148-47612cd69a2f",
+  "timeout": 120000
+}
+warning: in the working copy of 'tensorflow/core/kernels/reverse_sequence_op.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/kernels/reverse_sequence_op.cc b/tensorflow/core/kernels/reverse_sequence_op.cc
+index 0e11213391..490456fddd 100644
+--- a/tensorflow/core/kernels/reverse_sequence_op.cc
++++ b/tensorflow/core/kernels/reverse_sequence_op.cc
+@@ -113,6 +113,10 @@ class ReverseSequenceOp : public OpKernel {
+       : OpKernel(context) {
+     OP_REQUIRES_OK(context, context->GetAttr("batch_dim", &batch_dim_));
+     OP_REQUIRES_OK(context, context->GetAttr("seq_dim", &seq_dim_));
++    OP_REQUIRES(context, batch_dim_ >= 0,
++                errors::InvalidArgument("Invalid batch_dim ", batch_dim_));
++    OP_REQUIRES(context, seq_dim_ >= 0,
++                errors::InvalidArgument("Invalid seq_dim ", seq_dim_));
+   }
+ 
+   void Compute(OpKernelContext* context) override {
+
+tokens used
+input: 338
+cache read: 9,728
+cache write: 0
+output: 106
+reasoning output: 0
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target ReverseSequenceOp context",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate and apply minimal backport hunk",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Review resulting diff for final YAML",
+      "status": "completed",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target ReverseSequenceOp context",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate and apply minimal backport hunk",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Review resulting diff for final YAML",
+    "status": "completed",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 697
+cache read: 9,728
+cache write: 0
+output: 73
+reasoning output: 0
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/kernels/reverse_sequence_op.cc b/tensorflow/core/kernels/reverse_sequence_op.cc
+    index 0e11213391..490456fddd 100644
+    --- a/tensorflow/core/kernels/reverse_sequence_op.cc
+    +++ b/tensorflow/core/kernels/reverse_sequence_op.cc
+    @@ -113,6 +113,10 @@ class ReverseSequenceOp : public OpKernel {
+           : OpKernel(context) {
+         OP_REQUIRES_OK(context, context->GetAttr("batch_dim", &batch_dim_));
+         OP_REQUIRES_OK(context, context->GetAttr("seq_dim", &seq_dim_));
+    +    OP_REQUIRES(context, batch_dim_ >= 0,
+    +                errors::InvalidArgument("Invalid batch_dim ", batch_dim_));
+    +    OP_REQUIRES(context, seq_dim_ >= 0,
+    +                errors::InvalidArgument("Invalid seq_dim ", seq_dim_));
+       }
+     
+       void Compute(OpKernelContext* context) override {
+  notes: >
+    Added constructor validation rejecting negative batch_dim and seq_dim in ReverseSequenceOp.
+```
+
+tokens used
+input: 877
+cache read: 9,728
+cache write: 0
+output: 261
+reasoning output: 0

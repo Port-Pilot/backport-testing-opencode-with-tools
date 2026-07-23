@@ -1,0 +1,195 @@
+I’ll locate the older `MapStageOp` implementation at the target commit, compare the surrounding context to the provided new-version hunk, then apply the minimal guard if the equivalent code exists.
+
+tool: grep
+{
+  "pattern": "class MapStageOp|input\\(\"key\"|input\\(\"indices\"|input_list\\(\"values\"",
+  "path": "tensorflow/core/kernels",
+  "include": "map_stage_op.cc"
+}
+Found 9 matches
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0217-6c1eb9637e02\tensorflow\core\kernels\map_stage_op.cc:
+  Line 513: class MapStageOp : public OpKernel {
+
+  Line 527:     OP_REQUIRES_OK(ctx, ctx->input("key", &key_tensor));
+
+  Line 528:     OP_REQUIRES_OK(ctx, ctx->input("indices", &indices_tensor));
+
+  Line 529:     OP_REQUIRES_OK(ctx, ctx->input_list("values", &values_tensor));
+
+  Line 588:     OP_REQUIRES_OK(ctx, ctx->input("key", &key_tensor));
+
+  Line 589:     OP_REQUIRES_OK(ctx, ctx->input("indices", &indices_tensor));
+
+  Line 649:     OP_REQUIRES_OK(ctx, ctx->input("key", &key_tensor));
+
+  Line 650:     OP_REQUIRES_OK(ctx, ctx->input("indices", &indices_tensor));
+
+  Line 708:     OP_REQUIRES_OK(ctx, ctx->input("indices", &indices_tensor));
+
+tool: viewcode
+{
+  "ref": "6c1eb9637e0218d2d04c72c8838e17e72ebd00d5",
+  "path": "tensorflow/core/kernels/map_stage_op.cc",
+  "startline": 500,
+  "endline": 545
+}
+Here are lines 500 through 545.
+
+    TF_RETURN_IF_ERROR(GetNodeAttr(ndef, "capacity", &capacity));
+    TF_RETURN_IF_ERROR(GetNodeAttr(ndef, "memory_limit", &memory_limit));
+    *ret = new StagingMap<Ordered>(dtypes, capacity, memory_limit);
+    return Status::OK();
+  };
+
+  TF_RETURN_IF_ERROR(cinfo.Init(rm, ndef, true /* use name() */));
+  TF_RETURN_IF_ERROR(rm->LookupOrCreate<StagingMap<Ordered>>(
+      cinfo.container(), cinfo.name(), map, create_fn));
+  return Status::OK();
+}
+
+template <bool Ordered>
+class MapStageOp : public OpKernel {
+ public:
+  explicit MapStageOp(OpKernelConstruction* ctx) : OpKernel(ctx) {}
+
+  void Compute(OpKernelContext* ctx) override {
+    StagingMap<Ordered>* map = nullptr;
+    OP_REQUIRES_OK(ctx, GetStagingMap(ctx, def(), &map));
+    core::ScopedUnref scope(map);
+    typename StagingMap<Ordered>::OptionalTuple tuple;
+
+    const Tensor* key_tensor;
+    const Tensor* indices_tensor;
+    OpInputList values_tensor;
+
+    OP_REQUIRES_OK(ctx, ctx->input("key", &key_tensor));
+    OP_REQUIRES_OK(ctx, ctx->input("indices", &indices_tensor));
+    OP_REQUIRES_OK(ctx, ctx->input_list("values", &values_tensor));
+
+    // Create copy for insertion into Staging Area
+    Tensor key(*key_tensor);
+
+    // Create the tuple to store
+    for (std::size_t i = 0; i < values_tensor.size(); ++i) {
+      tuple.push_back(values_tensor[i]);
+    }
+
+    // Store the tuple in the map
+    OP_REQUIRES_OK(ctx, map->put(&key, indices_tensor, &tuple));
+  }
+};
+
+REGISTER_KERNEL_BUILDER(Name("MapStage").Device(DEVICE_CPU), MapStageOp<false>);
+REGISTER_KERNEL_BUILDER(Name("OrderedMapStage").Device(DEVICE_CPU),
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: locate_symbol
+{
+  "ref": "6c1eb9637e0218d2d04c72c8838e17e72ebd00d5",
+  "symbol": "MapStageOp"
+}
+tensorflow/core/kernels/map_stage_op.cc:513
+tensorflow/core/kernels/map_stage_op.cc:515
+tensorflow/core/kernels/map_stage_op.cc:544
+tensorflow/core/kernels/map_stage_op.cc:546
+tensorflow/core/kernels/map_stage_op.cc:551
+tensorflow/core/kernels/map_stage_op.cc:556
+tensorflow/core/kernels/map_stage_op.cc:564
+tensorflow/core/kernels/map_stage_op.cc:569
+
+tokens used
+input: 3,728
+cache read: 4,608
+cache write: 0
+output: 224
+reasoning output: 0
+
+The target release has the same `MapStageOp::Compute` shape and the missing empty-key guard belongs immediately after the key/indices/values input acquisition, matching the newer hunk. I’ll validate that small hunk against the specified target ref, then apply it locally.
+
+tool: validate
+{
+  "ref": "6c1eb9637e0218d2d04c72c8838e17e72ebd00d5",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/map_stage_op.cc b/tensorflow/core/kernels/map_stage_op.cc\n--- a/tensorflow/core/kernels/map_stage_op.cc\n+++ b/tensorflow/core/kernels/map_stage_op.cc\n@@ -527,6 +527,8 @@ class MapStageOp : public OpKernel {\n     OP_REQUIRES_OK(ctx, ctx->input(\"key\", &key_tensor));\n     OP_REQUIRES_OK(ctx, ctx->input(\"indices\", &indices_tensor));\n     OP_REQUIRES_OK(ctx, ctx->input_list(\"values\", &values_tensor));\n+    OP_REQUIRES(ctx, key_tensor->NumElements() > 0,\n+                errors::InvalidArgument(\"key must not be empty\"));\n \n     // Create copy for insertion into Staging Area\n     Tensor key(*key_tensor);\n"
+}
+Patch applied successfully
+
+tokens used
+input: 4,791
+cache read: 4,608
+cache write: 0
+output: 305
+reasoning output: 41
+
+The hunk applies cleanly to the target ref. I’m applying exactly that source change in the current checkout.
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/kernels/map_stage_op.cc\n@@\n     OP_REQUIRES_OK(ctx, ctx->input(\"key\", &key_tensor));\n     OP_REQUIRES_OK(ctx, ctx->input(\"indices\", &indices_tensor));\n     OP_REQUIRES_OK(ctx, ctx->input_list(\"values\", &values_tensor));\n+    OP_REQUIRES(ctx, key_tensor->NumElements() > 0,\n+                errors::InvalidArgument(\"key must not be empty\"));\n \n     // Create copy for insertion into Staging Area\n     Tensor key(*key_tensor);\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/kernels/map_stage_op.cc
+
+tokens used
+input: 1,054
+cache read: 8,704
+cache write: 0
+output: 188
+reasoning output: 0
+
+I’ll inspect the resulting diff to confirm only the intended TensorFlow source hunk changed.
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/kernels/map_stage_op.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0217-6c1eb9637e02"
+}
+warning: in the working copy of 'tensorflow/core/kernels/map_stage_op.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/kernels/map_stage_op.cc b/tensorflow/core/kernels/map_stage_op.cc
+index 6c01e42ff8..85e9be3a2d 100644
+--- a/tensorflow/core/kernels/map_stage_op.cc
++++ b/tensorflow/core/kernels/map_stage_op.cc
+@@ -527,6 +527,8 @@ class MapStageOp : public OpKernel {
+     OP_REQUIRES_OK(ctx, ctx->input("key", &key_tensor));
+     OP_REQUIRES_OK(ctx, ctx->input("indices", &indices_tensor));
+     OP_REQUIRES_OK(ctx, ctx->input_list("values", &values_tensor));
++    OP_REQUIRES(ctx, key_tensor->NumElements() > 0,
++                errors::InvalidArgument("key must not be empty"));
+ 
+     // Create copy for insertion into Staging Area
+     Tensor key(*key_tensor);
+
+tokens used
+input: 1,269
+cache read: 8,704
+cache write: 0
+output: 98
+reasoning output: 20
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/kernels/map_stage_op.cc b/tensorflow/core/kernels/map_stage_op.cc
+    index 6c01e42ff8..85e9be3a2d 100644
+    --- a/tensorflow/core/kernels/map_stage_op.cc
+    +++ b/tensorflow/core/kernels/map_stage_op.cc
+    @@ -527,6 +527,8 @@ class MapStageOp : public OpKernel {
+         OP_REQUIRES_OK(ctx, ctx->input("key", &key_tensor));
+         OP_REQUIRES_OK(ctx, ctx->input("indices", &indices_tensor));
+         OP_REQUIRES_OK(ctx, ctx->input_list("values", &values_tensor));
+    +    OP_REQUIRES(ctx, key_tensor->NumElements() > 0,
+    +                errors::InvalidArgument("key must not be empty"));
+     
+         // Create copy for insertion into Staging Area
+         Tensor key(*key_tensor);
+  notes: >
+    Added the empty key validation to MapStageOp in the TensorFlow 2.3.4 target source.
+```
+
+tokens used
+input: 603
+cache read: 9,728
+cache write: 0
+output: 254
+reasoning output: 0

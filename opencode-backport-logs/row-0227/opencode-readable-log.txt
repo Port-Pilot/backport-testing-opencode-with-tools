@@ -1,0 +1,602 @@
+I’ll inspect the target-side 2.4.4 source and test context for the two patch hunks, then apply only the equivalent minimal changes.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target pooling op and test context",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Validate and apply minimal backport hunks",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "content": "Review resulting diff and report YAML",
+      "status": "pending",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target pooling op and test context",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Validate and apply minimal backport hunks",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "content": "Review resulting diff and report YAML",
+    "status": "pending",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 4,139
+cache read: 4,608
+cache write: 0
+output: 113
+reasoning output: 0
+
+tool: viewcode
+{
+  "ref": "bb93d96771228278adee16f357f5b86d588887f4",
+  "path": "tensorflow/python/kernel_tests/pooling_ops_3d_test.py",
+  "startline": 1,
+  "endline": 40
+}
+Here are lines 1 through 40.
+
+# Copyright 2016 The TensorFlow Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+"""Functional tests for 3d pooling operations."""
+
+from __future__ import absolute_import
+from __future__ import division
+from __future__ import print_function
+
+import numpy as np
+
+from tensorflow.python.framework import constant_op
+from tensorflow.python.framework import test_util
+from tensorflow.python.ops import gradient_checker
+from tensorflow.python.ops import gradients_impl
+from tensorflow.python.ops import nn_ops
+import tensorflow.python.ops.nn_grad  # pylint: disable=unused-import
+from tensorflow.python.platform import test
+
+
+def GetTestConfigs():
+  """Get all the valid tests configs to run.
+
+  Returns:
+    all the valid test configs as tuples of data_format and use_gpu.
+  """
+  test_configs = [("NDHWC", False), ("NDHWC", True)]
+  if test.is_gpu_available(cuda_only=True):
+    # "NCHW" format is currently supported exclusively on CUDA GPUs.
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: viewcode
+{
+  "ref": "bb93d96771228278adee16f357f5b86d588887f4",
+  "path": "tensorflow/core/kernels/pooling_ops_3d.cc",
+  "startline": 110,
+  "endline": 175
+}
+Here are lines 110 through 175.
+
+template <typename T>
+struct LaunchPoolingOp<CPUDevice, T, MAX> {
+  static void launch(OpKernelContext* context, const Tensor& tensor_in,
+                     const std::array<int64, 3>& window,
+                     const std::array<int64, 3>& stride,
+                     const std::array<int64, 3>& padding,
+                     TensorFormat data_format, Padding padding_type,
+                     Tensor* output) {
+    output->tensor<T, 5>().device(context->eigen_device<CPUDevice>()) =
+        Eigen::CuboidMaxPooling(tensor_in.tensor<T, 5>(), window[0], window[1],
+                                window[2], stride[0], stride[1], stride[2],
+                                BrainPadding2EigenPadding(padding_type));
+  }
+};
+
+template <typename Device, typename T, PoolingType Type>
+class Pooling3DOp : public UnaryOp<T> {
+ public:
+  explicit Pooling3DOp(OpKernelConstruction* context) : UnaryOp<T>(context) {
+    string data_format;
+    OP_REQUIRES_OK(context, context->GetAttr("data_format", &data_format));
+    OP_REQUIRES(context, FormatFromString(data_format, &data_format_),
+                errors::InvalidArgument("Invalid data format"));
+    if (context->device_type() == DEVICE_CPU) {
+      OP_REQUIRES(
+          context, data_format_ == FORMAT_NHWC,
+          errors::InvalidArgument("Default Pooling3DOp only supports NDHWC ",
+                                  "on device type ",
+                                  DeviceTypeString(context->device_type())));
+    }
+    OP_REQUIRES_OK(context, context->GetAttr("ksize", &ksize_));
+    OP_REQUIRES(context, ksize_.size() == 5,
+                errors::InvalidArgument("Sliding window ksize field must "
+                                        "specify 5 dimensions"));
+    OP_REQUIRES_OK(context, context->GetAttr("strides", &stride_));
+    OP_REQUIRES(context, stride_.size() == 5,
+                errors::InvalidArgument("Sliding window stride field must "
+                                        "specify 5 dimensions"));
+    OP_REQUIRES_OK(context, context->GetAttr("padding", &padding_));
+    OP_REQUIRES(context,
+                (GetTensorDim(ksize_, data_format_, 'N') == 1 &&
+                 GetTensorDim(stride_, data_format_, 'N') == 1),
+                errors::Unimplemented(
+                    "Pooling is not yet supported on the batch dimension."));
+    OP_REQUIRES(context,
+                (GetTensorDim(ksize_, data_format_, 'C') == 1 &&
+                 GetTensorDim(stride_, data_format_, 'C') == 1),
+                errors::Unimplemented(
+                    "Pooling is not yet supported on the depth dimension."));
+  }
+
+  void Compute(OpKernelContext* context) override {
+    const Tensor& tensor_in = context->input(0);
+
+    OP_REQUIRES(context, tensor_in.dims() == 5,
+                errors::InvalidArgument("tensor_in must be 5-dimensional"));
+    const int64 depth = GetTensorDim(tensor_in, data_format_, 'C');
+    const int64 in_batch = GetTensorDim(tensor_in, data_format_, 'N');
+
+    // Dimension order for these arrays is: x, y, z.
+    std::array<int64, 3> input_size{
+        {GetTensorDim(tensor_in, data_format_, '2'),
+         GetTensorDim(tensor_in, data_format_, '1'),
+         GetTensorDim(tensor_in, data_format_, '0')}};
+    std::array<int64, 3> window{{GetTensorDim(ksize_, data_format_, '2'),
+                                 GetTensorDim(ksize_, data_format_, '1'),
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: viewcode
+{
+  "ref": "bb93d96771228278adee16f357f5b86d588887f4",
+  "path": "tensorflow/python/kernel_tests/pooling_ops_3d_test.py",
+  "startline": 470,
+  "endline": 525
+}
+This file only has 511 lines. Here are lines 470 through 511.
+
+    self._ConstructAndTestGradient(
+        nn_ops.avg_pool3d,
+        input_sizes=[1, 3, 2, 4, 2],
+        output_sizes=[1, 2, 1, 2, 2],
+        window=(1, 1, 1),
+        strides=(2, 2, 2),
+        padding="SAME")
+
+  @test_util.run_deprecated_v1
+  def testAvgPoolGradSamePadding2_1_3d(self):
+    self._ConstructAndTestGradient(
+        nn_ops.avg_pool3d,
+        input_sizes=[1, 2, 2, 2, 1],
+        output_sizes=[1, 2, 2, 2, 1],
+        window=(2, 2, 2),
+        strides=(1, 1, 1),
+        padding="SAME")
+
+  @test_util.run_deprecated_v1
+  def testAvgPoolGradSamePadding2_2_3d(self):
+    self._ConstructAndTestGradient(
+        nn_ops.avg_pool3d,
+        input_sizes=[1, 5, 2, 4, 1],
+        output_sizes=[1, 3, 1, 2, 1],
+        window=(2, 2, 2),
+        strides=(2, 2, 2),
+        padding="SAME")
+
+  @test_util.run_deprecated_v1
+  def testAvgPoolGradSamePadding3_1_3d(self):
+    self._ConstructAndTestGradient(
+        nn_ops.avg_pool3d,
+        input_sizes=[1, 3, 6, 2, 1],
+        output_sizes=[1, 3, 6, 2, 1],
+        window=(3, 3, 3),
+        strides=(1, 1, 1),
+        padding="SAME")
+
+
+if __name__ == "__main__":
+  test.main()
+
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tokens used
+input: 1,289
+cache read: 7,680
+cache write: 0
+output: 196
+reasoning output: 0
+
+tool: viewcode
+{
+  "ref": "bb93d96771228278adee16f357f5b86d588887f4",
+  "path": "tensorflow/core/kernels/pooling_ops_3d.cc",
+  "startline": 1,
+  "endline": 35
+}
+Here are lines 1 through 35.
+
+/* Copyright 2016 The TensorFlow Authors. All Rights Reserved.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+==============================================================================*/
+#define EIGEN_USE_THREADS
+
+#include "tensorflow/core/kernels/pooling_ops_3d.h"
+
+#include <array>
+
+#include "third_party/eigen3/Eigen/Core"
+#include "third_party/eigen3/unsupported/Eigen/CXX11/Tensor"
+#include "tensorflow/core/framework/kernel_shape_util.h"
+#include "tensorflow/core/framework/numeric_op.h"
+#include "tensorflow/core/framework/op_kernel.h"
+#include "tensorflow/core/framework/register_types.h"
+#include "tensorflow/core/framework/tensor.h"
+#include "tensorflow/core/framework/tensor_shape.h"
+#include "tensorflow/core/framework/tensor_slice.h"
+#include "tensorflow/core/kernels/eigen_pooling.h"
+#include "tensorflow/core/kernels/ops_util.h"
+#include "tensorflow/core/lib/core/errors.h"
+#include "tensorflow/core/util/padding.h"
+#include "tensorflow/core/util/tensor_format.h"
+#include "tensorflow/core/util/work_sharder.h"
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tokens used
+input: 2,127
+cache read: 8,704
+cache write: 0
+output: 64
+reasoning output: 24
+
+tool: grep
+{
+  "pattern": "std::all_of|#include <algorithm>",
+  "path": ".",
+  "include": "pooling_ops_3d.cc"
+}
+No files found
+
+tokens used
+input: 518
+cache read: 10,752
+cache write: 0
+output: 43
+reasoning output: 33
+
+The target has the same constructor/test locations, but `pooling_ops_3d.cc` in 2.4.4 lacks `<algorithm>`, so the backport needs that include for `std::all_of` to compile.
+
+tool: validate
+{
+  "ref": "bb93d96771228278adee16f357f5b86d588887f4",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/pooling_ops_3d.cc b/tensorflow/core/kernels/pooling_ops_3d.cc\n--- a/tensorflow/core/kernels/pooling_ops_3d.cc\n+++ b/tensorflow/core/kernels/pooling_ops_3d.cc\n@@ -17,6 +17,7 @@ limitations under the License.\n \n #include \"tensorflow/core/kernels/pooling_ops_3d.h\"\n \n+#include <algorithm>\n #include <array>\n \n #include \"third_party/eigen3/Eigen/Core\"\n@@ -141,6 +142,11 @@ class Pooling3DOp : public UnaryOp<T> {\n     OP_REQUIRES(context, ksize_.size() == 5,\n                 errors::InvalidArgument(\"Sliding window ksize field must \"\n                                         \"specify 5 dimensions\"));\n+    bool non_negative =\n+        std::all_of(ksize_.begin(), ksize_.end(), [](int k) { return k > 0; });\n+    OP_REQUIRES(context, non_negative,\n+                errors::InvalidArgument(\"Sliding window ksize field must \"\n+                                        \"have non-negative dimensions\"));\n     OP_REQUIRES_OK(context, context->GetAttr(\"strides\", &stride_));\n     OP_REQUIRES(context, stride_.size() == 5,\n                 errors::InvalidArgument(\"Sliding window stride field must \"\n"
+}
+Patch applied successfully
+
+tokens used
+input: 608
+cache read: 10,752
+cache write: 0
+output: 426
+reasoning output: 39
+
+tool: validate
+{
+  "ref": "bb93d96771228278adee16f357f5b86d588887f4",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/python/kernel_tests/pooling_ops_3d_test.py b/tensorflow/python/kernel_tests/pooling_ops_3d_test.py\n--- a/tensorflow/python/kernel_tests/pooling_ops_3d_test.py\n+++ b/tensorflow/python/kernel_tests/pooling_ops_3d_test.py\n@@ -22,6 +22,7 @@ from __future__ import print_function\n import numpy as np\n \n from tensorflow.python.framework import constant_op\n+from tensorflow.python.framework import errors\n from tensorflow.python.framework import test_util\n from tensorflow.python.ops import gradient_checker\n from tensorflow.python.ops import gradients_impl\n@@ -501,6 +502,19 @@ class PoolingTest(test.TestCase):\n         strides=(1, 1, 1),\n         padding=\"SAME\")\n \n+  def testMaxPool3DZeroPoolSize(self):\n+    # Test case for GitHub issue 51936.\n+    for f in [nn_ops.max_pool3d, nn_ops.avg_pool3d]:\n+      with self.session():\n+        with self.assertRaises((errors.InvalidArgumentError, ValueError)):\n+          input_sizes = [3, 4, 10, 11, 12]\n+\n+          input_data = 1.\n+          input_tensor = constant_op.constant(\n+              input_data, shape=input_sizes, name=\"input\")\n+          pool_3d = f(input_tensor, ksize=[2, 2, 0], strides=1, padding=\"VALID\")\n+          self.evaluate(pool_3d)\n+\n \n if __name__ == \"__main__\":\n   test.main()\n"
+}
+Patch applied successfully
+
+tokens used
+input: 1,086
+cache read: 10,752
+cache write: 0
+output: 417
+reasoning output: 0
+
+Both adapted hunks validate against the target base. I’m applying those source and regression-test changes now.
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/kernels/pooling_ops_3d.cc\n@@\n #include \"tensorflow/core/kernels/pooling_ops_3d.h\"\n \n+#include <algorithm>\n #include <array>\n@@\n     OP_REQUIRES(context, ksize_.size() == 5,\n                 errors::InvalidArgument(\"Sliding window ksize field must \"\n                                         \"specify 5 dimensions\"));\n+    bool non_negative =\n+        std::all_of(ksize_.begin(), ksize_.end(), [](int k) { return k > 0; });\n+    OP_REQUIRES(context, non_negative,\n+                errors::InvalidArgument(\"Sliding window ksize field must \"\n+                                        \"have non-negative dimensions\"));\n     OP_REQUIRES_OK(context, context->GetAttr(\"strides\", &stride_));\n*** Update File: tensorflow/python/kernel_tests/pooling_ops_3d_test.py\n@@\n import numpy as np\n \n from tensorflow.python.framework import constant_op\n+from tensorflow.python.framework import errors\n from tensorflow.python.framework import test_util\n@@\n   def testAvgPoolGradSamePadding3_1_3d(self):\n     self._ConstructAndTestGradient(\n         nn_ops.avg_pool3d,\n         input_sizes=[1, 3, 6, 2, 1],\n         output_sizes=[1, 3, 6, 2, 1],\n         window=(3, 3, 3),\n         strides=(1, 1, 1),\n         padding=\"SAME\")\n \n+  def testMaxPool3DZeroPoolSize(self):\n+    # Test case for GitHub issue 51936.\n+    for f in [nn_ops.max_pool3d, nn_ops.avg_pool3d]:\n+      with self.session():\n+        with self.assertRaises((errors.InvalidArgumentError, ValueError)):\n+          input_sizes = [3, 4, 10, 11, 12]\n+\n+          input_data = 1.\n+          input_tensor = constant_op.constant(\n+              input_data, shape=input_sizes, name=\"input\")\n+          pool_3d = f(input_tensor, ksize=[2, 2, 0], strides=1, padding=\"VALID\")\n+          self.evaluate(pool_3d)\n+\n \n if __name__ == \"__main__\":\n   test.main()\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/kernels/pooling_ops_3d.cc
+M tensorflow/python/kernel_tests/pooling_ops_3d_test.py
+
+tokens used
+input: 492
+cache read: 11,776
+cache write: 0
+output: 612
+reasoning output: 8
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target pooling op and test context",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate and apply minimal backport hunks",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Review resulting diff and report YAML",
+      "status": "in_progress",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target pooling op and test context",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate and apply minimal backport hunks",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Review resulting diff and report YAML",
+    "status": "in_progress",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 1,156
+cache read: 11,776
+cache write: 0
+output: 75
+reasoning output: 0
+
+I’ll do a quick diff review only; no full build or full validation per the task constraints.
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/kernels/pooling_ops_3d.cc tensorflow/python/kernel_tests/pooling_ops_3d_test.py",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0227-bb93d9677122"
+}
+warning: in the working copy of 'tensorflow/core/kernels/pooling_ops_3d.cc', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'tensorflow/python/kernel_tests/pooling_ops_3d_test.py', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/kernels/pooling_ops_3d.cc b/tensorflow/core/kernels/pooling_ops_3d.cc
+index 56a55bc2ec..327a3be3b4 100644
+--- a/tensorflow/core/kernels/pooling_ops_3d.cc
++++ b/tensorflow/core/kernels/pooling_ops_3d.cc
+@@ -16,6 +16,7 @@ limitations under the License.
+ 
+ #include "tensorflow/core/kernels/pooling_ops_3d.h"
+ 
++#include <algorithm>
+ #include <array>
+ 
+ #include "third_party/eigen3/Eigen/Core"
+@@ -141,6 +142,11 @@ class Pooling3DOp : public UnaryOp<T> {
+     OP_REQUIRES(context, ksize_.size() == 5,
+                 errors::InvalidArgument("Sliding window ksize field must "
+                                         "specify 5 dimensions"));
++    bool non_negative =
++        std::all_of(ksize_.begin(), ksize_.end(), [](int k) { return k > 0; });
++    OP_REQUIRES(context, non_negative,
++                errors::InvalidArgument("Sliding window ksize field must "
++                                        "have non-negative dimensions"));
+     OP_REQUIRES_OK(context, context->GetAttr("strides", &stride_));
+     OP_REQUIRES(context, stride_.size() == 5,
+                 errors::InvalidArgument("Sliding window stride field must "
+diff --git a/tensorflow/python/kernel_tests/pooling_ops_3d_test.py b/tensorflow/python/kernel_tests/pooling_ops_3d_test.py
+index 051f7e1168..83d26e27d9 100644
+--- a/tensorflow/python/kernel_tests/pooling_ops_3d_test.py
++++ b/tensorflow/python/kernel_tests/pooling_ops_3d_test.py
+@@ -21,6 +21,7 @@ from __future__ import print_function
+ import numpy as np
+ 
+ from tensorflow.python.framework import constant_op
++from tensorflow.python.framework import errors
+ from tensorflow.python.framework import test_util
+ from tensorflow.python.ops import gradient_checker
+ from tensorflow.python.ops import gradients_impl
+@@ -505,6 +506,19 @@ class PoolingTest(test.TestCase):
+         strides=(1, 1, 1),
+         padding="SAME")
+ 
++  def testMaxPool3DZeroPoolSize(self):
++    # Test case for GitHub issue 51936.
++    for f in [nn_ops.max_pool3d, nn_ops.avg_pool3d]:
++      with self.session():
++        with self.assertRaises((errors.InvalidArgumentError, ValueError)):
++          input_sizes = [3, 4, 10, 11, 12]
++
++          input_data = 1.
++          input_tensor = constant_op.constant(
++              input_data, shape=input_sizes, name="input")
++          pool_3d = f(input_tensor, ksize=[2, 2, 0], strides=1, padding="VALID")
++          self.evaluate(pool_3d)
++
+ 
+ if __name__ == "__main__":
+   test.main()
+
+tokens used
+input: 316
+cache read: 12,800
+cache write: 0
+output: 111
+reasoning output: 0
+
+tool: bash
+{
+  "command": "git diff --check -- tensorflow/core/kernels/pooling_ops_3d.cc tensorflow/python/kernel_tests/pooling_ops_3d_test.py",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0227-bb93d9677122"
+}
+warning: in the working copy of 'tensorflow/core/kernels/pooling_ops_3d.cc', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'tensorflow/python/kernel_tests/pooling_ops_3d_test.py', LF will be replaced by CRLF the next time Git touches it
+
+tokens used
+input: 1,178
+cache read: 12,800
+cache write: 0
+output: 88
+reasoning output: 14
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target pooling op and test context",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate and apply minimal backport hunks",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Review resulting diff and report YAML",
+      "status": "completed",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target pooling op and test context",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate and apply minimal backport hunks",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Review resulting diff and report YAML",
+    "status": "completed",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 336
+cache read: 13,824
+cache write: 0
+output: 74
+reasoning output: 0
+
+Applied the TensorFlow 2.8.0-rc0 security fix to the 2.4.4 target: `Pooling3DOp` now rejects non-positive `ksize` values, and the regression test covers zero pool size for max/avg 3D pooling.
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/kernels/pooling_ops_3d.cc b/tensorflow/core/kernels/pooling_ops_3d.cc
+    index 56a55bc2ec..327a3be3b4 100644
+    --- a/tensorflow/core/kernels/pooling_ops_3d.cc
+    +++ b/tensorflow/core/kernels/pooling_ops_3d.cc
+    @@ -16,6 +16,7 @@ limitations under the License.
+     
+     #include "tensorflow/core/kernels/pooling_ops_3d.h"
+     
+    +#include <algorithm>
+     #include <array>
+     
+     #include "third_party/eigen3/Eigen/Core"
+    @@ -141,6 +142,11 @@ class Pooling3DOp : public UnaryOp<T> {
+         OP_REQUIRES(context, ksize_.size() == 5,
+                     errors::InvalidArgument("Sliding window ksize field must "
+                                             "specify 5 dimensions"));
+    +    bool non_negative =
+    +        std::all_of(ksize_.begin(), ksize_.end(), [](int k) { return k > 0; });
+    +    OP_REQUIRES(context, non_negative,
+    +                errors::InvalidArgument("Sliding window ksize field must "
+    +                                        "have non-negative dimensions"));
+         OP_REQUIRES_OK(context, context->GetAttr("strides", &stride_));
+         OP_REQUIRES(context, stride_.size() == 5,
+                     errors::InvalidArgument("Sliding window stride field must "
+    diff --git a/tensorflow/python/kernel_tests/pooling_ops_3d_test.py b/tensorflow/python/kernel_tests/pooling_ops_3d_test.py
+    index 051f7e1168..83d26e27d9 100644
+    --- a/tensorflow/python/kernel_tests/pooling_ops_3d_test.py
+    +++ b/tensorflow/python/kernel_tests/pooling_ops_3d_test.py
+    @@ -21,6 +21,7 @@ from __future__ import print_function
+     import numpy as np
+     
+     from tensorflow.python.framework import constant_op
+    +from tensorflow.python.framework import errors
+     from tensorflow.python.framework import test_util
+     from tensorflow.python.ops import gradient_checker
+     from tensorflow.python.ops import gradients_impl
+    @@ -505,6 +506,19 @@ class PoolingTest(test.TestCase):
+             strides=(1, 1, 1),
+             padding="SAME")
+     
+    +  def testMaxPool3DZeroPoolSize(self):
+    +    # Test case for GitHub issue 51936.
+    +    for f in [nn_ops.max_pool3d, nn_ops.avg_pool3d]:
+    +      with self.session():
+    +        with self.assertRaises((errors.InvalidArgumentError, ValueError)):
+    +          input_sizes = [3, 4, 10, 11, 12]
+    +
+    +          input_data = 1.
+    +          input_tensor = constant_op.constant(
+    +              input_data, shape=input_sizes, name="input")
+    +          pool_3d = f(input_tensor, ksize=[2, 2, 0], strides=1, padding="VALID")
+    +          self.evaluate(pool_3d)
+    +
+     
+     if __name__ == "__main__":
+       test.main()
+  notes: >
+    Backported the ksize positivity validation and regression test; added <algorithm> because the 2.4.4 target file did not already include it.
+```
+
+tokens used
+input: 518
+cache read: 13,824
+cache write: 0
+output: 833
+reasoning output: 31

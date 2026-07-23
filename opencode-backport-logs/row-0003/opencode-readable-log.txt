@@ -1,0 +1,502 @@
+I’ll locate the older `RaggedBincountOp` implementation, compare its immediate context to the 2.5.0 hunk, then apply the minimal argument validation backport.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target RaggedBincountOp context",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Validate adapted hunk against target base",
+      "status": "pending",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply minimal source change",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "content": "Inspect final diff",
+      "status": "pending",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target RaggedBincountOp context",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Validate adapted hunk against target base",
+    "status": "pending",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply minimal source change",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "content": "Inspect final diff",
+    "status": "pending",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 3,766
+cache read: 4,608
+cache write: 0
+output: 135
+reasoning output: 0
+
+tool: locate_symbol
+{
+  "ref": "84a5b5da11f4cd5413a185a90b65e48b5379cad6",
+  "symbol": "RaggedBincountOp"
+}
+tensorflow/core/kernels/bincount_op.cc:395
+tensorflow/core/kernels/bincount_op.cc:397
+tensorflow/core/kernels/bincount_op.cc:451
+
+tool: grep
+{
+  "pattern": "class RaggedBincountOp",
+  "path": "tensorflow/core/kernels",
+  "include": "*.cc"
+}
+Found 1 matches
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0003-84a5b5da11f4\tensorflow\core\kernels\bincount_op.cc:
+  Line 395: class RaggedBincountOp : public OpKernel {
+
+tokens used
+input: 964
+cache read: 7,680
+cache write: 0
+output: 101
+reasoning output: 0
+
+tool: viewcode
+{
+  "ref": "84a5b5da11f4cd5413a185a90b65e48b5379cad6",
+  "path": "tensorflow/core/kernels/bincount_op.cc",
+  "startline": 395,
+  "endline": 455
+}
+Here are lines 395 through 455.
+
+class RaggedBincountOp : public OpKernel {
+ public:
+  explicit RaggedBincountOp(OpKernelConstruction* ctx) : OpKernel(ctx) {
+    OP_REQUIRES_OK(ctx, ctx->GetAttr("binary_output", &binary_output_));
+  }
+
+  void Compute(OpKernelContext* ctx) override {
+    const auto splits = ctx->input(0).flat<int64>();
+    const auto values = ctx->input(1).flat<Tidx>();
+    const Tensor& size_t = ctx->input(2);
+    const auto weights = ctx->input(3).flat<T>();
+    const int64 weights_size = weights.size();
+
+    Tidx size = size_t.scalar<Tidx>()();
+    OP_REQUIRES(
+        ctx, size >= 0,
+        errors::InvalidArgument("size (", size, ") must be non-negative"));
+
+    int num_rows = splits.size() - 1;
+    int num_values = values.size();
+    int batch_idx = 0;
+
+    Tensor* out_t;
+    OP_REQUIRES_OK(
+        ctx, ctx->allocate_output(0, TensorShape({num_rows, size}), &out_t));
+    functor::SetZeroFunctor<Device, T> fill;
+    fill(ctx->eigen_device<Device>(), out_t->flat<T>());
+    const auto out = out_t->matrix<T>();
+
+    for (int idx = 0; idx < num_values; ++idx) {
+      while (idx >= splits(batch_idx)) {
+        batch_idx++;
+      }
+      Tidx bin = values(idx);
+      OP_REQUIRES(ctx, bin >= 0,
+                  errors::InvalidArgument("Input must be non-negative"));
+      if (bin < size) {
+        if (binary_output_) {
+          out(batch_idx - 1, bin) = T(1);
+        } else {
+          T value = (weights_size > 0) ? weights(idx) : T(1);
+          out(batch_idx - 1, bin) += value;
+        }
+      }
+    }
+  }
+
+ private:
+  bool binary_output_;
+};
+
+#define REGISTER_KERNELS(Tidx, T)                            \
+  REGISTER_KERNEL_BUILDER(Name("RaggedBincount")             \
+                              .Device(DEVICE_CPU)            \
+                              .TypeConstraint<T>("T")        \
+                              .TypeConstraint<Tidx>("Tidx"), \
+                          RaggedBincountOp<CPUDevice, Tidx, T>);
+#define REGISTER_CPU_KERNELS(T) \
+  REGISTER_KERNELS(int32, T);   \
+  REGISTER_KERNELS(int64, T);
+
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: git_show
+{
+  "ref": "eebb96c2830d48597d055d247c0e9aebaea94cd5",
+  "context": "class RaggedBincountOp : public OpKernel {\n  void Compute(OpKernelContext* ctx) override {\n    const Tensor& splits_t = ctx->input(0);\n    const auto splits = splits_t.flat<int64>();\n    const Tensor& values_t = ctx->input(1);\n    const auto values = values_t.flat<Tidx>();\n    int num_rows = splits.size() - 1;\n    int num_values = values.size();\n    int batch_idx = 0;\n\n    Tensor* out_t;"
+}
+commit eebb96c2830d48597d055d247c0e9aebaea94cd5
+Author: Amit Patankar <amitpatankar@google.com>
+Date:   Tue Apr 13 14:18:51 2021 -0700
+
+    Fix an invalid address vulnerability in `tf.raw_ops.RaggedBincount`.
+    
+    PiperOrigin-RevId: 368293153
+    Change-Id: I4b4e493d3fd05e7dc55a55de3a041a80a4f275c3
+
+ tensorflow/core/kernels/bincount_op.cc | 9 +++++++++
+ 1 file changed, 9 insertions(+)
+This commit shows that there is a high probability that this code is new, so the corresponding code segment cannot be found in the old version.
+You can call `viewcode` and `locate_symbol` to further check the results step by step. For newly introduced code, we consider that this hunk `need not ported`.
+
+tokens used
+input: 1,197
+cache read: 7,680
+cache write: 0
+output: 237
+reasoning output: 0
+
+The equivalent target code exists in the same file and has the same vulnerable control-flow shape: `splits(0)` and final split are not checked before using `splits(batch_idx)` to drive output indexing. I’m adding the same two `OP_REQUIRES` checks before output allocation.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target RaggedBincountOp context",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate adapted hunk against target base",
+      "status": "in_progress",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply minimal source change",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "content": "Inspect final diff",
+      "status": "pending",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target RaggedBincountOp context",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate adapted hunk against target base",
+    "status": "in_progress",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply minimal source change",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "content": "Inspect final diff",
+    "status": "pending",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 5,310
+cache read: 4,608
+cache write: 0
+output: 157
+reasoning output: 20
+
+tool: validate
+{
+  "ref": "84a5b5da11f4cd5413a185a90b65e48b5379cad6",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/bincount_op.cc b/tensorflow/core/kernels/bincount_op.cc\n--- a/tensorflow/core/kernels/bincount_op.cc\n+++ b/tensorflow/core/kernels/bincount_op.cc\n@@ -414,6 +414,15 @@ class RaggedBincountOp : public OpKernel {\n     int num_values = values.size();\n     int batch_idx = 0;\n \n+    OP_REQUIRES(ctx, splits(0) == 0,\n+                errors::InvalidArgument(\"Splits must start with 0, not with \",\n+                                        splits(0)));\n+\n+    OP_REQUIRES(ctx, splits(num_rows) == num_values,\n+                errors::InvalidArgument(\n+                    \"Splits must end with the number of values, got \",\n+                    splits(num_rows), \" instead of \", num_values));\n+\n     Tensor* out_t;\n     OP_REQUIRES_OK(\n         ctx, ctx->allocate_output(0, TensorShape({num_rows, size}), &out_t));\n"
+}
+Patch applied successfully
+
+tokens used
+input: 502
+cache read: 9,728
+cache write: 0
+output: 297
+reasoning output: 0
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target RaggedBincountOp context",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate adapted hunk against target base",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply minimal source change",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Inspect final diff",
+      "status": "pending",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target RaggedBincountOp context",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate adapted hunk against target base",
+    "status": "completed",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply minimal source change",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Inspect final diff",
+    "status": "pending",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 812
+cache read: 9,728
+cache write: 0
+output: 88
+reasoning output: 0
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/kernels/bincount_op.cc\n@@\n     int num_values = values.size();\n     int batch_idx = 0;\n \n+    OP_REQUIRES(ctx, splits(0) == 0,\n+                errors::InvalidArgument(\"Splits must start with 0, not with \",\n+                                        splits(0)));\n+\n+    OP_REQUIRES(ctx, splits(num_rows) == num_values,\n+                errors::InvalidArgument(\n+                    \"Splits must end with the number of values, got \",\n+                    splits(num_rows), \" instead of \", num_values));\n+\n     Tensor* out_t;\n     OP_REQUIRES_OK(\n         ctx, ctx->allocate_output(0, TensorShape({num_rows, size}), &out_t));\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/kernels/bincount_op.cc
+
+tokens used
+input: 1,035
+cache read: 9,728
+cache write: 0
+output: 211
+reasoning output: 0
+
+The hunk validated cleanly against the target base and has been applied to `tensorflow/core/kernels/bincount_op.cc`. I’m checking the resulting diff now.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target RaggedBincountOp context",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate adapted hunk against target base",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply minimal source change",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Inspect final diff",
+      "status": "in_progress",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target RaggedBincountOp context",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate adapted hunk against target base",
+    "status": "completed",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply minimal source change",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Inspect final diff",
+    "status": "in_progress",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 1,274
+cache read: 9,728
+cache write: 0
+output: 129
+reasoning output: 0
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/kernels/bincount_op.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0003-84a5b5da11f4"
+}
+warning: in the working copy of 'tensorflow/core/kernels/bincount_op.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/kernels/bincount_op.cc b/tensorflow/core/kernels/bincount_op.cc
+index a84b25f254..c75f67bb56 100644
+--- a/tensorflow/core/kernels/bincount_op.cc
++++ b/tensorflow/core/kernels/bincount_op.cc
+@@ -414,6 +414,15 @@ class RaggedBincountOp : public OpKernel {
+     int num_values = values.size();
+     int batch_idx = 0;
+ 
++    OP_REQUIRES(ctx, splits(0) == 0,
++                errors::InvalidArgument("Splits must start with 0, not with ",
++                                        splits(0)));
++
++    OP_REQUIRES(ctx, splits(num_rows) == num_values,
++                errors::InvalidArgument(
++                    "Splits must end with the number of values, got ",
++                    splits(num_rows), " instead of ", num_values));
++
+     Tensor* out_t;
+     OP_REQUIRES_OK(
+         ctx, ctx->allocate_output(0, TensorShape({num_rows, size}), &out_t));
+
+tokens used
+input: 2,562
+cache read: 8,704
+cache write: 0
+output: 73
+reasoning output: 0
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target RaggedBincountOp context",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate adapted hunk against target base",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply minimal source change",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Inspect final diff",
+      "status": "completed",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target RaggedBincountOp context",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate adapted hunk against target base",
+    "status": "completed",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply minimal source change",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Inspect final diff",
+    "status": "completed",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 871
+cache read: 10,752
+cache write: 0
+output: 87
+reasoning output: 0
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/kernels/bincount_op.cc b/tensorflow/core/kernels/bincount_op.cc
+    index a84b25f254..c75f67bb56 100644
+    --- a/tensorflow/core/kernels/bincount_op.cc
+    +++ b/tensorflow/core/kernels/bincount_op.cc
+    @@ -414,6 +414,15 @@ class RaggedBincountOp : public OpKernel {
+         int num_values = values.size();
+         int batch_idx = 0;
+     
+    +    OP_REQUIRES(ctx, splits(0) == 0,
+    +                errors::InvalidArgument("Splits must start with 0, not with ",
+    +                                        splits(0)));
+    +
+    +    OP_REQUIRES(ctx, splits(num_rows) == num_values,
+    +                errors::InvalidArgument(
+    +                    "Splits must end with the number of values, got ",
+    +                    splits(num_rows), " instead of ", num_values));
+    +
+         Tensor* out_t;
+         OP_REQUIRES_OK(
+             ctx, ctx->allocate_output(0, TensorShape({num_rows, size}), &out_t));
+  notes: >
+    Added RaggedBincount split-boundary validation to prevent invalid indexing; hunk validation succeeded against the target base.
+```
+
+tokens used
+input: 1,092
+cache read: 10,752
+cache write: 0
+output: 306
+reasoning output: 0

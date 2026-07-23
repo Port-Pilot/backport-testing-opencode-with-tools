@@ -1,0 +1,281 @@
+I’ll locate the target `gather_nd` implementation at the checked-out base, compare the exact surrounding context to the provided fix, then apply only the guard needed to prevent the zero-element params division path.
+
+tool: viewcode
+{
+  "ref": "47612cd69a2fdd76156360ca9102816e156f7e5c",
+  "path": "tensorflow/lite/kernels/gather_nd.cc",
+  "startline": 120,
+  "endline": 190
+}
+This file only has 155 lines. Here are lines 120 through 155.
+
+    default:
+      context->ReportError(context,
+                           "Params type '%s' are not supported by gather_nd.",
+                           TfLiteTypeGetName(params->type));
+      return kTfLiteError;
+  }
+}
+
+TfLiteStatus Eval(TfLiteContext* context, TfLiteNode* node) {
+  const TfLiteTensor* params = GetInput(context, node, kParams);
+  const TfLiteTensor* indices = GetInput(context, node, kIndices);
+  TfLiteTensor* output = GetOutput(context, node, kOutputTensor);
+
+  switch (indices->type) {
+    case kTfLiteInt32:
+      return EvalGatherNd<int32_t>(context, params, indices, output);
+    case kTfLiteInt64:
+      return EvalGatherNd<int64_t>(context, params, indices, output);
+    default:
+      context->ReportError(
+          context, "Indices of type '%s' are not supported by gather_nd.",
+          TfLiteTypeGetName(indices->type));
+      return kTfLiteError;
+  }
+}
+}  // namespace gather_nd
+
+TfLiteRegistration* Register_GATHER_ND() {
+  static TfLiteRegistration r = {/*init*/ nullptr, /*free*/ nullptr,
+                                 gather_nd::Prepare, gather_nd::Eval};
+  return &r;
+}
+}  // namespace builtin
+}  // namespace ops
+}  // namespace tflite
+
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: locate_symbol
+{
+  "ref": "47612cd69a2fdd76156360ca9102816e156f7e5c",
+  "symbol": "Eval"
+}
+tensorflow/core/platform/mutex.h:128
+tensorflow/lite/delegates/flex/kernel.cc:513
+tensorflow/lite/experimental/kernels/ctc_beam_search_decoder.cc:162
+tensorflow/lite/experimental/kernels/unidirectional_sequence_gru.cc:209
+tensorflow/lite/experimental/micro/kernels/add.cc:178
+tensorflow/lite/experimental/micro/kernels/arg_min_max.cc:51
+tensorflow/lite/experimental/micro/kernels/ceil.cc:45
+tensorflow/lite/experimental/micro/kernels/cmsis-nn/conv.cc:272
+tensorflow/lite/experimental/micro/kernels/cmsis-nn/depthwise_conv.cc:280
+tensorflow/lite/experimental/micro/kernels/cmsis-nn/fully_connected.cc:179
+tensorflow/lite/experimental/micro/kernels/conv.cc:203
+tensorflow/lite/experimental/micro/kernels/depthwise_conv.cc:196
+tensorflow/lite/experimental/micro/kernels/dequantize.cc:43
+tensorflow/lite/experimental/micro/kernels/floor.cc:29
+tensorflow/lite/experimental/micro/kernels/fully_connected.cc:166
+tensorflow/lite/experimental/micro/kernels/logistic.cc:38
+tensorflow/lite/experimental/micro/kernels/maximum_minimum.cc:82
+tensorflow/lite/experimental/micro/kernels/neg.cc:30
+tensorflow/lite/experimental/micro/kernels/pack.cc:75
+tensorflow/lite/experimental/micro/kernels/portable_optimized/depthwise_conv.cc:439
+
+tokens used
+input: 3,717
+cache read: 4,608
+cache write: 0
+output: 166
+reasoning output: 0
+
+The target file has the same `Eval` dispatch but uses direct `GetInput`/`GetOutput` rather than the newer safe helpers. The guard still belongs immediately after acquiring `params`, `indices`, and `output`, before dispatching to `EvalGatherNd`.
+
+tool: grep
+{
+  "pattern": "TfLiteStatus Eval\\(TfLiteContext\\* context, TfLiteNode\\* node\\)",
+  "path": "tensorflow/lite/kernels",
+  "include": "gather_nd.cc"
+}
+Found 1 matches
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0135-47612cd69a2f\tensorflow\lite\kernels\gather_nd.cc:
+  Line 128: TfLiteStatus Eval(TfLiteContext* context, TfLiteNode* node) {
+
+tool: viewcode
+{
+  "ref": "47612cd69a2fdd76156360ca9102816e156f7e5c",
+  "path": "tensorflow/lite/kernels/gather_nd.cc",
+  "startline": 1,
+  "endline": 80
+}
+Here are lines 1 through 80.
+
+/* Copyright 2019 The TensorFlow Authors. All Rights Reserved.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+==============================================================================*/
+#include "tensorflow/lite/c/builtin_op_data.h"
+#include "tensorflow/lite/c/c_api_internal.h"
+#include "tensorflow/lite/kernels/internal/optimized/optimized_ops.h"
+#include "tensorflow/lite/kernels/internal/tensor.h"
+#include "tensorflow/lite/kernels/kernel_util.h"
+#include "tensorflow/lite/kernels/op_macros.h"
+
+namespace tflite {
+namespace ops {
+namespace builtin {
+namespace gather_nd {
+constexpr int kParams = 0;
+constexpr int kIndices = 1;
+constexpr int kOutputTensor = 0;
+
+TfLiteStatus Prepare(TfLiteContext* context, TfLiteNode* node) {
+  TF_LITE_ENSURE_EQ(context, NumInputs(node), 2);
+  TF_LITE_ENSURE_EQ(context, NumOutputs(node), 1);
+
+  const TfLiteTensor* params = GetInput(context, node, kParams);
+  const TfLiteTensor* indices = GetInput(context, node, kIndices);
+  TfLiteTensor* output = GetOutput(context, node, kOutputTensor);
+
+  switch (params->type) {
+    case kTfLiteFloat32:
+    case kTfLiteUInt8:
+    case kTfLiteInt8:
+    case kTfLiteInt64:
+    case kTfLiteInt32:
+      break;
+    default:
+      context->ReportError(
+          context, "Params of type '%s' are not supported by gather_nd.",
+          TfLiteTypeGetName(params->type));
+      return kTfLiteError;
+  }
+  switch (indices->type) {
+    case kTfLiteInt64:
+    case kTfLiteInt32:
+      break;
+    default:
+      context->ReportError(
+          context, "Indices of type '%s' are not supported by gather_nd.",
+          TfLiteTypeGetName(indices->type));
+      return kTfLiteError;
+  }
+
+  const int params_rank = NumDimensions(params);
+  const int indices_rank = NumDimensions(indices);
+  const int indices_nd = SizeOfDimension(indices, indices_rank - 1);
+  if (params_rank < 1) {
+    context->ReportError(context, "Params must be at least a vector.");
+    return kTfLiteError;
+  }
+  if (indices_rank < 1) {
+    context->ReportError(context, "Indices must be at least a vector.");
+    return kTfLiteError;
+  }
+  if (indices_nd > params_rank) {
+    context->ReportError(
+        context, "Index innermost dimension length must be <= params rank.");
+    return kTfLiteError;
+  }
+
+  // Assign to output the input type.
+  output->type = params->type;
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tokens used
+input: 4,562
+cache read: 4,608
+cache write: 0
+output: 190
+reasoning output: 24
+
+I’m applying the minimal source change: an existing TFLite `TF_LITE_ENSURE` check on `NumElements(params)` in `Eval`, matching the provided fix’s intent and local API style.
+
+tool: validate
+{
+  "ref": "47612cd69a2fdd76156360ca9102816e156f7e5c",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/lite/kernels/gather_nd.cc b/tensorflow/lite/kernels/gather_nd.cc\n--- a/tensorflow/lite/kernels/gather_nd.cc\n+++ b/tensorflow/lite/kernels/gather_nd.cc\n@@ -130,6 +130,9 @@ TfLiteStatus Eval(TfLiteContext* context, TfLiteNode* node) {\n   const TfLiteTensor* indices = GetInput(context, node, kIndices);\n   TfLiteTensor* output = GetOutput(context, node, kOutputTensor);\n \n+  // Prevent division by 0 in the helper\n+  TF_LITE_ENSURE(context, NumElements(params) > 0);\n+\n   switch (indices->type) {\n     case kTfLiteInt32:\n       return EvalGatherNd<int32_t>(context, params, indices, output);\n"
+}
+Patch applied successfully
+
+tokens used
+input: 1,489
+cache read: 8,704
+cache write: 0
+output: 290
+reasoning output: 26
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/lite/kernels/gather_nd.cc\n@@\n   const TfLiteTensor* indices = GetInput(context, node, kIndices);\n   TfLiteTensor* output = GetOutput(context, node, kOutputTensor);\n \n+  // Prevent division by 0 in the helper\n+  TF_LITE_ENSURE(context, NumElements(params) > 0);\n+\n   switch (indices->type) {\n     case kTfLiteInt32:\n       return EvalGatherNd<int32_t>(context, params, indices, output);\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/lite/kernels/gather_nd.cc
+
+tokens used
+input: 794
+cache read: 9,728
+cache write: 0
+output: 149
+reasoning output: 0
+
+The hunk validated against the target base and has been applied. I’ll inspect the final diff now to report the exact patch.
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/lite/kernels/gather_nd.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0135-47612cd69a2f"
+}
+warning: in the working copy of 'tensorflow/lite/kernels/gather_nd.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/lite/kernels/gather_nd.cc b/tensorflow/lite/kernels/gather_nd.cc
+index 20e98652ee..b8698b3ea2 100644
+--- a/tensorflow/lite/kernels/gather_nd.cc
++++ b/tensorflow/lite/kernels/gather_nd.cc
+@@ -130,6 +130,9 @@ TfLiteStatus Eval(TfLiteContext* context, TfLiteNode* node) {
+   const TfLiteTensor* indices = GetInput(context, node, kIndices);
+   TfLiteTensor* output = GetOutput(context, node, kOutputTensor);
+ 
++  // Prevent division by 0 in the helper
++  TF_LITE_ENSURE(context, NumElements(params) > 0);
++
+   switch (indices->type) {
+     case kTfLiteInt32:
+       return EvalGatherNd<int32_t>(context, params, indices, output);
+
+tokens used
+input: 971
+cache read: 9,728
+cache write: 0
+output: 106
+reasoning output: 14
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/lite/kernels/gather_nd.cc b/tensorflow/lite/kernels/gather_nd.cc
+    index 20e98652ee..b8698b3ea2 100644
+    --- a/tensorflow/lite/kernels/gather_nd.cc
+    +++ b/tensorflow/lite/kernels/gather_nd.cc
+    @@ -130,6 +130,9 @@ TfLiteStatus Eval(TfLiteContext* context, TfLiteNode* node) {
+       const TfLiteTensor* indices = GetInput(context, node, kIndices);
+       TfLiteTensor* output = GetOutput(context, node, kOutputTensor);
+     
+    +  // Prevent division by 0 in the helper
+    +  TF_LITE_ENSURE(context, NumElements(params) > 0);
+    +
+       switch (indices->type) {
+         case kTfLiteInt32:
+           return EvalGatherNd<int32_t>(context, params, indices, output);
+  notes: >
+    Added the GatherNd Eval guard to reject empty params before helper dispatch, preventing division by zero.
+```
+
+tokens used
+input: 1,336
+cache read: 9,728
+cache write: 0
+output: 256
+reasoning output: 0

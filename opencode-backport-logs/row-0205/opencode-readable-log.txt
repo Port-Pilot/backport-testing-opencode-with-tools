@@ -1,0 +1,674 @@
+I’ll inspect the target-side implementation of `MatrixSetDiagOp` and confirm the equivalent insertion point before applying the minimal guard.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect newer patch context and target MatrixSetDiagOp implementation",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Validate the backport hunk against the target base",
+      "status": "pending",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply the minimal source change and capture final diff",
+      "status": "pending",
+      "priority": "high"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect newer patch context and target MatrixSetDiagOp implementation",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Validate the backport hunk against the target base",
+    "status": "pending",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply the minimal source change and capture final diff",
+    "status": "pending",
+    "priority": "high"
+  }
+]
+
+tokens used
+input: 3,719
+cache read: 4,608
+cache write: 0
+output: 117
+reasoning output: 0
+
+tool: viewcode
+{
+  "ref": "fd73277008858dca223e9fe7fc0c8dd597f19d55",
+  "path": "tensorflow/core/kernels/linalg/matrix_set_diag_op.cc",
+  "startline": 1,
+  "endline": 130
+}
+This file doesn't exist in this commit.
+
+tool: git_show
+{
+  "ref": "ff8894044dfae5568ecbf2ed514c1a37dc394f1b",
+  "context": "OP_REQUIRES(\n          context,\n          TensorShapeUtils::IsScalar(diag_index.shape()) ||\n              TensorShapeUtils::IsVector(diag_index.shape()),\n          errors::InvalidArgument(\n              \"diag_index must be a scalar or vector, received shape: \",\n              diag_index.shape().DebugString()));\n      lower_diag_index = diag_index.flat<int32>()(0);"
+}
+commit ff8894044dfae5568ecbf2ed514c1a37dc394f1b
+Author: Mihai Maruseac <mihaimaruseac@google.com>
+Date:   Fri Jul 30 18:58:29 2021 -0700
+
+    Add one missing valdiation to `matrix_set_diag_op.cc`
+    
+    PiperOrigin-RevId: 387923408
+    Change-Id: If6a97b9098c13879400f56c22f91555cdf0ce5d7
+
+ tensorflow/core/kernels/linalg/matrix_set_diag_op.cc | 3 +++
+ 1 file changed, 3 insertions(+)
+This commit shows that there is a high probability that this code is new, so the corresponding code segment cannot be found in the old version.
+You can call `viewcode` and `locate_symbol` to further check the results step by step. For newly introduced code, we consider that this hunk `need not ported`.
+
+tokens used
+input: 882
+cache read: 7,680
+cache write: 0
+output: 206
+reasoning output: 0
+
+The newer file path does not exist in the 2.3.4 target, so I’m locating the older equivalent op implementation rather than assuming it is absent.
+
+tool: locate_symbol
+{
+  "ref": "fd73277008858dca223e9fe7fc0c8dd597f19d55",
+  "symbol": "MatrixSetDiagOp"
+}
+tensorflow/compiler/tf2xla/kernels/matrix_diag_ops.cc:453
+tensorflow/core/kernels/matrix_set_diag_op.cc:44
+tensorflow/compiler/tf2xla/kernels/matrix_diag_ops.cc:455
+tensorflow/core/kernels/matrix_set_diag_op.cc:46
+tensorflow/compiler/tf2xla/kernels/matrix_diag_ops.cc:534
+tensorflow/compiler/tf2xla/kernels/matrix_diag_ops.cc:537
+tensorflow/compiler/tf2xla/kernels/matrix_diag_ops.cc:539
+tensorflow/compiler/tf2xla/kernels/matrix_diag_ops.cc:541
+tensorflow/core/kernels/matrix_set_diag_op.cc:173
+tensorflow/core/kernels/matrix_set_diag_op.cc:179
+tensorflow/core/kernels/matrix_set_diag_op.cc:182
+tensorflow/core/kernels/matrix_set_diag_op.cc:185
+tensorflow/core/kernels/matrix_set_diag_op.cc:195
+tensorflow/core/kernels/matrix_set_diag_op.cc:283
+tensorflow/core/kernels/matrix_set_diag_op.cc:288
+tensorflow/core/kernels/matrix_set_diag_op.cc:293
+tensorflow/core/kernels/matrix_set_diag_op.cc:303
+
+tool: grep
+{
+  "pattern": "class MatrixSetDiagOp|MatrixSetDiagOp|diag_index must be a scalar",
+  "path": ".",
+  "include": "*.cc"
+}
+Found 38 matches
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0205-fd7327700885\tensorflow\lite\toco\import_tensorflow.cc:
+  Line 2599:       {"MatrixSetDiag", ConvertSimpleOperator<MatrixSetDiagOperator, 2, 1>},
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0205-fd7327700885\tensorflow\lite\toco\tflite\operator_test.cc:
+  Line 789:   MatrixSetDiagOperator op;
+
+  Line 790:   std::unique_ptr<toco::MatrixSetDiagOperator> output_toco_op =
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0205-fd7327700885\tensorflow\lite\toco\tflite\operator.cc:
+  Line 1977:   ops.push_back(MakeUnique<SimpleOperator<MatrixSetDiagOperator>>(
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0205-fd7327700885\tensorflow\lite\toco\graph_transformations\convert_matrix_set_diag_v2_or_v3_to_v1.cc:
+  Line 67:   auto* matrix_set_diag_op = new MatrixSetDiagOperator;
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0205-fd7327700885\tensorflow\lite\toco\graph_transformations\propagate_fixed_sizes.cc:
+  Line 2108: void ProcessMatrixSetDiagOperator(Model* model, MatrixSetDiagOperator* op) {
+
+  Line 2453:       ProcessMatrixSetDiagOperator(model,
+
+  Line 2454:                                    static_cast<MatrixSetDiagOperator*>(op));
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0205-fd7327700885\tensorflow\lite\kernels\matrix_set_diag_test.cc:
+  Line 33: class MatrixSetDiagOpModel : public SingleOpModel {
+
+  Line 35:   explicit MatrixSetDiagOpModel(const TensorData& input,
+
+  Line 42:                  BuiltinOptions_MatrixSetDiagOptions,
+
+  Line 43:                  CreateMatrixSetDiagOptions(builder_).Union());
+
+  Line 68: class MatrixSetDiagOpTest : public ::testing::Test {};
+
+  Line 74: TYPED_TEST_SUITE(MatrixSetDiagOpTest, TypesUnderTest);
+
+  Line 76: TYPED_TEST(MatrixSetDiagOpTest, ThreeByThreeDiagScatter) {
+
+  Line 77:   MatrixSetDiagOpModel<typename TypeParam::ScalarType> model(
+
+  Line 94:   MatrixSetDiagOpModel<int32_t> model({TensorType_INT32, {2, 3}},
+
+  Line 107:   MatrixSetDiagOpModel<int32_t> model({TensorType_INT32, {2, 4, 4}},
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0205-fd7327700885\tensorflow\compiler\tf2xla\kernels\matrix_diag_ops.cc:
+  Line 453: class MatrixSetDiagOp : public XlaOpKernel {
+
+  Line 455:   explicit MatrixSetDiagOp(OpKernelConstruction* context)
+
+  Line 534:   TF_DISALLOW_COPY_AND_ASSIGN(MatrixSetDiagOp);
+
+  Line 537: REGISTER_XLA_OP(Name("MatrixSetDiag"), MatrixSetDiagOp);
+
+  Line 539:                 MatrixSetDiagOp);
+
+  Line 541:                 MatrixSetDiagOp);
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0205-fd7327700885\tensorflow\core\kernels\matrix_diag_op.cc:
+  Line 74:                       "diag_index must be a scalar or vector, received shape: ",
+
+  Line 183:                       "diag_index must be a scalar or vector, received shape: ",
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0205-fd7327700885\tensorflow\core\kernels\matrix_set_diag_op.cc:
+  Line 44: class MatrixSetDiagOp : public OpKernel {
+
+  Line 46:   explicit MatrixSetDiagOp(OpKernelConstruction* context) : OpKernel(context) {
+
+  Line 71:                       "diag_index must be a scalar or vector, received shape: ",
+
+  Line 173:   TF_DISALLOW_COPY_AND_ASSIGN(MatrixSetDiagOp);
+
+  Line 179:       MatrixSetDiagOp<CPUDevice, type>);                                    \
+
+  Line 182:       MatrixSetDiagOp<CPUDevice, type>);                                    \
+
+  Line 185:       MatrixSetDiagOp<CPUDevice, type>);
+
+  Line 195:       MatrixSetDiagOp<CPUDevice, type>);
+
+  Line 283:       MatrixSetDiagOp<GPUDevice, type>);                                  \
+
+  Line 288:                           MatrixSetDiagOp<GPUDevice, type>);              \
+
+  Line 293:                           MatrixSetDiagOp<GPUDevice, type>);
+
+  Line 303:       MatrixSetDiagOp<GPUDevice, type>);
+
+tokens used
+input: 1,331
+cache read: 7,680
+cache write: 0
+output: 144
+reasoning output: 15
+
+tool: read
+{
+  "filePath": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0205-fd7327700885\\tensorflow\\core\\kernels\\matrix_set_diag_op.cc",
+  "offset": 35,
+  "limit": 70
+}
+<path>C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0205-fd7327700885\tensorflow\core\kernels\matrix_set_diag_op.cc</path>
+<type>file</type>
+<content>
+35: #include "tensorflow/core/platform/logging.h"
+36: #include "tensorflow/core/platform/macros.h"
+37: 
+38: namespace tensorflow {
+39: 
+40: typedef Eigen::ThreadPoolDevice CPUDevice;
+41: typedef Eigen::GpuDevice GPUDevice;
+42: 
+43: template <typename Device, typename T>
+44: class MatrixSetDiagOp : public OpKernel {
+45:  public:
+46:   explicit MatrixSetDiagOp(OpKernelConstruction* context) : OpKernel(context) {
+47:     // MatrixSetDiagV3-specific.
+48:     if (context->HasAttr("align")) {
+49:       functor::ReadAlignment(context, &left_align_superdiagonal_,
+50:                              &left_align_subdiagonal_);
+51:     }
+52:   }
+53: 
+54:   void Compute(OpKernelContext* context) override {
+55:     const Tensor& input = context->input(0);
+56:     const Tensor& diag = context->input(1);
+57: 
+58:     // MatrixSetDiag and MatrixSetDiagV2 both use this OpKernel. MatrixSetDiag
+59:     // only has two inputs, so we have to check the number of inputs before
+60:     // reading additional parameters in MatrixSetDiagV2.
+61:     int32 lower_diag_index = 0;
+62:     int32 upper_diag_index = 0;
+63: 
+64:     // MatrixSetDiagV2-specific.
+65:     if (context->num_inputs() > kNumV1Inputs) {
+66:       auto& diag_index = context->input(2);
+67:       OP_REQUIRES(context,
+68:                   TensorShapeUtils::IsScalar(diag_index.shape()) ||
+69:                       TensorShapeUtils::IsVector(diag_index.shape()),
+70:                   errors::InvalidArgument(
+71:                       "diag_index must be a scalar or vector, received shape: ",
+72:                       diag_index.shape().DebugString()));
+73:       lower_diag_index = diag_index.flat<int32>()(0);
+74:       upper_diag_index = lower_diag_index;
+75:       if (TensorShapeUtils::IsVector(diag_index.shape())) {
+76:         auto diag_index_size = diag_index.dim_size(0);
+77:         OP_REQUIRES(
+78:             context, 0 < diag_index_size && diag_index_size <= 2,
+79:             errors::InvalidArgument(
+80:                 "diag_index must have only one or two elements, received ",
+81:                 diag_index_size, " elements."));
+82:         if (diag_index_size > 1) {
+83:           upper_diag_index = diag_index.flat<int32>()(1);
+84:         }
+85:       }
+86:     }
+87: 
+88:     const TensorShape& input_shape = input.shape();
+89:     const TensorShape& diag_shape = diag.shape();
+90:     const int input_rank = input_shape.dims();
+91: 
+92:     // Preliminary validation of sizes.
+93:     OP_REQUIRES(context, TensorShapeUtils::IsMatrixOrHigher(input_shape),
+94:                 errors::InvalidArgument(
+95:                     "input must be at least 2-dim, received shape: ",
+96:                     input.shape().DebugString()));
+97:     OP_REQUIRES(context, TensorShapeUtils::IsVectorOrHigher(diag_shape),
+98:                 errors::InvalidArgument(
+99:                     "diagonal must be at least 1-dim, received shape: ",
+100:                     diag_shape.DebugString()));
+101: 
+102:     // Make sure lower_diag_index and upper_diag_index is valid.
+103:     const Eigen::Index num_rows = input_shape.dim_size(input_rank - 2);
+104:     const Eigen::Index num_cols = input_shape.dim_size(input_rank - 1);
+
+(Showing lines 35-104 of 309. Use offset=105 to continue.)
+</content>
+
+tool: viewcode
+{
+  "ref": "fd73277008858dca223e9fe7fc0c8dd597f19d55",
+  "path": "tensorflow/core/kernels/matrix_set_diag_op.cc",
+  "startline": 35,
+  "endline": 95
+}
+Here are lines 35 through 95.
+
+#include "tensorflow/core/platform/logging.h"
+#include "tensorflow/core/platform/macros.h"
+
+namespace tensorflow {
+
+typedef Eigen::ThreadPoolDevice CPUDevice;
+typedef Eigen::GpuDevice GPUDevice;
+
+template <typename Device, typename T>
+class MatrixSetDiagOp : public OpKernel {
+ public:
+  explicit MatrixSetDiagOp(OpKernelConstruction* context) : OpKernel(context) {
+    // MatrixSetDiagV3-specific.
+    if (context->HasAttr("align")) {
+      functor::ReadAlignment(context, &left_align_superdiagonal_,
+                             &left_align_subdiagonal_);
+    }
+  }
+
+  void Compute(OpKernelContext* context) override {
+    const Tensor& input = context->input(0);
+    const Tensor& diag = context->input(1);
+
+    // MatrixSetDiag and MatrixSetDiagV2 both use this OpKernel. MatrixSetDiag
+    // only has two inputs, so we have to check the number of inputs before
+    // reading additional parameters in MatrixSetDiagV2.
+    int32 lower_diag_index = 0;
+    int32 upper_diag_index = 0;
+
+    // MatrixSetDiagV2-specific.
+    if (context->num_inputs() > kNumV1Inputs) {
+      auto& diag_index = context->input(2);
+      OP_REQUIRES(context,
+                  TensorShapeUtils::IsScalar(diag_index.shape()) ||
+                      TensorShapeUtils::IsVector(diag_index.shape()),
+                  errors::InvalidArgument(
+                      "diag_index must be a scalar or vector, received shape: ",
+                      diag_index.shape().DebugString()));
+      lower_diag_index = diag_index.flat<int32>()(0);
+      upper_diag_index = lower_diag_index;
+      if (TensorShapeUtils::IsVector(diag_index.shape())) {
+        auto diag_index_size = diag_index.dim_size(0);
+        OP_REQUIRES(
+            context, 0 < diag_index_size && diag_index_size <= 2,
+            errors::InvalidArgument(
+                "diag_index must have only one or two elements, received ",
+                diag_index_size, " elements."));
+        if (diag_index_size > 1) {
+          upper_diag_index = diag_index.flat<int32>()(1);
+        }
+      }
+    }
+
+    const TensorShape& input_shape = input.shape();
+    const TensorShape& diag_shape = diag.shape();
+    const int input_rank = input_shape.dims();
+
+    // Preliminary validation of sizes.
+    OP_REQUIRES(context, TensorShapeUtils::IsMatrixOrHigher(input_shape),
+                errors::InvalidArgument(
+                    "input must be at least 2-dim, received shape: ",
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: viewcode
+{
+  "ref": "fd73277008858dca223e9fe7fc0c8dd597f19d55",
+  "path": "tensorflow/compiler/tf2xla/kernels/matrix_diag_ops.cc",
+  "startline": 440,
+  "endline": 500
+}
+Here are lines 440 through 500.
+
+  static constexpr int kNumV1Inputs = 1;
+};
+
+REGISTER_XLA_OP(Name("MatrixDiagPart"), MatrixDiagPartOp);
+REGISTER_XLA_OP(Name("MatrixDiagPartV2")
+                    .CompileTimeConstantInput("k")
+                    .CompileTimeConstantInput("padding_value"),
+                MatrixDiagPartOp);
+REGISTER_XLA_OP(Name("MatrixDiagPartV3")
+                    .CompileTimeConstantInput("k")
+                    .CompileTimeConstantInput("padding_value"),
+                MatrixDiagPartOp);
+
+class MatrixSetDiagOp : public XlaOpKernel {
+ public:
+  explicit MatrixSetDiagOp(OpKernelConstruction* context)
+      : XlaOpKernel(context) {
+    // MatrixSetDiagV3-specific.
+    if (context->HasAttr("align")) {
+      ReadAlignment(context, &left_align_superdiagonal_,
+                    &left_align_subdiagonal_);
+    }
+  }
+
+  void Compile(XlaOpKernelContext* context) override {
+    const TensorShape input_shape = context->InputShape(0);
+    const TensorShape diag_shape = context->InputShape(1);
+    const int input_rank = input_shape.dims();
+    const int diag_rank = diag_shape.dims();
+
+    // Preliminary validation of sizes.
+    OP_REQUIRES(context, TensorShapeUtils::IsMatrixOrHigher(input_shape),
+                errors::InvalidArgument(
+                    "input must be at least 2-dim, received shape: ",
+                    input_shape.DebugString()));
+    OP_REQUIRES(context, TensorShapeUtils::IsVectorOrHigher(diag_shape),
+                errors::InvalidArgument(
+                    "diagonal must be at least 1-dim, received shape: ",
+                    diag_shape.DebugString()));
+
+    // MatrixSetDiag and MatrixSetDiagV2 both use this OpKernel. MatrixSetDiag
+    // only has two inputs, so we have to check the number of inputs before
+    // reading additional parameters in MatrixSetDiagV2.
+    int64 lower_diag_index = 0;
+    int64 upper_diag_index = 0;
+    if (context->num_inputs() > kNumV1Inputs) {
+      std::tie(lower_diag_index, upper_diag_index) = ProcessDiagIndex(context);
+    }
+
+    // Checks if diag sizes are consistent with input.
+    const int64 num_rows = input_shape.dim_size(input_rank - 2);
+    const int64 num_cols = input_shape.dim_size(input_rank - 1);
+    ValidateDiagIndexWithOutputMatrixSize(context, lower_diag_index,
+                                          upper_diag_index, num_rows, num_cols);
+    const Eigen::Index num_diags = upper_diag_index - lower_diag_index + 1;
+    OP_REQUIRES(
+        context,
+        lower_diag_index == upper_diag_index ||
+            (diag_shape.dim_size(input_rank - 2) == num_diags),
+        errors::InvalidArgument("The number of diagonals provided in `diag` "
+                                "is not consistent with `lower_diag_index` and "
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tokens used
+input: 1,971
+cache read: 8,704
+cache write: 0
+output: 212
+reasoning output: 8
+
+The equivalent target code is `tensorflow/core/kernels/matrix_set_diag_op.cc`; it has the same unchecked `diag_index.flat<int32>()(0)` access after scalar/vector validation. I’m adding the same non-empty `diag_index` guard at that point only.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect newer patch context and target MatrixSetDiagOp implementation",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate the backport hunk against the target base",
+      "status": "in_progress",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply the minimal source change and capture final diff",
+      "status": "pending",
+      "priority": "high"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect newer patch context and target MatrixSetDiagOp implementation",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate the backport hunk against the target base",
+    "status": "in_progress",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply the minimal source change and capture final diff",
+    "status": "pending",
+    "priority": "high"
+  }
+]
+
+tokens used
+input: 3,299
+cache read: 9,728
+cache write: 0
+output: 148
+reasoning output: 55
+
+tool: validate
+{
+  "ref": "fd73277008858dca223e9fe7fc0c8dd597f19d55",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/matrix_set_diag_op.cc b/tensorflow/core/kernels/matrix_set_diag_op.cc\n--- a/tensorflow/core/kernels/matrix_set_diag_op.cc\n+++ b/tensorflow/core/kernels/matrix_set_diag_op.cc\n@@ -70,6 +70,9 @@ class MatrixSetDiagOp : public OpKernel {\n                   errors::InvalidArgument(\n                       \"diag_index must be a scalar or vector, received shape: \",\n                       diag_index.shape().DebugString()));\n+      OP_REQUIRES(\n+          context, diag_index.NumElements() > 0,\n+          errors::InvalidArgument(\"diag_index must have at least one element\"));\n       lower_diag_index = diag_index.flat<int32>()(0);\n       upper_diag_index = lower_diag_index;\n       if (TensorShapeUtils::IsVector(diag_index.shape())) {\n"
+}
+Patch applied successfully
+
+tokens used
+input: 548
+cache read: 12,800
+cache write: 0
+output: 246
+reasoning output: 8
+
+The hunk applies cleanly to the target base. I’m applying it to the working tree now.
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/kernels/matrix_set_diag_op.cc\n@@\n                   errors::InvalidArgument(\n                       \"diag_index must be a scalar or vector, received shape: \",\n                       diag_index.shape().DebugString()));\n+      OP_REQUIRES(\n+          context, diag_index.NumElements() > 0,\n+          errors::InvalidArgument(\"diag_index must have at least one element\"));\n       lower_diag_index = diag_index.flat<int32>()(0);\n       upper_diag_index = lower_diag_index;\n       if (TensorShapeUtils::IsVector(diag_index.shape())) {\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/kernels/matrix_set_diag_op.cc
+
+tokens used
+input: 815
+cache read: 12,800
+cache write: 0
+output: 188
+reasoning output: 0
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect newer patch context and target MatrixSetDiagOp implementation",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate the backport hunk against the target base",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply the minimal source change and capture final diff",
+      "status": "in_progress",
+      "priority": "high"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect newer patch context and target MatrixSetDiagOp implementation",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate the backport hunk against the target base",
+    "status": "completed",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply the minimal source change and capture final diff",
+    "status": "in_progress",
+    "priority": "high"
+  }
+]
+
+tokens used
+input: 1,032
+cache read: 12,800
+cache write: 0
+output: 84
+reasoning output: 0
+
+The source change is applied; I’m checking the resulting diff to report the exact patch.
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/kernels/matrix_set_diag_op.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0205-fd7327700885"
+}
+warning: in the working copy of 'tensorflow/core/kernels/matrix_set_diag_op.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/kernels/matrix_set_diag_op.cc b/tensorflow/core/kernels/matrix_set_diag_op.cc
+index bf98fd0d47..e1c47d8140 100644
+--- a/tensorflow/core/kernels/matrix_set_diag_op.cc
++++ b/tensorflow/core/kernels/matrix_set_diag_op.cc
+@@ -70,6 +70,9 @@ class MatrixSetDiagOp : public OpKernel {
+                   errors::InvalidArgument(
+                       "diag_index must be a scalar or vector, received shape: ",
+                       diag_index.shape().DebugString()));
++      OP_REQUIRES(
++          context, diag_index.NumElements() > 0,
++          errors::InvalidArgument("diag_index must have at least one element"));
+       lower_diag_index = diag_index.flat<int32>()(0);
+       upper_diag_index = lower_diag_index;
+       if (TensorShapeUtils::IsVector(diag_index.shape())) {
+
+tokens used
+input: 1,234
+cache read: 12,800
+cache write: 0
+output: 97
+reasoning output: 13
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect newer patch context and target MatrixSetDiagOp implementation",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate the backport hunk against the target base",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply the minimal source change and capture final diff",
+      "status": "completed",
+      "priority": "high"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect newer patch context and target MatrixSetDiagOp implementation",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate the backport hunk against the target base",
+    "status": "completed",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply the minimal source change and capture final diff",
+    "status": "completed",
+    "priority": "high"
+  }
+]
+
+tokens used
+input: 566
+cache read: 13,824
+cache write: 0
+output: 83
+reasoning output: 0
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/kernels/matrix_set_diag_op.cc b/tensorflow/core/kernels/matrix_set_diag_op.cc
+    index bf98fd0d47..e1c47d8140 100644
+    --- a/tensorflow/core/kernels/matrix_set_diag_op.cc
+    +++ b/tensorflow/core/kernels/matrix_set_diag_op.cc
+    @@ -70,6 +70,9 @@ class MatrixSetDiagOp : public OpKernel {
+                       errors::InvalidArgument(
+                           "diag_index must be a scalar or vector, received shape: ",
+                           diag_index.shape().DebugString()));
+    +      OP_REQUIRES(
+    +          context, diag_index.NumElements() > 0,
+    +          errors::InvalidArgument("diag_index must have at least one element"));
+           lower_diag_index = diag_index.flat<int32>()(0);
+           upper_diag_index = lower_diag_index;
+           if (TensorShapeUtils::IsVector(diag_index.shape())) {
+  notes: >
+    Added the missing non-empty diag_index validation before reading diag_index[0] in the TensorFlow 2.3.4 MatrixSetDiag kernel.
+```
+
+tokens used
+input: 766
+cache read: 13,824
+cache write: 0
+output: 267
+reasoning output: 0

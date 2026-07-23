@@ -1,0 +1,43 @@
+diff --git a/tensorflow/core/kernels/pad_op.cc b/tensorflow/core/kernels/pad_op.cc
+index 4a1d0cfc3e2374..b59db5a59a7bd3 100644
+--- a/tensorflow/core/kernels/pad_op.cc
++++ b/tensorflow/core/kernels/pad_op.cc
+@@ -84,8 +84,10 @@ class PadOp : public OpKernel {
+       OP_REQUIRES(context, before_d >= 0 && after_d >= 0,
+                   errors::InvalidArgument("Paddings must be non-negative: ",
+                                           before_d, " ", after_d));
+-      const int64 size_d = in0.dim_size(d);
+-      output_shape.AddDim(before_d + size_d + after_d);
++      const int64_t size_d = in0.dim_size(d);
++      OP_REQUIRES_OK(
++          context, output_shape.AddDimWithStatus(before_d + size_d + after_d));
++
+     }
+ 
+     // If there is no padding to be done, forward the input to output.
+diff --git a/tensorflow/python/ops/image_ops_test.py b/tensorflow/python/ops/image_ops_test.py
+index 7f361a489aec3f..e39cd8c2acfc32 100644
+--- a/tensorflow/python/ops/image_ops_test.py
++++ b/tensorflow/python/ops/image_ops_test.py
+@@ -2242,6 +2242,21 @@ def testNameScope(self):
+       y = image_ops.pad_to_bounding_box(image, 0, 0, 55, 66)
+       self.assertTrue(y.op.name.startswith("pad_to_bounding_box"))
+ 
++  def testInvalidInput(self):
++    # Test case for GitHub issue 46890.
++    if test_util.is_xla_enabled():
++      # TODO(b/200850176): test fails with XLA.
++      return
++    with self.session():
++      with self.assertRaises(errors_impl.InternalError):
++        v = image_ops.pad_to_bounding_box(
++            image=np.ones((1, 1, 1)),
++            target_height=5191549470,
++            target_width=5191549470,
++            offset_height=1,
++            offset_width=1)
++        self.evaluate(v)
++
+ 
+ class SelectDistortedCropBoxTest(test_util.TensorFlowTestCase):
+ 

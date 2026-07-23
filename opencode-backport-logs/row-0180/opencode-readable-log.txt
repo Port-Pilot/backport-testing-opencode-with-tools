@@ -1,0 +1,397 @@
+I’ll locate the older `FFTCPU` implementation, compare the target context to the provided newer hunk, then apply the minimal guard if the same zero-element FFT shape path exists.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect newer patch context and target FFTCPU location",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Validate and apply minimal backport hunk",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "content": "Review resulting diff and report YAML",
+      "status": "pending",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect newer patch context and target FFTCPU location",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Validate and apply minimal backport hunk",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "content": "Review resulting diff and report YAML",
+    "status": "pending",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 3,726
+cache read: 4,608
+cache write: 0
+output: 121
+reasoning output: 0
+
+tool: grep
+{
+  "pattern": "class FFTCPU|temp_shape\\.AddDim|flat_inner_dims<ComplexT",
+  "path": "tensorflow/core/kernels",
+  "include": "fft_ops.cc"
+}
+Found 6 matches
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0180-7a5dd0aa176d\tensorflow\core\kernels\fft_ops.cc:
+  Line 145: class FFTCPU : public FFTBase {
+
+  Line 222:       temp_shape.AddDim(fft_shape[i - 1]);
+
+  Line 225:     auto output = out->flat_inner_dims<ComplexT, FFTRank + 1>();
+
+  Line 232:     auto full_fft = temp.flat_inner_dims<ComplexT, FFTRank + 1>();
+
+  Line 247:     auto input = Tensor(in).flat_inner_dims<ComplexT, FFTRank + 1>();
+
+  Line 268:     auto full_fft = temp.flat_inner_dims<ComplexT, FFTRank + 1>();
+
+tool: git_show
+{
+  "ref": "31bd5026304677faa8a0b77602c6154171b9aec1",
+  "context": "class FFTCPU : public FFTBase {\n      input_slice_sizes[i] = fft_shape[i - 1];\n      temp_shape.AddDim(fft_shape[i - 1]);\n    }\n    auto output = out->flat_inner_dims<ComplexT, FFTRank + 1>();"
+}
+commit 31bd5026304677faa8a0b77602c6154171b9aec1
+Author: Mihai Maruseac <mihaimaruseac@google.com>
+Date:   Tue May 4 17:42:54 2021 -0700
+
+    Prevent check fail in FFT
+    
+    PiperOrigin-RevId: 372031044
+    Change-Id: I50994e3e8a5d1342d01bde80256f6bf2730ca299
+
+ tensorflow/core/kernels/fft_ops.cc | 3 +++
+ 1 file changed, 3 insertions(+)
+This commit shows that there is a high probability that this code is new, so the corresponding code segment cannot be found in the old version.
+You can call `viewcode` and `locate_symbol` to further check the results step by step. For newly introduced code, we consider that this hunk `need not ported`.
+
+tool: locate_symbol
+{
+  "ref": "7a5dd0aa176dbf81742f84b44aeb0948fa2d8f20",
+  "symbol": "FFTCPU"
+}
+tensorflow/core/kernels/fft_ops.cc:145
+tensorflow/core/kernels/fft_ops.cc:315
+tensorflow/core/kernels/fft_ops.cc:317
+tensorflow/core/kernels/fft_ops.cc:319
+tensorflow/core/kernels/fft_ops.cc:321
+tensorflow/core/kernels/fft_ops.cc:323
+tensorflow/core/kernels/fft_ops.cc:325
+tensorflow/core/kernels/fft_ops.cc:327
+tensorflow/core/kernels/fft_ops.cc:329
+tensorflow/core/kernels/fft_ops.cc:331
+tensorflow/core/kernels/fft_ops.cc:333
+tensorflow/core/kernels/fft_ops.cc:335
+tensorflow/core/kernels/fft_ops.cc:337
+
+tokens used
+input: 886
+cache read: 7,680
+cache write: 0
+output: 206
+reasoning output: 0
+
+The target release has the same `FFTCPU` code shape at the same insertion point, so this looks like a direct minimal port rather than omitted/new-only logic.
+
+tool: read
+{
+  "filePath": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0180-7a5dd0aa176d\\tensorflow\\core\\kernels\\fft_ops.cc",
+  "offset": 200,
+  "limit": 40
+}
+<path>C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0180-7a5dd0aa176d\tensorflow\core\kernels\fft_ops.cc</path>
+<type>file</type>
+<content>
+200:           DCHECK_EQ(out->dtype(), DT_FLOAT);
+201:           DoRealBackwardFFT<complex64, float>(ctx, fft_shape, in, out);
+202:         }
+203:       }
+204:     }
+205:   }
+206: 
+207:   template <typename RealT, typename ComplexT>
+208:   void DoRealForwardFFT(OpKernelContext* ctx, uint64* fft_shape,
+209:                         const Tensor& in, Tensor* out) {
+210:     // Create the axes (which are always trailing).
+211:     const auto axes = Eigen::ArrayXi::LinSpaced(FFTRank, 1, FFTRank);
+212:     auto device = ctx->eigen_device<CPUDevice>();
+213:     auto input = Tensor(in).flat_inner_dims<RealT, FFTRank + 1>();
+214:     const auto input_dims = input.dimensions();
+215: 
+216:     // Slice input to fft_shape on its inner-most dimensions.
+217:     Eigen::DSizes<Eigen::DenseIndex, FFTRank + 1> input_slice_sizes;
+218:     input_slice_sizes[0] = input_dims[0];
+219:     TensorShape temp_shape{input_dims[0]};
+220:     for (int i = 1; i <= FFTRank; ++i) {
+221:       input_slice_sizes[i] = fft_shape[i - 1];
+222:       temp_shape.AddDim(fft_shape[i - 1]);
+223:     }
+224: 
+225:     auto output = out->flat_inner_dims<ComplexT, FFTRank + 1>();
+226:     const Eigen::DSizes<Eigen::DenseIndex, FFTRank + 1> zero_start_indices;
+227: 
+228:     // Compute the full FFT using a temporary tensor.
+229:     Tensor temp;
+230:     OP_REQUIRES_OK(ctx, ctx->allocate_temp(DataTypeToEnum<ComplexT>::v(),
+231:                                            temp_shape, &temp));
+232:     auto full_fft = temp.flat_inner_dims<ComplexT, FFTRank + 1>();
+233:     full_fft.device(device) =
+234:         input.slice(zero_start_indices, input_slice_sizes)
+235:             .template fft<Eigen::BothParts, Eigen::FFT_FORWARD>(axes);
+236: 
+237:     // Slice away the negative frequency components.
+238:     output.device(device) =
+239:         full_fft.slice(zero_start_indices, output.dimensions());
+
+(Showing lines 200-239 of 621. Use offset=240 to continue.)
+</content>
+
+tool: viewcode
+{
+  "ref": "7a5dd0aa176dbf81742f84b44aeb0948fa2d8f20",
+  "path": "tensorflow/core/kernels/fft_ops.cc",
+  "startline": 200,
+  "endline": 232
+}
+Here are lines 200 through 232.
+
+          DCHECK_EQ(out->dtype(), DT_FLOAT);
+          DoRealBackwardFFT<complex64, float>(ctx, fft_shape, in, out);
+        }
+      }
+    }
+  }
+
+  template <typename RealT, typename ComplexT>
+  void DoRealForwardFFT(OpKernelContext* ctx, uint64* fft_shape,
+                        const Tensor& in, Tensor* out) {
+    // Create the axes (which are always trailing).
+    const auto axes = Eigen::ArrayXi::LinSpaced(FFTRank, 1, FFTRank);
+    auto device = ctx->eigen_device<CPUDevice>();
+    auto input = Tensor(in).flat_inner_dims<RealT, FFTRank + 1>();
+    const auto input_dims = input.dimensions();
+
+    // Slice input to fft_shape on its inner-most dimensions.
+    Eigen::DSizes<Eigen::DenseIndex, FFTRank + 1> input_slice_sizes;
+    input_slice_sizes[0] = input_dims[0];
+    TensorShape temp_shape{input_dims[0]};
+    for (int i = 1; i <= FFTRank; ++i) {
+      input_slice_sizes[i] = fft_shape[i - 1];
+      temp_shape.AddDim(fft_shape[i - 1]);
+    }
+
+    auto output = out->flat_inner_dims<ComplexT, FFTRank + 1>();
+    const Eigen::DSizes<Eigen::DenseIndex, FFTRank + 1> zero_start_indices;
+
+    // Compute the full FFT using a temporary tensor.
+    Tensor temp;
+    OP_REQUIRES_OK(ctx, ctx->allocate_temp(DataTypeToEnum<ComplexT>::v(),
+                                           temp_shape, &temp));
+    auto full_fft = temp.flat_inner_dims<ComplexT, FFTRank + 1>();
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tokens used
+input: 1,661
+cache read: 7,680
+cache write: 0
+output: 192
+reasoning output: 8
+
+I’m validating the direct hunk against the target base before editing, then I’ll apply exactly that guard in `tensorflow/core/kernels/fft_ops.cc`.
+
+tool: validate
+{
+  "ref": "7a5dd0aa176dbf81742f84b44aeb0948fa2d8f20",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/fft_ops.cc b/tensorflow/core/kernels/fft_ops.cc\n--- a/tensorflow/core/kernels/fft_ops.cc\n+++ b/tensorflow/core/kernels/fft_ops.cc\n@@ -220,6 +220,9 @@\n     for (int i = 1; i <= FFTRank; ++i) {\n       input_slice_sizes[i] = fft_shape[i - 1];\n       temp_shape.AddDim(fft_shape[i - 1]);\n     }\n+    OP_REQUIRES(ctx, temp_shape.num_elements() > 0,\n+                errors::InvalidArgument(\"Obtained a FFT shape of 0 elements: \",\n+                                        temp_shape.DebugString()));\n \n     auto output = out->flat_inner_dims<ComplexT, FFTRank + 1>();\n     const Eigen::DSizes<Eigen::DenseIndex, FFTRank + 1> zero_start_indices;\n"
+}
+Patch applied successfully
+
+tokens used
+input: 5,965
+cache read: 4,608
+cache write: 0
+output: 304
+reasoning output: 12
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/kernels/fft_ops.cc\n@@\n     for (int i = 1; i <= FFTRank; ++i) {\n       input_slice_sizes[i] = fft_shape[i - 1];\n       temp_shape.AddDim(fft_shape[i - 1]);\n     }\n+    OP_REQUIRES(ctx, temp_shape.num_elements() > 0,\n+                errors::InvalidArgument(\"Obtained a FFT shape of 0 elements: \",\n+                                        temp_shape.DebugString()));\n \n     auto output = out->flat_inner_dims<ComplexT, FFTRank + 1>();\n     const Eigen::DSizes<Eigen::DenseIndex, FFTRank + 1> zero_start_indices;\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/kernels/fft_ops.cc
+
+tokens used
+input: 2,198
+cache read: 8,704
+cache write: 0
+output: 191
+reasoning output: 0
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect newer patch context and target FFTCPU location",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate and apply minimal backport hunk",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Review resulting diff and report YAML",
+      "status": "in_progress",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect newer patch context and target FFTCPU location",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate and apply minimal backport hunk",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Review resulting diff and report YAML",
+    "status": "in_progress",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 368
+cache read: 10,752
+cache write: 0
+output: 77
+reasoning output: 0
+
+The guard is applied. I’m checking the final diff to ensure only the intended TensorFlow kernel change is present.
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/kernels/fft_ops.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0180-7a5dd0aa176d"
+}
+warning: in the working copy of 'tensorflow/core/kernels/fft_ops.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/kernels/fft_ops.cc b/tensorflow/core/kernels/fft_ops.cc
+index 0584359483..462e3f28bb 100644
+--- a/tensorflow/core/kernels/fft_ops.cc
++++ b/tensorflow/core/kernels/fft_ops.cc
+@@ -221,6 +221,9 @@ class FFTCPU : public FFTBase {
+       input_slice_sizes[i] = fft_shape[i - 1];
+       temp_shape.AddDim(fft_shape[i - 1]);
+     }
++    OP_REQUIRES(ctx, temp_shape.num_elements() > 0,
++                errors::InvalidArgument("Obtained a FFT shape of 0 elements: ",
++                                        temp_shape.DebugString()));
+ 
+     auto output = out->flat_inner_dims<ComplexT, FFTRank + 1>();
+     const Eigen::DSizes<Eigen::DenseIndex, FFTRank + 1> zero_start_indices;
+
+tokens used
+input: 556
+cache read: 10,752
+cache write: 0
+output: 103
+reasoning output: 14
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect newer patch context and target FFTCPU location",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate and apply minimal backport hunk",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Review resulting diff and report YAML",
+      "status": "completed",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect newer patch context and target FFTCPU location",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate and apply minimal backport hunk",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Review resulting diff and report YAML",
+    "status": "completed",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 917
+cache read: 10,752
+cache write: 0
+output: 78
+reasoning output: 8
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/kernels/fft_ops.cc b/tensorflow/core/kernels/fft_ops.cc
+    index 0584359483..462e3f28bb 100644
+    --- a/tensorflow/core/kernels/fft_ops.cc
+    +++ b/tensorflow/core/kernels/fft_ops.cc
+    @@ -221,6 +221,9 @@ class FFTCPU : public FFTBase {
+           input_slice_sizes[i] = fft_shape[i - 1];
+           temp_shape.AddDim(fft_shape[i - 1]);
+         }
+    +    OP_REQUIRES(ctx, temp_shape.num_elements() > 0,
+    +                errors::InvalidArgument("Obtained a FFT shape of 0 elements: ",
+    +                                        temp_shape.DebugString()));
+     
+         auto output = out->flat_inner_dims<ComplexT, FFTRank + 1>();
+         const Eigen::DSizes<Eigen::DenseIndex, FFTRank + 1> zero_start_indices;
+  notes: >
+    Added the zero-element FFT shape validation guard to the matching CPU real-forward FFT path in TensorFlow 2.1.4.
+```
+
+tokens used
+input: 1,113
+cache read: 10,752
+cache write: 0
+output: 263
+reasoning output: 0

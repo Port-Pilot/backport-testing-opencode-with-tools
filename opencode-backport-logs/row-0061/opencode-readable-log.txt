@@ -1,0 +1,1701 @@
+I’ll inspect the target-side files and symbols to map the newer patch onto the 2.5.2 checkout, then apply only the security-relevant minimal changes plus matching test coverage if the test file exists.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target MapStageOp implementation and test file context",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Validate and apply minimal backport hunks",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "content": "Review final diff and report YAML result",
+      "status": "pending",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target MapStageOp implementation and test file context",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Validate and apply minimal backport hunks",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "content": "Review final diff and report YAML result",
+    "status": "pending",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 12,156
+cache read: 0
+cache write: 0
+output: 129
+reasoning output: 0
+
+tool: viewcode
+{
+  "ref": "e87bc4979d037c615f37024fb9ba53a726536cc7",
+  "path": "tensorflow/python/kernel_tests/data_structures/map_stage_op_test.py",
+  "startline": 1,
+  "endline": 170
+}
+This file doesn't exist in this commit.
+
+tool: viewcode
+{
+  "ref": "e87bc4979d037c615f37024fb9ba53a726536cc7",
+  "path": "tensorflow/python/kernel_tests/data_structures/map_stage_op_test.py",
+  "startline": 170,
+  "endline": 460
+}
+This file doesn't exist in this commit.
+
+tool: viewcode
+{
+  "ref": "e87bc4979d037c615f37024fb9ba53a726536cc7",
+  "path": "tensorflow/core/kernels/map_stage_op.cc",
+  "startline": 500,
+  "endline": 570
+}
+Here are lines 500 through 570.
+
+    int64 capacity;
+    int64 memory_limit;
+    TF_RETURN_IF_ERROR(GetNodeAttr(ndef, "dtypes", &dtypes));
+    TF_RETURN_IF_ERROR(GetNodeAttr(ndef, "capacity", &capacity));
+    TF_RETURN_IF_ERROR(GetNodeAttr(ndef, "memory_limit", &memory_limit));
+    *ret = new StagingMap<Ordered>(dtypes, capacity, memory_limit);
+    return Status::OK();
+  };
+
+  TF_RETURN_IF_ERROR(cinfo.Init(rm, ndef, true /* use name() */));
+  TF_RETURN_IF_ERROR(rm->LookupOrCreate<StagingMap<Ordered>>(
+      cinfo.container(), cinfo.name(), map, create_fn));
+  return Status::OK();
+}
+
+template <bool Ordered>
+class MapStageOp : public OpKernel {
+ public:
+  explicit MapStageOp(OpKernelConstruction* ctx) : OpKernel(ctx) {}
+
+  void Compute(OpKernelContext* ctx) override {
+    StagingMap<Ordered>* map = nullptr;
+    OP_REQUIRES_OK(ctx, GetStagingMap(ctx, def(), &map));
+    core::ScopedUnref scope(map);
+    typename StagingMap<Ordered>::OptionalTuple tuple;
+
+    const Tensor* key_tensor;
+    const Tensor* indices_tensor;
+    OpInputList values_tensor;
+
+    OP_REQUIRES_OK(ctx, ctx->input("key", &key_tensor));
+    OP_REQUIRES_OK(ctx, ctx->input("indices", &indices_tensor));
+    OP_REQUIRES_OK(ctx, ctx->input_list("values", &values_tensor));
+    OP_REQUIRES(ctx, key_tensor->NumElements() > 0,
+                errors::InvalidArgument("key must not be empty"));
+
+    // Create copy for insertion into Staging Area
+    Tensor key(*key_tensor);
+
+    // Create the tuple to store
+    for (std::size_t i = 0; i < values_tensor.size(); ++i) {
+      tuple.push_back(values_tensor[i]);
+    }
+
+    // Store the tuple in the map
+    OP_REQUIRES_OK(ctx, map->put(&key, indices_tensor, &tuple));
+  }
+};
+
+REGISTER_KERNEL_BUILDER(Name("MapStage").Device(DEVICE_CPU), MapStageOp<false>);
+REGISTER_KERNEL_BUILDER(Name("OrderedMapStage").Device(DEVICE_CPU),
+                        MapStageOp<true>);
+
+#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+REGISTER_KERNEL_BUILDER(
+    Name("MapStage").HostMemory("key").HostMemory("indices").Device(DEVICE_GPU),
+    MapStageOp<false>);
+REGISTER_KERNEL_BUILDER(Name("OrderedMapStage")
+                            .HostMemory("key")
+                            .HostMemory("indices")
+                            .Device(DEVICE_GPU),
+                        MapStageOp<true>);
+#endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+
+
+template <bool Ordered>
+class MapUnstageOp : public OpKernel {
+ public:
+  explicit MapUnstageOp(OpKernelConstruction* ctx) : OpKernel(ctx) {}
+
+  // Using this op in such a way that it blocks forever
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tokens used
+input: 622
+cache read: 11,776
+cache write: 0
+output: 193
+reasoning output: 0
+
+The C++ target location matches directly. The Python test path from the newer patch does not exist in this 2.5.2 checkout, so I’m locating the equivalent test file before deciding whether to port the test hunk.
+
+tool: glob
+{
+  "pattern": "tensorflow/python/kernel_tests/**/map_stage_op_test.py"
+}
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0061-e87bc4979d03\tensorflow\python\kernel_tests\map_stage_op_test.py
+
+tool: glob
+{
+  "pattern": "**/map_stage_op_test.py"
+}
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0061-e87bc4979d03\tensorflow\python\kernel_tests\map_stage_op_test.py
+
+tool: grep
+{
+  "pattern": "class MapStageTest",
+  "path": "tensorflow",
+  "include": "*.py"
+}
+Found 1 matches
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0061-e87bc4979d03\tensorflow\python\kernel_tests\map_stage_op_test.py:
+  Line 31: class MapStageTest(test.TestCase):
+
+tokens used
+input: 1,534
+cache read: 11,776
+cache write: 0
+output: 144
+reasoning output: 12
+
+The equivalent test file is `tensorflow/python/kernel_tests/map_stage_op_test.py` in this target release. I’m checking its local contents and will add the vulnerability regression test there if the APIs match.
+
+tool: grep
+{
+  "pattern": "constant_op|MapStagingArea\\(|assertRaises|InvalidArgument",
+  "path": "tensorflow/python/kernel_tests",
+  "include": "map_stage_op_test.py"
+}
+Found 14 matches
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0061-e87bc4979d03\tensorflow\python\kernel_tests\map_stage_op_test.py:
+  Line 42:         stager = data_flow_ops.MapStagingArea([dtypes.float32])
+
+  Line 64:         stager = data_flow_ops.MapStagingArea([dtypes.float32, dtypes.float32])
+
+  Line 87:         stager = data_flow_ops.MapStagingArea(
+
+  Line 114:         stager = data_flow_ops.MapStagingArea([dtypes.float32])
+
+  Line 137:         stager = data_flow_ops.MapStagingArea(
+
+  Line 167:         stager = data_flow_ops.MapStagingArea(
+
+  Line 195:         stager = data_flow_ops.MapStagingArea(
+
+  Line 261:         stager = data_flow_ops.MapStagingArea(
+
+  Line 325:         stager = data_flow_ops.MapStagingArea(
+
+  Line 364:         stager = data_flow_ops.MapStagingArea(
+
+  Line 423:         stager = data_flow_ops.MapStagingArea(
+
+  Line 469:         stager = data_flow_ops.MapStagingArea(
+
+  Line 519:       with self.assertRaises(errors.InvalidArgumentError) as cm:
+
+  Line 567:         stager = data_flow_ops.MapStagingArea(
+
+tool: read
+{
+  "filePath": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0061-e87bc4979d03\\tensorflow\\python\\kernel_tests\\map_stage_op_test.py",
+  "offset": 1,
+  "limit": 120
+}
+<path>C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0061-e87bc4979d03\tensorflow\python\kernel_tests\map_stage_op_test.py</path>
+<type>file</type>
+<content>
+1: # Copyright 2017 The TensorFlow Authors. All Rights Reserved.
+2: #
+3: # Licensed under the Apache License, Version 2.0 (the "License");
+4: # you may not use this file except in compliance with the License.
+5: # You may obtain a copy of the License at
+6: #
+7: #     http://www.apache.org/licenses/LICENSE-2.0
+8: #
+9: # Unless required by applicable law or agreed to in writing, software
+10: # distributed under the License is distributed on an "AS IS" BASIS,
+11: # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+12: # See the License for the specific language governing permissions and
+13: # limitations under the License.
+14: # ==============================================================================
+15: from __future__ import absolute_import
+16: from __future__ import division
+17: from __future__ import print_function
+18: 
+19: from tensorflow.python.framework import errors
+20: from tensorflow.python.framework import dtypes
+21: from tensorflow.python.framework import ops
+22: from tensorflow.python.framework import test_util
+23: from tensorflow.python.ops import array_ops
+24: from tensorflow.python.ops import data_flow_ops
+25: from tensorflow.python.ops import math_ops
+26: from tensorflow.python.platform import test
+27: 
+28: TIMEOUT = 1
+29: 
+30: 
+31: class MapStageTest(test.TestCase):
+32: 
+33:   @test_util.run_deprecated_v1
+34:   def testSimple(self):
+35:     with ops.Graph().as_default() as G:
+36:       with ops.device('/cpu:0'):
+37:         x = array_ops.placeholder(dtypes.float32)
+38:         pi = array_ops.placeholder(dtypes.int64)
+39:         gi = array_ops.placeholder(dtypes.int64)
+40:         v = 2. * (array_ops.zeros([128, 128]) + x)
+41:       with ops.device(test.gpu_device_name()):
+42:         stager = data_flow_ops.MapStagingArea([dtypes.float32])
+43:         stage = stager.put(pi, [v], [0])
+44:         k, y = stager.get(gi)
+45:         y = math_ops.reduce_max(math_ops.matmul(y, y))
+46: 
+47:     G.finalize()
+48: 
+49:     with self.session(graph=G) as sess:
+50:       sess.run(stage, feed_dict={x: -1, pi: 0})
+51:       for i in range(10):
+52:         _, yval = sess.run([stage, y], feed_dict={x: i, pi: i + 1, gi: i})
+53:         self.assertAllClose(4 * (i - 1) * (i - 1) * 128, yval, rtol=1e-4)
+54: 
+55:   @test_util.run_deprecated_v1
+56:   def testMultiple(self):
+57:     with ops.Graph().as_default() as G:
+58:       with ops.device('/cpu:0'):
+59:         x = array_ops.placeholder(dtypes.float32)
+60:         pi = array_ops.placeholder(dtypes.int64)
+61:         gi = array_ops.placeholder(dtypes.int64)
+62:         v = 2. * (array_ops.zeros([128, 128]) + x)
+63:       with ops.device(test.gpu_device_name()):
+64:         stager = data_flow_ops.MapStagingArea([dtypes.float32, dtypes.float32])
+65:         stage = stager.put(pi, [x, v], [0, 1])
+66:         k, (z, y) = stager.get(gi)
+67:         y = math_ops.reduce_max(z * math_ops.matmul(y, y))
+68: 
+69:     G.finalize()
+70: 
+71:     with self.session(graph=G) as sess:
+72:       sess.run(stage, feed_dict={x: -1, pi: 0})
+73:       for i in range(10):
+74:         _, yval = sess.run([stage, y], feed_dict={x: i, pi: i + 1, gi: i})
+75:         self.assertAllClose(
+76:             4 * (i - 1) * (i - 1) * (i - 1) * 128, yval, rtol=1e-4)
+77: 
+78:   @test_util.run_deprecated_v1
+79:   def testDictionary(self):
+80:     with ops.Graph().as_default() as G:
+81:       with ops.device('/cpu:0'):
+82:         x = array_ops.placeholder(dtypes.float32)
+83:         pi = array_ops.placeholder(dtypes.int64)
+84:         gi = array_ops.placeholder(dtypes.int64)
+85:         v = 2. * (array_ops.zeros([128, 128]) + x)
+86:       with ops.device(test.gpu_device_name()):
+87:         stager = data_flow_ops.MapStagingArea(
+88:             [dtypes.float32, dtypes.float32],
+89:             shapes=[[], [128, 128]],
+90:             names=['x', 'v'])
+91:         stage = stager.put(pi, {'x': x, 'v': v})
+92:         key, ret = stager.get(gi)
+93:         z = ret['x']
+94:         y = ret['v']
+95:         y = math_ops.reduce_max(z * math_ops.matmul(y, y))
+96: 
+97:     G.finalize()
+98: 
+99:     with self.session(graph=G) as sess:
+100:       sess.run(stage, feed_dict={x: -1, pi: 0})
+101:       for i in range(10):
+102:         _, yval = sess.run([stage, y], feed_dict={x: i, pi: i + 1, gi: i})
+103:         self.assertAllClose(
+104:             4 * (i - 1) * (i - 1) * (i - 1) * 128, yval, rtol=1e-4)
+105: 
+106:   def testColocation(self):
+107:     gpu_dev = test.gpu_device_name()
+108: 
+109:     with ops.Graph().as_default() as G:
+110:       with ops.device('/cpu:0'):
+111:         x = array_ops.placeholder(dtypes.float32)
+112:         v = 2. * (array_ops.zeros([128, 128]) + x)
+113:       with ops.device(gpu_dev):
+114:         stager = data_flow_ops.MapStagingArea([dtypes.float32])
+115:         y = stager.put(1, [v], [0])
+116:         expected_name = gpu_dev if 'gpu' not in gpu_dev else '/device:GPU:0'
+117:         self.assertEqual(y.device, expected_name)
+118:       with ops.device('/cpu:0'):
+119:         _, x = stager.get(1)
+120:         y = stager.peek(1)[0]
+
+(Showing lines 1-120 of 600. Use offset=121 to continue.)
+</content>
+
+tool: read
+{
+  "filePath": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0061-e87bc4979d03\\tensorflow\\python\\kernel_tests\\map_stage_op_test.py",
+  "offset": 120,
+  "limit": 380
+}
+<path>C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0061-e87bc4979d03\tensorflow\python\kernel_tests\map_stage_op_test.py</path>
+<type>file</type>
+<content>
+120:         y = stager.peek(1)[0]
+121:         _, z = stager.get()
+122:         self.assertEqual(x[0].device, '/device:CPU:0')
+123:         self.assertEqual(y.device, '/device:CPU:0')
+124:         self.assertEqual(z[0].device, '/device:CPU:0')
+125: 
+126:     G.finalize()
+127: 
+128:   @test_util.run_deprecated_v1
+129:   def testPeek(self):
+130:     with ops.Graph().as_default() as G:
+131:       with ops.device('/cpu:0'):
+132:         x = array_ops.placeholder(dtypes.int32, name='x')
+133:         pi = array_ops.placeholder(dtypes.int64)
+134:         gi = array_ops.placeholder(dtypes.int64)
+135:         p = array_ops.placeholder(dtypes.int32, name='p')
+136:       with ops.device(test.gpu_device_name()):
+137:         stager = data_flow_ops.MapStagingArea(
+138:             [
+139:                 dtypes.int32,
+140:             ], shapes=[[]])
+141:         stage = stager.put(pi, [x], [0])
+142:         peek = stager.peek(gi)
+143:         size = stager.size()
+144: 
+145:     G.finalize()
+146: 
+147:     n = 10
+148: 
+149:     with self.session(graph=G) as sess:
+150:       for i in range(n):
+151:         sess.run(stage, feed_dict={x: i, pi: i})
+152: 
+153:       for i in range(n):
+154:         self.assertTrue(sess.run(peek, feed_dict={gi: i})[0] == i)
+155: 
+156:       self.assertTrue(sess.run(size) == 10)
+157: 
+158:   @test_util.run_deprecated_v1
+159:   def testSizeAndClear(self):
+160:     with ops.Graph().as_default() as G:
+161:       with ops.device('/cpu:0'):
+162:         x = array_ops.placeholder(dtypes.float32, name='x')
+163:         pi = array_ops.placeholder(dtypes.int64)
+164:         gi = array_ops.placeholder(dtypes.int64)
+165:         v = 2. * (array_ops.zeros([128, 128]) + x)
+166:       with ops.device(test.gpu_device_name()):
+167:         stager = data_flow_ops.MapStagingArea(
+168:             [dtypes.float32, dtypes.float32],
+169:             shapes=[[], [128, 128]],
+170:             names=['x', 'v'])
+171:         stage = stager.put(pi, {'x': x, 'v': v})
+172:         size = stager.size()
+173:         clear = stager.clear()
+174: 
+175:     G.finalize()
+176: 
+177:     with self.session(graph=G) as sess:
+178:       sess.run(stage, feed_dict={x: -1, pi: 3})
+179:       self.assertEqual(sess.run(size), 1)
+180:       sess.run(stage, feed_dict={x: -1, pi: 1})
+181:       self.assertEqual(sess.run(size), 2)
+182:       sess.run(clear)
+183:       self.assertEqual(sess.run(size), 0)
+184: 
+185:   @test_util.run_deprecated_v1
+186:   def testCapacity(self):
+187:     capacity = 3
+188: 
+189:     with ops.Graph().as_default() as G:
+190:       with ops.device('/cpu:0'):
+191:         x = array_ops.placeholder(dtypes.int32, name='x')
+192:         pi = array_ops.placeholder(dtypes.int64, name='pi')
+193:         gi = array_ops.placeholder(dtypes.int64, name='gi')
+194:       with ops.device(test.gpu_device_name()):
+195:         stager = data_flow_ops.MapStagingArea(
+196:             [
+197:                 dtypes.int32,
+198:             ], capacity=capacity, shapes=[[]])
+199: 
+200:       stage = stager.put(pi, [x], [0])
+201:       get = stager.get()
+202:       size = stager.size()
+203: 
+204:     G.finalize()
+205: 
+206:     from six.moves import queue as Queue
+207:     import threading
+208: 
+209:     queue = Queue.Queue()
+210:     n = 8
+211: 
+212:     with self.session(graph=G) as sess:
+213:       # Stage data in a separate thread which will block
+214:       # when it hits the staging area's capacity and thus
+215:       # not fill the queue with n tokens
+216:       def thread_run():
+217:         for i in range(n):
+218:           sess.run(stage, feed_dict={x: i, pi: i})
+219:           queue.put(0)
+220: 
+221:       t = threading.Thread(target=thread_run)
+222:       t.daemon = True
+223:       t.start()
+224: 
+225:       # Get tokens from the queue until a timeout occurs
+226:       try:
+227:         for i in range(n):
+228:           queue.get(timeout=TIMEOUT)
+229:       except Queue.Empty:
+230:         pass
+231: 
+232:       # Should've timed out on the iteration 'capacity'
+233:       if not i == capacity:
+234:         self.fail("Expected to timeout on iteration '{}' "
+235:                   "but instead timed out on iteration '{}' "
+236:                   "Staging Area size is '{}' and configured "
+237:                   "capacity is '{}'.".format(capacity, i, sess.run(size),
+238:                                              capacity))
+239: 
+240:       # Should have capacity elements in the staging area
+241:       self.assertTrue(sess.run(size) == capacity)
+242: 
+243:       # Clear the staging area completely
+244:       for i in range(n):
+245:         sess.run(get)
+246: 
+247:       self.assertTrue(sess.run(size) == 0)
+248: 
+249:   @test_util.run_deprecated_v1
+250:   def testMemoryLimit(self):
+251:     memory_limit = 512 * 1024  # 512K
+252:     chunk = 200 * 1024  # 256K
+253:     capacity = memory_limit // chunk
+254: 
+255:     with ops.Graph().as_default() as G:
+256:       with ops.device('/cpu:0'):
+257:         x = array_ops.placeholder(dtypes.uint8, name='x')
+258:         pi = array_ops.placeholder(dtypes.int64, name='pi')
+259:         gi = array_ops.placeholder(dtypes.int64, name='gi')
+260:       with ops.device(test.gpu_device_name()):
+261:         stager = data_flow_ops.MapStagingArea(
+262:             [dtypes.uint8], memory_limit=memory_limit, shapes=[[]])
+263:         stage = stager.put(pi, [x], [0])
+264:         get = stager.get()
+265:         size = stager.size()
+266: 
+267:     G.finalize()
+268: 
+269:     from six.moves import queue as Queue
+270:     import threading
+271:     import numpy as np
+272: 
+273:     queue = Queue.Queue()
+274:     n = 8
+275: 
+276:     with self.session(graph=G) as sess:
+277:       # Stage data in a separate thread which will block
+278:       # when it hits the staging area's capacity and thus
+279:       # not fill the queue with n tokens
+280:       def thread_run():
+281:         for i in range(n):
+282:           data = np.full(chunk, i, dtype=np.uint8)
+283:           sess.run(stage, feed_dict={x: data, pi: i})
+284:           queue.put(0)
+285: 
+286:       t = threading.Thread(target=thread_run)
+287:       t.daemon = True
+288:       t.start()
+289: 
+290:       # Get tokens from the queue until a timeout occurs
+291:       try:
+292:         for i in range(n):
+293:           queue.get(timeout=TIMEOUT)
+294:       except Queue.Empty:
+295:         pass
+296: 
+297:       # Should've timed out on the iteration 'capacity'
+298:       if not i == capacity:
+299:         self.fail("Expected to timeout on iteration '{}' "
+300:                   "but instead timed out on iteration '{}' "
+301:                   "Staging Area size is '{}' and configured "
+302:                   "capacity is '{}'.".format(capacity, i, sess.run(size),
+303:                                              capacity))
+304: 
+305:       # Should have capacity elements in the staging area
+306:       self.assertTrue(sess.run(size) == capacity)
+307: 
+308:       # Clear the staging area completely
+309:       for i in range(n):
+310:         sess.run(get)
+311: 
+312:       self.assertTrue(sess.run(size) == 0)
+313: 
+314:   @test_util.run_deprecated_v1
+315:   def testOrdering(self):
+316:     import six
+317:     import random
+318: 
+319:     with ops.Graph().as_default() as G:
+320:       with ops.device('/cpu:0'):
+321:         x = array_ops.placeholder(dtypes.int32, name='x')
+322:         pi = array_ops.placeholder(dtypes.int64, name='pi')
+323:         gi = array_ops.placeholder(dtypes.int64, name='gi')
+324:       with ops.device(test.gpu_device_name()):
+325:         stager = data_flow_ops.MapStagingArea(
+326:             [
+327:                 dtypes.int32,
+328:             ], shapes=[[]], ordered=True)
+329:         stage = stager.put(pi, [x], [0])
+330:         get = stager.get()
+331:         size = stager.size()
+332: 
+333:     G.finalize()
+334: 
+335:     n = 10
+336: 
+337:     with self.session(graph=G) as sess:
+338:       # Keys n-1..0
+339:       keys = list(reversed(six.moves.range(n)))
+340: 
+341:       for i in keys:
+342:         sess.run(stage, feed_dict={pi: i, x: i})
+343: 
+344:       self.assertTrue(sess.run(size) == n)
+345: 
+346:       # Check that key, values come out in ascending order
+347:       for i, k in enumerate(reversed(keys)):
+348:         get_key, values = sess.run(get)
+349:         self.assertTrue(i == k == get_key == values)
+350: 
+351:       self.assertTrue(sess.run(size) == 0)
+352: 
+353:   @test_util.run_deprecated_v1
+354:   def testPartialDictInsert(self):
+355:     with ops.Graph().as_default() as G:
+356:       with ops.device('/cpu:0'):
+357:         x = array_ops.placeholder(dtypes.float32)
+358:         f = array_ops.placeholder(dtypes.float32)
+359:         v = array_ops.placeholder(dtypes.float32)
+360:         pi = array_ops.placeholder(dtypes.int64)
+361:         gi = array_ops.placeholder(dtypes.int64)
+362:       with ops.device(test.gpu_device_name()):
+363:         # Test barrier with dictionary
+364:         stager = data_flow_ops.MapStagingArea(
+365:             [dtypes.float32, dtypes.float32, dtypes.float32],
+366:             names=['x', 'v', 'f'])
+367:         stage_xf = stager.put(pi, {'x': x, 'f': f})
+368:         stage_v = stager.put(pi, {'v': v})
+369:         key, ret = stager.get(gi)
+370:         size = stager.size()
+371:         isize = stager.incomplete_size()
+372: 
+373:     G.finalize()
+374: 
+375:     with self.session(graph=G) as sess:
+376:       # 0 complete and incomplete entries
+377:       self.assertTrue(sess.run([size, isize]) == [0, 0])
+378:       # Stage key 0, x and f tuple entries
+379:       sess.run(stage_xf, feed_dict={pi: 0, x: 1, f: 2})
+380:       self.assertTrue(sess.run([size, isize]) == [0, 1])
+381:       # Stage key 1, x and f tuple entries
+382:       sess.run(stage_xf, feed_dict={pi: 1, x: 1, f: 2})
+383:       self.assertTrue(sess.run([size, isize]) == [0, 2])
+384: 
+385:       # Now complete key 0 with tuple entry v
+386:       sess.run(stage_v, feed_dict={pi: 0, v: 1})
+387:       # 1 complete and 1 incomplete entry
+388:       self.assertTrue(sess.run([size, isize]) == [1, 1])
+389:       # We can now obtain tuple associated with key 0
+390:       self.assertTrue(
+391:           sess.run([key, ret], feed_dict={
+392:               gi: 0
+393:           }) == [0, {
+394:               'x': 1,
+395:               'f': 2,
+396:               'v': 1
+397:           }])
+398: 
+399:       # 0 complete and 1 incomplete entry
+400:       self.assertTrue(sess.run([size, isize]) == [0, 1])
+401:       # Now complete key 1 with tuple entry v
+402:       sess.run(stage_v, feed_dict={pi: 1, v: 3})
+403:       # We can now obtain tuple associated with key 1
+404:       self.assertTrue(
+405:           sess.run([key, ret], feed_dict={
+406:               gi: 1
+407:           }) == [1, {
+408:               'x': 1,
+409:               'f': 2,
+410:               'v': 3
+411:           }])
+412: 
+413:   @test_util.run_deprecated_v1
+414:   def testPartialIndexInsert(self):
+415:     with ops.Graph().as_default() as G:
+416:       with ops.device('/cpu:0'):
+417:         x = array_ops.placeholder(dtypes.float32)
+418:         f = array_ops.placeholder(dtypes.float32)
+419:         v = array_ops.placeholder(dtypes.float32)
+420:         pi = array_ops.placeholder(dtypes.int64)
+421:         gi = array_ops.placeholder(dtypes.int64)
+422:       with ops.device(test.gpu_device_name()):
+423:         stager = data_flow_ops.MapStagingArea(
+424:             [dtypes.float32, dtypes.float32, dtypes.float32])
+425:         stage_xf = stager.put(pi, [x, f], [0, 2])
+426:         stage_v = stager.put(pi, [v], [1])
+427:         key, ret = stager.get(gi)
+428:         size = stager.size()
+429:         isize = stager.incomplete_size()
+430: 
+431:     G.finalize()
+432: 
+433:     with self.session(graph=G) as sess:
+434:       # 0 complete and incomplete entries
+435:       self.assertTrue(sess.run([size, isize]) == [0, 0])
+436:       # Stage key 0, x and f tuple entries
+437:       sess.run(stage_xf, feed_dict={pi: 0, x: 1, f: 2})
+438:       self.assertTrue(sess.run([size, isize]) == [0, 1])
+439:       # Stage key 1, x and f tuple entries
+440:       sess.run(stage_xf, feed_dict={pi: 1, x: 1, f: 2})
+441:       self.assertTrue(sess.run([size, isize]) == [0, 2])
+442: 
+443:       # Now complete key 0 with tuple entry v
+444:       sess.run(stage_v, feed_dict={pi: 0, v: 1})
+445:       # 1 complete and 1 incomplete entry
+446:       self.assertTrue(sess.run([size, isize]) == [1, 1])
+447:       # We can now obtain tuple associated with key 0
+448:       self.assertTrue(sess.run([key, ret], feed_dict={gi: 0}) == [0, [1, 1, 2]])
+449: 
+450:       # 0 complete and 1 incomplete entry
+451:       self.assertTrue(sess.run([size, isize]) == [0, 1])
+452:       # Now complete key 1 with tuple entry v
+453:       sess.run(stage_v, feed_dict={pi: 1, v: 3})
+454:       # We can now obtain tuple associated with key 1
+455:       self.assertTrue(sess.run([key, ret], feed_dict={gi: 1}) == [1, [1, 3, 2]])
+456: 
+457:   @test_util.run_deprecated_v1
+458:   def testPartialDictGetsAndPeeks(self):
+459:     with ops.Graph().as_default() as G:
+460:       with ops.device('/cpu:0'):
+461:         x = array_ops.placeholder(dtypes.float32)
+462:         f = array_ops.placeholder(dtypes.float32)
+463:         v = array_ops.placeholder(dtypes.float32)
+464:         pi = array_ops.placeholder(dtypes.int64)
+465:         pei = array_ops.placeholder(dtypes.int64)
+466:         gi = array_ops.placeholder(dtypes.int64)
+467:       with ops.device(test.gpu_device_name()):
+468:         # Test barrier with dictionary
+469:         stager = data_flow_ops.MapStagingArea(
+470:             [dtypes.float32, dtypes.float32, dtypes.float32],
+471:             names=['x', 'v', 'f'])
+472:         stage_xf = stager.put(pi, {'x': x, 'f': f})
+473:         stage_v = stager.put(pi, {'v': v})
+474:         peek_xf = stager.peek(pei, ['x', 'f'])
+475:         peek_v = stager.peek(pei, ['v'])
+476:         key_xf, get_xf = stager.get(gi, ['x', 'f'])
+477:         key_v, get_v = stager.get(gi, ['v'])
+478:         pop_key_xf, pop_xf = stager.get(indices=['x', 'f'])
+479:         pop_key_v, pop_v = stager.get(pi, ['v'])
+480:         size = stager.size()
+481:         isize = stager.incomplete_size()
+482: 
+483:     G.finalize()
+484: 
+485:     with self.session(graph=G) as sess:
+486:       # 0 complete and incomplete entries
+487:       self.assertTrue(sess.run([size, isize]) == [0, 0])
+488:       # Stage key 0, x and f tuple entries
+489:       sess.run(stage_xf, feed_dict={pi: 0, x: 1, f: 2})
+490:       self.assertTrue(sess.run([size, isize]) == [0, 1])
+491:       # Stage key 1, x and f tuple entries
+492:       sess.run(stage_xf, feed_dict={pi: 1, x: 1, f: 2})
+493:       self.assertTrue(sess.run([size, isize]) == [0, 2])
+494: 
+495:       # Now complete key 0 with tuple entry v
+496:       sess.run(stage_v, feed_dict={pi: 0, v: 1})
+497:       # 1 complete and 1 incomplete entry
+498:       self.assertTrue(sess.run([size, isize]) == [1, 1])
+499: 
+
+(Showing lines 120-499 of 600. Use offset=500 to continue.)
+</content>
+
+tokens used
+input: 865
+cache read: 12,800
+cache write: 0
+output: 251
+reasoning output: 0
+
+tool: read
+{
+  "filePath": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0061-e87bc4979d03\\tensorflow\\python\\kernel_tests\\map_stage_op_test.py",
+  "offset": 500,
+  "limit": 140
+}
+<path>C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0061-e87bc4979d03\tensorflow\python\kernel_tests\map_stage_op_test.py</path>
+<type>file</type>
+<content>
+500:       # We can now peek at 'x' and 'f' values associated with key 0
+501:       self.assertTrue(sess.run(peek_xf, feed_dict={pei: 0}) == {'x': 1, 'f': 2})
+502:       # Peek at 'v' value associated with key 0
+503:       self.assertTrue(sess.run(peek_v, feed_dict={pei: 0}) == {'v': 1})
+504:       # 1 complete and 1 incomplete entry
+505:       self.assertTrue(sess.run([size, isize]) == [1, 1])
+506: 
+507:       # We can now obtain 'x' and 'f' values associated with key 0
+508:       self.assertTrue(
+509:           sess.run([key_xf, get_xf], feed_dict={
+510:               gi: 0
+511:           }) == [0, {
+512:               'x': 1,
+513:               'f': 2
+514:           }])
+515:       # Still have 1 complete and 1 incomplete entry
+516:       self.assertTrue(sess.run([size, isize]) == [1, 1])
+517: 
+518:       # We can no longer get 'x' and 'f' from key 0
+519:       with self.assertRaises(errors.InvalidArgumentError) as cm:
+520:         sess.run([key_xf, get_xf], feed_dict={gi: 0})
+521: 
+522:       exc_str = ("Tensor at index '0' for key '0' " 'has already been removed.')
+523: 
+524:       self.assertTrue(exc_str in cm.exception.message)
+525: 
+526:       # Obtain 'v' value associated with key 0
+527:       self.assertTrue(
+528:           sess.run([key_v, get_v], feed_dict={
+529:               gi: 0
+530:           }) == [0, {
+531:               'v': 1
+532:           }])
+533:       # 0 complete and 1 incomplete entry
+534:       self.assertTrue(sess.run([size, isize]) == [0, 1])
+535: 
+536:       # Now complete key 1 with tuple entry v
+537:       sess.run(stage_v, feed_dict={pi: 1, v: 1})
+538:       # 1 complete and 1 incomplete entry
+539:       self.assertTrue(sess.run([size, isize]) == [1, 0])
+540: 
+541:       # Pop without key to obtain 'x' and 'f' values associated with key 1
+542:       self.assertTrue(sess.run([pop_key_xf, pop_xf]) == [1, {'x': 1, 'f': 2}])
+543:       # still 1 complete and 1 incomplete entry
+544:       self.assertTrue(sess.run([size, isize]) == [1, 0])
+545:       # We can now obtain 'x' and 'f' values associated with key 1
+546:       self.assertTrue(
+547:           sess.run([pop_key_v, pop_v], feed_dict={
+548:               pi: 1
+549:           }) == [1, {
+550:               'v': 1
+551:           }])
+552:       # Nothing is left
+553:       self.assertTrue(sess.run([size, isize]) == [0, 0])
+554: 
+555:   @test_util.run_deprecated_v1
+556:   def testPartialIndexGets(self):
+557:     with ops.Graph().as_default() as G:
+558:       with ops.device('/cpu:0'):
+559:         x = array_ops.placeholder(dtypes.float32)
+560:         f = array_ops.placeholder(dtypes.float32)
+561:         v = array_ops.placeholder(dtypes.float32)
+562:         pi = array_ops.placeholder(dtypes.int64)
+563:         pei = array_ops.placeholder(dtypes.int64)
+564:         gi = array_ops.placeholder(dtypes.int64)
+565:       with ops.device(test.gpu_device_name()):
+566:         # Test again with partial index gets
+567:         stager = data_flow_ops.MapStagingArea(
+568:             [dtypes.float32, dtypes.float32, dtypes.float32])
+569:         stage_xvf = stager.put(pi, [x, v, f], [0, 1, 2])
+570:         key_xf, get_xf = stager.get(gi, [0, 2])
+571:         key_v, get_v = stager.get(gi, [1])
+572:         size = stager.size()
+573:         isize = stager.incomplete_size()
+574: 
+575:     G.finalize()
+576: 
+577:     with self.session(graph=G) as sess:
+578:       # Stage complete tuple
+579:       sess.run(stage_xvf, feed_dict={pi: 0, x: 1, f: 2, v: 3})
+580: 
+581:       self.assertTrue(sess.run([size, isize]) == [1, 0])
+582: 
+583:       # Partial get using indices
+584:       self.assertTrue(
+585:           sess.run([key_xf, get_xf], feed_dict={
+586:               gi: 0
+587:           }) == [0, [1, 2]])
+588: 
+589:       # Still some of key 0 left
+590:       self.assertTrue(sess.run([size, isize]) == [1, 0])
+591: 
+592:       # Partial get of remaining index
+593:       self.assertTrue(sess.run([key_v, get_v], feed_dict={gi: 0}) == [0, [3]])
+594: 
+595:       # All gone
+596:       self.assertTrue(sess.run([size, isize]) == [0, 0])
+597: 
+598: 
+599: if __name__ == '__main__':
+600:   test.main()
+
+(End of file - total 600 lines)
+</content>
+
+tokens used
+input: 7,540
+cache read: 12,800
+cache write: 0
+output: 77
+reasoning output: 14
+
+The provided diff is truncated before the likely regression test despite showing new imports. I’ll inspect only the allowed source commit to recover the complete hunks for this fix, then map them to the target file layout.
+
+tool: git_show
+{
+  "ref": "f57315566d7094f322b784947093406c2aea0d7d"
+}
+commit f57315566d7094f322b784947093406c2aea0d7d
+Author: Isha Arkatkar <ishark@google.com>
+Date:   Thu Dec 2 18:57:58 2021 -0800
+
+    Add a check for Key being scalar tensor for MapStage and OrderedMapStage ops.
+    
+    According to documentation[1][2], key must be int64 value, but this wasn't enforced and the ops would fail with check failure for non-scalar key value.
+    
+    [1]https://www.tensorflow.org/api_docs/cc/class/tensorflow/ops/ordered-map-stage
+    [2]https://www.tensorflow.org/api_docs/cc/class/tensorflow/ops/map-stage
+    
+    PiperOrigin-RevId: 413822112
+    Change-Id: I9d118faf990e6361900aa32272eff486ad9f0e2e
+
+ tensorflow/core/kernels/map_stage_op.cc            |   5 +
+ .../data_structures/map_stage_op_test.py           | 286 ++++++++++++---------
+ 2 files changed, 167 insertions(+), 124 deletions(-)
+
+--- Commit Details ---
+commit f57315566d7094f322b784947093406c2aea0d7d
+Author: Isha Arkatkar <ishark@google.com>
+Date:   Thu Dec 2 18:57:58 2021 -0800
+
+    Add a check for Key being scalar tensor for MapStage and OrderedMapStage ops.
+    
+    According to documentation[1][2], key must be int64 value, but this wasn't enforced and the ops would fail with check failure for non-scalar key value.
+    
+    [1]https://www.tensorflow.org/api_docs/cc/class/tensorflow/ops/ordered-map-stage
+    [2]https://www.tensorflow.org/api_docs/cc/class/tensorflow/ops/map-stage
+    
+    PiperOrigin-RevId: 413822112
+    Change-Id: I9d118faf990e6361900aa32272eff486ad9f0e2e
+
+diff --git a/tensorflow/core/kernels/map_stage_op.cc b/tensorflow/core/kernels/map_stage_op.cc
+index aee53ae78d..463e2a8ced 100644
+--- a/tensorflow/core/kernels/map_stage_op.cc
++++ b/tensorflow/core/kernels/map_stage_op.cc
+@@ -536,6 +536,11 @@ class MapStageOp : public OpKernel {
+     OP_REQUIRES(ctx, key_tensor->NumElements() > 0,
+                 errors::InvalidArgument("key must not be empty"));
+ 
++    OP_REQUIRES(ctx, key_tensor->NumElements() == 1,
++                errors::InvalidArgument(
++                    "key must be an int64 scalar, got tensor with shape: ",
++                    key_tensor->shape()));
++
+     // Create copy for insertion into Staging Area
+     Tensor key(*key_tensor);
+ 
+diff --git a/tensorflow/python/kernel_tests/data_structures/map_stage_op_test.py b/tensorflow/python/kernel_tests/data_structures/map_stage_op_test.py
+index 313b5244ee..8600ad1f8d 100644
+--- a/tensorflow/python/kernel_tests/data_structures/map_stage_op_test.py
++++ b/tensorflow/python/kernel_tests/data_structures/map_stage_op_test.py
+@@ -12,8 +12,11 @@
+ # See the License for the specific language governing permissions and
+ # limitations under the License.
+ # ==============================================================================
+-from tensorflow.python.framework import errors
++import numpy as np
++
++from tensorflow.python.framework import constant_op
+ from tensorflow.python.framework import dtypes
++from tensorflow.python.framework import errors
+ from tensorflow.python.framework import ops
+ from tensorflow.python.framework import test_util
+ from tensorflow.python.ops import array_ops
+@@ -28,7 +31,7 @@ class MapStageTest(test.TestCase):
+ 
+   @test_util.run_deprecated_v1
+   def testSimple(self):
+-    with ops.Graph().as_default() as G:
++    with ops.Graph().as_default() as g:
+       with ops.device('/cpu:0'):
+         x = array_ops.placeholder(dtypes.float32)
+         pi = array_ops.placeholder(dtypes.int64)
+@@ -40,9 +43,9 @@ class MapStageTest(test.TestCase):
+         k, y = stager.get(gi)
+         y = math_ops.reduce_max(math_ops.matmul(y, y))
+ 
+-    G.finalize()
++    g.finalize()
+ 
+-    with self.session(graph=G) as sess:
++    with self.session(graph=g) as sess:
+       sess.run(stage, feed_dict={x: -1, pi: 0})
+       for i in range(10):
+         _, yval = sess.run([stage, y], feed_dict={x: i, pi: i + 1, gi: i})
+@@ -50,7 +53,7 @@ class MapStageTest(test.TestCase):
+ 
+   @test_util.run_deprecated_v1
+   def testMultiple(self):
+-    with ops.Graph().as_default() as G:
++    with ops.Graph().as_default() as g:
+       with ops.device('/cpu:0'):
+         x = array_ops.placeholder(dtypes.float32)
+         pi = array_ops.placeholder(dtypes.int64)
+@@ -62,9 +65,9 @@ class MapStageTest(test.TestCase):
+         k, (z, y) = stager.get(gi)
+         y = math_ops.reduce_max(z * math_ops.matmul(y, y))
+ 
+-    G.finalize()
++    g.finalize()
+ 
+-    with self.session(graph=G) as sess:
++    with self.session(graph=g) as sess:
+       sess.run(stage, feed_dict={x: -1, pi: 0})
+       for i in range(10):
+         _, yval = sess.run([stage, y], feed_dict={x: i, pi: i + 1, gi: i})
+@@ -73,26 +76,25 @@ class MapStageTest(test.TestCase):
+ 
+   @test_util.run_deprecated_v1
+   def testDictionary(self):
+-    with ops.Graph().as_default() as G:
++    with ops.Graph().as_default() as g:
+       with ops.device('/cpu:0'):
+         x = array_ops.pla
+... (commit truncated due to length) ...
+
+tokens used
+input: 1,847
+cache read: 19,968
+cache write: 0
+output: 89
+reasoning output: 79
+
+tool: git_show
+{
+  "ref": "f57315566d7094f322b784947093406c2aea0d7d",
+  "context": "def testMapStageNonScalarKey\nkey must be an int64 scalar"
+}
+commit f57315566d7094f322b784947093406c2aea0d7d
+Author: Isha Arkatkar <ishark@google.com>
+Date:   Thu Dec 2 18:57:58 2021 -0800
+
+    Add a check for Key being scalar tensor for MapStage and OrderedMapStage ops.
+    
+    According to documentation[1][2], key must be int64 value, but this wasn't enforced and the ops would fail with check failure for non-scalar key value.
+    
+    [1]https://www.tensorflow.org/api_docs/cc/class/tensorflow/ops/ordered-map-stage
+    [2]https://www.tensorflow.org/api_docs/cc/class/tensorflow/ops/map-stage
+    
+    PiperOrigin-RevId: 413822112
+    Change-Id: I9d118faf990e6361900aa32272eff486ad9f0e2e
+
+ tensorflow/core/kernels/map_stage_op.cc            |   5 +
+ .../data_structures/map_stage_op_test.py           | 286 ++++++++++++---------
+ 2 files changed, 167 insertions(+), 124 deletions(-)
+Because the commit's code change maybe too long, so I generate the abstract of the code change to show you how code changed in this commit.
+Commit shows that the patch code in old version maybe in the file tensorflow/python/kernel_tests/data_structures/map_stage_op_test.py around line number 124 to 126. The code is below
+  @test_util.run_deprecated_v1
+  def testPeek(self):
+You can call `viewcode` and `locate_symbol` to find the relevant code based on this information step by step.
+
+tokens used
+input: 2,372
+cache read: 20,992
+cache write: 0
+output: 58
+reasoning output: 18
+
+tool: grep
+{
+  "pattern": "assertRaisesRegex\\(|assertRaisesRegexp\\(",
+  "path": "tensorflow/python/kernel_tests",
+  "include": "*.py"
+}
+Found 100 matches (more matches available)
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0061-e87bc4979d03\tensorflow\python\kernel_tests\array_ops_test.py:
+  Line 122:     with self.assertRaisesRegex(ValueError, "should be a "):
+
+  Line 274:       with self.assertRaisesRegex(ValueError, "dimensions must be specified"):
+
+  Line 281:       with self.assertRaisesRegex(ValueError, "incompatible"):
+
+  Line 288:       with self.assertRaisesRegex(ValueError, "mask.*scalar"):
+
+  Line 295:       with self.assertRaisesRegex(ValueError, "incompatible"):
+
+  Line 356:     with self.assertRaisesRegex(
+
+  Line 366:     with self.assertRaisesRegex(Exception,
+
+  Line 428:     with self.assertRaisesRegex(ValueError, "is out of valid range"):
+
+  Line 430:     with self.assertRaisesRegex(ValueError, "is out of valid range"):
+
+  Line 432:     with self.assertRaisesRegex(ValueError, "axis 0 specified more than once"):
+
+  Line 446:       with self.assertRaisesRegex(errors_impl.InvalidArgumentError,
+
+  Line 449:       with self.assertRaisesRegex(errors_impl.InvalidArgumentError,
+
+  Line 452:       with self.assertRaisesRegex(
+
+  Line 757:       with self.assertRaisesRegex(ValueError, "Multiple ellipses"):
+
+  Line 796:       with self.assertRaisesRegex(TypeError, expected):
+
+  Line 798:       with self.assertRaisesRegex(TypeError, expected):
+
+  Line 800:       with self.assertRaisesRegex(TypeError, expected):
+
+  Line 802:       with self.assertRaisesRegex(TypeError, expected):
+
+  Line 804:       with self.assertRaisesRegex(TypeError, expected):
+
+  Line 806:       with self.assertRaisesRegex(TypeError, expected):
+
+  Line 1004:       with self.assertRaisesRegex(ValueError, "out of bounds"):
+
+  Line 1006:       with self.assertRaisesRegex(ValueError, "out of bounds"):
+
+  Line 1077:       with self.assertRaisesRegex(
+
+  Line 1177:     with self.assertRaisesRegex(AttributeError, "no attribute 'assign'"):
+
+  Line 1223:     with self.assertRaisesRegex(
+
+  Line 1347:       with self.assertRaisesRegex(ValueError, "maxlen must be scalar"):
+
+  Line 1572:         with self.assertRaisesRegex(errors.InvalidArgumentError,
+
+  Line 1581:         with self.assertRaisesRegex(
+
+  Line 1695:     with self.assertRaisesRegex(error, error_message_pattern):
+
+  Line 1726:     with self.assertRaisesRegex(error,
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0061-e87bc4979d03\tensorflow\python\kernel_tests\barrier_ops_test.py:
+  Line 91:       with self.assertRaisesRegex(ValueError, error_message):
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0061-e87bc4979d03\tensorflow\python\kernel_tests\base64_ops_test.py:
+  Line 110:       with self.assertRaisesRegex(errors.InvalidArgumentError, "1 modulo 4"):
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0061-e87bc4979d03\tensorflow\python\kernel_tests\array_ops\slice_op_test.py:
+  Line 456:       with self.assertRaisesRegex(errors_impl.OperatorNotAllowedInGraphError,
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0061-e87bc4979d03\tensorflow\python\kernel_tests\array_ops\gather_op_test.py:
+  Line 285:     with self.assertRaisesRegex(
+
+  Line 320:         with self.assertRaisesRegex(
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0061-e87bc4979d03\tensorflow\python\kernel_tests\array_ops\stack_op_test.py:
+  Line 92:     with self.assertRaisesRegex(errors.InvalidArgumentError,
+
+  Line 275:     with self.assertRaisesRegex(ValueError, r"axis = 2 not in \[-2, 2\)"):
+
+  Line 280:     with self.assertRaisesRegex(ValueError, r"axis = -3 not in \[-2, 2\)"):
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0061-e87bc4979d03\tensorflow\python\kernel_tests\array_ops\unstack_op_test.py:
+  Line 152:       with self.assertRaisesRegex(ValueError,
+
+  Line 166:       with self.assertRaisesRegex(
+
+  Line 193:     with self.assertRaisesRegex(ValueError, r'axis = 2 not in \[-2, 2\)'):
+
+  Line 198:     with self.assertRaisesRegex(ValueError, r'axis = -3 not in \[-2, 2\)'):
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0061-e87bc4979d03\tensorflow\python\kernel_tests\betainc_op_test.py:
+  Line 100:       with self.assertRaisesRegex(ValueError, "must be equal"):
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0061-e87bc4979d03\tensorflow\python\kernel_tests\bincount_op_test.py:
+  Line 124:     with self.assertRaisesRegex(
+
+  Line 129:     with self.assertRaisesRegex((ValueError, errors.InvalidArgumentError),
+
+  Line 328:     with self.assertRaisesRegex((ValueError, errors.InvalidArgumentError),
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0061-e87bc4979d03\tensorflow\python\kernel_tests\bitcast_op_test.py:
+  Line 68:     with self.assertRaisesRegex((ValueError, errors.InvalidArgumentError),
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0061-e87bc4979d03\tensorflow\python\kernel_tests\broadcast_to_ops_test.py:
+  Line 124:       with self.assertRaisesRegex(errors.InvalidArgumentError,
+
+  Line 197:     with self.assertRaisesRegex((ValueError, errors.InvalidArgumentError),
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0061-e87bc4979d03\tensorflow\python\kernel_tests\bucketize_op_test.py:
+  Line 70:       with self.assertRaisesRegex(errors_impl.InvalidArgumentError,
+
+  Line 75:     with self.assertRaisesRegex(TypeError, "Expected list.*"):
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0061-e87bc4979d03\tensorflow\python\kernel_tests\cholesky_op_test.py:
+  Line 170:       with self.assertRaisesRegex(
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0061-e87bc4979d03\tensorflow\python\kernel_tests\check_ops_test.py:
+  Line 102:         with self.assertRaisesRegex(error, "fail"):
+
+  Line 113:     with self.assertRaisesRegex(TypeError, "proper"):
+
+  Line 120:     with self.assertRaisesRegex(TypeError, "proper"):
+
+  Line 126:     with self.assertRaisesRegex(TypeError, "proper"):
+
+  Line 132:     with self.assertRaisesRegex(TypeError, "proper"):
+
+  Line 138:     with self.assertRaisesRegex(TypeError, "to be iterable"):
+
+  Line 168:     with self.assertRaisesRegex(errors.InvalidArgumentError, "fail"):
+
+  Line 183:     with self.assertRaisesRegex(errors.InvalidArgumentError, "fail"):
+
+  Line 242:       with self.assertRaisesRegex(errors.InvalidArgumentError,
+
+  Line 246:       with self.assertRaisesRegex(errors.InvalidArgumentError,
+
+  Line 249:       with self.assertRaisesRegex(errors.InvalidArgumentError,
+
+  Line 260:     with self.assertRaisesRegex(errors.InvalidArgumentError, "fail"):
+
+  Line 297:     with self.assertRaisesRegex(errors.InvalidArgumentError, "fail"):
+
+  Line 380:       with self.assertRaisesRegex(  # pylint:disable=g-error-prone-assert-raises
+
+  Line 392:       with self.assertRaisesRegex(  # pylint:disable=g-error-prone-assert-raises
+
+  Line 396:       with self.assertRaisesRegex(  # pylint:disable=g-error-prone-assert-raises
+
+  Line 400:       with self.assertRaisesRegex(  # pylint:disable=g-error-prone-assert-raises
+
+  Line 403:       with self.assertRaisesRegex(  # pylint:disable=g-error-prone-assert-raises
+
+  Line 605:       with self.assertRaisesRegex(  # pylint:disable=g-error-prone-assert-raises
+
+  Line 656:     with self.assertRaisesRegex(  # pylint:disable=g-error-prone-assert-raises
+
+  Line 676:       with self.assertRaisesRegex(  # pylint:disable=g-error-prone-assert-raises
+
+  Line 729:     with self.assertRaisesRegex(  # pylint:disable=g-error-prone-assert-raises
+
+  Line 747:       with self.assertRaisesRegex(  # pylint:disable=g-error-prone-assert-raises
+
+  Line 800:     with self.assertRaisesRegex(  # pylint:disable=g-error-prone-assert-raises
+
+  Line 820:       with self.assertRaisesRegex(  # pylint:disable=g-error-prone-assert-raises
+
+  Line 869:       with self.assertRaisesRegex(errors.InvalidArgumentError,
+
+  Line 917:       with self.assertRaisesRegex(errors.InvalidArgumentError,
+
+  Line 1094:     with self.assertRaisesRegex(ValueError, "fail.*must have rank 1"):
+
+  Line 1132:     with self.assertRaisesRegex(ValueError, "rank"):
+
+  Line 1168:     with self.assertRaisesRegex(ValueError, "rank"):
+
+  Line 1186:     with self.assertRaisesRegex(ValueError, "Rank must be a scalar"):
+
+  Line 1203:     with self.assertRaisesRegex(TypeError, "must be of type <dtype: 'int32'>"):
+
+  Line 1212:       with self.assertRaisesRegex(TypeError,
+
+  Line 1224:     with self.assertRaisesRegex(ValueError, "fail.*must have rank.*in.*1.*2"):
+
+  Line 1277:     with self.assertRaisesRegex(ValueError, "rank"):
+
+  Line 1299:     with self.assertRaisesRegex(ValueError, "Rank must be a scalar"):
+
+  Line 1321:     with self.assertRaisesRegex(TypeError, "must be of type <dtype: 'int32'>"):
+
+  Line 1330:       with self.assertRaisesRegex(TypeError,
+
+  Line 1343:     with self.assertRaisesRegex(ValueError, "rank at least 1"):
+
+  Line 1413:     with self.assertRaisesRegex(ValueError, "rank at least 2"):
+
+  Line 1460:       with self.assertRaisesRegex(errors.InvalidArgumentError,
+
+  Line 1496:       with self.assertRaisesRegex(errors.InvalidArgumentError,
+
+  Line 1513:     with self.assertRaisesRegex(TypeError, "Expected.*integer"):
+
+  Line 1544:     with self.assertRaisesRegex(TypeError, "must be of type.*float32"):
+
+  Line 1553:     with self.assertRaisesRegexp(TypeError, "must be of type.*float32"):
+
+  Line 1560:     with self.assertRaisesRegexp(TypeError,
+
+  Line 1898:     with self.assertRaisesRegex(ValueError, regex):
+
+  Line 1903:       with self.assertRaisesRegex(errors.InvalidArgumentError, regex):
+
+
+(Results truncated. Consider using a more specific path or pattern.)
+
+tokens used
+input: 771
+cache read: 23,040
+cache write: 0
+output: 40
+reasoning output: 561
+
+I’m applying the security guard in the kernel and adding a focused regression test in the target’s existing `map_stage_op_test.py`, without porting unrelated formatting-only edits from the newer release.
+
+tool: validate
+{
+  "ref": "e87bc4979d037c615f37024fb9ba53a726536cc7",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/map_stage_op.cc b/tensorflow/core/kernels/map_stage_op.cc\n--- a/tensorflow/core/kernels/map_stage_op.cc\n+++ b/tensorflow/core/kernels/map_stage_op.cc\n@@ -532,6 +532,11 @@ class MapStageOp : public OpKernel {\n     OP_REQUIRES(ctx, key_tensor->NumElements() > 0,\n                 errors::InvalidArgument(\"key must not be empty\"));\n \n+    OP_REQUIRES(ctx, key_tensor->NumElements() == 1,\n+                errors::InvalidArgument(\n+                    \"key must be an int64 scalar, got tensor with shape: \",\n+                    key_tensor->shape()));\n+\n     // Create copy for insertion into Staging Area\n     Tensor key(*key_tensor);\n \n"
+}
+Patch applied successfully
+
+tokens used
+input: 4,180
+cache read: 23,040
+cache write: 0
+output: 279
+reasoning output: 272
+
+The kernel hunk applies cleanly to the target base. I’m editing the checked-out files now.
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/kernels/map_stage_op.cc\n@@\n     OP_REQUIRES_OK(ctx, ctx->input_list(\"values\", &values_tensor));\n     OP_REQUIRES(ctx, key_tensor->NumElements() > 0,\n                 errors::InvalidArgument(\"key must not be empty\"));\n \n+    OP_REQUIRES(ctx, key_tensor->NumElements() == 1,\n+                errors::InvalidArgument(\n+                    \"key must be an int64 scalar, got tensor with shape: \",\n+                    key_tensor->shape()));\n+\n     // Create copy for insertion into Staging Area\n     Tensor key(*key_tensor);\n*** Update File: tensorflow/python/kernel_tests/map_stage_op_test.py\n@@\n-from tensorflow.python.framework import errors\n+from tensorflow.python.framework import constant_op\n from tensorflow.python.framework import dtypes\n+from tensorflow.python.framework import errors\n from tensorflow.python.framework import ops\n@@\n     G.finalize()\n \n+  @test_util.run_deprecated_v1\n+  def testNonScalarKeyFails(self):\n+    for ordered in [False, True]:\n+      with ops.Graph().as_default() as G:\n+        with ops.device('/cpu:0'):\n+          key = constant_op.constant([0, 1], dtype=dtypes.int64)\n+          x = constant_op.constant(1.0)\n+        with ops.device(test.gpu_device_name()):\n+          stager = data_flow_ops.MapStagingArea([dtypes.float32],\n+                                                ordered=ordered)\n+          stage = stager.put(key, [x], [0])\n+\n+      G.finalize()\n+\n+      with self.session(graph=G) as sess:\n+        with self.assertRaisesRegex(errors.InvalidArgumentError,\n+                                    \"key must be an int64 scalar\"):\n+          sess.run(stage)\n+\n   @test_util.run_deprecated_v1\n   def testPeek(self):\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/kernels/map_stage_op.cc
+M tensorflow/python/kernel_tests/map_stage_op_test.py
+
+tokens used
+input: 648
+cache read: 27,136
+cache write: 0
+output: 497
+reasoning output: 0
+
+The source changes are in place. I’m reviewing the resulting diff and doing a lightweight syntax/patch sanity check rather than running an expensive TensorFlow build.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target MapStageOp implementation and test file context",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate and apply minimal backport hunks",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Review final diff and report YAML result",
+      "status": "in_progress",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target MapStageOp implementation and test file context",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate and apply minimal backport hunks",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Review final diff and report YAML result",
+    "status": "in_progress",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 1,183
+cache read: 27,136
+cache write: 0
+output: 119
+reasoning output: 19
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/kernels/map_stage_op.cc tensorflow/python/kernel_tests/map_stage_op_test.py",
+  "timeout": 120000
+}
+warning: in the working copy of 'tensorflow/core/kernels/map_stage_op.cc', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'tensorflow/python/kernel_tests/map_stage_op_test.py', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/kernels/map_stage_op.cc b/tensorflow/core/kernels/map_stage_op.cc
+index fd03d2e187..6cc5af6fb3 100644
+--- a/tensorflow/core/kernels/map_stage_op.cc
++++ b/tensorflow/core/kernels/map_stage_op.cc
+@@ -533,6 +533,11 @@ class MapStageOp : public OpKernel {
+     OP_REQUIRES(ctx, key_tensor->NumElements() > 0,
+                 errors::InvalidArgument("key must not be empty"));
+ 
++    OP_REQUIRES(ctx, key_tensor->NumElements() == 1,
++                errors::InvalidArgument(
++                    "key must be an int64 scalar, got tensor with shape: ",
++                    key_tensor->shape()));
++
+     // Create copy for insertion into Staging Area
+     Tensor key(*key_tensor);
+ 
+diff --git a/tensorflow/python/kernel_tests/map_stage_op_test.py b/tensorflow/python/kernel_tests/map_stage_op_test.py
+index 516fc37517..4c14bc5c2f 100644
+--- a/tensorflow/python/kernel_tests/map_stage_op_test.py
++++ b/tensorflow/python/kernel_tests/map_stage_op_test.py
+@@ -16,8 +16,9 @@ from __future__ import absolute_import
+ from __future__ import division
+ from __future__ import print_function
+ 
+-from tensorflow.python.framework import errors
++from tensorflow.python.framework import constant_op
+ from tensorflow.python.framework import dtypes
++from tensorflow.python.framework import errors
+ from tensorflow.python.framework import ops
+ from tensorflow.python.framework import test_util
+ from tensorflow.python.ops import array_ops
+@@ -125,6 +126,25 @@ class MapStageTest(test.TestCase):
+ 
+     G.finalize()
+ 
++  @test_util.run_deprecated_v1
++  def testNonScalarKeyFails(self):
++    for ordered in [False, True]:
++      with ops.Graph().as_default() as G:
++        with ops.device('/cpu:0'):
++          key = constant_op.constant([0, 1], dtype=dtypes.int64)
++          x = constant_op.constant(1.0)
++        with ops.device(test.gpu_device_name()):
++          stager = data_flow_ops.MapStagingArea([dtypes.float32],
++                                                ordered=ordered)
++          stage = stager.put(key, [x], [0])
++
++      G.finalize()
++
++      with self.session(graph=G) as sess:
++        with self.assertRaisesRegex(errors.InvalidArgumentError,
++                                    "key must be an int64 scalar"):
++          sess.run(stage)
++
+   @test_util.run_deprecated_v1
+   def testPeek(self):
+     with ops.Graph().as_default() as G:
+
+tokens used
+input: 410
+cache read: 28,160
+cache write: 0
+output: 42
+reasoning output: 0
+
+tool: grep
+{
+  "pattern": "class MapStagingArea|def __init__\\(.*ordered",
+  "path": "tensorflow/python/ops",
+  "include": "data_flow_ops.py"
+}
+Found 1 matches
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0061-e87bc4979d03\tensorflow\python\ops\data_flow_ops.py:
+  Line 2045: class MapStagingArea(BaseStagingArea):
+
+tokens used
+input: 1,114
+cache read: 28,160
+cache write: 0
+output: 47
+reasoning output: 49
+
+tool: read
+{
+  "filePath": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0061-e87bc4979d03\\tensorflow\\python\\ops\\data_flow_ops.py",
+  "offset": 2045,
+  "limit": 90
+}
+<path>C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0061-e87bc4979d03\tensorflow\python\ops\data_flow_ops.py</path>
+<type>file</type>
+<content>
+2045: class MapStagingArea(BaseStagingArea):
+2046:   """A `MapStagingArea` is a TensorFlow data structure that stores tensors
+2047:   across multiple steps, and exposes operations that can put and get tensors.
+2048: 
+2049:   Each `MapStagingArea` element is a (key, value) pair.
+2050:   Only int64 keys are supported, other types should be
+2051:   hashed to produce a key.
+2052:   Values are a tuple of one or more tensors.
+2053:   Each tuple component has a static dtype,
+2054:   and may have a static shape.
+2055: 
+2056:   The capacity of a `MapStagingArea` may be bounded or unbounded.
+2057:   It supports multiple concurrent producers and consumers; and
+2058:   provides exactly-once delivery.
+2059: 
+2060:   Each value tuple of a `MapStagingArea` is a fixed-length tuple of tensors
+2061:   whose
+2062:   dtypes are described by `dtypes`, and whose shapes are optionally described
+2063:   by the `shapes` argument.
+2064: 
+2065:   If the `shapes` argument is specified, each component of a staging area
+2066:   element must have the respective fixed shape. If it is
+2067:   unspecified, different elements may have different shapes,
+2068: 
+2069:   It behaves like an associative container with support for:
+2070: 
+2071:    - put(key, values)
+2072:    - peek(key)         like dict.get(key)
+2073:    - get(key)          like dict.pop(key)
+2074:    - get(key=None)     like dict.popitem()
+2075:    - size()
+2076:    - clear()
+2077: 
+2078:   If ordered a tree structure ordered by key will be used and
+2079:   get(key=None) will remove (key, value) pairs in increasing key order.
+2080:   Otherwise a hashtable
+2081: 
+2082:   It can be configured with a capacity in which case
+2083:   put(key, values) will block until space becomes available.
+2084: 
+2085:   Similarly, it can be configured with a memory limit which
+2086:   will block put(key, values) until space is available.
+2087:   This is mostly useful for limiting the number of tensors on
+2088:   devices such as GPUs.
+2089: 
+2090:   All get() and peek() commands block if the requested
+2091:   (key, value) pair is not present in the staging area.
+2092: 
+2093:   Partial puts are supported and will be placed in an incomplete
+2094:   map until such time as all values associated with the key have
+2095:   been inserted. Once completed, this (key, value) pair will be
+2096:   inserted into the map. Data in the incomplete map
+2097:   counts towards the memory limit, but not towards capacity limit.
+2098: 
+2099:   Partial gets from the map are also supported.
+2100:   This removes the partially requested tensors from the entry,
+2101:   but the entry is only removed from the map once all tensors
+2102:   associated with it are removed.
+2103:   """
+2104: 
+2105:   def __init__(self,
+2106:                dtypes,
+2107:                shapes=None,
+2108:                names=None,
+2109:                shared_name=None,
+2110:                ordered=False,
+2111:                capacity=0,
+2112:                memory_limit=0):
+2113:     """Args:
+2114: 
+2115:       dtypes:  A list of types.  The length of dtypes must equal the number
+2116:         of tensors in each element.
+2117:       capacity: (Optional.) Maximum number of elements.
+2118:         An integer. If zero, the Staging Area is unbounded
+2119:       memory_limit: (Optional.) Maximum number of bytes of all tensors
+2120:         in the Staging Area (excluding keys).
+2121:         An integer. If zero, the Staging Area is unbounded
+2122:       ordered: (Optional.) If True the underlying data structure
+2123:         is a tree ordered on key. Otherwise assume a hashtable.
+2124:       shapes: (Optional.) Constraints on the shapes of tensors in an element.
+2125:         A list of shape tuples or None. This list is the same length
+2126:         as dtypes.  If the shape of any tensors in the element are constrained,
+2127:         all must be; shapes can be None if the shapes should not be constrained.
+2128:       names: (Optional.) If provided, the `get()` and
+2129:         `put()` methods will use dictionaries with these names as keys.
+2130:         Must be None or a list or tuple of the same length as `dtypes`.
+2131:       shared_name: (Optional.) A name to be used for the shared object. By
+2132:         passing the same name to two different python objects they will share
+2133:         the underlying staging area. Must be a string.
+2134: 
+
+(Showing lines 2045-2134 of 2516. Use offset=2135 to continue.)
+</content>
+
+tokens used
+input: 267
+cache read: 29,184
+cache write: 0
+output: 74
+reasoning output: 0
+
+tool: bash
+{
+  "command": "python -m py_compile \"tensorflow/python/kernel_tests/map_stage_op_test.py\"",
+  "timeout": 120000
+}
+(no output)
+
+tokens used
+input: 1,591
+cache read: 29,184
+cache write: 0
+output: 40
+reasoning output: 57
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target MapStageOp implementation and test file context",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate and apply minimal backport hunks",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Review final diff and report YAML result",
+      "status": "completed",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target MapStageOp implementation and test file context",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate and apply minimal backport hunks",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Review final diff and report YAML result",
+    "status": "completed",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 678
+cache read: 30,208
+cache write: 0
+output: 80
+reasoning output: 31
+
+Applied the MapStage key scalar validation and added a focused regression test in the target release’s equivalent test file.
+
+Validation performed: `python -m py_compile tensorflow/python/kernel_tests/map_stage_op_test.py`
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/kernels/map_stage_op.cc b/tensorflow/core/kernels/map_stage_op.cc
+    index fd03d2e187..6cc5af6fb3 100644
+    --- a/tensorflow/core/kernels/map_stage_op.cc
+    +++ b/tensorflow/core/kernels/map_stage_op.cc
+    @@ -533,6 +533,11 @@ class MapStageOp : public OpKernel {
+         OP_REQUIRES(ctx, key_tensor->NumElements() > 0,
+                     errors::InvalidArgument("key must not be empty"));
+     
+    +    OP_REQUIRES(ctx, key_tensor->NumElements() == 1,
+    +                errors::InvalidArgument(
+    +                    "key must be an int64 scalar, got tensor with shape: ",
+    +                    key_tensor->shape()));
+    +
+         // Create copy for insertion into Staging Area
+         Tensor key(*key_tensor);
+     
+    diff --git a/tensorflow/python/kernel_tests/map_stage_op_test.py b/tensorflow/python/kernel_tests/map_stage_op_test.py
+    index 516fc37517..4c14bc5c2f 100644
+    --- a/tensorflow/python/kernel_tests/map_stage_op_test.py
+    +++ b/tensorflow/python/kernel_tests/map_stage_op_test.py
+    @@ -16,8 +16,9 @@ from __future__ import absolute_import
+     from __future__ import division
+     from __future__ import print_function
+     
+    -from tensorflow.python.framework import errors
+    +from tensorflow.python.framework import constant_op
+     from tensorflow.python.framework import dtypes
+    +from tensorflow.python.framework import errors
+     from tensorflow.python.framework import ops
+     from tensorflow.python.framework import test_util
+     from tensorflow.python.ops import array_ops
+    @@ -125,6 +126,25 @@ class MapStageTest(test.TestCase):
+     
+         G.finalize()
+     
+    +  @test_util.run_deprecated_v1
+    +  def testNonScalarKeyFails(self):
+    +    for ordered in [False, True]:
+    +      with ops.Graph().as_default() as G:
+    +        with ops.device('/cpu:0'):
+    +          key = constant_op.constant([0, 1], dtype=dtypes.int64)
+    +          x = constant_op.constant(1.0)
+    +        with ops.device(test.gpu_device_name()):
+    +          stager = data_flow_ops.MapStagingArea([dtypes.float32],
+    +                                                ordered=ordered)
+    +          stage = stager.put(key, [x], [0])
+    +
+    +      G.finalize()
+    +
+    +      with self.session(graph=G) as sess:
+    +        with self.assertRaisesRegex(errors.InvalidArgumentError,
+    +                                    "key must be an int64 scalar"):
+    +          sess.run(stage)
+    +
+       @test_util.run_deprecated_v1
+       def testPeek(self):
+         with ops.Graph().as_default() as G:
+  notes: >
+    Backported the scalar key validation for MapStage/OrderedMapStage and added a targeted non-scalar key regression test in the 2.5.2 test layout.
+```
+
+tokens used
+input: 901
+cache read: 30,208
+cache write: 0
+output: 737
+reasoning output: 0

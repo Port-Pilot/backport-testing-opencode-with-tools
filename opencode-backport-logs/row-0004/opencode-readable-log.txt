@@ -1,0 +1,467 @@
+I’ll locate the older `MatrixDiagOp` implementation, compare its input handling to the 2.5.0 patch, then apply the minimal scalar validation backport and validate the hunk against the target base.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target MatrixDiagOp context and source patch location",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Validate and apply minimal backport hunk",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "content": "Review final diff and report YAML result",
+      "status": "pending",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target MatrixDiagOp context and source patch location",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Validate and apply minimal backport hunk",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "content": "Review final diff and report YAML result",
+    "status": "pending",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 8,501
+cache read: 0
+cache write: 0
+output: 130
+reasoning output: 0
+
+tool: grep
+{
+  "pattern": "num_rows = context->input\\(2\\)|padding_value = context->input\\(4\\)",
+  "path": "tensorflow/core/kernels/linalg",
+  "include": "matrix_diag_op.cc"
+}
+Found 2 matches
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0004-a5d613d23c2a\tensorflow\core\kernels\matrix_diag_op.cc:
+  Line 181:       num_rows = context->input(2).flat<int32>()(0);
+
+  Line 183:       padding_value = context->input(4).flat<T>()(0);
+
+tool: viewcode
+{
+  "ref": "a5d613d23c2aa234d370d04b19ccabe3824c284d",
+  "path": "tensorflow/core/kernels/linalg/matrix_diag_op.cc",
+  "startline": 150,
+  "endline": 230
+}
+This file doesn't exist in this commit.
+
+tool: locate_symbol
+{
+  "ref": "a5d613d23c2aa234d370d04b19ccabe3824c284d",
+  "symbol": "MatrixDiagOp"
+}
+tensorflow/compiler/tf2xla/kernels/matrix_diag_ops.cc:174
+tensorflow/core/kernels/matrix_diag_op.cc:143
+tensorflow/compiler/tf2xla/kernels/matrix_diag_ops.cc:176
+tensorflow/core/kernels/matrix_diag_op.cc:145
+tensorflow/compiler/mlir/lite/transforms/legalize_tf.cc:353
+tensorflow/compiler/tf2xla/kernels/matrix_diag_ops.cc:259
+tensorflow/compiler/tf2xla/kernels/matrix_diag_ops.cc:265
+tensorflow/core/kernels/matrix_diag_op.cc:249
+tensorflow/core/kernels/matrix_diag_op.cc:255
+tensorflow/core/kernels/matrix_diag_op.cc:258
+tensorflow/core/kernels/matrix_diag_op.cc:273
+tensorflow/core/kernels/matrix_diag_op.cc:416
+tensorflow/core/kernels/matrix_diag_op.cc:424
+tensorflow/core/kernels/matrix_diag_op.cc:446
+
+tokens used
+input: 1,064
+cache read: 7,680
+cache write: 0
+output: 174
+reasoning output: 0
+
+The target release has the equivalent kernel in `tensorflow/core/kernels/matrix_diag_op.cc` rather than the newer `linalg/` path; the vulnerable scalar reads are present there.
+
+tool: viewcode
+{
+  "ref": "a5d613d23c2aa234d370d04b19ccabe3824c284d",
+  "path": "tensorflow/core/kernels/matrix_diag_op.cc",
+  "startline": 130,
+  "endline": 210
+}
+Here are lines 130 through 210.
+
+    auto output_reshaped = output->flat<T>();
+    auto input_reshaped = input.flat_inner_dims<T, 3>();
+    functor::MatrixDiagPart<Device, T>::Compute(
+        context, context->eigen_device<Device>(), input_reshaped,
+        output_reshaped, lower_diag_index, upper_diag_index, max_diag_len,
+        padding_value);
+  }
+
+ private:
+  TF_DISALLOW_COPY_AND_ASSIGN(MatrixDiagPartOp);
+};
+
+template <typename Device, typename T>
+class MatrixDiagOp : public OpKernel {
+ public:
+  explicit MatrixDiagOp(OpKernelConstruction* context) : OpKernel(context) {}
+
+  void Compute(OpKernelContext* context) override {
+    const Tensor& diagonal = context->input(0);
+
+    // MatrixDiag and MatrixDiagV2 both use this OpKernel. MatrixDiag only has
+    // one input, so we have to check the number of inputs before reading
+    // additional parameters in MatrixDiagV2.
+    int32 lower_diag_index = 0;
+    int32 upper_diag_index = 0;
+    int32 num_rows = -1;
+    int32 num_cols = -1;
+    T padding_value(0);
+
+    // MatrixDiagOpV2-specific.
+    if (context->num_inputs() > 1) {
+      auto& diag_index = context->input(1);
+      OP_REQUIRES(context,
+                  TensorShapeUtils::IsScalar(diag_index.shape()) ||
+                      TensorShapeUtils::IsVector(diag_index.shape()),
+                  errors::InvalidArgument(
+                      "diag_index must be a scalar or vector, received shape: ",
+                      diag_index.shape().DebugString()));
+      lower_diag_index = diag_index.flat<int32>()(0);
+      upper_diag_index = lower_diag_index;
+      if (TensorShapeUtils::IsVector(diag_index.shape())) {
+        auto diag_index_size = diag_index.dim_size(0);
+        OP_REQUIRES(
+            context, 0 < diag_index_size && diag_index_size <= 2,
+            errors::InvalidArgument(
+                "diag_index must have only one or two elements, received ",
+                diag_index_size, " elements."));
+        if (diag_index_size > 1) {
+          upper_diag_index = diag_index.flat<int32>()(1);
+        }
+      }
+      num_rows = context->input(2).flat<int32>()(0);
+      num_cols = context->input(3).flat<int32>()(0);
+      padding_value = context->input(4).flat<T>()(0);
+    }
+
+    // Size validations.
+    const TensorShape& diagonal_shape = diagonal.shape();
+    const int diag_rank = diagonal_shape.dims();
+    const Eigen::Index num_diags = upper_diag_index - lower_diag_index + 1;
+    OP_REQUIRES(context, TensorShapeUtils::IsVectorOrHigher(diagonal_shape),
+                errors::InvalidArgument(
+                    "diagonal must be at least 1-dim, received shape: ",
+                    diagonal.shape().DebugString()));
+    OP_REQUIRES(
+        context, lower_diag_index <= upper_diag_index,
+        errors::InvalidArgument(
+            "lower_diag_index must not be larger than upper_diag_index: ",
+            lower_diag_index, " > ", upper_diag_index));
+    OP_REQUIRES(context,
+                lower_diag_index == upper_diag_index ||
+                    diagonal_shape.dim_size(diag_rank - 2) == num_diags,
+                errors::InvalidArgument(
+                    "The number of diagonals provided in the input does not "
+                    "match the lower_diag_index and upper_diag_index range."));
+
+    const Eigen::Index max_diag_len = diagonal_shape.dim_size(diag_rank - 1);
+    const int32 min_num_rows = max_diag_len - std::min(upper_diag_index, 0);
+    const int32 min_num_cols = max_diag_len + std::max(lower_diag_index, 0);
+    OP_REQUIRES(context, num_rows == -1 || num_rows >= min_num_rows,
+                errors::InvalidArgument("The number of rows is too small."));
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tokens used
+input: 1,568
+cache read: 7,680
+cache write: 0
+output: 107
+reasoning output: 0
+
+tool: viewcode
+{
+  "ref": "a5d613d23c2aa234d370d04b19ccabe3824c284d",
+  "path": "tensorflow/core/kernels/matrix_diag_op.cc",
+  "startline": 1,
+  "endline": 40
+}
+Here are lines 1 through 40.
+
+/* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+==============================================================================*/
+
+// See docs in ../ops/array_ops.cc.
+#define EIGEN_USE_THREADS
+
+#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+#define EIGEN_USE_GPU
+#endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+
+#include "tensorflow/core/kernels/matrix_diag_op.h"
+
+#include <algorithm>
+#include <memory>
+#include <vector>
+
+#include "third_party/eigen3/unsupported/Eigen/CXX11/Tensor"
+#include "tensorflow/core/framework/op_kernel.h"
+#include "tensorflow/core/framework/register_types.h"
+#include "tensorflow/core/framework/tensor.h"
+#include "tensorflow/core/framework/tensor_shape.h"
+#include "tensorflow/core/framework/tensor_types.h"
+#include "tensorflow/core/framework/types.h"
+#include "tensorflow/core/lib/core/errors.h"
+#include "tensorflow/core/lib/core/threadpool.h"
+#include "tensorflow/core/platform/logging.h"
+#include "tensorflow/core/platform/macros.h"
+
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tokens used
+input: 1,535
+cache read: 8,704
+cache write: 0
+output: 64
+reasoning output: 21
+
+I’m applying the same validation semantics at the older file path, using the existing `TensorShapeUtils` and `OP_REQUIRES` style already present in the function.
+
+tool: validate
+{
+  "ref": "a5d613d23c2aa234d370d04b19ccabe3824c284d",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/matrix_diag_op.cc b/tensorflow/core/kernels/matrix_diag_op.cc\n--- a/tensorflow/core/kernels/matrix_diag_op.cc\n+++ b/tensorflow/core/kernels/matrix_diag_op.cc\n@@ -178,9 +178,22 @@ class MatrixDiagOp : public OpKernel {\n         if (diag_index_size > 1) {\n           upper_diag_index = diag_index.flat<int32>()(1);\n         }\n       }\n-      num_rows = context->input(2).flat<int32>()(0);\n-      num_cols = context->input(3).flat<int32>()(0);\n-      padding_value = context->input(4).flat<T>()(0);\n+\n+      auto& num_rows_tensor = context->input(2);\n+      OP_REQUIRES(context, TensorShapeUtils::IsScalar(num_rows_tensor.shape()),\n+                  errors::InvalidArgument(\"num_rows must be a scalar\"));\n+      num_rows = num_rows_tensor.flat<int32>()(0);\n+\n+      auto& num_cols_tensor = context->input(3);\n+      OP_REQUIRES(context, TensorShapeUtils::IsScalar(num_cols_tensor.shape()),\n+                  errors::InvalidArgument(\"num_cols must be a scalar\"));\n+      num_cols = num_cols_tensor.flat<int32>()(0);\n+\n+      auto& padding_value_tensor = context->input(4);\n+      OP_REQUIRES(context,\n+                  TensorShapeUtils::IsScalar(padding_value_tensor.shape()),\n+                  errors::InvalidArgument(\"padding_value must be a scalar\"));\n+      padding_value = padding_value_tensor.flat<T>()(0);\n     }\n \n     // Size validations.\n"
+}
+Patch applied successfully
+
+tokens used
+input: 950
+cache read: 9,728
+cache write: 0
+output: 483
+reasoning output: 17
+
+The hunk validates cleanly against the target base; I’m now editing the checked-out file.
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/kernels/matrix_diag_op.cc\n@@\n-      num_rows = context->input(2).flat<int32>()(0);\n-      num_cols = context->input(3).flat<int32>()(0);\n-      padding_value = context->input(4).flat<T>()(0);\n+\n+      auto& num_rows_tensor = context->input(2);\n+      OP_REQUIRES(context, TensorShapeUtils::IsScalar(num_rows_tensor.shape()),\n+                  errors::InvalidArgument(\"num_rows must be a scalar\"));\n+      num_rows = num_rows_tensor.flat<int32>()(0);\n+\n+      auto& num_cols_tensor = context->input(3);\n+      OP_REQUIRES(context, TensorShapeUtils::IsScalar(num_cols_tensor.shape()),\n+                  errors::InvalidArgument(\"num_cols must be a scalar\"));\n+      num_cols = num_cols_tensor.flat<int32>()(0);\n+\n+      auto& padding_value_tensor = context->input(4);\n+      OP_REQUIRES(context,\n+                  TensorShapeUtils::IsScalar(padding_value_tensor.shape()),\n+                  errors::InvalidArgument(\"padding_value must be a scalar\"));\n+      padding_value = padding_value_tensor.flat<T>()(0);\n     }\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/kernels/matrix_diag_op.cc
+
+tokens used
+input: 1,463
+cache read: 9,728
+cache write: 0
+output: 344
+reasoning output: 0
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target MatrixDiagOp context and source patch location",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate and apply minimal backport hunk",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Review final diff and report YAML result",
+      "status": "in_progress",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target MatrixDiagOp context and source patch location",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate and apply minimal backport hunk",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Review final diff and report YAML result",
+    "status": "in_progress",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 811
+cache read: 10,752
+cache write: 0
+output: 79
+reasoning output: 0
+
+I’ll inspect the resulting diff to ensure only the intended scalar checks were added.
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/kernels/matrix_diag_op.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0004-a5d613d23c2a"
+}
+warning: in the working copy of 'tensorflow/core/kernels/matrix_diag_op.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/kernels/matrix_diag_op.cc b/tensorflow/core/kernels/matrix_diag_op.cc
+index ae69e7752f..9eef404bf4 100644
+--- a/tensorflow/core/kernels/matrix_diag_op.cc
++++ b/tensorflow/core/kernels/matrix_diag_op.cc
+@@ -178,9 +178,22 @@ class MatrixDiagOp : public OpKernel {
+           upper_diag_index = diag_index.flat<int32>()(1);
+         }
+       }
+-      num_rows = context->input(2).flat<int32>()(0);
+-      num_cols = context->input(3).flat<int32>()(0);
+-      padding_value = context->input(4).flat<T>()(0);
++
++      auto& num_rows_tensor = context->input(2);
++      OP_REQUIRES(context, TensorShapeUtils::IsScalar(num_rows_tensor.shape()),
++                  errors::InvalidArgument("num_rows must be a scalar"));
++      num_rows = num_rows_tensor.flat<int32>()(0);
++
++      auto& num_cols_tensor = context->input(3);
++      OP_REQUIRES(context, TensorShapeUtils::IsScalar(num_cols_tensor.shape()),
++                  errors::InvalidArgument("num_cols must be a scalar"));
++      num_cols = num_cols_tensor.flat<int32>()(0);
++
++      auto& padding_value_tensor = context->input(4);
++      OP_REQUIRES(context,
++                  TensorShapeUtils::IsScalar(padding_value_tensor.shape()),
++                  errors::InvalidArgument("padding_value must be a scalar"));
++      padding_value = padding_value_tensor.flat<T>()(0);
+     }
+ 
+     // Size validations.
+
+tokens used
+input: 1,003
+cache read: 10,752
+cache write: 0
+output: 95
+reasoning output: 0
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target MatrixDiagOp context and source patch location",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate and apply minimal backport hunk",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Review final diff and report YAML result",
+      "status": "completed",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target MatrixDiagOp context and source patch location",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate and apply minimal backport hunk",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Review final diff and report YAML result",
+    "status": "completed",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 1,503
+cache read: 10,752
+cache write: 0
+output: 80
+reasoning output: 16
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/kernels/matrix_diag_op.cc b/tensorflow/core/kernels/matrix_diag_op.cc
+    index ae69e7752f..9eef404bf4 100644
+    --- a/tensorflow/core/kernels/matrix_diag_op.cc
+    +++ b/tensorflow/core/kernels/matrix_diag_op.cc
+    @@ -178,9 +178,22 @@ class MatrixDiagOp : public OpKernel {
+               upper_diag_index = diag_index.flat<int32>()(1);
+             }
+           }
+    -      num_rows = context->input(2).flat<int32>()(0);
+    -      num_cols = context->input(3).flat<int32>()(0);
+    -      padding_value = context->input(4).flat<T>()(0);
+    +
+    +      auto& num_rows_tensor = context->input(2);
+    +      OP_REQUIRES(context, TensorShapeUtils::IsScalar(num_rows_tensor.shape()),
+    +                  errors::InvalidArgument("num_rows must be a scalar"));
+    +      num_rows = num_rows_tensor.flat<int32>()(0);
+    +
+    +      auto& num_cols_tensor = context->input(3);
+    +      OP_REQUIRES(context, TensorShapeUtils::IsScalar(num_cols_tensor.shape()),
+    +                  errors::InvalidArgument("num_cols must be a scalar"));
+    +      num_cols = num_cols_tensor.flat<int32>()(0);
+    +
+    +      auto& padding_value_tensor = context->input(4);
+    +      OP_REQUIRES(context,
+    +                  TensorShapeUtils::IsScalar(padding_value_tensor.shape()),
+    +                  errors::InvalidArgument("padding_value must be a scalar"));
+    +      padding_value = padding_value_tensor.flat<T>()(0);
+         }
+     
+         // Size validations.
+  notes: >
+    Backported MatrixDiagV2 scalar validation for num_rows, num_cols, and padding_value to the TensorFlow 2.1.4 kernel path; hunk validation succeeded.
+```
+
+tokens used
+input: 687
+cache read: 11,776
+cache write: 0
+output: 449
+reasoning output: 0

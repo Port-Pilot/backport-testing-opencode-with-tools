@@ -1,0 +1,491 @@
+I’ll inspect the target-side TFLite common API and validate the minimal type-change hunks against the specified base before applying them.
+
+tool: viewcode
+{
+  "ref": "8bedf5ce1f37824df0b56223d6040cbfdff58059",
+  "path": "tensorflow/lite/c/common.c",
+  "startline": 1,
+  "endline": 80
+}
+Here are lines 1 through 80.
+
+/* Copyright 2019 The TensorFlow Authors. All Rights Reserved.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+==============================================================================*/
+
+#include "tensorflow/lite/c/common.h"
+#include "tensorflow/lite/c/c_api_types.h"
+
+#ifndef TF_LITE_STATIC_MEMORY
+#include <stdlib.h>
+#include <string.h>
+#endif  // TF_LITE_STATIC_MEMORY
+
+int TfLiteIntArrayGetSizeInBytes(int size) {
+  static TfLiteIntArray dummy;
+  return sizeof(dummy) + sizeof(dummy.data[0]) * size;
+}
+
+int TfLiteIntArrayEqual(const TfLiteIntArray* a, const TfLiteIntArray* b) {
+  if (a == b) return 1;
+  if (a == NULL || b == NULL) return 0;
+  return TfLiteIntArrayEqualsArray(a, b->size, b->data);
+}
+
+int TfLiteIntArrayEqualsArray(const TfLiteIntArray* a, int b_size,
+                              const int b_data[]) {
+  if (a == NULL) return (b_size == 0);
+  if (a->size != b_size) return 0;
+  int i = 0;
+  for (; i < a->size; i++)
+    if (a->data[i] != b_data[i]) return 0;
+  return 1;
+}
+
+#ifndef TF_LITE_STATIC_MEMORY
+
+TfLiteIntArray* TfLiteIntArrayCreate(int size) {
+  int alloc_size = TfLiteIntArrayGetSizeInBytes(size);
+  if (alloc_size <= 0) return NULL;
+  TfLiteIntArray* ret = (TfLiteIntArray*)malloc(alloc_size);
+  if (!ret) return ret;
+  ret->size = size;
+  return ret;
+}
+
+TfLiteIntArray* TfLiteIntArrayCopy(const TfLiteIntArray* src) {
+  if (!src) return NULL;
+  TfLiteIntArray* ret = TfLiteIntArrayCreate(src->size);
+  if (ret) {
+    memcpy(ret->data, src->data, src->size * sizeof(int));
+  }
+  return ret;
+}
+
+void TfLiteIntArrayFree(TfLiteIntArray* a) { free(a); }
+
+#endif  // TF_LITE_STATIC_MEMORY
+
+int TfLiteFloatArrayGetSizeInBytes(int size) {
+  static TfLiteFloatArray dummy;
+  return sizeof(dummy) + sizeof(dummy.data[0]) * size;
+}
+
+#ifndef TF_LITE_STATIC_MEMORY
+
+TfLiteFloatArray* TfLiteFloatArrayCreate(int size) {
+  TfLiteFloatArray* ret =
+      (TfLiteFloatArray*)malloc(TfLiteFloatArrayGetSizeInBytes(size));
+  ret->size = size;
+  return ret;
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: viewcode
+{
+  "ref": "8bedf5ce1f37824df0b56223d6040cbfdff58059",
+  "path": "tensorflow/lite/c/common.h",
+  "startline": 80,
+  "endline": 110
+}
+Here are lines 80 through 110.
+
+// indices
+typedef struct TfLiteIntArray {
+  int size;
+// gcc 6.1+ have a bug where flexible members aren't properly handled
+// https://github.com/google/re2/commit/b94b7cd42e9f02673cd748c1ac1d16db4052514c
+#if (!defined(__clang__) && defined(__GNUC__) && __GNUC__ == 6 && \
+     __GNUC_MINOR__ >= 1) ||                                      \
+    defined(HEXAGON) ||                                           \
+    (defined(__clang__) && __clang_major__ == 7 && __clang_minor__ == 1)
+  int data[0];
+#else
+  int data[];
+#endif
+} TfLiteIntArray;
+
+// Given the size (number of elements) in a TfLiteIntArray, calculate its size
+// in bytes.
+int TfLiteIntArrayGetSizeInBytes(int size);
+
+#ifndef TF_LITE_STATIC_MEMORY
+// Create a array of a given `size` (uninitialized entries).
+// This returns a pointer, that you must free using TfLiteIntArrayFree().
+TfLiteIntArray* TfLiteIntArrayCreate(int size);
+#endif
+
+// Check if two intarrays are equal. Returns 1 if they are equal, 0 otherwise.
+int TfLiteIntArrayEqual(const TfLiteIntArray* a, const TfLiteIntArray* b);
+
+// Check if an intarray equals an array. Returns 1 if equals, 0 otherwise.
+int TfLiteIntArrayEqualsArray(const TfLiteIntArray* a, int b_size,
+                              const int b_data[]);
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: locate_symbol
+{
+  "ref": "8bedf5ce1f37824df0b56223d6040cbfdff58059",
+  "symbol": "TfLiteIntArrayGetSizeInBytes"
+}
+tensorflow/lite/c/common.c:24
+tensorflow/lite/micro/micro_allocator.cc:409
+tensorflow/lite/micro/micro_allocator.cc:544
+tensorflow/lite/micro/micro_allocator.cc:547
+tensorflow/lite/c/common.c:48
+tensorflow/lite/c/common.h:97
+tensorflow/lite/core/subgraph.cc:339
+tensorflow/lite/core/subgraph.cc:343
+tensorflow/lite/core/subgraph.cc:347
+tensorflow/lite/micro/memory_helpers.cc:157
+tensorflow/lite/micro/micro_allocator.cc:415
+tensorflow/lite/micro/recording_micro_allocator_test.cc:223
+
+tokens used
+input: 3,999
+cache read: 4,608
+cache write: 0
+output: 209
+reasoning output: 0
+
+The target release has the same API locations, but `common.c` is slightly older than the source patch context: it returns the computed expression directly and does not have the later MSVC adjustment block. I’ll apply only the security-relevant type widening to the matching older implementation.
+
+tool: read
+{
+  "filePath": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0056-8bedf5ce1f37\\tensorflow\\lite\\c\\common.c",
+  "offset": 20,
+  "limit": 35
+}
+<path>C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0056-8bedf5ce1f37\tensorflow\lite\c\common.c</path>
+<type>file</type>
+<content>
+20: #include <stdlib.h>
+21: #include <string.h>
+22: #endif  // TF_LITE_STATIC_MEMORY
+23: 
+24: int TfLiteIntArrayGetSizeInBytes(int size) {
+25:   static TfLiteIntArray dummy;
+26:   return sizeof(dummy) + sizeof(dummy.data[0]) * size;
+27: }
+28: 
+29: int TfLiteIntArrayEqual(const TfLiteIntArray* a, const TfLiteIntArray* b) {
+30:   if (a == b) return 1;
+31:   if (a == NULL || b == NULL) return 0;
+32:   return TfLiteIntArrayEqualsArray(a, b->size, b->data);
+33: }
+34: 
+35: int TfLiteIntArrayEqualsArray(const TfLiteIntArray* a, int b_size,
+36:                               const int b_data[]) {
+37:   if (a == NULL) return (b_size == 0);
+38:   if (a->size != b_size) return 0;
+39:   int i = 0;
+40:   for (; i < a->size; i++)
+41:     if (a->data[i] != b_data[i]) return 0;
+42:   return 1;
+43: }
+44: 
+45: #ifndef TF_LITE_STATIC_MEMORY
+46: 
+47: TfLiteIntArray* TfLiteIntArrayCreate(int size) {
+48:   int alloc_size = TfLiteIntArrayGetSizeInBytes(size);
+49:   if (alloc_size <= 0) return NULL;
+50:   TfLiteIntArray* ret = (TfLiteIntArray*)malloc(alloc_size);
+51:   if (!ret) return ret;
+52:   ret->size = size;
+53:   return ret;
+54: }
+
+(Showing lines 20-54 of 244. Use offset=55 to continue.)
+</content>
+
+tool: read
+{
+  "filePath": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0056-8bedf5ce1f37\\tensorflow\\lite\\c\\common.h",
+  "offset": 1,
+  "limit": 105
+}
+<path>C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0056-8bedf5ce1f37\tensorflow\lite\c\common.h</path>
+<type>file</type>
+<content>
+1: /* Copyright 2019 The TensorFlow Authors. All Rights Reserved.
+2: 
+3: Licensed under the Apache License, Version 2.0 (the "License");
+4: you may not use this file except in compliance with the License.
+5: You may obtain a copy of the License at
+6: 
+7:     http://www.apache.org/licenses/LICENSE-2.0
+8: 
+9: Unless required by applicable law or agreed to in writing, software
+10: distributed under the License is distributed on an "AS IS" BASIS,
+11: WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+12: See the License for the specific language governing permissions and
+13: limitations under the License.
+14: ==============================================================================*/
+15: 
+16: // This file defines common C types and APIs for implementing operations,
+17: // delegates and other constructs in TensorFlow Lite. The actual operations and
+18: // delegates can be defined using C++, but the interface between the interpreter
+19: // and the operations are C.
+20: //
+21: // Summary of abstractions
+22: // TF_LITE_ENSURE - Self-sufficient error checking
+23: // TfLiteStatus - Status reporting
+24: // TfLiteIntArray - stores tensor shapes (dims),
+25: // TfLiteContext - allows an op to access the tensors
+26: // TfLiteTensor - tensor (a multidimensional array)
+27: // TfLiteNode - a single node or operation
+28: // TfLiteRegistration - the implementation of a conceptual operation.
+29: // TfLiteDelegate - allows delegation of nodes to alternative backends.
+30: //
+31: // Some abstractions in this file are created and managed by Interpreter.
+32: //
+33: // NOTE: The order of values in these structs are "semi-ABI stable". New values
+34: // should be added only to the end of structs and never reordered.
+35: 
+36: #ifndef TENSORFLOW_LITE_C_COMMON_H_
+37: #define TENSORFLOW_LITE_C_COMMON_H_
+38: 
+39: #include <stdbool.h>
+40: #include <stddef.h>
+41: #include <stdint.h>
+42: 
+43: #include "tensorflow/lite/c/c_api_types.h"  // IWYU pragma: export
+44: 
+45: #ifdef __cplusplus
+46: extern "C" {
+47: #endif  // __cplusplus
+48: 
+49: // The list of external context types known to TF Lite. This list exists solely
+50: // to avoid conflicts and to ensure ops can share the external contexts they
+51: // need. Access to the external contexts is controlled by one of the
+52: // corresponding support files.
+53: typedef enum TfLiteExternalContextType {
+54:   kTfLiteEigenContext = 0,       // include eigen_support.h to use.
+55:   kTfLiteGemmLowpContext = 1,    // include gemm_support.h to use.
+56:   kTfLiteEdgeTpuContext = 2,     // Placeholder for Edge TPU support.
+57:   kTfLiteCpuBackendContext = 3,  // include cpu_backend_context.h to use.
+58:   kTfLiteMaxExternalContexts = 4
+59: } TfLiteExternalContextType;
+60: 
+61: // Forward declare so dependent structs and methods can reference these types
+62: // prior to the struct definitions.
+63: struct TfLiteContext;
+64: struct TfLiteDelegate;
+65: struct TfLiteRegistration;
+66: 
+67: // An external context is a collection of information unrelated to the TF Lite
+68: // framework, but useful to a subset of the ops. TF Lite knows very little
+69: // about the actual contexts, but it keeps a list of them, and is able to
+70: // refresh them if configurations like the number of recommended threads
+71: // change.
+72: typedef struct TfLiteExternalContext {
+73:   TfLiteExternalContextType type;
+74:   TfLiteStatus (*Refresh)(struct TfLiteContext* context);
+75: } TfLiteExternalContext;
+76: 
+77: #define kTfLiteOptionalTensor (-1)
+78: 
+79: // Fixed size list of integers. Used for dimensions and inputs/outputs tensor
+80: // indices
+81: typedef struct TfLiteIntArray {
+82:   int size;
+83: // gcc 6.1+ have a bug where flexible members aren't properly handled
+84: // https://github.com/google/re2/commit/b94b7cd42e9f02673cd748c1ac1d16db4052514c
+85: #if (!defined(__clang__) && defined(__GNUC__) && __GNUC__ == 6 && \
+86:      __GNUC_MINOR__ >= 1) ||                                      \
+87:     defined(HEXAGON) ||                                           \
+88:     (defined(__clang__) && __clang_major__ == 7 && __clang_minor__ == 1)
+89:   int data[0];
+90: #else
+91:   int data[];
+92: #endif
+93: } TfLiteIntArray;
+94: 
+95: // Given the size (number of elements) in a TfLiteIntArray, calculate its size
+96: // in bytes.
+97: int TfLiteIntArrayGetSizeInBytes(int size);
+98: 
+99: #ifndef TF_LITE_STATIC_MEMORY
+100: // Create a array of a given `size` (uninitialized entries).
+101: // This returns a pointer, that you must free using TfLiteIntArrayFree().
+102: TfLiteIntArray* TfLiteIntArrayCreate(int size);
+103: #endif
+104: 
+105: // Check if two intarrays are equal. Returns 1 if they are equal, 0 otherwise.
+
+(Showing lines 1-105 of 926. Use offset=106 to continue.)
+</content>
+
+tokens used
+input: 2,350
+cache read: 7,680
+cache write: 0
+output: 223
+reasoning output: 197
+
+I’m validating the adapted hunks against the target base before modifying the checkout.
+
+tool: validate
+{
+  "ref": "8bedf5ce1f37824df0b56223d6040cbfdff58059",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/lite/c/common.c b/tensorflow/lite/c/common.c\n--- a/tensorflow/lite/c/common.c\n+++ b/tensorflow/lite/c/common.c\n@@ -21,10 +21,10 @@ limitations under the License.\n #include <string.h>\n #endif  // TF_LITE_STATIC_MEMORY\n \n-int TfLiteIntArrayGetSizeInBytes(int size) {\n+size_t TfLiteIntArrayGetSizeInBytes(int size) {\n   static TfLiteIntArray dummy;\n   return sizeof(dummy) + sizeof(dummy.data[0]) * size;\n }\n@@ -45,7 +45,7 @@ int TfLiteIntArrayEqualsArray(const TfLiteIntArray* a, int b_size,\n #ifndef TF_LITE_STATIC_MEMORY\n \n TfLiteIntArray* TfLiteIntArrayCreate(int size) {\n-  int alloc_size = TfLiteIntArrayGetSizeInBytes(size);\n+  size_t alloc_size = TfLiteIntArrayGetSizeInBytes(size);\n   if (alloc_size <= 0) return NULL;\n   TfLiteIntArray* ret = (TfLiteIntArray*)malloc(alloc_size);\n   if (!ret) return ret;\ndiff --git a/tensorflow/lite/c/common.h b/tensorflow/lite/c/common.h\n--- a/tensorflow/lite/c/common.h\n+++ b/tensorflow/lite/c/common.h\n@@ -94,7 +94,7 @@ typedef struct TfLiteIntArray {\n \n // Given the size (number of elements) in a TfLiteIntArray, calculate its size\n // in bytes.\n-int TfLiteIntArrayGetSizeInBytes(int size);\n+size_t TfLiteIntArrayGetSizeInBytes(int size);\n \n #ifndef TF_LITE_STATIC_MEMORY\n // Create a array of a given `size` (uninitialized entries).\n"
+}
+This patch does not apply to the target TensorFlow ref.
+Git apply output:
+error: corrupt patch at line 13
+Touched files:
+- tensorflow/lite/c/common.c
+- tensorflow/lite/c/common.h
+Fix the patch context against the older TensorFlow version, then run validate again in hunk mode.
+
+tokens used
+input: 2,517
+cache read: 9,728
+cache write: 0
+output: 482
+reasoning output: 9
+
+tool: validate
+{
+  "ref": "8bedf5ce1f37824df0b56223d6040cbfdff58059",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/lite/c/common.c b/tensorflow/lite/c/common.c\n--- a/tensorflow/lite/c/common.c\n+++ b/tensorflow/lite/c/common.c\n@@ -21,7 +21,7 @@ limitations under the License.\n #include <string.h>\n #endif  // TF_LITE_STATIC_MEMORY\n \n-int TfLiteIntArrayGetSizeInBytes(int size) {\n+size_t TfLiteIntArrayGetSizeInBytes(int size) {\n   static TfLiteIntArray dummy;\n   return sizeof(dummy) + sizeof(dummy.data[0]) * size;\n }\n@@ -45,7 +45,7 @@ int TfLiteIntArrayEqualsArray(const TfLiteIntArray* a, int b_size,\n #ifndef TF_LITE_STATIC_MEMORY\n \n TfLiteIntArray* TfLiteIntArrayCreate(int size) {\n-  int alloc_size = TfLiteIntArrayGetSizeInBytes(size);\n+  size_t alloc_size = TfLiteIntArrayGetSizeInBytes(size);\n   if (alloc_size <= 0) return NULL;\n   TfLiteIntArray* ret = (TfLiteIntArray*)malloc(alloc_size);\n   if (!ret) return ret;\ndiff --git a/tensorflow/lite/c/common.h b/tensorflow/lite/c/common.h\n--- a/tensorflow/lite/c/common.h\n+++ b/tensorflow/lite/c/common.h\n@@ -94,7 +94,7 @@ typedef struct TfLiteIntArray {\n \n // Given the size (number of elements) in a TfLiteIntArray, calculate its size\n // in bytes.\n-int TfLiteIntArrayGetSizeInBytes(int size);\n+size_t TfLiteIntArrayGetSizeInBytes(int size);\n \n #ifndef TF_LITE_STATIC_MEMORY\n // Create a array of a given `size` (uninitialized entries).\n"
+}
+Patch applied successfully
+
+tokens used
+input: 1,034
+cache read: 11,776
+cache write: 0
+output: 459
+reasoning output: 55
+
+The adapted patch applies cleanly to the target base; I’m applying those exact changes to the working tree now.
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/lite/c/common.c\n@@\n-int TfLiteIntArrayGetSizeInBytes(int size) {\n+size_t TfLiteIntArrayGetSizeInBytes(int size) {\n   static TfLiteIntArray dummy;\n   return sizeof(dummy) + sizeof(dummy.data[0]) * size;\n }\n@@\n TfLiteIntArray* TfLiteIntArrayCreate(int size) {\n-  int alloc_size = TfLiteIntArrayGetSizeInBytes(size);\n+  size_t alloc_size = TfLiteIntArrayGetSizeInBytes(size);\n   if (alloc_size <= 0) return NULL;\n   TfLiteIntArray* ret = (TfLiteIntArray*)malloc(alloc_size);\n*** Update File: tensorflow/lite/c/common.h\n@@\n-int TfLiteIntArrayGetSizeInBytes(int size);\n+size_t TfLiteIntArrayGetSizeInBytes(int size);\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/lite/c/common.c
+M tensorflow/lite/c/common.h
+
+tokens used
+input: 1,561
+cache read: 11,776
+cache write: 0
+output: 256
+reasoning output: 8
+
+I’ll inspect the resulting diff to ensure only the intended backport changes are present.
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/lite/c/common.c tensorflow/lite/c/common.h",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0056-8bedf5ce1f37"
+}
+warning: in the working copy of 'tensorflow/lite/c/common.c', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'tensorflow/lite/c/common.h', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/lite/c/common.c b/tensorflow/lite/c/common.c
+index 00dd0260cb..4e35a52ee6 100644
+--- a/tensorflow/lite/c/common.c
++++ b/tensorflow/lite/c/common.c
+@@ -21,7 +21,7 @@ limitations under the License.
+ #include <string.h>
+ #endif  // TF_LITE_STATIC_MEMORY
+ 
+-int TfLiteIntArrayGetSizeInBytes(int size) {
++size_t TfLiteIntArrayGetSizeInBytes(int size) {
+   static TfLiteIntArray dummy;
+   return sizeof(dummy) + sizeof(dummy.data[0]) * size;
+ }
+@@ -45,7 +45,7 @@ int TfLiteIntArrayEqualsArray(const TfLiteIntArray* a, int b_size,
+ #ifndef TF_LITE_STATIC_MEMORY
+ 
+ TfLiteIntArray* TfLiteIntArrayCreate(int size) {
+-  int alloc_size = TfLiteIntArrayGetSizeInBytes(size);
++  size_t alloc_size = TfLiteIntArrayGetSizeInBytes(size);
+   if (alloc_size <= 0) return NULL;
+   TfLiteIntArray* ret = (TfLiteIntArray*)malloc(alloc_size);
+   if (!ret) return ret;
+diff --git a/tensorflow/lite/c/common.h b/tensorflow/lite/c/common.h
+index 56e0f8d54f..9697310e2c 100644
+--- a/tensorflow/lite/c/common.h
++++ b/tensorflow/lite/c/common.h
+@@ -94,7 +94,7 @@ typedef struct TfLiteIntArray {
+ 
+ // Given the size (number of elements) in a TfLiteIntArray, calculate its size
+ // in bytes.
+-int TfLiteIntArrayGetSizeInBytes(int size);
++size_t TfLiteIntArrayGetSizeInBytes(int size);
+ 
+ #ifndef TF_LITE_STATIC_MEMORY
+ // Create a array of a given `size` (uninitialized entries).
+
+tokens used
+input: 834
+cache read: 12,800
+cache write: 0
+output: 101
+reasoning output: 16
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/lite/c/common.c b/tensorflow/lite/c/common.c
+    index 00dd0260cb..4e35a52ee6 100644
+    --- a/tensorflow/lite/c/common.c
+    +++ b/tensorflow/lite/c/common.c
+    @@ -21,7 +21,7 @@ limitations under the License.
+     #include <string.h>
+     #endif  // TF_LITE_STATIC_MEMORY
+     
+    -int TfLiteIntArrayGetSizeInBytes(int size) {
+    +size_t TfLiteIntArrayGetSizeInBytes(int size) {
+       static TfLiteIntArray dummy;
+       return sizeof(dummy) + sizeof(dummy.data[0]) * size;
+     }
+    @@ -45,7 +45,7 @@ int TfLiteIntArrayEqualsArray(const TfLiteIntArray* a, int b_size,
+     #ifndef TF_LITE_STATIC_MEMORY
+     
+     TfLiteIntArray* TfLiteIntArrayCreate(int size) {
+    -  int alloc_size = TfLiteIntArrayGetSizeInBytes(size);
+    +  size_t alloc_size = TfLiteIntArrayGetSizeInBytes(size);
+       if (alloc_size <= 0) return NULL;
+       TfLiteIntArray* ret = (TfLiteIntArray*)malloc(alloc_size);
+       if (!ret) return ret;
+    diff --git a/tensorflow/lite/c/common.h b/tensorflow/lite/c/common.h
+    index 56e0f8d54f..9697310e2c 100644
+    --- a/tensorflow/lite/c/common.h
+    +++ b/tensorflow/lite/c/common.h
+    @@ -94,7 +94,7 @@ typedef struct TfLiteIntArray {
+     
+     // Given the size (number of elements) in a TfLiteIntArray, calculate its size
+     // in bytes.
+    -int TfLiteIntArrayGetSizeInBytes(int size);
+    +size_t TfLiteIntArrayGetSizeInBytes(int size);
+     
+     #ifndef TF_LITE_STATIC_MEMORY
+     // Create a array of a given `size` (uninitialized entries).
+  notes: >
+    Backported the TfLiteIntArray allocation size calculation and declaration from int to size_t in the TensorFlow 2.5.2 target layout.
+```
+
+tokens used
+input: 1,446
+cache read: 12,800
+cache write: 0
+output: 516
+reasoning output: 22

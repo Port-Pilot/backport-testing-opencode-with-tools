@@ -1,0 +1,367 @@
+I’ll locate the older 2.1.4 implementation of `RequantizationRangeOp`, compare the local context to the provided newer patch, then apply only the equivalent bounds checks.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target RequantizationRangeOp context",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Validate adapted hunk against target base",
+      "status": "pending",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply minimal backport edit",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "content": "Inspect final diff",
+      "status": "pending",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target RequantizationRangeOp context",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Validate adapted hunk against target base",
+    "status": "pending",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply minimal backport edit",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "content": "Inspect final diff",
+    "status": "pending",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 3,750
+cache read: 4,608
+cache write: 0
+output: 133
+reasoning output: 0
+
+tool: viewcode
+{
+  "ref": "47612cd69a2fdd76156360ca9102816e156f7e5c",
+  "path": "tensorflow/core/kernels/requantization_range_op.cc",
+  "startline": 1,
+  "endline": 120
+}
+This file only has 79 lines. Here are lines 1 through 79.
+
+/* Copyright 2016 The TensorFlow Authors. All Rights Reserved.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+==============================================================================*/
+
+// See docs in ../ops/array_ops.cc.
+
+#define EIGEN_USE_THREADS
+
+#include <math.h>
+
+#include "third_party/eigen3/unsupported/Eigen/CXX11/Tensor"
+#include "tensorflow/core/framework/op.h"
+#include "tensorflow/core/framework/op_kernel.h"
+#include "tensorflow/core/framework/type_traits.h"
+#include "tensorflow/core/framework/types.h"
+#include "tensorflow/core/kernels/quantization_utils.h"
+#include "tensorflow/core/lib/core/errors.h"
+
+namespace tensorflow {
+
+typedef Eigen::ThreadPoolDevice CPUDevice;
+
+void CalculateUsedRange(const Tensor& input, qint32* used_min_quantized,
+                        qint32* used_max_quantized) {
+  auto input_array = input.flat<qint32>();
+  Eigen::Tensor<qint32, 0, Eigen::RowMajor> min = input_array.minimum();
+  Eigen::Tensor<qint32, 0, Eigen::RowMajor> max = input_array.maximum();
+  *used_min_quantized = min();
+  *used_max_quantized = max();
+}
+
+class RequantizationRangeOp : public OpKernel {
+ public:
+  explicit RequantizationRangeOp(OpKernelConstruction* ctx) : OpKernel(ctx) {}
+
+  void Compute(OpKernelContext* ctx) override {
+    const Tensor& input = ctx->input(0);
+    const float input_min_float = ctx->input(1).flat<float>()(0);
+    const float input_max_float = ctx->input(2).flat<float>()(0);
+    Tensor* output_min = nullptr;
+    OP_REQUIRES_OK(ctx, ctx->allocate_output(0, TensorShape({}), &output_min));
+    Tensor* output_max = nullptr;
+    OP_REQUIRES_OK(ctx, ctx->allocate_output(1, TensorShape({}), &output_max));
+
+    qint32 used_min_quantized;
+    qint32 used_max_quantized;
+    CalculateUsedRange(input, &used_min_quantized, &used_max_quantized);
+
+    // We want to make sure that the minimum is no larger than zero, so that the
+    // convolution operation can run efficiently.
+    const float used_min_float = std::min(
+        0.0f,
+        QuantizedToFloat(used_min_quantized, input_min_float, input_max_float));
+    const float used_max_float =
+        QuantizedToFloat(used_max_quantized, input_min_float, input_max_float);
+
+    output_min->flat<float>().setConstant(used_min_float);
+    output_max->flat<float>().setConstant(used_max_float);
+  }
+};
+
+REGISTER_KERNEL_BUILDER(Name("RequantizationRange")
+                            .Device(DEVICE_CPU)
+                            .TypeConstraint<qint32>("Tinput"),
+                        RequantizationRangeOp);
+
+}  // namespace tensorflow
+
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: locate_symbol
+{
+  "ref": "47612cd69a2fdd76156360ca9102816e156f7e5c",
+  "symbol": "RequantizationRangeOp"
+}
+tensorflow/core/kernels/requantization_range_op.cc:43
+tensorflow/core/kernels/requantization_range_op.cc:45
+tensorflow/core/kernels/requantization_range_op.cc:76
+
+tokens used
+input: 946
+cache read: 7,680
+cache write: 0
+output: 122
+reasoning output: 0
+
+The target file has the same `Compute` layout as the source hunk, and the vulnerable scalar reads are present before any `NumElements()` checks. I’m validating the minimal adapted hunk before editing.
+
+tool: validate
+{
+  "ref": "47612cd69a2fdd76156360ca9102816e156f7e5c",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/requantization_range_op.cc b/tensorflow/core/kernels/requantization_range_op.cc\n--- a/tensorflow/core/kernels/requantization_range_op.cc\n+++ b/tensorflow/core/kernels/requantization_range_op.cc\n@@ -46,6 +46,10 @@ class RequantizationRangeOp : public OpKernel {\n \n   void Compute(OpKernelContext* ctx) override {\n     const Tensor& input = ctx->input(0);\n+    OP_REQUIRES(ctx, ctx->input(1).NumElements() > 0,\n+                errors::InvalidArgument(\"Input min must not be empty.\"));\n+    OP_REQUIRES(ctx, ctx->input(2).NumElements() > 0,\n+                errors::InvalidArgument(\"Input max must not be empty.\"));\n     const float input_min_float = ctx->input(1).flat<float>()(0);\n     const float input_max_float = ctx->input(2).flat<float>()(0);\n     Tensor* output_min = nullptr;\n"
+}
+Patch applied successfully
+
+tokens used
+input: 1,864
+cache read: 7,680
+cache write: 0
+output: 333
+reasoning output: 21
+
+Validation succeeded; I’m applying the same guard checks directly to `tensorflow/core/kernels/requantization_range_op.cc`.
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/kernels/requantization_range_op.cc\n@@\n   void Compute(OpKernelContext* ctx) override {\n     const Tensor& input = ctx->input(0);\n+    OP_REQUIRES(ctx, ctx->input(1).NumElements() > 0,\n+                errors::InvalidArgument(\"Input min must not be empty.\"));\n+    OP_REQUIRES(ctx, ctx->input(2).NumElements() > 0,\n+                errors::InvalidArgument(\"Input max must not be empty.\"));\n     const float input_min_float = ctx->input(1).flat<float>()(0);\n     const float input_max_float = ctx->input(2).flat<float>()(0);\n     Tensor* output_min = nullptr;\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/kernels/requantization_range_op.cc
+
+tokens used
+input: 1,207
+cache read: 8,704
+cache write: 0
+output: 226
+reasoning output: 0
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target RequantizationRangeOp context",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate adapted hunk against target base",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply minimal backport edit",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Inspect final diff",
+      "status": "in_progress",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target RequantizationRangeOp context",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate adapted hunk against target base",
+    "status": "completed",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply minimal backport edit",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Inspect final diff",
+    "status": "in_progress",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 438
+cache read: 9,728
+cache write: 0
+output: 88
+reasoning output: 0
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/kernels/requantization_range_op.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0024-47612cd69a2f",
+  "timeout": 120000
+}
+warning: in the working copy of 'tensorflow/core/kernels/requantization_range_op.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/kernels/requantization_range_op.cc b/tensorflow/core/kernels/requantization_range_op.cc
+index cc6e891a6b..f6e217499d 100644
+--- a/tensorflow/core/kernels/requantization_range_op.cc
++++ b/tensorflow/core/kernels/requantization_range_op.cc
+@@ -46,6 +46,10 @@ class RequantizationRangeOp : public OpKernel {
+ 
+   void Compute(OpKernelContext* ctx) override {
+     const Tensor& input = ctx->input(0);
++    OP_REQUIRES(ctx, ctx->input(1).NumElements() > 0,
++                errors::InvalidArgument("Input min must not be empty."));
++    OP_REQUIRES(ctx, ctx->input(2).NumElements() > 0,
++                errors::InvalidArgument("Input max must not be empty."));
+     const float input_min_float = ctx->input(1).flat<float>()(0);
+     const float input_max_float = ctx->input(2).flat<float>()(0);
+     Tensor* output_min = nullptr;
+
+tokens used
+input: 661
+cache read: 9,728
+cache write: 0
+output: 77
+reasoning output: 0
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target RequantizationRangeOp context",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate adapted hunk against target base",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply minimal backport edit",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Inspect final diff",
+      "status": "completed",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target RequantizationRangeOp context",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate adapted hunk against target base",
+    "status": "completed",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply minimal backport edit",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Inspect final diff",
+    "status": "completed",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 1,022
+cache read: 9,728
+cache write: 0
+output: 87
+reasoning output: 0
+
+Applied the minimal backport to guard `input_min` and `input_max` before scalar access in `RequantizationRangeOp`. The hunk was validated against the target base with `validate` in hunk mode.
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/kernels/requantization_range_op.cc b/tensorflow/core/kernels/requantization_range_op.cc
+    index cc6e891a6b..f6e217499d 100644
+    --- a/tensorflow/core/kernels/requantization_range_op.cc
+    +++ b/tensorflow/core/kernels/requantization_range_op.cc
+    @@ -46,6 +46,10 @@ class RequantizationRangeOp : public OpKernel {
+     
+       void Compute(OpKernelContext* ctx) override {
+         const Tensor& input = ctx->input(0);
+    +    OP_REQUIRES(ctx, ctx->input(1).NumElements() > 0,
+    +                errors::InvalidArgument("Input min must not be empty."));
+    +    OP_REQUIRES(ctx, ctx->input(2).NumElements() > 0,
+    +                errors::InvalidArgument("Input max must not be empty."));
+         const float input_min_float = ctx->input(1).flat<float>()(0);
+         const float input_max_float = ctx->input(2).flat<float>()(0);
+         Tensor* output_min = nullptr;
+  notes: >
+    Added empty-tensor checks for input min and input max before flat scalar reads in RequantizationRangeOp.
+```
+
+tokens used
+input: 1,243
+cache read: 9,728
+cache write: 0
+output: 345
+reasoning output: 24

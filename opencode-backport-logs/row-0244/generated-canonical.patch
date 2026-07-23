@@ -1,0 +1,26 @@
+diff --git a/tensorflow/core/kernels/sparse_tensors_map_ops.cc b/tensorflow/core/kernels/sparse_tensors_map_ops.cc
+index 5ea5fca544..29a9e61f8d 100644
+--- a/tensorflow/core/kernels/sparse_tensors_map_ops.cc
++++ b/tensorflow/core/kernels/sparse_tensors_map_ops.cc
+@@ -244,6 +244,21 @@ class AddManySparseToTensorsMapOp : public SparseTensorAccessingOp {
+                 errors::InvalidArgument(
+                     "Input shape should be a vector but received shape ",
+                     input_shape->shape().DebugString()));
++    OP_REQUIRES(
++        context,
++        input_values->shape().dim_size(0) == input_indices->shape().dim_size(0),
++        errors::InvalidArgument(
++            "Number of values must match first dimension of indices. ", "Got ",
++            input_values->shape().dim_size(0),
++            " values, indices shape: ", input_indices->shape().DebugString()));
++    OP_REQUIRES(
++        context,
++        input_shape->shape().dim_size(0) == input_indices->shape().dim_size(1),
++        errors::InvalidArgument(
++            "Number of dimensions must match second dimension of indices. ",
++            "Got ", input_shape->shape().dim_size(0),
++            " dimensions, indices shape: ",
++            input_indices->shape().DebugString()));
+ 
+     int rank = input_shape->NumElements();
+ 

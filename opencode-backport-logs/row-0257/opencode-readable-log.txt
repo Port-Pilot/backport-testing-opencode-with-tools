@@ -1,0 +1,151 @@
+I’ll inspect the target-side implementation of `DeleteSessionTensorOp`, verify the hunk against the 2.6.4 base, then apply only the scalar shape guard required by the newer security patch.
+
+tool: viewcode
+{
+  "ref": "75867f82431f8801f26d651ca567a3ff1b0d39c3",
+  "path": "tensorflow/core/kernels/session_ops.cc",
+  "startline": 110,
+  "endline": 155
+}
+This file only has 153 lines. Here are lines 110 through 153.
+
+
+  TF_DISALLOW_COPY_AND_ASSIGN(GetSessionTensorOp);
+};
+
+REGISTER_KERNEL_BUILDER(Name("GetSessionTensor").Device(DEVICE_CPU),
+                        GetSessionTensorOp);
+
+#define REGISTER_GPU_KERNEL(type)                             \
+  REGISTER_KERNEL_BUILDER(Name("GetSessionTensor")            \
+                              .Device(DEVICE_GPU)             \
+                              .HostMemory("handle")           \
+                              .TypeConstraint<type>("dtype"), \
+                          GetSessionTensorOp)
+
+TF_CALL_NUMBER_TYPES(REGISTER_GPU_KERNEL);
+REGISTER_GPU_KERNEL(bool);
+#undef REGISTER_GPU_KERNEL
+
+class DeleteSessionTensorOp : public OpKernel {
+ public:
+  explicit DeleteSessionTensorOp(OpKernelConstruction* context)
+      : OpKernel(context) {}
+
+  void Compute(OpKernelContext* ctx) override {
+    const Tensor& handle = ctx->input(0);
+    const string& name = handle.scalar<tstring>()();
+    auto session_state = ctx->session_state();
+    OP_REQUIRES(ctx, session_state != nullptr,
+                errors::FailedPrecondition(
+                    "DeleteSessionTensor called on null session state"));
+    OP_REQUIRES_OK(ctx, session_state->DeleteTensor(name));
+  }
+
+  TF_DISALLOW_COPY_AND_ASSIGN(DeleteSessionTensorOp);
+};
+
+REGISTER_KERNEL_BUILDER(Name("DeleteSessionTensor").Device(DEVICE_CPU),
+                        DeleteSessionTensorOp);
+REGISTER_KERNEL_BUILDER(
+    Name("DeleteSessionTensor").Device(DEVICE_GPU).HostMemory("handle"),
+    DeleteSessionTensorOp);
+
+}  // namespace tensorflow
+
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tokens used
+input: 3,697
+cache read: 4,608
+cache write: 0
+output: 110
+reasoning output: 0
+
+The target file has the same vulnerable access pattern: it reads `handle.scalar<tstring>()()` without first confirming the input is scalar. I’m applying the equivalent guard in place.
+
+tool: validate
+{
+  "ref": "75867f82431f8801f26d651ca567a3ff1b0d39c3",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/session_ops.cc b/tensorflow/core/kernels/session_ops.cc\n--- a/tensorflow/core/kernels/session_ops.cc\n+++ b/tensorflow/core/kernels/session_ops.cc\n@@ -130,6 +130,8 @@ class DeleteSessionTensorOp : public OpKernel {\n \n   void Compute(OpKernelContext* ctx) override {\n     const Tensor& handle = ctx->input(0);\n+    OP_REQUIRES(ctx, TensorShapeUtils::IsScalar(handle.shape()),\n+                errors::InvalidArgument(\"`handle` must be scalar\"));\n     const string& name = handle.scalar<tstring>()();\n     auto session_state = ctx->session_state();\n     OP_REQUIRES(ctx, session_state != nullptr,\n"
+}
+Patch applied successfully
+
+tokens used
+input: 1,092
+cache read: 7,680
+cache write: 0
+output: 264
+reasoning output: 16
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/kernels/session_ops.cc\n@@\n   void Compute(OpKernelContext* ctx) override {\n     const Tensor& handle = ctx->input(0);\n+    OP_REQUIRES(ctx, TensorShapeUtils::IsScalar(handle.shape()),\n+                errors::InvalidArgument(\"`handle` must be scalar\"));\n     const string& name = handle.scalar<tstring>()();\n     auto session_state = ctx->session_state();\n     OP_REQUIRES(ctx, session_state != nullptr,\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/kernels/session_ops.cc
+
+tokens used
+input: 361
+cache read: 8,704
+cache write: 0
+output: 140
+reasoning output: 0
+
+The hunk validated cleanly against the target base and has been applied to `tensorflow/core/kernels/session_ops.cc`. I’ll capture the resulting diff for the final report.
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/kernels/session_ops.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0257-75867f82431f"
+}
+warning: in the working copy of 'tensorflow/core/kernels/session_ops.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/kernels/session_ops.cc b/tensorflow/core/kernels/session_ops.cc
+index 109acc5572..4854d71970 100644
+--- a/tensorflow/core/kernels/session_ops.cc
++++ b/tensorflow/core/kernels/session_ops.cc
+@@ -132,6 +132,8 @@ class DeleteSessionTensorOp : public OpKernel {
+ 
+   void Compute(OpKernelContext* ctx) override {
+     const Tensor& handle = ctx->input(0);
++    OP_REQUIRES(ctx, TensorShapeUtils::IsScalar(handle.shape()),
++                errors::InvalidArgument("`handle` must be scalar"));
+     const string& name = handle.scalar<tstring>()();
+     auto session_state = ctx->session_state();
+     OP_REQUIRES(ctx, session_state != nullptr,
+
+tokens used
+input: 527
+cache read: 8,704
+cache write: 0
+output: 110
+reasoning output: 0
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/kernels/session_ops.cc b/tensorflow/core/kernels/session_ops.cc
+    index 109acc5572..4854d71970 100644
+    --- a/tensorflow/core/kernels/session_ops.cc
+    +++ b/tensorflow/core/kernels/session_ops.cc
+    @@ -132,6 +132,8 @@ class DeleteSessionTensorOp : public OpKernel {
+     
+       void Compute(OpKernelContext* ctx) override {
+         const Tensor& handle = ctx->input(0);
+    +    OP_REQUIRES(ctx, TensorShapeUtils::IsScalar(handle.shape()),
+    +                errors::InvalidArgument("`handle` must be scalar"));
+         const string& name = handle.scalar<tstring>()();
+         auto session_state = ctx->session_state();
+         OP_REQUIRES(ctx, session_state != nullptr,
+  notes: >
+    Added the scalar shape validation before reading DeleteSessionTensor handle as a scalar string.
+```
+
+tokens used
+input: 851
+cache read: 8,704
+cache write: 0
+output: 223
+reasoning output: 0

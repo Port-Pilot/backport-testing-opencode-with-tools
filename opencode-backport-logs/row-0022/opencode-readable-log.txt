@@ -1,0 +1,495 @@
+I’ll inspect the target file and patch context, then apply the minimal equivalent checks in the current 2.1.4 checkout without looking at the held-out backport commit.
+
+tool: viewcode
+{
+  "ref": "bf171d8341da2cfe1b2500b6b0bbbaa9bacc63db",
+  "path": "tensorflow/core/kernels/quantized_batch_norm_op.cc",
+  "startline": 130,
+  "endline": 260
+}
+This file only has 241 lines. Here are lines 130 through 241.
+
+        QuantizedToFloat(gamma_flat(channel), gamma_min, gamma_max);
+    float scale_value;
+    if (scale_after_normalization) {
+      scale_value = (1.0f / sqrtf(var_value + variance_epsilon)) * gamma_value;
+    } else {
+      scale_value = (1.0f / sqrtf(var_value + variance_epsilon));
+    }
+    const float offset_value = (-mean_value * scale_value) + beta_value;
+    scale_flat(channel) =
+        FloatToQuantized<T2>(scale_value, *output_min, *output_max);
+    offset_flat(channel) =
+        FloatToQuantized<T2>(offset_value, *output_min, *output_max);
+  }
+
+  const T2 one_in_output_space =
+      FloatToQuantized<T2>(1.0f, *output_min, *output_max);
+  for (int row_index = 0; row_index < row_count; ++row_index) {
+    for (int channel = 0; channel < depth; ++channel) {
+      const int input_index = (row_index * depth) + channel;
+      const T2 input_value =
+          RequantizeInNewRange<T1, T2>(input_flat(input_index), input_min,
+                                       input_max, *output_min, *output_max);
+      const T2 scale_value = scale_flat(channel);
+      const T2 offset_value = offset_flat(channel);
+      const T2 output_value =
+          ((input_value * scale_value) / one_in_output_space) + offset_value;
+      output_flat(input_index) = output_value;
+    }
+  }
+}
+
+}  // namespace
+
+template <typename T1, typename T2>
+class QuantizedBatchNormOp : public OpKernel {
+ public:
+  explicit QuantizedBatchNormOp(OpKernelConstruction* context)
+      : OpKernel(context) {
+    OP_REQUIRES_OK(context,
+                   context->GetAttr("variance_epsilon", &variance_epsilon_));
+    OP_REQUIRES_OK(context, context->GetAttr("scale_after_normalization",
+                                             &scale_after_normalization_));
+  }
+
+  void Compute(OpKernelContext* context) override {
+    const Tensor& input = context->input(0);
+    const float input_min = context->input(1).flat<float>()(0);
+    const float input_max = context->input(2).flat<float>()(0);
+    const Tensor& mean = context->input(3);
+    const float mean_min = context->input(4).flat<float>()(0);
+    const float mean_max = context->input(5).flat<float>()(0);
+    const Tensor& var = context->input(6);
+    const float var_min = context->input(7).flat<float>()(0);
+    const float var_max = context->input(8).flat<float>()(0);
+    const Tensor& beta = context->input(9);
+    const float beta_min = context->input(10).flat<float>()(0);
+    const float beta_max = context->input(11).flat<float>()(0);
+    const Tensor& gamma = context->input(12);
+    const float gamma_min = context->input(13).flat<float>()(0);
+    const float gamma_max = context->input(14).flat<float>()(0);
+
+    OP_REQUIRES(context, input.dims() == 4,
+                errors::InvalidArgument("input must be 4-dimensional",
+                                        input.shape().DebugString()));
+    OP_REQUIRES(context, mean.dims() == 1,
+                errors::InvalidArgument("mean must be 1-dimensional",
+                                        mean.shape().DebugString()));
+    OP_REQUIRES(context, var.dims() == 1,
+                errors::InvalidArgument("var must be 1-dimensional",
+                                        var.shape().DebugString()));
+    OP_REQUIRES(context, beta.dims() == 1,
+                errors::InvalidArgument("beta must be 1-dimensional",
+                                        beta.shape().DebugString()));
+    OP_REQUIRES(context, gamma.dims() == 1,
+                errors::InvalidArgument("gamma must be 1-dimensional",
+                                        gamma.shape().DebugString()));
+
+    Tensor* output = nullptr;
+    OP_REQUIRES_OK(context,
+                   context->allocate_output(0, input.shape(), &output));
+    float output_min;
+    float output_max;
+    FixedPointBatchNorm<T1, T2>(input, input_min, input_max, mean, mean_min,
+                                mean_max, var, var_min, var_max, beta, beta_min,
+                                beta_max, gamma, gamma_min, gamma_max,
+                                variance_epsilon_, scale_after_normalization_,
+                                output, &output_min, &output_max);
+
+    Tensor* output_min_tensor = nullptr;
+    OP_REQUIRES_OK(context,
+                   context->allocate_output(1, {}, &output_min_tensor));
+    output_min_tensor->flat<float>()(0) = output_min;
+
+    Tensor* output_max_tensor = nullptr;
+    OP_REQUIRES_OK(context,
+                   context->allocate_output(2, {}, &output_max_tensor));
+    output_max_tensor->flat<float>()(0) = output_max;
+  }
+
+ private:
+  float variance_epsilon_;
+  bool scale_after_normalization_;
+};
+
+REGISTER_KERNEL_BUILDER(Name("QuantizedBatchNormWithGlobalNormalization")
+                            .Device(DEVICE_CPU)
+                            .TypeConstraint<quint8>("Tinput")
+                            .TypeConstraint<qint32>("out_type"),
+                        QuantizedBatchNormOp<quint8, qint32>);
+
+}  // namespace tensorflow
+
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: locate_symbol
+{
+  "ref": "bf171d8341da2cfe1b2500b6b0bbbaa9bacc63db",
+  "symbol": "QuantizedBatchNormOp"
+}
+tensorflow/core/kernels/quantized_batch_norm_op.cc:164
+tensorflow/core/kernels/quantized_batch_norm_op.cc:166
+tensorflow/core/kernels/quantized_batch_norm_op.cc:238
+
+tokens used
+input: 4,982
+cache read: 4,608
+cache write: 0
+output: 170
+reasoning output: 0
+
+The target implementation is in the same file with matching structure, so this is a direct source backport. I’m adding the scalar min/max validation and the dimension/shape checks before allocation, matching the newer fix while preserving the older file layout.
+
+tool: read
+{
+  "filePath": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0022-bf171d8341da\\tensorflow\\core\\kernels\\quantized_batch_norm_op.cc",
+  "offset": 160,
+  "limit": 70
+}
+<path>C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0022-bf171d8341da\tensorflow\core\kernels\quantized_batch_norm_op.cc</path>
+<type>file</type>
+<content>
+160: 
+161: }  // namespace
+162: 
+163: template <typename T1, typename T2>
+164: class QuantizedBatchNormOp : public OpKernel {
+165:  public:
+166:   explicit QuantizedBatchNormOp(OpKernelConstruction* context)
+167:       : OpKernel(context) {
+168:     OP_REQUIRES_OK(context,
+169:                    context->GetAttr("variance_epsilon", &variance_epsilon_));
+170:     OP_REQUIRES_OK(context, context->GetAttr("scale_after_normalization",
+171:                                              &scale_after_normalization_));
+172:   }
+173: 
+174:   void Compute(OpKernelContext* context) override {
+175:     const Tensor& input = context->input(0);
+176:     const float input_min = context->input(1).flat<float>()(0);
+177:     const float input_max = context->input(2).flat<float>()(0);
+178:     const Tensor& mean = context->input(3);
+179:     const float mean_min = context->input(4).flat<float>()(0);
+180:     const float mean_max = context->input(5).flat<float>()(0);
+181:     const Tensor& var = context->input(6);
+182:     const float var_min = context->input(7).flat<float>()(0);
+183:     const float var_max = context->input(8).flat<float>()(0);
+184:     const Tensor& beta = context->input(9);
+185:     const float beta_min = context->input(10).flat<float>()(0);
+186:     const float beta_max = context->input(11).flat<float>()(0);
+187:     const Tensor& gamma = context->input(12);
+188:     const float gamma_min = context->input(13).flat<float>()(0);
+189:     const float gamma_max = context->input(14).flat<float>()(0);
+190: 
+191:     OP_REQUIRES(context, input.dims() == 4,
+192:                 errors::InvalidArgument("input must be 4-dimensional",
+193:                                         input.shape().DebugString()));
+194:     OP_REQUIRES(context, mean.dims() == 1,
+195:                 errors::InvalidArgument("mean must be 1-dimensional",
+196:                                         mean.shape().DebugString()));
+197:     OP_REQUIRES(context, var.dims() == 1,
+198:                 errors::InvalidArgument("var must be 1-dimensional",
+199:                                         var.shape().DebugString()));
+200:     OP_REQUIRES(context, beta.dims() == 1,
+201:                 errors::InvalidArgument("beta must be 1-dimensional",
+202:                                         beta.shape().DebugString()));
+203:     OP_REQUIRES(context, gamma.dims() == 1,
+204:                 errors::InvalidArgument("gamma must be 1-dimensional",
+205:                                         gamma.shape().DebugString()));
+206: 
+207:     Tensor* output = nullptr;
+208:     OP_REQUIRES_OK(context,
+209:                    context->allocate_output(0, input.shape(), &output));
+210:     float output_min;
+211:     float output_max;
+212:     FixedPointBatchNorm<T1, T2>(input, input_min, input_max, mean, mean_min,
+213:                                 mean_max, var, var_min, var_max, beta, beta_min,
+214:                                 beta_max, gamma, gamma_min, gamma_max,
+215:                                 variance_epsilon_, scale_after_normalization_,
+216:                                 output, &output_min, &output_max);
+217: 
+218:     Tensor* output_min_tensor = nullptr;
+219:     OP_REQUIRES_OK(context,
+220:                    context->allocate_output(1, {}, &output_min_tensor));
+221:     output_min_tensor->flat<float>()(0) = output_min;
+222: 
+223:     Tensor* output_max_tensor = nullptr;
+224:     OP_REQUIRES_OK(context,
+225:                    context->allocate_output(2, {}, &output_max_tensor));
+226:     output_max_tensor->flat<float>()(0) = output_max;
+227:   }
+228: 
+229:  private:
+
+(Showing lines 160-229 of 240. Use offset=230 to continue.)
+</content>
+
+tokens used
+input: 2,311
+cache read: 8,704
+cache write: 0
+output: 134
+reasoning output: 20
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/kernels/quantized_batch_norm_op.cc\n@@\n   void Compute(OpKernelContext* context) override {\n     const Tensor& input = context->input(0);\n-    const float input_min = context->input(1).flat<float>()(0);\n-    const float input_max = context->input(2).flat<float>()(0);\n+    const auto& input_min_tensor = context->input(1);\n+    OP_REQUIRES(context, input_min_tensor.NumElements() == 1,\n+                errors::InvalidArgument(\"input_min must have 1 element\"));\n+    const float input_min = input_min_tensor.flat<float>()(0);\n+    const auto& input_max_tensor = context->input(2);\n+    OP_REQUIRES(context, input_max_tensor.NumElements() == 1,\n+                errors::InvalidArgument(\"input_max must have 1 element\"));\n+    const float input_max = input_max_tensor.flat<float>()(0);\n     const Tensor& mean = context->input(3);\n-    const float mean_min = context->input(4).flat<float>()(0);\n-    const float mean_max = context->input(5).flat<float>()(0);\n+    const auto& mean_min_tensor = context->input(4);\n+    OP_REQUIRES(context, mean_min_tensor.NumElements() == 1,\n+                errors::InvalidArgument(\"mean_min must have 1 element\"));\n+    const float mean_min = mean_min_tensor.flat<float>()(0);\n+    const auto& mean_max_tensor = context->input(5);\n+    OP_REQUIRES(context, mean_max_tensor.NumElements() == 1,\n+                errors::InvalidArgument(\"mean_max must have 1 element\"));\n+    const float mean_max = mean_max_tensor.flat<float>()(0);\n     const Tensor& var = context->input(6);\n-    const float var_min = context->input(7).flat<float>()(0);\n-    const float var_max = context->input(8).flat<float>()(0);\n+    const auto& var_min_tensor = context->input(7);\n+    OP_REQUIRES(context, var_min_tensor.NumElements() == 1,\n+                errors::InvalidArgument(\"var_min must have 1 element\"));\n+    const float var_min = var_min_tensor.flat<float>()(0);\n+    const auto& var_max_tensor = context->input(8);\n+    OP_REQUIRES(context, var_max_tensor.NumElements() == 1,\n+                errors::InvalidArgument(\"var_max must have 1 element\"));\n+    const float var_max = var_max_tensor.flat<float>()(0);\n     const Tensor& beta = context->input(9);\n-    const float beta_min = context->input(10).flat<float>()(0);\n-    const float beta_max = context->input(11).flat<float>()(0);\n+    const auto& beta_min_tensor = context->input(10);\n+    OP_REQUIRES(context, beta_min_tensor.NumElements() == 1,\n+                errors::InvalidArgument(\"beta_min must have 1 element\"));\n+    const float beta_min = beta_min_tensor.flat<float>()(0);\n+    const auto& beta_max_tensor = context->input(11);\n+    OP_REQUIRES(context, beta_max_tensor.NumElements() == 1,\n+                errors::InvalidArgument(\"beta_max must have 1 element\"));\n+    const float beta_max = beta_max_tensor.flat<float>()(0);\n     const Tensor& gamma = context->input(12);\n-    const float gamma_min = context->input(13).flat<float>()(0);\n-    const float gamma_max = context->input(14).flat<float>()(0);\n+    const auto& gamma_min_tensor = context->input(13);\n+    OP_REQUIRES(context, gamma_min_tensor.NumElements() == 1,\n+                errors::InvalidArgument(\"gamma_min must have 1 element\"));\n+    const float gamma_min = gamma_min_tensor.flat<float>()(0);\n+    const auto& gamma_max_tensor = context->input(14);\n+    OP_REQUIRES(context, gamma_max_tensor.NumElements() == 1,\n+                errors::InvalidArgument(\"gamma_max must have 1 element\"));\n+    const float gamma_max = gamma_max_tensor.flat<float>()(0);\n@@\n     OP_REQUIRES(context, gamma.dims() == 1,\n                 errors::InvalidArgument(\"gamma must be 1-dimensional\",\n                                         gamma.shape().DebugString()));\n+    OP_REQUIRES(context, mean.NumElements() > 1,\n+                errors::InvalidArgument(\"Must have at least a mean value\",\n+                                        gamma.shape().DebugString()));\n+    OP_REQUIRES(context, mean.NumElements() > 1,\n+                errors::InvalidArgument(\"Must have at least a mean value\"));\n+    const auto last_dim = input.shape().dims() - 1;\n+    OP_REQUIRES(context,\n+                mean.shape().dim_size(0) == input.shape().dim_size(last_dim),\n+                errors::InvalidArgument(\"Must provide as many means as the \"\n+                                        \"last dimension of the input tensor: \",\n+                                        mean.shape().DebugString(), \" vs. \",\n+                                        input.shape().DebugString()));\n+    OP_REQUIRES(\n+        context, mean.shape().dim_size(0) == var.shape().dim_size(0),\n+        errors::InvalidArgument(\n+            \"Mean and variance tensors must have the same shape: \",\n+            mean.shape().DebugString(), \" vs. \", var.shape().DebugString()));\n+    OP_REQUIRES(\n+        context, mean.shape().dim_size(0) == beta.shape().dim_size(0),\n+        errors::InvalidArgument(\n+            \"Mean and beta tensors must have the same shape: \",\n+            mean.shape().DebugString(), \" vs. \", beta.shape().DebugString()));\n+    OP_REQUIRES(\n+        context, mean.shape().dim_size(0) == gamma.shape().dim_size(0),\n+        errors::InvalidArgument(\n+            \"Mean and gamma tensors must have the same shape: \",\n+            mean.shape().DebugString(), \" vs. \", gamma.shape().DebugString()));\n \n     Tensor* output = nullptr;\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/kernels/quantized_batch_norm_op.cc
+
+tokens used
+input: 1,398
+cache read: 10,752
+cache write: 0
+output: 1,487
+reasoning output: 88
+
+The source change is applied. I’m checking the resulting diff and validating that the hunk applies cleanly to the target base.
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/kernels/quantized_batch_norm_op.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0022-bf171d8341da",
+  "timeout": 120000
+}
+warning: in the working copy of 'tensorflow/core/kernels/quantized_batch_norm_op.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/kernels/quantized_batch_norm_op.cc b/tensorflow/core/kernels/quantized_batch_norm_op.cc
+index b03da7ad17..6dfe07f97a 100644
+--- a/tensorflow/core/kernels/quantized_batch_norm_op.cc
++++ b/tensorflow/core/kernels/quantized_batch_norm_op.cc
+@@ -173,20 +173,50 @@ class QuantizedBatchNormOp : public OpKernel {
+ 
+   void Compute(OpKernelContext* context) override {
+     const Tensor& input = context->input(0);
+-    const float input_min = context->input(1).flat<float>()(0);
+-    const float input_max = context->input(2).flat<float>()(0);
++    const auto& input_min_tensor = context->input(1);
++    OP_REQUIRES(context, input_min_tensor.NumElements() == 1,
++                errors::InvalidArgument("input_min must have 1 element"));
++    const float input_min = input_min_tensor.flat<float>()(0);
++    const auto& input_max_tensor = context->input(2);
++    OP_REQUIRES(context, input_max_tensor.NumElements() == 1,
++                errors::InvalidArgument("input_max must have 1 element"));
++    const float input_max = input_max_tensor.flat<float>()(0);
+     const Tensor& mean = context->input(3);
+-    const float mean_min = context->input(4).flat<float>()(0);
+-    const float mean_max = context->input(5).flat<float>()(0);
++    const auto& mean_min_tensor = context->input(4);
++    OP_REQUIRES(context, mean_min_tensor.NumElements() == 1,
++                errors::InvalidArgument("mean_min must have 1 element"));
++    const float mean_min = mean_min_tensor.flat<float>()(0);
++    const auto& mean_max_tensor = context->input(5);
++    OP_REQUIRES(context, mean_max_tensor.NumElements() == 1,
++                errors::InvalidArgument("mean_max must have 1 element"));
++    const float mean_max = mean_max_tensor.flat<float>()(0);
+     const Tensor& var = context->input(6);
+-    const float var_min = context->input(7).flat<float>()(0);
+-    const float var_max = context->input(8).flat<float>()(0);
++    const auto& var_min_tensor = context->input(7);
++    OP_REQUIRES(context, var_min_tensor.NumElements() == 1,
++                errors::InvalidArgument("var_min must have 1 element"));
++    const float var_min = var_min_tensor.flat<float>()(0);
++    const auto& var_max_tensor = context->input(8);
++    OP_REQUIRES(context, var_max_tensor.NumElements() == 1,
++                errors::InvalidArgument("var_max must have 1 element"));
++    const float var_max = var_max_tensor.flat<float>()(0);
+     const Tensor& beta = context->input(9);
+-    const float beta_min = context->input(10).flat<float>()(0);
+-    const float beta_max = context->input(11).flat<float>()(0);
++    const auto& beta_min_tensor = context->input(10);
++    OP_REQUIRES(context, beta_min_tensor.NumElements() == 1,
++                errors::InvalidArgument("beta_min must have 1 element"));
++    const float beta_min = beta_min_tensor.flat<float>()(0);
++    const auto& beta_max_tensor = context->input(11);
++    OP_REQUIRES(context, beta_max_tensor.NumElements() == 1,
++                errors::InvalidArgument("beta_max must have 1 element"));
++    const float beta_max = beta_max_tensor.flat<float>()(0);
+     const Tensor& gamma = context->input(12);
+-    const float gamma_min = context->input(13).flat<float>()(0);
+-    const float gamma_max = context->input(14).flat<float>()(0);
++    const auto& gamma_min_tensor = context->input(13);
++    OP_REQUIRES(context, gamma_min_tensor.NumElements() == 1,
++                errors::InvalidArgument("gamma_min must have 1 element"));
++    const float gamma_min = gamma_min_tensor.flat<float>()(0);
++    const auto& gamma_max_tensor = context->input(14);
++    OP_REQUIRES(context, gamma_max_tensor.NumElements() == 1,
++                errors::InvalidArgument("gamma_max must have 1 element"));
++    const float gamma_max = gamma_max_tensor.flat<float>()(0);
+ 
+     OP_REQUIRES(context, input.dims() == 4,
+                 errors::InvalidArgument("input must be 4-dimensional",
+@@ -203,6 +233,33 @@ class QuantizedBatchNormOp : public OpKernel {
+     OP_REQUIRES(context, gamma.dims() == 1,
+                 errors::InvalidArgument("gamma must be 1-dimensional",
+                                         gamma.shape().DebugString()));
++    OP_REQUIRES(context, mean.NumElements() > 1,
++                errors::InvalidArgument("Must have at least a mean value",
++                                        gamma.shape().DebugString()));
++    OP_REQUIRES(context, mean.NumElements() > 1,
++                errors::InvalidArgument("Must have at least a mean value"));
++    const auto last_dim = input.shape().dims() - 1;
++    OP_REQUIRES(context,
++                mean.shape().dim_size(0) == input.shape().dim_size(last_dim),
++                errors::InvalidArgument("Must provide as many means as the "
++                                        "last dimension of the input tensor: ",
++                                        mean.shape().DebugString(), " vs. ",
++                                        input.shape().DebugString()));
++    OP_REQUIRES(
++        context, mean.shape().dim_size(0) == var.shape().dim_size(0),
++        errors::InvalidArgument(
++            "Mean and variance tensors must have the same shape: ",
++            mean.shape().DebugString(), " vs. ", var.shape().DebugString()));
++    OP_REQUIRES(
++        context, mean.shape().dim_size(0) == beta.shape().dim_size(0),
++        errors::InvalidArgument(
++            "Mean and beta tensors must have the same shape: ",
++            mean.shape().DebugString(), " vs. ", beta.shape().DebugString()));
++    OP_REQUIRES(
++        context, mean.shape().dim_size(0) == gamma.shape().dim_size(0),
++        errors::InvalidArgument(
++            "Mean and gamma tensors must have the same shape: ",
++            mean.shape().DebugString(), " vs. ", gamma.shape().DebugString()));
+ 
+     Tensor* output = nullptr;
+     OP_REQUIRES_OK(context,
+
+tokens used
+input: 1,979
+cache read: 11,776
+cache write: 0
+output: 112
+reasoning output: 137
+
+tool: validate
+{
+  "ref": "bf171d8341da2cfe1b2500b6b0bbbaa9bacc63db",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/quantized_batch_norm_op.cc b/tensorflow/core/kernels/quantized_batch_norm_op.cc\nindex b03da7ad17..6dfe07f97a 100644\n--- a/tensorflow/core/kernels/quantized_batch_norm_op.cc\n+++ b/tensorflow/core/kernels/quantized_batch_norm_op.cc\n@@ -173,20 +173,50 @@ class QuantizedBatchNormOp : public OpKernel {\n \n   void Compute(OpKernelContext* context) override {\n     const Tensor& input = context->input(0);\n-    const float input_min = context->input(1).flat<float>()(0);\n-    const float input_max = context->input(2).flat<float>()(0);\n+    const auto& input_min_tensor = context->input(1);\n+    OP_REQUIRES(context, input_min_tensor.NumElements() == 1,\n+                errors::InvalidArgument(\"input_min must have 1 element\"));\n+    const float input_min = input_min_tensor.flat<float>()(0);\n+    const auto& input_max_tensor = context->input(2);\n+    OP_REQUIRES(context, input_max_tensor.NumElements() == 1,\n+                errors::InvalidArgument(\"input_max must have 1 element\"));\n+    const float input_max = input_max_tensor.flat<float>()(0);\n     const Tensor& mean = context->input(3);\n-    const float mean_min = context->input(4).flat<float>()(0);\n-    const float mean_max = context->input(5).flat<float>()(0);\n+    const auto& mean_min_tensor = context->input(4);\n+    OP_REQUIRES(context, mean_min_tensor.NumElements() == 1,\n+                errors::InvalidArgument(\"mean_min must have 1 element\"));\n+    const float mean_min = mean_min_tensor.flat<float>()(0);\n+    const auto& mean_max_tensor = context->input(5);\n+    OP_REQUIRES(context, mean_max_tensor.NumElements() == 1,\n+                errors::InvalidArgument(\"mean_max must have 1 element\"));\n+    const float mean_max = mean_max_tensor.flat<float>()(0);\n     const Tensor& var = context->input(6);\n-    const float var_min = context->input(7).flat<float>()(0);\n-    const float var_max = context->input(8).flat<float>()(0);\n+    const auto& var_min_tensor = context->input(7);\n+    OP_REQUIRES(context, var_min_tensor.NumElements() == 1,\n+                errors::InvalidArgument(\"var_min must have 1 element\"));\n+    const float var_min = var_min_tensor.flat<float>()(0);\n+    const auto& var_max_tensor = context->input(8);\n+    OP_REQUIRES(context, var_max_tensor.NumElements() == 1,\n+                errors::InvalidArgument(\"var_max must have 1 element\"));\n+    const float var_max = var_max_tensor.flat<float>()(0);\n     const Tensor& beta = context->input(9);\n-    const float beta_min = context->input(10).flat<float>()(0);\n-    const float beta_max = context->input(11).flat<float>()(0);\n+    const auto& beta_min_tensor = context->input(10);\n+    OP_REQUIRES(context, beta_min_tensor.NumElements() == 1,\n+                errors::InvalidArgument(\"beta_min must have 1 element\"));\n+    const float beta_min = beta_min_tensor.flat<float>()(0);\n+    const auto& beta_max_tensor = context->input(11);\n+    OP_REQUIRES(context, beta_max_tensor.NumElements() == 1,\n+                errors::InvalidArgument(\"beta_max must have 1 element\"));\n+    const float beta_max = beta_max_tensor.flat<float>()(0);\n     const Tensor& gamma = context->input(12);\n-    const float gamma_min = context->input(13).flat<float>()(0);\n-    const float gamma_max = context->input(14).flat<float>()(0);\n+    const auto& gamma_min_tensor = context->input(13);\n+    OP_REQUIRES(context, gamma_min_tensor.NumElements() == 1,\n+                errors::InvalidArgument(\"gamma_min must have 1 element\"));\n+    const float gamma_min = gamma_min_tensor.flat<float>()(0);\n+    const auto& gamma_max_tensor = context->input(14);\n+    OP_REQUIRES(context, gamma_max_tensor.NumElements() == 1,\n+                errors::InvalidArgument(\"gamma_max must have 1 element\"));\n+    const float gamma_max = gamma_max_tensor.flat<float>()(0);\n \n     OP_REQUIRES(context, input.dims() == 4,\n                 errors::InvalidArgument(\"input must be 4-dimensional\",\n@@ -203,6 +233,33 @@ class QuantizedBatchNormOp : public OpKernel {\n     OP_REQUIRES(context, gamma.dims() == 1,\n                 errors::InvalidArgument(\"gamma must be 1-dimensional\",\n                                         gamma.shape().DebugString()));\n+    OP_REQUIRES(context, mean.NumElements() > 1,\n+                errors::InvalidArgument(\"Must have at least a mean value\",\n+                                        gamma.shape().DebugString()));\n+    OP_REQUIRES(context, mean.NumElements() > 1,\n+                errors::InvalidArgument(\"Must have at least a mean value\"));\n+    const auto last_dim = input.shape().dims() - 1;\n+    OP_REQUIRES(context,\n+                mean.shape().dim_size(0) == input.shape().dim_size(last_dim),\n+                errors::InvalidArgument(\"Must provide as many means as the \"\n+                                        \"last dimension of the input tensor: \",\n+                                        mean.shape().DebugString(), \" vs. \",\n+                                        input.shape().DebugString()));\n+    OP_REQUIRES(\n+        context, mean.shape().dim_size(0) == var.shape().dim_size(0),\n+        errors::InvalidArgument(\n+            \"Mean and variance tensors must have the same shape: \",\n+            mean.shape().DebugString(), \" vs. \", var.shape().DebugString()));\n+    OP_REQUIRES(\n+        context, mean.shape().dim_size(0) == beta.shape().dim_size(0),\n+        errors::InvalidArgument(\n+            \"Mean and beta tensors must have the same shape: \",\n+            mean.shape().DebugString(), \" vs. \", beta.shape().DebugString()));\n+    OP_REQUIRES(\n+        context, mean.shape().dim_size(0) == gamma.shape().dim_size(0),\n+        errors::InvalidArgument(\n+            \"Mean and gamma tensors must have the same shape: \",\n+            mean.shape().DebugString(), \" vs. \", gamma.shape().DebugString()));\n \n     Tensor* output = nullptr;\n     OP_REQUIRES_OK(context,\n"
+}
+Patch applied successfully
+
+tokens used
+input: 2,716
+cache read: 12,800
+cache write: 0
+output: 1,658
+reasoning output: 13
+
+Applied the TensorFlow security backport to `tensorflow/core/kernels/quantized_batch_norm_op.cc`.
+
+Validation: `validate(..., mode="hunk")` succeeded.
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/kernels/quantized_batch_norm_op.cc b/tensorflow/core/kernels/quantized_batch_norm_op.cc
+    index b03da7ad17..6dfe07f97a 100644
+    --- a/tensorflow/core/kernels/quantized_batch_norm_op.cc
+    +++ b/tensorflow/core/kernels/quantized_batch_norm_op.cc
+    @@ -173,20 +173,50 @@ class QuantizedBatchNormOp : public OpKernel {
+     
+       void Compute(OpKernelContext* context) override {
+         const Tensor& input = context->input(0);
+    -    const float input_min = context->input(1).flat<float>()(0);
+    -    const float input_max = context->input(2).flat<float>()(0);
+    +    const auto& input_min_tensor = context->input(1);
+    +    OP_REQUIRES(context, input_min_tensor.NumElements() == 1,
+    +                errors::InvalidArgument("input_min must have 1 element"));
+    +    const float input_min = input_min_tensor.flat<float>()(0);
+    +    const auto& input_max_tensor = context->input(2);
+    +    OP_REQUIRES(context, input_max_tensor.NumElements() == 1,
+    +                errors::InvalidArgument("input_max must have 1 element"));
+    +    const float input_max = input_max_tensor.flat<float>()(0);
+         const Tensor& mean = context->input(3);
+    -    const float mean_min = context->input(4).flat<float>()(0);
+    -    const float mean_max = context->input(5).flat<float>()(0);
+    +    const auto& mean_min_tensor = context->input(4);
+    +    OP_REQUIRES(context, mean_min_tensor.NumElements() == 1,
+    +                errors::InvalidArgument("mean_min must have 1 element"));
+    +    const float mean_min = mean_min_tensor.flat<float>()(0);
+    +    const auto& mean_max_tensor = context->input(5);
+    +    OP_REQUIRES(context, mean_max_tensor.NumElements() == 1,
+    +                errors::InvalidArgument("mean_max must have 1 element"));
+    +    const float mean_max = mean_max_tensor.flat<float>()(0);
+         const Tensor& var = context->input(6);
+    -    const float var_min = context->input(7).flat<float>()(0);
+    -    const float var_max = context->input(8).flat<float>()(0);
+    +    const auto& var_min_tensor = context->input(7);
+    +    OP_REQUIRES(context, var_min_tensor.NumElements() == 1,
+    +                errors::InvalidArgument("var_min must have 1 element"));
+    +    const float var_min = var_min_tensor.flat<float>()(0);
+    +    const auto& var_max_tensor = context->input(8);
+    +    OP_REQUIRES(context, var_max_tensor.NumElements() == 1,
+    +                errors::InvalidArgument("var_max must have 1 element"));
+    +    const float var_max = var_max_tensor.flat<float>()(0);
+         const Tensor& beta = context->input(9);
+    -    const float beta_min = context->input(10).flat<float>()(0);
+    -    const float beta_max = context->input(11).flat<float>()(0);
+    +    const auto& beta_min_tensor = context->input(10);
+    +    OP_REQUIRES(context, beta_min_tensor.NumElements() == 1,
+    +                errors::InvalidArgument("beta_min must have 1 element"));
+    +    const float beta_min = beta_min_tensor.flat<float>()(0);
+    +    const auto& beta_max_tensor = context->input(11);
+    +    OP_REQUIRES(context, beta_max_tensor.NumElements() == 1,
+    +                errors::InvalidArgument("beta_max must have 1 element"));
+    +    const float beta_max = beta_max_tensor.flat<float>()(0);
+         const Tensor& gamma = context->input(12);
+    -    const float gamma_min = context->input(13).flat<float>()(0);
+    -    const float gamma_max = context->input(14).flat<float>()(0);
+    +    const auto& gamma_min_tensor = context->input(13);
+    +    OP_REQUIRES(context, gamma_min_tensor.NumElements() == 1,
+    +                errors::InvalidArgument("gamma_min must have 1 element"));
+    +    const float gamma_min = gamma_min_tensor.flat<float>()(0);
+    +    const auto& gamma_max_tensor = context->input(14);
+    +    OP_REQUIRES(context, gamma_max_tensor.NumElements() == 1,
+    +                errors::InvalidArgument("gamma_max must have 1 element"));
+    +    const float gamma_max = gamma_max_tensor.flat<float>()(0);
+     
+         OP_REQUIRES(context, input.dims() == 4,
+                     errors::InvalidArgument("input must be 4-dimensional",
+    @@ -203,6 +233,33 @@ class QuantizedBatchNormOp : public OpKernel {
+         OP_REQUIRES(context, gamma.dims() == 1,
+                     errors::InvalidArgument("gamma must be 1-dimensional",
+                                             gamma.shape().DebugString()));
+    +    OP_REQUIRES(context, mean.NumElements() > 1,
+    +                errors::InvalidArgument("Must have at least a mean value",
+    +                                        gamma.shape().DebugString()));
+    +    OP_REQUIRES(context, mean.NumElements() > 1,
+    +                errors::InvalidArgument("Must have at least a mean value"));
+    +    const auto last_dim = input.shape().dims() - 1;
+    +    OP_REQUIRES(context,
+    +                mean.shape().dim_size(0) == input.shape().dim_size(last_dim),
+    +                errors::InvalidArgument("Must provide as many means as the "
+    +                                        "last dimension of the input tensor: ",
+    +                                        mean.shape().DebugString(), " vs. ",
+    +                                        input.shape().DebugString()));
+    +    OP_REQUIRES(
+    +        context, mean.shape().dim_size(0) == var.shape().dim_size(0),
+    +        errors::InvalidArgument(
+    +            "Mean and variance tensors must have the same shape: ",
+    +            mean.shape().DebugString(), " vs. ", var.shape().DebugString()));
+    +    OP_REQUIRES(
+    +        context, mean.shape().dim_size(0) == beta.shape().dim_size(0),
+    +        errors::InvalidArgument(
+    +            "Mean and beta tensors must have the same shape: ",
+    +            mean.shape().DebugString(), " vs. ", beta.shape().DebugString()));
+    +    OP_REQUIRES(
+    +        context, mean.shape().dim_size(0) == gamma.shape().dim_size(0),
+    +        errors::InvalidArgument(
+    +            "Mean and gamma tensors must have the same shape: ",
+    +            mean.shape().DebugString(), " vs. ", gamma.shape().DebugString()));
+     
+         Tensor* output = nullptr;
+         OP_REQUIRES_OK(context,
+  notes: >
+    Backported input scalar validation and batch norm parameter shape checks for QuantizedBatchNormWithGlobalNormalization.
+```
+
+tokens used
+input: 2,352
+cache read: 14,848
+cache write: 0
+output: 1,634
+reasoning output: 34

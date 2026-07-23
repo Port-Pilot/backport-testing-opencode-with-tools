@@ -1,0 +1,966 @@
+I’ll inspect the target-side equivalents for both patched files, then apply the minimal matching changes and validate uncertain hunks against the target base.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Locate target code for ResourceScatterUpdateOp and sharded variable test hunk",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Prepare and validate minimal backport hunks",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "content": "Apply source changes and capture final diff",
+      "status": "pending",
+      "priority": "high"
+    }
+  ]
+}
+[
+  {
+    "content": "Locate target code for ResourceScatterUpdateOp and sharded variable test hunk",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Prepare and validate minimal backport hunks",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "content": "Apply source changes and capture final diff",
+    "status": "pending",
+    "priority": "high"
+  }
+]
+
+tokens used
+input: 4,207
+cache read: 4,608
+cache write: 0
+output: 119
+reasoning output: 0
+
+tool: viewcode
+{
+  "ref": "161a0b4bb7beac223400ecd248d1494e0e5b2711",
+  "path": "tensorflow/python/distribute/sharded_variable_test.py",
+  "startline": 150,
+  "endline": 205
+}
+This file only has 147 lines. Showing full file.
+
+# Copyright 2019 The TensorFlow Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+"""Tests for ShardedVariable."""
+
+from __future__ import absolute_import
+from __future__ import division
+from __future__ import print_function
+
+import os
+
+from tensorflow.python.compat import v2_compat
+from tensorflow.python.distribute import sharded_variable
+from tensorflow.python.ops import array_ops
+from tensorflow.python.ops import variables as variables_lib
+from tensorflow.python.platform import test
+from tensorflow.python.training.tracking import util
+
+
+class ShardedVariableTest(test.TestCase):
+
+  def test_sharded_variable_simple(self):
+    v0 = variables_lib.Variable([0])
+    v1 = variables_lib.Variable([1])
+    s = sharded_variable.ShardedVariable([v0, v1], name='s')
+    self.assertEqual(s.variables[0], v0)
+    self.assertEqual(s.variables[1], v1)
+    self.assertEqual(s.shape.as_list(), [2])
+    self.assertEqual(s.dtype, v0.dtype)
+    self.assertEqual(s.name, 's')
+
+  def test_save_restore(self):
+    fname = os.path.join(self.get_temp_dir(), 'checkpoint')
+    variables = [
+        variables_lib.Variable([0]),
+        variables_lib.Variable([1]),
+        variables_lib.Variable([2]),
+        variables_lib.Variable([3])
+    ]
+    s = sharded_variable.ShardedVariable(variables, name='s')
+
+    cp = util.Checkpoint(s=s)
+    self.assertEqual(self.evaluate(cp.s.variables[0]), [0])
+    cp.write(fname)
+
+    self.evaluate(cp.s.variables[0].assign([4]))
+    self.assertEqual(self.evaluate(cp.s.variables[0]), [4])
+
+    cp.restore(fname)
+    # Tests that the original weights are restored.
+    self.assertEqual(self.evaluate(cp.s.variables[0]), [0])
+
+  def test_save_restore_different_partitions(self):
+    fname = os.path.join(self.get_temp_dir(), 'checkpoint')
+    variables = [
+        variables_lib.Variable([0]),
+        variables_lib.Variable([1]),
+        variables_lib.Variable([2]),
+        variables_lib.Variable([3])
+    ]
+    s = sharded_variable.ShardedVariable(variables, name='s')
+
+    cp = util.Checkpoint(s=s)
+    cp.write(fname)
+
+    variables2 = [variables_lib.Variable([0, 0, 0, 0])]
+    s2 = sharded_variable.ShardedVariable(variables2, name='s')
+
+    # Restore from 4 partitions into 1.
+    cp2 = util.Checkpoint(s=s2)
+    cp2.restore(fname)
+    self.assertAllEqual(self.evaluate(cp2.s.variables[0]), [0, 1, 2, 3])
+
+    self.evaluate(cp2.s.variables[0].assign([5, 10, 15, 20]))
+    cp2.write(fname)
+
+    # Restore 1 partition into 4.
+    cp.restore(fname)
+    self.assertEqual(self.evaluate(cp.s.variables[0]), [5])
+    self.assertEqual(self.evaluate(cp.s.variables[1]), [10])
+    self.assertEqual(self.evaluate(cp.s.variables[2]), [15])
+    self.assertEqual(self.evaluate(cp.s.variables[3]), [20])
+
+  def test_save_restore_4_to_2_partitions(self):
+    fname = os.path.join(self.get_temp_dir(), 'checkpoint')
+    variables = [
+        variables_lib.Variable([0]),
+        variables_lib.Variable([1]),
+        variables_lib.Variable([2]),
+        variables_lib.Variable([3])
+    ]
+    s = sharded_variable.ShardedVariable(variables, name='s')
+    cp = util.Checkpoint(s=s)
+    cp.write(fname)
+
+    variables2 = [
+        variables_lib.Variable([0, 0]),
+        variables_lib.Variable([0, 0])
+    ]
+    s2 = sharded_variable.ShardedVariable(variables2, name='s')
+    cp2 = util.Checkpoint(s=s2)
+    cp2.restore(fname)
+    # Assert that weights from the 4 partitions were loaded here.
+    self.assertLen(cp2.s.variables, 2)
+    self.assertAllEqual(self.evaluate(cp2.s.variables[0]), [0, 1])
+    self.assertAllEqual(self.evaluate(cp2.s.variables[1]), [2, 3])
+
+  def test_validation_errors(self):
+    with self.assertRaisesRegexp(ValueError, 'Expected a list of '):
+      sharded_variable.ShardedVariable(
+          [variables_lib.Variable([0]), 'not-a-variable'])
+
+    with self.assertRaisesRegexp(ValueError, 'must have the same dtype'):
+      sharded_variable.ShardedVariable([
+          variables_lib.Variable([0], dtype='int64'),
+          variables_lib.Variable([1], dtype='int32')
+      ])
+
+    with self.assertRaisesRegexp(ValueError, 'the same shapes except'):
+      sharded_variable.ShardedVariable([
+          variables_lib.Variable(array_ops.ones((5, 10))),
+          variables_lib.Variable(array_ops.ones((5, 20)))
+      ])
+
+    with self.assertRaisesRegexp(ValueError, '`SaveSliceInfo` should not'):
+      v = variables_lib.Variable([0])
+      v._set_save_slice_info(
+          variables_lib.Variable.SaveSliceInfo(
+              full_name='s', full_shape=[2], var_offset=[0], var_shape=[1]))
+      sharded_variable.ShardedVariable([v])
+
+
+if __name__ == '__main__':
+  v2_compat.enable_v2_behavior()
+  test.main()
+
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: locate_symbol
+{
+  "ref": "161a0b4bb7beac223400ecd248d1494e0e5b2711",
+  "symbol": "ResourceScatterUpdateOp"
+}
+tensorflow/compiler/tf2xla/kernels/variable_ops.cc:262
+tensorflow/core/kernels/resource_variable_ops.cc:848
+tensorflow/compiler/tf2xla/kernels/variable_ops.cc:264
+tensorflow/core/kernels/resource_variable_ops.cc:850
+tensorflow/compiler/tf2xla/kernels/variable_ops.cc:268
+tensorflow/core/kernels/resource_variable_ops.cc:956
+tensorflow/core/kernels/resource_variable_ops.cc:1011
+tensorflow/core/kernels/resource_variable_ops.cc:1018
+tensorflow/core/kernels/resource_variable_ops.cc:1026
+
+tool: grep
+{
+  "pattern": "test_scatter_ops_even_partition|scatter_div|ResourceScatterUpdateOp",
+  "path": "."
+}
+Found 66 matches
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0195-161a0b4bb7be\tensorflow\tools\compatibility\renames_v2.py:
+  Line 1119:     'tf.scatter_div':
+
+  Line 1120:         'tf.compat.v1.scatter_div',
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0195-161a0b4bb7be\tensorflow\python\distribute\values_util.py:
+  Line 145: def scatter_div(var, sparse_delta, use_locking=False, name=None):
+
+  Line 146:   scatter_div_fn = lambda var, *a, **kw: var.scatter_div(*a, **kw)
+
+  Line 148:       update_fn=scatter_div_fn,
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0195-161a0b4bb7be\tensorflow\python\distribute\values_test.py:
+  Line 1259:     def scatter_div():
+
+  Line 1266:       return v.scatter_div(value)
+
+  Line 1270:             distribution.run(scatter_div)))
+
+  Line 2071:       self.evaluate(distribution.run(v.scatter_div, args=(delta,)))
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0195-161a0b4bb7be\tensorflow\python\distribute\values.py:
+  Line 709:   def scatter_div(self, sparse_delta, use_locking=False, name=None):
+
+  Line 711:       self._var_policy.scatter_div(self, sparse_delta, use_locking=use_locking,
+
+  Line 713:     return values_util.scatter_div(self, sparse_delta, use_locking=use_locking,
+
+  Line 1043:   def scatter_div(self, *args, **kwargs):
+
+  Line 1044:     self._scatter_not_implemented("scatter_div")
+
+  Line 1264:   def scatter_div(self, *args, **kwargs):
+
+  Line 1266:     self._scatter_not_implemented("scatter_div")
+
+  Line 1363:   def scatter_div(self, var, sparse_delta, use_locking=False, name=None):
+
+  Line 1364:     return values_util.scatter_div(var, sparse_delta, use_locking=use_locking,
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0195-161a0b4bb7be\tensorflow\python\distribute\tpu_values.py:
+  Line 277:   def scatter_div(self, *args, **kwargs):
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0195-161a0b4bb7be\tensorflow\python\distribute\packed_distributed_variable.py:
+  Line 198:   def scatter_div(self, sparse_delta, use_locking=False, name=None):
+
+  Line 199:     scatter_div_fn = lambda var, *a, **kw: var.scatter_div(*a, **kw)
+
+  Line 201:         update_fn=scatter_div_fn,
+
+  Line 310:   def scatter_div(self, sparse_delta, use_locking=False, name=None):
+
+  Line 312:       return self._var.scatter_div(sparse_delta, use_locking, name)
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0195-161a0b4bb7be\tensorflow\tools\api\golden\v2\tensorflow.-variable.pbtxt:
+  Line 123:     name: "scatter_div"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0195-161a0b4bb7be\tensorflow\tools\api\golden\v1\tensorflow.-variable.pbtxt:
+  Line 124:     name: "scatter_div"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0195-161a0b4bb7be\tensorflow\python\ops\variables.py:
+  Line 712:   def scatter_div(self, sparse_delta, use_locking=False, name=None):
+
+  Line 2223:   def scatter_div(self, sparse_delta, use_locking=False, name=None):
+
+  Line 2240:     return gen_state_ops.scatter_div(
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0195-161a0b4bb7be\tensorflow\python\ops\state_ops.py:
+  Line 656: @tf_export(v1=["scatter_div"])
+
+  Line 657: def scatter_div(ref, indices, updates, use_locking=False, name=None):
+
+  Line 701:     return gen_state_ops.scatter_div(ref, indices, updates,
+
+  Line 703:   return ref._lazy_read(gen_resource_variable_ops.resource_scatter_div(  # pylint: disable=protected-access
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0195-161a0b4bb7be\tensorflow\python\ops\standard_ops.py:
+  Line 92: from tensorflow.python.ops.state_ops import scatter_div
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0195-161a0b4bb7be\tensorflow\python\ops\resource_variable_ops.py:
+  Line 978:   def scatter_div(self, sparse_delta, use_locking=False, name=None):
+
+  Line 994:     return self._lazy_read(gen_resource_variable_ops.resource_scatter_div(
+
+  Line 2006:   def scatter_div(self, sparse_delta, use_locking=False, name=None):
+
+  Line 2008:       return super(_UnreadVariable, self).scatter_div(sparse_delta, use_locking,
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0195-161a0b4bb7be\tensorflow\python\keras\mixed_precision\experimental\autocast_variable_test.py:
+  Line 213:             self.assertAllEqual(evaluate(x.scatter_div(slices(2., 1))), [7, 8])
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0195-161a0b4bb7be\tensorflow\python\keras\mixed_precision\experimental\autocast_variable.py:
+  Line 223:   def scatter_div(self, sparse_delta, use_locking=False, name=None):
+
+  Line 224:     var = self._variable.scatter_div(sparse_delta, use_locking, name)
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0195-161a0b4bb7be\tensorflow\python\kernel_tests\scatter_ops_test.py:
+  Line 112:     state_ops.scatter_div: _NumpyDiv,
+
+  Line 122:     state_ops.scatter_div: _NumpyDivScalar,
+
+  Line 192:     if tf_scatter != state_ops.scatter_div:
+
+  Line 213:     self._VariableRankTests(state_ops.scatter_div, False)
+
+  Line 231:     self._VariableRankTests(state_ops.scatter_div, True)
+
+  Line 252:     self._VariableRankTests(state_ops.scatter_div, False, True)
+
+  Line 270:     self._VariableRankTests(state_ops.scatter_div, True, True)
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0195-161a0b4bb7be\tensorflow\python\kernel_tests\resource_variable_ops_test.py:
+  Line 423:         resource_variable_ops.resource_scatter_div(
+
+  Line 534:         resource_variable_ops.resource_scatter_div(
+
+  Line 622:         v.scatter_div(ops.IndexedSlices(indices=[1], values=[2.0])))
+
+  Line 1007:     assert_eq(var.scatter_div(slices).scatter_div(slices), [3., 2.])
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0195-161a0b4bb7be\tensorflow\tools\api\golden\v1\tensorflow.pbtxt:
+  Line 1996:     name: "scatter_div"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0195-161a0b4bb7be\tensorflow\compiler\tests\variable_ops_test.py:
+  Line 268:           resource_variable_ops.resource_scatter_div(
+
+  Line 359:           resource_variable_ops.resource_scatter_div(
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0195-161a0b4bb7be\tensorflow\compiler\tf2xla\kernels\variable_ops.cc:
+  Line 262: class ResourceScatterUpdateOp : public ResourceScatterOp {
+
+  Line 264:   explicit ResourceScatterUpdateOp(OpKernelConstruction* context)
+
+  Line 268: REGISTER_XLA_OP(Name("ResourceScatterUpdate"), ResourceScatterUpdateOp);
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0195-161a0b4bb7be\tensorflow\compiler\mlir\tensorflow\transforms\decompose_resource_ops.td:
+  Line 315:   (TF_ResourceScatterUpdateOp:$src_op $resource, $indices, $updates),
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0195-161a0b4bb7be\tensorflow\compiler\mlir\tensorflow\ir\tf_generated_ops.td:
+  Line 7456: def TF_ResourceScatterUpdateOp : TF_Op<"ResourceScatterUpdate", []> {
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0195-161a0b4bb7be\tensorflow\core\kernels\resource_variable_ops.cc:
+  Line 848: class ResourceScatterUpdateOp : public OpKernel {
+
+  Line 850:   explicit ResourceScatterUpdateOp(OpKernelConstruction* c) : OpKernel(c) {
+
+  Line 956:       ResourceScatterUpdateOp<dev##Device, type, index_type, op>)
+
+  Line 1011:                         ResourceScatterUpdateOp<GPUDevice, Variant, int32,
+
+  Line 1018:                         ResourceScatterUpdateOp<GPUDevice, bool, int32,
+
+  Line 1026:                         ResourceScatterUpdateOp<GPUDevice, Variant, int64,
+
+tokens used
+input: 348
+cache read: 8,704
+cache write: 0
+output: 153
+reasoning output: 0
+
+The C++ kernel is present in the target at the expected path. The Python sharded-variable scatter test from the newer release does not exist in TensorFlow 2.3.4, so I’ll only port the kernel-side security check unless another equivalent test location appears.
+
+tool: grep
+{
+  "pattern": "test_scatter_ops_even_partition|ShardedVariableTest|class ShardedVariableTest",
+  "path": "tensorflow/python",
+  "include": "*.py"
+}
+Found 1 matches
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0195-161a0b4bb7be\tensorflow\python\distribute\sharded_variable_test.py:
+  Line 31: class ShardedVariableTest(test.TestCase):
+
+tool: viewcode
+{
+  "ref": "161a0b4bb7beac223400ecd248d1494e0e5b2711",
+  "path": "tensorflow/core/kernels/resource_variable_ops.cc",
+  "startline": 790,
+  "endline": 940
+}
+Here are lines 790 through 940.
+
+#undef REGISTER_GATHER_FULL
+
+template <typename Device, typename T, typename Index>
+class ResourceGatherNdOp : public OpKernel {
+ public:
+  explicit ResourceGatherNdOp(OpKernelConstruction* c) : OpKernel(c) {}
+
+  void Compute(OpKernelContext* c) override {
+    core::RefCountPtr<Var> v;
+    OP_REQUIRES_OK(c, LookupResource(c, HandleFromInput(c, 0), &v));
+    OP_REQUIRES_OK(c, EnsureSparseVariableAccess<Device, T>(c, v.get()));
+    // NOTE: We hold the lock for the whole gather operation instead
+    // of increasing the reference count of v->tensor() to avoid a
+    // situation where a write to the same variable will see a
+    // reference count greater than one and make a copy of the
+    // (potentially very large) tensor buffer.
+    tf_shared_lock ml(*v->mu());
+    const Tensor& params = *v->tensor();
+    const Tensor& indices = c->input(1);
+
+    Tensor out;
+    OP_REQUIRES_OK(
+        c, functor::DoGatherNd<Device, T, Index>(c, params, indices, &out));
+    c->set_output(0, out);
+  }
+};
+
+#define REGISTER_GATHER_ND_FULL(dev, type, index_type)                 \
+  REGISTER_KERNEL_BUILDER(Name("ResourceGatherNd")                     \
+                              .Device(DEVICE_##dev)                    \
+                              .HostMemory("resource")                  \
+                              .TypeConstraint<type>("dtype")           \
+                              .TypeConstraint<index_type>("Tindices"), \
+                          ResourceGatherNdOp<dev##Device, type, index_type>)
+
+#define REGISTER_GATHER_ND_ALL_INDICES(dev, type) \
+  REGISTER_GATHER_ND_FULL(dev, type, int32);      \
+  REGISTER_GATHER_ND_FULL(dev, type, int64)
+
+#define REGISTER_GATHER_ND_CPU(type) REGISTER_GATHER_ND_ALL_INDICES(CPU, type)
+
+// Registration of the CPU implementations.
+TF_CALL_ALL_TYPES(REGISTER_GATHER_ND_CPU);
+
+// Registers GPU kernels.
+#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+#define REGISTER_GATHER_ND_GPU(type) REGISTER_GATHER_ND_ALL_INDICES(GPU, type)
+
+TF_CALL_GPU_NUMBER_TYPES(REGISTER_GATHER_ND_GPU);
+
+#endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+
+#undef REGISTER_GATHER_ND_CPU
+#undef REGISTER_GATHER_ND_GPU
+#undef REGISTER_GATHER_ND_ALL_INDICES
+#undef REGISTER_GATHER_ND_FULL
+
+template <typename Device, typename T, typename Index, scatter_op::UpdateOp op>
+class ResourceScatterUpdateOp : public OpKernel {
+ public:
+  explicit ResourceScatterUpdateOp(OpKernelConstruction* c) : OpKernel(c) {
+    // We use the same kernel for many operations.
+    // Each operation has a different set of attributes defined in its nodes.
+    Status s = c->GetAttr("use_locking", &use_exclusive_lock_);
+    if (!s.ok()) {
+      use_exclusive_lock_ = false;
+    }
+  }
+
+  void Compute(OpKernelContext* c) override {
+    core::RefCountPtr<Var> v;
+    OP_REQUIRES_OK(c, LookupResource(c, HandleFromInput(c, 0), &v));
+    OP_REQUIRES_OK(c, EnsureSparseVariableAccess<Device, T>(c, v.get()));
+    const bool is_non_pod_dtype = c->input_dtype(0) == DT_RESOURCE ||
+                                  c->input_dtype(0) == DT_STRING ||
+                                  c->input_dtype(0) == DT_VARIANT;
+    if (is_non_pod_dtype || use_exclusive_lock_) {
+      mutex_lock ml(*v->mu());
+      DoCompute(c);
+    } else {
+      // For POD dtypes, we can safely run the update without the mutex.
+      tf_shared_lock ml(*v->mu());
+      DoCompute(c);
+    }
+  }
+
+ private:
+  bool use_exclusive_lock_;
+
+  void DoCompute(OpKernelContext* c) {
+    core::RefCountPtr<Var> v;
+    OP_REQUIRES_OK(c, LookupResource(c, HandleFromInput(c, 0), &v));
+    Tensor* params = v->tensor();
+    const Tensor& indices = c->input(1);
+    const Tensor& updates = c->input(2);
+
+    // Check that rank(updates.shape) = rank(indices.shape + params.shape[1:])
+    OP_REQUIRES(c,
+                updates.dims() == 0 ||
+                    updates.dims() == indices.dims() + params->dims() - 1,
+                errors::InvalidArgument(
+                    "Must have updates.shape = indices.shape + "
+                    "params.shape[1:] or updates.shape = [], got ",
+                    "updates.shape ", updates.shape().DebugString(),
+                    ", indices.shape ", indices.shape().DebugString(),
+                    ", params.shape ", params->shape().DebugString()));
+
+    // Check that we have enough index space
+    const int64 N_big = indices.NumElements();
+    OP_REQUIRES(
+        c, N_big <= std::numeric_limits<Index>::max(),
+        errors::InvalidArgument("indices has too many elements for ",
+                                DataTypeString(DataTypeToEnum<Index>::v()),
+                                " indexing: ", N_big, " > ",
+                                std::numeric_limits<Index>::max()));
+    const Index N = static_cast<Index>(N_big);
+    OP_REQUIRES(
+        c, params->dim_size(0) <= std::numeric_limits<Index>::max(),
+        errors::InvalidArgument("params.shape[0] too large for ",
+                                DataTypeString(DataTypeToEnum<Index>::v()),
+                                " indexing: ", params->dim_size(0), " > ",
+                                std::numeric_limits<Index>::max()));
+
+    if (N > 0) {
+      auto indices_flat = indices.flat<Index>();
+      auto params_flat = params->flat_outer_dims<T>();
+      if (TensorShapeUtils::IsScalar(updates.shape())) {
+        const auto update = updates.scalar<T>();
+
+        functor::ScatterScalarFunctor<Device, T, Index, op> functor;
+        const Index bad_i = functor(c, c->template eigen_device<Device>(),
+                                    params_flat, update, indices_flat);
+        OP_REQUIRES(c, bad_i < 0,
+                    errors::InvalidArgument(
+                        "indices", SliceDebugString(indices.shape(), bad_i),
+                        " = ", indices_flat(bad_i), " is not in [0, ",
+                        params->dim_size(0), ")"));
+      } else {
+        int64 num_updates = updates.NumElements();
+        OP_REQUIRES(c, num_updates % N == 0,
+                    errors::InvalidArgument(
+                        "shape of indices (", indices.shape().DebugString(),
+                        ") is not compatible with the shape of updates (",
+                        updates.shape().DebugString(), ")"));
+        auto updates_flat = updates.shaped<T, 2>({N, num_updates / N});
+
+        functor::ScatterFunctor<Device, T, Index, op> functor;
+        const Index bad_i = functor(c, c->template eigen_device<Device>(),
+                                    params_flat, updates_flat, indices_flat);
+        OP_REQUIRES(c, bad_i < 0,
+                    errors::InvalidArgument(
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: viewcode
+{
+  "ref": "161a0b4bb7beac223400ecd248d1494e0e5b2711",
+  "path": "tensorflow/core/kernels/resource_variable_ops.cc",
+  "startline": 940,
+  "endline": 1045
+}
+This file only has 1039 lines. Here are lines 940 through 1039.
+
+                    errors::InvalidArgument(
+                        "indices", SliceDebugString(indices.shape(), bad_i),
+                        " = ", indices_flat(bad_i), " is not in [0, ",
+                        params->dim_size(0), ")"));
+      }
+    }
+  }
+};
+
+#define REGISTER_SCATTER_KERNEL_INDEX(type, index_type, dev, name, op) \
+  REGISTER_KERNEL_BUILDER(                                             \
+      Name(name)                                                       \
+          .Device(DEVICE_##dev)                                        \
+          .HostMemory("resource")                                      \
+          .TypeConstraint<type>("dtype")                               \
+          .TypeConstraint<index_type>("Tindices"),                     \
+      ResourceScatterUpdateOp<dev##Device, type, index_type, op>)
+
+#define REGISTER_SCATTER_KERNEL(type, dev, name, op)         \
+  REGISTER_SCATTER_KERNEL_INDEX(type, int32, dev, name, op); \
+  REGISTER_SCATTER_KERNEL_INDEX(type, int64, dev, name, op);
+
+#define REGISTER_SCATTER_ARITHMETIC(type, dev)                \
+  REGISTER_SCATTER_KERNEL(type, dev, "ResourceScatterAdd",    \
+                          scatter_op::UpdateOp::ADD);         \
+  REGISTER_SCATTER_KERNEL(type, dev, "ResourceScatterSub",    \
+                          scatter_op::UpdateOp::SUB);         \
+  REGISTER_SCATTER_KERNEL(type, dev, "ResourceScatterMul",    \
+                          scatter_op::UpdateOp::MUL);         \
+  REGISTER_SCATTER_KERNEL(type, dev, "ResourceScatterDiv",    \
+                          scatter_op::UpdateOp::DIV);         \
+  REGISTER_SCATTER_KERNEL(type, dev, "ResourceScatterUpdate", \
+                          scatter_op::UpdateOp::ASSIGN);
+#define REGISTER_SCATTER_MINMAX(type, dev)                 \
+  REGISTER_SCATTER_KERNEL(type, dev, "ResourceScatterMin", \
+                          scatter_op::UpdateOp::MIN);      \
+  REGISTER_SCATTER_KERNEL(type, dev, "ResourceScatterMax", \
+                          scatter_op::UpdateOp::MAX);
+
+// Registers CPU kernels.
+#define REGISTER_SCATTER_ARITHMETIC_CPU(type) \
+  REGISTER_SCATTER_ARITHMETIC(type, CPU);
+#define REGISTER_SCATTER_MINMAX_CPU(type) REGISTER_SCATTER_MINMAX(type, CPU);
+
+TF_CALL_NUMBER_TYPES(REGISTER_SCATTER_ARITHMETIC_CPU);
+TF_CALL_REAL_NUMBER_TYPES(REGISTER_SCATTER_MINMAX_CPU);
+
+REGISTER_SCATTER_KERNEL(tstring, CPU, "ResourceScatterUpdate",
+                        scatter_op::UpdateOp::ASSIGN);
+REGISTER_SCATTER_KERNEL(bool, CPU, "ResourceScatterUpdate",
+                        scatter_op::UpdateOp::ASSIGN);
+REGISTER_SCATTER_KERNEL(Variant, CPU, "ResourceScatterUpdate",
+                        scatter_op::UpdateOp::ASSIGN);
+
+// Registers GPU kernels.
+#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+#define REGISTER_SCATTER_ARITHMETIC_GPU(type) \
+  REGISTER_SCATTER_ARITHMETIC(type, GPU);
+#define REGISTER_SCATTER_MINMAX_GPU(type) REGISTER_SCATTER_MINMAX(type, GPU);
+
+#define REGISTER_SCATTER_UPDATE_GPU(type) REGISTER_SCATTER_UPDATE(type, GPU);
+
+TF_CALL_GPU_NUMBER_TYPES_NO_HALF(REGISTER_SCATTER_ARITHMETIC_GPU);
+TF_CALL_GPU_NUMBER_TYPES_NO_HALF(REGISTER_SCATTER_MINMAX_GPU);
+
+REGISTER_KERNEL_BUILDER(Name("ResourceScatterUpdate")
+                            .Device(DEVICE_GPU)
+                            .HostMemory("resource")
+                            .HostMemory("indices")
+                            .TypeConstraint<Variant>("dtype")
+                            .TypeConstraint<int32>("Tindices"),
+                        ResourceScatterUpdateOp<GPUDevice, Variant, int32,
+                                                scatter_op::UpdateOp::ASSIGN>)
+REGISTER_KERNEL_BUILDER(Name("ResourceScatterUpdate")
+                            .Device(DEVICE_GPU)
+                            .HostMemory("resource")
+                            .TypeConstraint<bool>("dtype")
+                            .TypeConstraint<int32>("Tindices"),
+                        ResourceScatterUpdateOp<GPUDevice, bool, int32,
+                                                scatter_op::UpdateOp::ASSIGN>)
+REGISTER_KERNEL_BUILDER(Name("ResourceScatterUpdate")
+                            .Device(DEVICE_GPU)
+                            .HostMemory("resource")
+                            .HostMemory("indices")
+                            .TypeConstraint<Variant>("dtype")
+                            .TypeConstraint<int64>("Tindices"),
+                        ResourceScatterUpdateOp<GPUDevice, Variant, int64,
+                                                scatter_op::UpdateOp::ASSIGN>)
+
+#endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+
+#undef REGISTER_SCATTER_ARITHMETIC
+#undef REGISTER_SCATTER_ARITHMETIC_CPU
+#undef REGISTER_SCATTER_MINMAX
+#undef REGISTER_SCATTER_MINMAX_CPU
+#undef REGISTER_SCATTER_KERNEL
+#undef REGISTER_SCATTER_KERNEL_INDEX
+
+}  // namespace tensorflow
+
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tokens used
+input: 4,512
+cache read: 8,704
+cache write: 0
+output: 239
+reasoning output: 8
+
+I found no target equivalent for the newer `test_scatter_ops_even_partition` hunk: the 2.3.4 `sharded_variable_test.py` only contains save/restore and validation tests. I’m applying the kernel guard at the same pre-update validation point in `resource_variable_ops.cc`.
+
+tool: validate
+{
+  "ref": "161a0b4bb7beac223400ecd248d1494e0e5b2711",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/resource_variable_ops.cc b/tensorflow/core/kernels/resource_variable_ops.cc\n--- a/tensorflow/core/kernels/resource_variable_ops.cc\n+++ b/tensorflow/core/kernels/resource_variable_ops.cc\n@@ -842,6 +842,35 @@ TF_CALL_GPU_NUMBER_TYPES(REGISTER_GATHER_ND_GPU);\n #undef REGISTER_GATHER_ND_ALL_INDICES\n #undef REGISTER_GATHER_ND_FULL\n \n+namespace {\n+\n+template <typename Device>\n+bool isCPUDevice() {\n+  return false;\n+}\n+\n+template <>\n+bool isCPUDevice<CPUDevice>() {\n+  return true;\n+}\n+\n+template <typename T>\n+bool ValidateInput(const Tensor& updates) {\n+  const auto updates_flat = updates.flat<T>();\n+  const T zero(0);\n+  for (int i = 0; i < updates.NumElements(); i++) {\n+    if (updates_flat(i) == zero) return false;\n+  }\n+  return true;\n+}\n+\n+template <>\n+bool ValidateInput<Variant>(const Tensor& updates) {\n+  return true;\n+}\n+\n+}  // namespace\n+\n template <typename Device, typename T, typename Index, scatter_op::UpdateOp op>\n class ResourceScatterUpdateOp : public OpKernel {\n  public:\n@@ -899,6 +928,12 @@ class ResourceScatterUpdateOp : public OpKernel {\n                                 \" indexing: \", params->dim_size(0), \" > \",\n                                 std::numeric_limits<Index>::max()));\n \n+    // Prevent division by 0\n+    if (isCPUDevice<Device>() && op == tensorflow::scatter_op::UpdateOp::DIV) {\n+      OP_REQUIRES(c, ValidateInput<T>(updates),\n+                  errors::InvalidArgument(\"updates must not contain 0\"));\n+    }\n+\n     if (N > 0) {\n       auto indices_flat = indices.flat<Index>();\n       auto params_flat = params->flat_outer_dims<T>();\n"
+}
+Patch applied successfully
+
+tokens used
+input: 3,359
+cache read: 12,800
+cache write: 0
+output: 599
+reasoning output: 80
+
+The backport hunk validates cleanly against the target base, so I’m applying it directly.
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/kernels/resource_variable_ops.cc\n@@\n #undef REGISTER_GATHER_ND_ALL_INDICES\n #undef REGISTER_GATHER_ND_FULL\n \n+namespace {\n+\n+template <typename Device>\n+bool isCPUDevice() {\n+  return false;\n+}\n+\n+template <>\n+bool isCPUDevice<CPUDevice>() {\n+  return true;\n+}\n+\n+template <typename T>\n+bool ValidateInput(const Tensor& updates) {\n+  const auto updates_flat = updates.flat<T>();\n+  const T zero(0);\n+  for (int i = 0; i < updates.NumElements(); i++) {\n+    if (updates_flat(i) == zero) return false;\n+  }\n+  return true;\n+}\n+\n+template <>\n+bool ValidateInput<Variant>(const Tensor& updates) {\n+  return true;\n+}\n+\n+}  // namespace\n+\n template <typename Device, typename T, typename Index, scatter_op::UpdateOp op>\n class ResourceScatterUpdateOp : public OpKernel {\n  public:\n@@\n                                 \" indexing: \", params->dim_size(0), \" > \",\n                                 std::numeric_limits<Index>::max()));\n \n+    // Prevent division by 0\n+    if (isCPUDevice<Device>() && op == tensorflow::scatter_op::UpdateOp::DIV) {\n+      OP_REQUIRES(c, ValidateInput<T>(updates),\n+                  errors::InvalidArgument(\"updates must not contain 0\"));\n+    }\n+\n     if (N > 0) {\n       auto indices_flat = indices.flat<Index>();\n       auto params_flat = params->flat_outer_dims<T>();\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/kernels/resource_variable_ops.cc
+
+tokens used
+input: 979
+cache read: 15,872
+cache write: 0
+output: 457
+reasoning output: 8
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Locate target code for ResourceScatterUpdateOp and sharded variable test hunk",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Prepare and validate minimal backport hunks",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Apply source changes and capture final diff",
+      "status": "in_progress",
+      "priority": "high"
+    }
+  ]
+}
+[
+  {
+    "content": "Locate target code for ResourceScatterUpdateOp and sharded variable test hunk",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Prepare and validate minimal backport hunks",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Apply source changes and capture final diff",
+    "status": "in_progress",
+    "priority": "high"
+  }
+]
+
+tokens used
+input: 1,471
+cache read: 15,872
+cache write: 0
+output: 84
+reasoning output: 0
+
+The source change is applied. I’ll inspect the resulting diff to ensure only the intended kernel file changed.
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/kernels/resource_variable_ops.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0195-161a0b4bb7be"
+}
+warning: in the working copy of 'tensorflow/core/kernels/resource_variable_ops.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/kernels/resource_variable_ops.cc b/tensorflow/core/kernels/resource_variable_ops.cc
+index b9c883c7e2..e056d9cb0f 100644
+--- a/tensorflow/core/kernels/resource_variable_ops.cc
++++ b/tensorflow/core/kernels/resource_variable_ops.cc
+@@ -844,6 +844,35 @@ TF_CALL_GPU_NUMBER_TYPES(REGISTER_GATHER_ND_GPU);
+ #undef REGISTER_GATHER_ND_ALL_INDICES
+ #undef REGISTER_GATHER_ND_FULL
+ 
++namespace {
++
++template <typename Device>
++bool isCPUDevice() {
++  return false;
++}
++
++template <>
++bool isCPUDevice<CPUDevice>() {
++  return true;
++}
++
++template <typename T>
++bool ValidateInput(const Tensor& updates) {
++  const auto updates_flat = updates.flat<T>();
++  const T zero(0);
++  for (int i = 0; i < updates.NumElements(); i++) {
++    if (updates_flat(i) == zero) return false;
++  }
++  return true;
++}
++
++template <>
++bool ValidateInput<Variant>(const Tensor& updates) {
++  return true;
++}
++
++}  // namespace
++
+ template <typename Device, typename T, typename Index, scatter_op::UpdateOp op>
+ class ResourceScatterUpdateOp : public OpKernel {
+  public:
+@@ -910,6 +939,12 @@ class ResourceScatterUpdateOp : public OpKernel {
+                                 " indexing: ", params->dim_size(0), " > ",
+                                 std::numeric_limits<Index>::max()));
+ 
++    // Prevent division by 0
++    if (isCPUDevice<Device>() && op == tensorflow::scatter_op::UpdateOp::DIV) {
++      OP_REQUIRES(c, ValidateInput<T>(updates),
++                  errors::InvalidArgument("updates must not contain 0"));
++    }
++
+     if (N > 0) {
+       auto indices_flat = indices.flat<Index>();
+       auto params_flat = params->flat_outer_dims<T>();
+
+tool: bash
+{
+  "command": "git status --short",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0195-161a0b4bb7be"
+}
+ M tensorflow/core/kernels/resource_variable_ops.cc
+
+tokens used
+input: 649
+cache read: 16,896
+cache write: 0
+output: 177
+reasoning output: 17
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Locate target code for ResourceScatterUpdateOp and sharded variable test hunk",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Prepare and validate minimal backport hunks",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Apply source changes and capture final diff",
+      "status": "completed",
+      "priority": "high"
+    }
+  ]
+}
+[
+  {
+    "content": "Locate target code for ResourceScatterUpdateOp and sharded variable test hunk",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Prepare and validate minimal backport hunks",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Apply source changes and capture final diff",
+    "status": "completed",
+    "priority": "high"
+  }
+]
+
+tokens used
+input: 1,348
+cache read: 16,896
+cache write: 0
+output: 85
+reasoning output: 23
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/kernels/resource_variable_ops.cc b/tensorflow/core/kernels/resource_variable_ops.cc
+    index b9c883c7e2..e056d9cb0f 100644
+    --- a/tensorflow/core/kernels/resource_variable_ops.cc
+    +++ b/tensorflow/core/kernels/resource_variable_ops.cc
+    @@ -844,6 +844,35 @@ TF_CALL_GPU_NUMBER_TYPES(REGISTER_GATHER_ND_GPU);
+     #undef REGISTER_GATHER_ND_ALL_INDICES
+     #undef REGISTER_GATHER_ND_FULL
+     
+    +namespace {
+    +
+    +template <typename Device>
+    +bool isCPUDevice() {
+    +  return false;
+    +}
+    +
+    +template <>
+    +bool isCPUDevice<CPUDevice>() {
+    +  return true;
+    +}
+    +
+    +template <typename T>
+    +bool ValidateInput(const Tensor& updates) {
+    +  const auto updates_flat = updates.flat<T>();
+    +  const T zero(0);
+    +  for (int i = 0; i < updates.NumElements(); i++) {
+    +    if (updates_flat(i) == zero) return false;
+    +  }
+    +  return true;
+    +}
+    +
+    +template <>
+    +bool ValidateInput<Variant>(const Tensor& updates) {
+    +  return true;
+    +}
+    +
+    +}  // namespace
+    +
+     template <typename Device, typename T, typename Index, scatter_op::UpdateOp op>
+     class ResourceScatterUpdateOp : public OpKernel {
+      public:
+    @@ -910,6 +939,12 @@ class ResourceScatterUpdateOp : public OpKernel {
+                                     " indexing: ", params->dim_size(0), " > ",
+                                     std::numeric_limits<Index>::max()));
+     
+    +    // Prevent division by 0
+    +    if (isCPUDevice<Device>() && op == tensorflow::scatter_op::UpdateOp::DIV) {
+    +      OP_REQUIRES(c, ValidateInput<T>(updates),
+    +                  errors::InvalidArgument("updates must not contain 0"));
+    +    }
+    +
+         if (N > 0) {
+           auto indices_flat = indices.flat<Index>();
+           auto params_flat = params->flat_outer_dims<T>();
+  notes: >
+    Backported the CPU ResourceScatterDiv zero-update validation; the newer sharded_variable scatter test has no equivalent in TensorFlow 2.3.4.
+```
+
+tokens used
+input: 549
+cache read: 17,920
+cache write: 0
+output: 548
+reasoning output: 0

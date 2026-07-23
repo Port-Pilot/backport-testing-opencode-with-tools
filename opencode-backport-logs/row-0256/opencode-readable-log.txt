@@ -1,0 +1,259 @@
+I’ll locate the older 2.6.4 implementation of `SummaryTensorOpV2`, compare the local context to the provided source hunk, validate the minimal equivalent hunk, then apply only that change.
+
+tool: viewcode
+{
+  "ref": "75867f82431f8801f26d651ca567a3ff1b0d39c3",
+  "path": "tensorflow/core/kernels/summary_tensor_op.cc",
+  "startline": 1,
+  "endline": 90
+}
+Here are lines 1 through 90.
+
+/* Copyright 2016 The TensorFlow Authors. All Rights Reserved.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+==============================================================================*/
+
+#include "tensorflow/core/framework/op_kernel.h"
+#include "tensorflow/core/framework/register_types.h"
+#include "tensorflow/core/framework/resource_mgr.h"
+#include "tensorflow/core/framework/summary.pb.h"
+#include "tensorflow/core/framework/tensor.pb.h"
+#include "tensorflow/core/lib/core/errors.h"
+#include "tensorflow/core/platform/logging.h"
+#include "tensorflow/core/platform/protobuf.h"
+
+namespace tensorflow {
+
+template <typename T>
+class SummaryTensorOpV2 : public OpKernel {
+ public:
+  explicit SummaryTensorOpV2(OpKernelConstruction* context)
+      : OpKernel(context) {}
+
+  void Compute(OpKernelContext* c) override {
+    const Tensor& tag = c->input(0);
+    OP_REQUIRES(c, TensorShapeUtils::IsScalar(tag.shape()),
+                errors::InvalidArgument("tag must be scalar"));
+    const Tensor& tensor = c->input(1);
+    const Tensor& serialized_summary_metadata_tensor = c->input(2);
+
+    Summary s;
+    Summary::Value* v = s.add_value();
+    v->set_tag(string(tag.scalar<tstring>()()));  // NOLINT
+
+    if (tensor.dtype() == DT_STRING) {
+      // tensor_util.makeNdarray doesn't work for strings in tensor_content
+      tensor.AsProtoField(v->mutable_tensor());
+    } else {
+      tensor.AsProtoTensorContent(v->mutable_tensor());
+    }
+
+    ParseFromTString(serialized_summary_metadata_tensor.scalar<tstring>()(),
+                     v->mutable_metadata());
+
+    Tensor* summary_tensor = nullptr;
+    OP_REQUIRES_OK(c, c->allocate_output(0, TensorShape({}), &summary_tensor));
+    CHECK(SerializeToTString(s, &summary_tensor->scalar<tstring>()()));
+  }
+};
+
+#define REGISTER(T)                                                      \
+  REGISTER_KERNEL_BUILDER(                                               \
+      Name("TensorSummaryV2").Device(DEVICE_CPU).TypeConstraint<T>("T"), \
+      SummaryTensorOpV2<T>);
+
+TF_CALL_ALL_TYPES(REGISTER)
+
+#undef REGISTER
+
+// NOTE(chizeng): We are phasing out the use of SummaryTensorOp in favor of
+// SummaryTensorOpV2. This is because SummaryTensorOpV2 allows the callers to
+// pass a tag (more consistent with other summaries) as well as serialized
+// summary metadata used by plugins (which lets TensorBoard determine which
+// events are relevant to which plugins).
+template <typename T>
+class SummaryTensorOp : public OpKernel {
+ public:
+  explicit SummaryTensorOp(OpKernelConstruction* context) : OpKernel(context) {}
+
+  void Compute(OpKernelContext* c) override {
+    const Tensor& tensor = c->input(0);
+
+    Summary s;
+    Summary::Value* v = s.add_value();
+    v->set_node_name(c->op_kernel().name());
+
+    if (tensor.dtype() == DT_STRING) {
+      // tensor_util.makeNdarray doesn't work for strings in tensor_content
+      tensor.AsProtoField(v->mutable_tensor());
+    } else {
+      tensor.AsProtoTensorContent(v->mutable_tensor());
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: git_show
+{
+  "ref": "290bb05c80c327ed74fae1d089f1001b1e2a4ef7",
+  "context": "class SummaryTensorOpV2 : public OpKernel {\n public:\n  explicit SummaryTensorOpV2(OpKernelConstruction* c) : OpKernel(c) {}\n\n  void Compute(OpKernelContext* c) override {\n    OP_REQUIRES(c, TensorShapeUtils::IsScalar(c->input(0).shape()),\n                errors::InvalidArgument(\"tag must be scalar\"));\n    const Tensor& tensor = c->input(1);\n    const Tensor& serialized_summary_metadata_tensor = c->input(2);\n\n    Summary s;"
+}
+commit 290bb05c80c327ed74fae1d089f1001b1e2a4ef7
+Author: Alan Liu <liualan@google.com>
+Date:   Thu Apr 28 11:02:25 2022 -0700
+
+    Fix tf.raw_ops.TensorSummaryV2 vulnerability with invalid serialized_summary_metadata.
+    
+    Check that input is actually a scalar before treating it as such.
+    
+    PiperOrigin-RevId: 445197183
+
+ tensorflow/core/kernels/summary_tensor_op.cc | 4 ++++
+ 1 file changed, 4 insertions(+)
+This commit shows that there is a high probability that this code is new, so the corresponding code segment cannot be found in the old version.
+You can call `viewcode` and `locate_symbol` to further check the results step by step. For newly introduced code, we consider that this hunk `need not ported`.
+
+tool: grep
+{
+  "pattern": "class SummaryTensorOpV2",
+  "path": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0256-75867f82431f",
+  "include": "*.cc"
+}
+Found 2 matches
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0256-75867f82431f\tensorflow\core\kernels\summary_tensor_op.cc:
+  Line 28: class SummaryTensorOpV2 : public OpKernel {
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0256-75867f82431f\tensorflow\core\kernels\summary_tensor_op_test.cc:
+  Line 49: class SummaryTensorOpV2Test : public OpsTestBase {
+
+tokens used
+input: 3,714
+cache read: 4,608
+cache write: 0
+output: 354
+reasoning output: 0
+
+The target file has the same `SummaryTensorOpV2` logic and the vulnerable scalar access is present, so this hunk maps directly to 2.6.4 with only local constructor-name context differences.
+
+tool: validate
+{
+  "ref": "75867f82431f8801f26d651ca567a3ff1b0d39c3",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/summary_tensor_op.cc b/tensorflow/core/kernels/summary_tensor_op.cc\n--- a/tensorflow/core/kernels/summary_tensor_op.cc\n+++ b/tensorflow/core/kernels/summary_tensor_op.cc\n@@ -36,6 +36,10 @@ class SummaryTensorOpV2 : public OpKernel {\n     const Tensor& tensor = c->input(1);\n     const Tensor& serialized_summary_metadata_tensor = c->input(2);\n+    OP_REQUIRES(\n+        c,\n+        TensorShapeUtils::IsScalar(serialized_summary_metadata_tensor.shape()),\n+        errors::InvalidArgument(\"serialized_summary_metadata must be scalar\"));\n \n     Summary s;\n     Summary::Value* v = s.add_value();\n"
+}
+This patch does not apply to the target TensorFlow ref.
+Git apply output:
+error: corrupt patch at line 14
+Touched files:
+- tensorflow/core/kernels/summary_tensor_op.cc
+Fix the patch context against the older TensorFlow version, then run validate again in hunk mode.
+
+tokens used
+input: 9,825
+cache read: 0
+cache write: 0
+output: 274
+reasoning output: 19
+
+The first validation patch was malformed because the hunk counts did not match the supplied context. I’m validating the same source change with corrected unified-diff context before editing.
+
+tool: validate
+{
+  "ref": "75867f82431f8801f26d651ca567a3ff1b0d39c3",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/summary_tensor_op.cc b/tensorflow/core/kernels/summary_tensor_op.cc\n--- a/tensorflow/core/kernels/summary_tensor_op.cc\n+++ b/tensorflow/core/kernels/summary_tensor_op.cc\n@@ -33,8 +33,12 @@ class SummaryTensorOpV2 : public OpKernel {\n     OP_REQUIRES(c, TensorShapeUtils::IsScalar(tag.shape()),\n                 errors::InvalidArgument(\"tag must be scalar\"));\n     const Tensor& tensor = c->input(1);\n     const Tensor& serialized_summary_metadata_tensor = c->input(2);\n+    OP_REQUIRES(\n+        c,\n+        TensorShapeUtils::IsScalar(serialized_summary_metadata_tensor.shape()),\n+        errors::InvalidArgument(\"serialized_summary_metadata must be scalar\"));\n \n     Summary s;\n     Summary::Value* v = s.add_value();\n     v->set_tag(string(tag.scalar<tstring>()()));  // NOLINT\n"
+}
+Patch applied successfully
+
+tokens used
+input: 459
+cache read: 9,728
+cache write: 0
+output: 315
+reasoning output: 59
+
+Validation succeeded for the adapted hunk. I’m applying the minimal scalar-shape check in `tensorflow/core/kernels/summary_tensor_op.cc`.
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/kernels/summary_tensor_op.cc\n@@\n     OP_REQUIRES(c, TensorShapeUtils::IsScalar(tag.shape()),\n                 errors::InvalidArgument(\"tag must be scalar\"));\n     const Tensor& tensor = c->input(1);\n     const Tensor& serialized_summary_metadata_tensor = c->input(2);\n+    OP_REQUIRES(\n+        c,\n+        TensorShapeUtils::IsScalar(serialized_summary_metadata_tensor.shape()),\n+        errors::InvalidArgument(\"serialized_summary_metadata must be scalar\"));\n \n     Summary s;\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/kernels/summary_tensor_op.cc
+
+tokens used
+input: 846
+cache read: 9,728
+cache write: 0
+output: 193
+reasoning output: 0
+
+The source change is applied; I’m checking the resulting diff to confirm only the intended hunk changed.
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/kernels/summary_tensor_op.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0256-75867f82431f"
+}
+warning: in the working copy of 'tensorflow/core/kernels/summary_tensor_op.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/kernels/summary_tensor_op.cc b/tensorflow/core/kernels/summary_tensor_op.cc
+index e367045b02..730ef6f38e 100644
+--- a/tensorflow/core/kernels/summary_tensor_op.cc
++++ b/tensorflow/core/kernels/summary_tensor_op.cc
+@@ -36,6 +36,10 @@ class SummaryTensorOpV2 : public OpKernel {
+                 errors::InvalidArgument("tag must be scalar"));
+     const Tensor& tensor = c->input(1);
+     const Tensor& serialized_summary_metadata_tensor = c->input(2);
++    OP_REQUIRES(
++        c,
++        TensorShapeUtils::IsScalar(serialized_summary_metadata_tensor.shape()),
++        errors::InvalidArgument("serialized_summary_metadata must be scalar"));
+ 
+     Summary s;
+     Summary::Value* v = s.add_value();
+
+tokens used
+input: 1,067
+cache read: 9,728
+cache write: 0
+output: 100
+reasoning output: 14
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/kernels/summary_tensor_op.cc b/tensorflow/core/kernels/summary_tensor_op.cc
+    index e367045b02..730ef6f38e 100644
+    --- a/tensorflow/core/kernels/summary_tensor_op.cc
+    +++ b/tensorflow/core/kernels/summary_tensor_op.cc
+    @@ -36,6 +36,10 @@ class SummaryTensorOpV2 : public OpKernel {
+                     errors::InvalidArgument("tag must be scalar"));
+         const Tensor& tensor = c->input(1);
+         const Tensor& serialized_summary_metadata_tensor = c->input(2);
+    +    OP_REQUIRES(
+    +        c,
+    +        TensorShapeUtils::IsScalar(serialized_summary_metadata_tensor.shape()),
+    +        errors::InvalidArgument("serialized_summary_metadata must be scalar"));
+     
+         Summary s;
+         Summary::Value* v = s.add_value();
+  notes: >
+    Added the missing scalar shape validation for serialized_summary_metadata before scalar access in TensorSummaryV2.
+```
+
+tokens used
+input: 1,412
+cache read: 9,728
+cache write: 0
+output: 245
+reasoning output: 17

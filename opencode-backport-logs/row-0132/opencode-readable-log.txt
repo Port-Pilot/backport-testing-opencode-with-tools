@@ -1,0 +1,178 @@
+I’ll inspect the target `while.cc` context, verify the hunk applies cleanly against the specified base, then apply only the minimal guard needed for the backport.
+
+tool: viewcode
+{
+  "ref": "07317a88b432c93465822c27786bcf31cd61a102",
+  "path": "tensorflow/lite/kernels/while.cc",
+  "startline": 120,
+  "endline": 155
+}
+Here are lines 120 through 155.
+
+void Free(TfLiteContext* context, void* buffer) {
+  delete reinterpret_cast<OpData*>(buffer);
+}
+
+TfLiteStatus Prepare(TfLiteContext* context, TfLiteNode* node) {
+  OpData* op_data = reinterpret_cast<OpData*>(node->user_data);
+  int num_inputs = node->inputs->size;
+  // The number of outputs should be the same as number of inputs.
+  TF_LITE_ENSURE_EQ(context, node->outputs->size, num_inputs);
+
+  // Check subgraph indices and get subgraphs.
+  Subgraph* this_subgraph = reinterpret_cast<Subgraph*>(context->impl_);
+  auto* subgraphs = this_subgraph->GetSubgraphs();
+  TF_LITE_ENSURE(context, op_data->cond_subgraph_index < subgraphs->size());
+  TF_LITE_ENSURE(context, op_data->body_subgraph_index < subgraphs->size());
+
+  Subgraph* cond_subgraph = (*subgraphs)[op_data->cond_subgraph_index].get();
+  Subgraph* body_subgraph = (*subgraphs)[op_data->body_subgraph_index].get();
+
+  // Check input & output count of the condition subgraph.
+  TF_LITE_ENSURE_EQ(context, cond_subgraph->inputs().size(), num_inputs);
+  TF_LITE_ENSURE_EQ(context, cond_subgraph->outputs().size(), 1);
+
+  // Check input & output count of the body subgraph.
+  TF_LITE_ENSURE_EQ(context, body_subgraph->inputs().size(), num_inputs);
+  TF_LITE_ENSURE_EQ(context, body_subgraph->outputs().size(), num_inputs);
+
+  // Prepare and check the condition subgraph.
+  TF_LITE_ENSURE_OK(
+      context, CopyTensorsShapeAndType(
+                   context, this_subgraph, TfLiteIntArrayView(node->inputs),
+                   cond_subgraph, cond_subgraph->inputs(), true));
+  TF_LITE_ENSURE_OK(context, cond_subgraph->AllocateTensors());
+  TfLiteTensor* cond_output =
+      cond_subgraph->tensor(cond_subgraph->outputs()[0]);
+  // TODO(ycling): Handle the case the cond subgraph has dynamic tensor outputs.
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: locate_symbol
+{
+  "ref": "07317a88b432c93465822c27786bcf31cd61a102",
+  "symbol": "Prepare"
+}
+tensorflow/core/common_runtime/eager/eager_executor.h:54
+tensorflow/core/distributed_runtime/eager/remote_copy_node.cc:339
+tensorflow/core/distributed_runtime/eager/remote_execute_node.h:75
+tensorflow/core/kernels/cast_op.cc:126
+tensorflow/core/kernels/cast_op.cc:180
+tensorflow/core/kernels/cast_op.cc:263
+tensorflow/core/lib/db/sqlite.cc:163
+tensorflow/core/lib/db/sqlite.cc:170
+tensorflow/lite/delegates/flex/delegate.cc:33
+tensorflow/lite/delegates/flex/delegate_data.cc:30
+tensorflow/lite/delegates/flex/kernel.cc:452
+tensorflow/lite/delegates/gpu/cl/gpu_api_delegate.cc:90
+tensorflow/lite/delegates/gpu/delegate.cc:49
+tensorflow/lite/delegates/gpu/gl_delegate.cc:129
+tensorflow/lite/delegates/gpu/metal_delegate.mm:227
+tensorflow/lite/delegates/nnapi/nnapi_delegate.cc:2972
+tensorflow/lite/delegates/nnapi/nnapi_delegate_kernel.h:276
+tensorflow/lite/experimental/kernels/ctc_beam_search_decoder.cc:55
+tensorflow/lite/experimental/kernels/unidirectional_sequence_gru.cc:123
+tensorflow/lite/experimental/micro/kernels/add.cc:63
+
+tokens used
+input: 3,726
+cache read: 4,608
+cache write: 0
+output: 154
+reasoning output: 0
+
+The target code matches the source patch location directly: both subgraph bounds checks are present and the missing validation belongs immediately after them.
+
+tool: validate
+{
+  "ref": "07317a88b432c93465822c27786bcf31cd61a102",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/lite/kernels/while.cc b/tensorflow/lite/kernels/while.cc\n--- a/tensorflow/lite/kernels/while.cc\n+++ b/tensorflow/lite/kernels/while.cc\n@@ -132,6 +132,8 @@ TfLiteStatus Prepare(TfLiteContext* context, TfLiteNode* node) {\n   auto* subgraphs = this_subgraph->GetSubgraphs();\n   TF_LITE_ENSURE(context, op_data->cond_subgraph_index < subgraphs->size());\n   TF_LITE_ENSURE(context, op_data->body_subgraph_index < subgraphs->size());\n+  TF_LITE_ENSURE(context,\n+                 op_data->cond_subgraph_index != op_data->body_subgraph_index);\n \n   Subgraph* cond_subgraph = (*subgraphs)[op_data->cond_subgraph_index].get();\n   Subgraph* body_subgraph = (*subgraphs)[op_data->body_subgraph_index].get();\n"
+}
+Patch applied successfully
+
+tokens used
+input: 1,608
+cache read: 7,680
+cache write: 0
+output: 304
+reasoning output: 20
+
+The hunk validates against the target base. I’m applying that exact minimal source change now.
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/lite/kernels/while.cc\n@@\n   auto* subgraphs = this_subgraph->GetSubgraphs();\n   TF_LITE_ENSURE(context, op_data->cond_subgraph_index < subgraphs->size());\n   TF_LITE_ENSURE(context, op_data->body_subgraph_index < subgraphs->size());\n+  TF_LITE_ENSURE(context,\n+                 op_data->cond_subgraph_index != op_data->body_subgraph_index);\n \n   Subgraph* cond_subgraph = (*subgraphs)[op_data->cond_subgraph_index].get();\n   Subgraph* body_subgraph = (*subgraphs)[op_data->body_subgraph_index].get();\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/lite/kernels/while.cc
+
+tokens used
+input: 921
+cache read: 8,704
+cache write: 0
+output: 211
+reasoning output: 0
+
+I’ll capture the resulting diff for the final report and confirm only the intended file changed.
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/lite/kernels/while.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0132-07317a88b432"
+}
+warning: in the working copy of 'tensorflow/lite/kernels/while.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/lite/kernels/while.cc b/tensorflow/lite/kernels/while.cc
+index 8951647bf4..b5902706d7 100644
+--- a/tensorflow/lite/kernels/while.cc
++++ b/tensorflow/lite/kernels/while.cc
+@@ -132,6 +132,8 @@ TfLiteStatus Prepare(TfLiteContext* context, TfLiteNode* node) {
+   auto* subgraphs = this_subgraph->GetSubgraphs();
+   TF_LITE_ENSURE(context, op_data->cond_subgraph_index < subgraphs->size());
+   TF_LITE_ENSURE(context, op_data->body_subgraph_index < subgraphs->size());
++  TF_LITE_ENSURE(context,
++                 op_data->cond_subgraph_index != op_data->body_subgraph_index);
+ 
+   Subgraph* cond_subgraph = (*subgraphs)[op_data->cond_subgraph_index].get();
+   Subgraph* body_subgraph = (*subgraphs)[op_data->body_subgraph_index].get();
+
+tool: bash
+{
+  "command": "git status --short",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0132-07317a88b432"
+}
+ M tensorflow/lite/kernels/while.cc
+
+tokens used
+input: 1,159
+cache read: 8,704
+cache write: 0
+output: 170
+reasoning output: 15
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/lite/kernels/while.cc b/tensorflow/lite/kernels/while.cc
+    index 8951647bf4..b5902706d7 100644
+    --- a/tensorflow/lite/kernels/while.cc
+    +++ b/tensorflow/lite/kernels/while.cc
+    @@ -132,6 +132,8 @@ TfLiteStatus Prepare(TfLiteContext* context, TfLiteNode* node) {
+       auto* subgraphs = this_subgraph->GetSubgraphs();
+       TF_LITE_ENSURE(context, op_data->cond_subgraph_index < subgraphs->size());
+       TF_LITE_ENSURE(context, op_data->body_subgraph_index < subgraphs->size());
+    +  TF_LITE_ENSURE(context,
+    +                 op_data->cond_subgraph_index != op_data->body_subgraph_index);
+     
+       Subgraph* cond_subgraph = (*subgraphs)[op_data->cond_subgraph_index].get();
+       Subgraph* body_subgraph = (*subgraphs)[op_data->body_subgraph_index].get();
+  notes: >
+    Added the missing TFLite WHILE Prepare validation that condition and body subgraphs must be distinct.
+```
+
+tokens used
+input: 610
+cache read: 9,728
+cache write: 0
+output: 283
+reasoning output: 0

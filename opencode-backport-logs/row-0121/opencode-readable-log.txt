@@ -1,0 +1,225 @@
+I’ll inspect the target-side SplitV implementation and validate the minimal bounds-check hunk against the specified base before editing.
+
+tool: viewcode
+{
+  "ref": "07317a88b432c93465822c27786bcf31cd61a102",
+  "path": "tensorflow/lite/kernels/split_v.cc",
+  "startline": 70,
+  "endline": 125
+}
+Here are lines 70 through 125.
+
+  } else if (size_splits->type == kTfLiteInt64) {
+    GetSizeSplitsVector<int64_t>(size_splits, &size_splits_vector);
+  } else {
+    context->ReportError(context, "size_splits only support type int32|int64.");
+    return kTfLiteError;
+  }
+
+  int minus_one_index = -1;
+  int64_t size_splits_sum = 0;
+
+  for (int i = 0; i < size_splits_vector.size(); ++i) {
+    if (size_splits_vector.at(i) == -1) {
+      if (minus_one_index == -1) {
+        minus_one_index = i;
+      } else {
+        context->ReportError(context,
+                             "The size_splits contains more than one -1.");
+      }
+    } else {
+      size_splits_sum += size_splits_vector.at(i);
+    }
+  }
+
+  const int input_size = SizeOfDimension(input, axis_value);
+
+  if (minus_one_index != -1) {
+    if (size_splits_sum > input_size) {
+      context->ReportError(
+          context,
+          "The sum of size_splits must be less than the dimension of value.");
+    } else {
+      size_splits_vector[minus_one_index] = input_size - size_splits_sum;
+    }
+  } else if (size_splits_sum != input_size) {
+    context->ReportError(
+        context,
+        "The size_splits must sum to the dimension of value along axis.");
+  }
+
+  for (int i = 0; i < NumOutputs(node); ++i) {
+    TfLiteIntArray* output_dims = TfLiteIntArrayCopy(input->dims);
+    output_dims->data[axis_value] = size_splits_vector.at(i);
+    TfLiteTensor* output = GetOutput(context, node, i);
+    TF_LITE_ENSURE_STATUS(context->ResizeTensor(context, output, output_dims));
+  }
+
+  return kTfLiteOk;
+}
+
+TfLiteStatus Prepare(TfLiteContext* context, TfLiteNode* node) {
+  TF_LITE_ENSURE_EQ(context, NumInputs(node), 3);
+
+  OpContext op_context(context, node);
+
+  TF_LITE_ENSURE_EQ(context, NumOutputs(node), op_context.params->num_splits);
+
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: locate_symbol
+{
+  "ref": "07317a88b432c93465822c27786bcf31cd61a102",
+  "symbol": "ResizeOutputTensors"
+}
+tensorflow/lite/kernels/split.cc:48
+tensorflow/lite/kernels/split.cc:93
+tensorflow/lite/kernels/split.cc:108
+tensorflow/lite/kernels/split_v.cc:58
+tensorflow/lite/kernels/split_v.cc:143
+tensorflow/lite/kernels/split_v.cc:158
+
+tokens used
+input: 3,666
+cache read: 4,608
+cache write: 0
+output: 147
+reasoning output: 0
+
+tool: viewcode
+{
+  "ref": "07317a88b432c93465822c27786bcf31cd61a102",
+  "path": "tensorflow/lite/kernels/split_v.cc",
+  "startline": 45,
+  "endline": 75
+}
+Here are lines 45 through 75.
+
+  }
+  return kTfLiteOk;
+}
+
+template <typename T>
+void GetSizeSplitsVector(const TfLiteTensor* size_splits,
+                         std::vector<int64_t>* size_splits_vector) {
+  const auto num_elements = NumElements(size_splits);
+  for (int i = 0; i < num_elements; ++i) {
+    size_splits_vector->push_back(GetTensorData<T>(size_splits)[i]);
+  }
+}
+
+TfLiteStatus ResizeOutputTensors(TfLiteContext* context, TfLiteNode* node,
+                                 const TfLiteTensor* input,
+                                 const TfLiteTensor* size_splits,
+                                 const TfLiteTensor* axis) {
+  int axis_value = GetTensorData<int>(axis)[0];
+  if (axis_value < 0) {
+    axis_value += NumDimensions(input);
+  }
+
+  std::vector<int64_t> size_splits_vector;
+  if (size_splits->type == kTfLiteInt32) {
+    GetSizeSplitsVector<int32_t>(size_splits, &size_splits_vector);
+  } else if (size_splits->type == kTfLiteInt64) {
+    GetSizeSplitsVector<int64_t>(size_splits, &size_splits_vector);
+  } else {
+    context->ReportError(context, "size_splits only support type int32|int64.");
+    return kTfLiteError;
+  }
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tokens used
+input: 1,350
+cache read: 7,680
+cache write: 0
+output: 61
+reasoning output: 15
+
+The target file has the same vulnerable flow: `axis_value` is normalized for negative values, then used in `SizeOfDimension` without confirming it falls within `[0, NumDimensions(input))`. I’m applying the two `TF_LITE_ENSURE` checks immediately before that use.
+
+tool: validate
+{
+  "ref": "07317a88b432c93465822c27786bcf31cd61a102",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/lite/kernels/split_v.cc b/tensorflow/lite/kernels/split_v.cc\n--- a/tensorflow/lite/kernels/split_v.cc\n+++ b/tensorflow/lite/kernels/split_v.cc\n@@ -90,6 +90,8 @@ TfLiteStatus ResizeOutputTensors(TfLiteContext* context, TfLiteNode* node,\n     }\n   }\n \n+  TF_LITE_ENSURE(context, axis_value >= 0);\n+  TF_LITE_ENSURE(context, axis_value < NumDimensions(input));\n   const int input_size = SizeOfDimension(input, axis_value);\n \n   if (minus_one_index != -1) {\n"
+}
+Patch applied successfully
+
+tokens used
+input: 744
+cache read: 8,704
+cache write: 0
+output: 272
+reasoning output: 14
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/lite/kernels/split_v.cc\n@@\n-  const int input_size = SizeOfDimension(input, axis_value);\n+  TF_LITE_ENSURE(context, axis_value >= 0);\n+  TF_LITE_ENSURE(context, axis_value < NumDimensions(input));\n+  const int input_size = SizeOfDimension(input, axis_value);\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/lite/kernels/split_v.cc
+
+tokens used
+input: 1,043
+cache read: 8,704
+cache write: 0
+output: 110
+reasoning output: 0
+
+The hunk validated against the target base and has been applied to the checkout. I’ll inspect the resulting diff now.
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/lite/kernels/split_v.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0121-07317a88b432",
+  "timeout": 120000
+}
+warning: in the working copy of 'tensorflow/lite/kernels/split_v.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/lite/kernels/split_v.cc b/tensorflow/lite/kernels/split_v.cc
+index b888e8adfa..a5fdf89ac1 100644
+--- a/tensorflow/lite/kernels/split_v.cc
++++ b/tensorflow/lite/kernels/split_v.cc
+@@ -90,6 +90,8 @@ TfLiteStatus ResizeOutputTensors(TfLiteContext* context, TfLiteNode* node,
+     }
+   }
+ 
++  TF_LITE_ENSURE(context, axis_value >= 0);
++  TF_LITE_ENSURE(context, axis_value < NumDimensions(input));
+   const int input_size = SizeOfDimension(input, axis_value);
+ 
+   if (minus_one_index != -1) {
+
+tokens used
+input: 1,181
+cache read: 8,704
+cache write: 0
+output: 108
+reasoning output: 13
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/lite/kernels/split_v.cc b/tensorflow/lite/kernels/split_v.cc
+    index b888e8adfa..a5fdf89ac1 100644
+    --- a/tensorflow/lite/kernels/split_v.cc
+    +++ b/tensorflow/lite/kernels/split_v.cc
+    @@ -90,6 +90,8 @@ TfLiteStatus ResizeOutputTensors(TfLiteContext* context, TfLiteNode* node,
+         }
+       }
+     
+    +  TF_LITE_ENSURE(context, axis_value >= 0);
+    +  TF_LITE_ENSURE(context, axis_value < NumDimensions(input));
+       const int input_size = SizeOfDimension(input, axis_value);
+     
+       if (minus_one_index != -1) {
+  notes: >
+    Added bounds checks for SplitV axis_value before SizeOfDimension to prevent out-of-bounds reads.
+```
+
+tokens used
+input: 490
+cache read: 9,728
+cache write: 0
+output: 223
+reasoning output: 0

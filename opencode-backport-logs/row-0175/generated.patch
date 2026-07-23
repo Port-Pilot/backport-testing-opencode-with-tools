@@ -1,0 +1,16 @@
+diff --git a/tensorflow/core/util/sparse/sparse_tensor.h b/tensorflow/core/util/sparse/sparse_tensor.h
+index d33bd03db2..7c556200d7 100644
+--- a/tensorflow/core/util/sparse/sparse_tensor.h
++++ b/tensorflow/core/util/sparse/sparse_tensor.h
+@@ -610,6 +610,11 @@ Status SparseTensor::Split(const SparseTensor& input_tensor,
+   for (int i = 0; i < input_tensor.indices().dim_size(0); ++i) {
+     const int dim = input_tensor.indices().matrix<int64>()(i, split_dim);
+     int slice_index = GetSliceIndex(dim, split_size, residual);
++    if (slice_index >= num_values.size()) {
++      return Status(error::INVALID_ARGUMENT,
++                    strings::StrCat("Slice index ", slice_index,
++                                    " is larger than num_split."));
++    }
+     num_values[slice_index]++;
+   }
+ 

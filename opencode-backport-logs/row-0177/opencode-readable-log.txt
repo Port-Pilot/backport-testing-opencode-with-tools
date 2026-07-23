@@ -1,0 +1,336 @@
+I’ll locate the older `RaggedTensorToTensor` implementation and compare the target-side context to the provided new-version hunk before making the minimal guard change.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target-side ragged_tensor_to_tensor implementation around ROW_SPLITS dispatch",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Validate the adapted hunk against target base",
+      "status": "pending",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply minimal source change and capture diff",
+      "status": "pending",
+      "priority": "high"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target-side ragged_tensor_to_tensor implementation around ROW_SPLITS dispatch",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Validate the adapted hunk against target base",
+    "status": "pending",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply minimal source change and capture diff",
+    "status": "pending",
+    "priority": "high"
+  }
+]
+
+tokens used
+input: 3,740
+cache read: 4,608
+cache write: 0
+output: 124
+reasoning output: 0
+
+tool: viewcode
+{
+  "ref": "7a5dd0aa176dbf81742f84b44aeb0948fa2d8f20",
+  "path": "tensorflow/core/kernels/ragged_tensor_to_tensor_op.cc",
+  "startline": 280,
+  "endline": 340
+}
+Here are lines 280 through 340.
+
+      if (next_value_rowid == current_value_rowid) {
+        if (current_output_index >= 0) {
+          ++current_output_column;
+          if (current_output_column < output_size) {
+            current_output_index += output_index_multiplier;
+          } else {
+            current_output_index = -1;
+          }
+        }
+      } else {
+        current_output_column = 0;
+        current_value_rowid = next_value_rowid;
+        DCHECK_LT(next_value_rowid, parent_output_index.size());
+        current_output_index = parent_output_index[next_value_rowid];
+      }
+      result->push_back(current_output_index);
+    }
+    OP_REQUIRES(context, result->size() == value_rowids.size(),
+                errors::InvalidArgument("Invalid row ids."));
+  }
+
+  Status CalculateOutputIndex(OpKernelContext* context, int dimension,
+                              const vector<INDEX_TYPE>& parent_output_index,
+                              INDEX_TYPE output_index_multiplier,
+                              INDEX_TYPE output_size,
+                              vector<INDEX_TYPE>* result) {
+    const RowPartitionTensor row_partition_tensor =
+        GetRowPartitionTensor(context, dimension);
+    auto partition_type = GetRowPartitionTypeByDimension(dimension);
+    switch (partition_type) {
+      case RowPartitionType::VALUE_ROWIDS:
+        CalculateOutputIndexValueRowID(
+            context, row_partition_tensor, parent_output_index,
+            output_index_multiplier, output_size, result);
+        return tensorflow::Status::OK();
+      case RowPartitionType::ROW_SPLITS:
+        CalculateOutputIndexRowSplit(
+            context, row_partition_tensor, parent_output_index,
+            output_index_multiplier, output_size, result);
+        return tensorflow::Status::OK();
+      default:
+        return errors::InvalidArgument(
+            "Unsupported partition type:",
+            RowPartitionTypeToString(partition_type));
+    }
+  }
+
+  Status GetFirstDimensionSize(OpKernelContext* context, INDEX_TYPE* result) {
+    const Tensor first_partition_tensor =
+        context->input(kFirstPartitionInputIndex);
+    const RowPartitionType first_partition_type = row_partition_types_[0];
+    switch (first_partition_type) {
+      case RowPartitionType::FIRST_DIM_SIZE:
+        *result = first_partition_tensor.scalar<INDEX_TYPE>()();
+        return Status::OK();
+      case RowPartitionType::VALUE_ROWIDS:
+        return errors::InvalidArgument(
+            "Cannot handle VALUE_ROWIDS in first dimension.");
+      case RowPartitionType::ROW_SPLITS:
+        *result = first_partition_tensor.shape().dim_size(0) - 1;
+        return Status::OK();
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: grep
+{
+  "pattern": "case RowPartitionType::ROW_SPLITS",
+  "path": "tensorflow/core/kernels",
+  "include": "ragged_tensor_to_tensor_op.cc"
+}
+Found 3 matches
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0177-7a5dd0aa176d\tensorflow\core\kernels\ragged_tensor_to_tensor_op.cc:
+  Line 94:       case RowPartitionType::ROW_SPLITS:
+
+  Line 315:       case RowPartitionType::ROW_SPLITS:
+
+  Line 338:       case RowPartitionType::ROW_SPLITS:
+
+tool: locate_symbol
+{
+  "ref": "7a5dd0aa176dbf81742f84b44aeb0948fa2d8f20",
+  "symbol": "RaggedTensorToTensorBaseOp"
+}
+tensorflow/core/kernels/ragged_tensor_to_tensor_op.cc:56
+tensorflow/core/kernels/ragged_tensor_to_tensor_op.cc:61
+tensorflow/core/kernels/ragged_tensor_to_tensor_op.cc:441
+tensorflow/core/kernels/ragged_tensor_to_tensor_op.cc:444
+
+tokens used
+input: 909
+cache read: 7,680
+cache write: 0
+output: 171
+reasoning output: 0
+
+The equivalent target code is in the same file and has the same `ROW_SPLITS` dispatch shape, without the bounds check. I’m validating the small adapted hunk against the target base before applying it.
+
+tool: validate
+{
+  "ref": "7a5dd0aa176dbf81742f84b44aeb0948fa2d8f20",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/ragged_tensor_to_tensor_op.cc b/tensorflow/core/kernels/ragged_tensor_to_tensor_op.cc\n--- a/tensorflow/core/kernels/ragged_tensor_to_tensor_op.cc\n+++ b/tensorflow/core/kernels/ragged_tensor_to_tensor_op.cc\n@@ -312,6 +312,12 @@ class RaggedTensorToTensorBaseOp : public OpKernel {\n             output_index_multiplier, output_size, result);\n         return tensorflow::Status::OK();\n       case RowPartitionType::ROW_SPLITS:\n+        if (row_partition_tensor.size() - 1 > parent_output_index.size()) {\n+          return errors::InvalidArgument(\n+              \"Row partition size is greater than output size: \",\n+              row_partition_tensor.size() - 1, \" > \",\n+              parent_output_index.size());\n+        }\n         CalculateOutputIndexRowSplit(\n             context, row_partition_tensor, parent_output_index,\n             output_index_multiplier, output_size, result);\n"
+}
+Patch applied successfully
+
+tokens used
+input: 1,829
+cache read: 7,680
+cache write: 0
+output: 330
+reasoning output: 54
+
+Validation succeeded. I’m applying only that guard to `tensorflow/core/kernels/ragged_tensor_to_tensor_op.cc`.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target-side ragged_tensor_to_tensor implementation around ROW_SPLITS dispatch",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate the adapted hunk against target base",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply minimal source change and capture diff",
+      "status": "in_progress",
+      "priority": "high"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target-side ragged_tensor_to_tensor implementation around ROW_SPLITS dispatch",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate the adapted hunk against target base",
+    "status": "completed",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply minimal source change and capture diff",
+    "status": "in_progress",
+    "priority": "high"
+  }
+]
+
+tokens used
+input: 5,298
+cache read: 4,608
+cache write: 0
+output: 114
+reasoning output: 0
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/kernels/ragged_tensor_to_tensor_op.cc\n@@\n       case RowPartitionType::ROW_SPLITS:\n+        if (row_partition_tensor.size() - 1 > parent_output_index.size()) {\n+          return errors::InvalidArgument(\n+              \"Row partition size is greater than output size: \",\n+              row_partition_tensor.size() - 1, \" > \",\n+              parent_output_index.size());\n+        }\n         CalculateOutputIndexRowSplit(\n             context, row_partition_tensor, parent_output_index,\n             output_index_multiplier, output_size, result);\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/kernels/ragged_tensor_to_tensor_op.cc
+
+tokens used
+input: 409
+cache read: 9,728
+cache write: 0
+output: 162
+reasoning output: 0
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/kernels/ragged_tensor_to_tensor_op.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0177-7a5dd0aa176d",
+  "timeout": 120000
+}
+warning: in the working copy of 'tensorflow/core/kernels/ragged_tensor_to_tensor_op.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/kernels/ragged_tensor_to_tensor_op.cc b/tensorflow/core/kernels/ragged_tensor_to_tensor_op.cc
+index 963c7eaf32..cf3efcd49b 100644
+--- a/tensorflow/core/kernels/ragged_tensor_to_tensor_op.cc
++++ b/tensorflow/core/kernels/ragged_tensor_to_tensor_op.cc
+@@ -313,6 +313,12 @@ class RaggedTensorToTensorBaseOp : public OpKernel {
+             output_index_multiplier, output_size, result);
+         return tensorflow::Status::OK();
+       case RowPartitionType::ROW_SPLITS:
++        if (row_partition_tensor.size() - 1 > parent_output_index.size()) {
++          return errors::InvalidArgument(
++              "Row partition size is greater than output size: ",
++              row_partition_tensor.size() - 1, " > ",
++              parent_output_index.size());
++        }
+         CalculateOutputIndexRowSplit(
+             context, row_partition_tensor, parent_output_index,
+             output_index_multiplier, output_size, result);
+
+tokens used
+input: 602
+cache read: 9,728
+cache write: 0
+output: 82
+reasoning output: 13
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target-side ragged_tensor_to_tensor implementation around ROW_SPLITS dispatch",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate the adapted hunk against target base",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply minimal source change and capture diff",
+      "status": "completed",
+      "priority": "high"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target-side ragged_tensor_to_tensor implementation around ROW_SPLITS dispatch",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate the adapted hunk against target base",
+    "status": "completed",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply minimal source change and capture diff",
+    "status": "completed",
+    "priority": "high"
+  }
+]
+
+tokens used
+input: 973
+cache read: 9,728
+cache write: 0
+output: 82
+reasoning output: 0
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/kernels/ragged_tensor_to_tensor_op.cc b/tensorflow/core/kernels/ragged_tensor_to_tensor_op.cc
+    index 963c7eaf32..cf3efcd49b 100644
+    --- a/tensorflow/core/kernels/ragged_tensor_to_tensor_op.cc
+    +++ b/tensorflow/core/kernels/ragged_tensor_to_tensor_op.cc
+    @@ -313,6 +313,12 @@ class RaggedTensorToTensorBaseOp : public OpKernel {
+                 output_index_multiplier, output_size, result);
+             return tensorflow::Status::OK();
+           case RowPartitionType::ROW_SPLITS:
+    +        if (row_partition_tensor.size() - 1 > parent_output_index.size()) {
+    +          return errors::InvalidArgument(
+    +              "Row partition size is greater than output size: ",
+    +              row_partition_tensor.size() - 1, " > ",
+    +              parent_output_index.size());
+    +        }
+             CalculateOutputIndexRowSplit(
+                 context, row_partition_tensor, parent_output_index,
+                 output_index_multiplier, output_size, result);
+  notes: >
+    Added the ROW_SPLITS row partition bounds check to prevent output-index overflow before CalculateOutputIndexRowSplit.
+```
+
+tokens used
+input: 1,171
+cache read: 9,728
+cache write: 0
+output: 289
+reasoning output: 0

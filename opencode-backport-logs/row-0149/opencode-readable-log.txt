@@ -1,0 +1,257 @@
+I’ll inspect the target-side `MaxPoolingGradWithArgmaxOp` implementation and validate the minimal hunk against the specified base before editing.
+
+tool: viewcode
+{
+  "ref": "47612cd69a2fdd76156360ca9102816e156f7e5c",
+  "path": "tensorflow/core/kernels/maxpooling_op.cc",
+  "startline": 1060,
+  "endline": 1105
+}
+Here are lines 1060 through 1105.
+
+  TensorFormat data_format_;
+  bool include_batch_in_index_;
+};
+
+template <typename Device, typename T>
+struct LaunchMaxPoolingGradGradWithArgmax;
+
+template <typename Device, typename T>
+class MaxPoolingGradGradWithArgmaxOp : public OpKernel {
+ public:
+  explicit MaxPoolingGradGradWithArgmaxOp(OpKernelConstruction* context)
+      : OpKernel(context) {
+    OP_REQUIRES_OK(context, context->GetAttr("ksize", &ksize_));
+    OP_REQUIRES(context, ksize_.size() == 4,
+                errors::InvalidArgument("Sliding window ksize field must "
+                                        "specify 4 dimensions"));
+    OP_REQUIRES_OK(context, context->GetAttr("strides", &stride_));
+    OP_REQUIRES(context, stride_.size() == 4,
+                errors::InvalidArgument("Sliding window stride field must "
+                                        "specify 4 dimensions"));
+    OP_REQUIRES_OK(context, context->GetAttr("padding", &padding_));
+    OP_REQUIRES(context, ksize_[0] == 1 && stride_[0] == 1,
+                errors::Unimplemented(
+                    "Pooling is not yet supported on the batch dimension."));
+    OP_REQUIRES_OK(context, context->GetAttr("include_batch_in_index",
+                                             &include_batch_in_index_));
+  }
+
+  void Compute(OpKernelContext* context) override {
+    const Tensor& tensor_in = context->input(0);
+    const Tensor& grad_in = context->input(1);
+    const Tensor& argmax = context->input(2);
+
+    PoolParameters params{context,  ksize_,      stride_,
+                          padding_, FORMAT_NHWC, tensor_in.shape()};
+    if (!context->status().ok()) {
+      return;
+    }
+
+    TensorShape out_shape({params.tensor_in_batch, params.out_height,
+                           params.out_width, params.depth});
+
+    Tensor* grad_out = nullptr;
+    OP_REQUIRES_OK(context, context->forward_input_or_allocate_output(
+                                {0}, 0, out_shape, &grad_out));
+
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: locate_symbol
+{
+  "ref": "47612cd69a2fdd76156360ca9102816e156f7e5c",
+  "symbol": "MaxPoolingGradWithArgmaxOp"
+}
+tensorflow/core/kernels/maxpooling_op.cc:1008
+tensorflow/core/kernels/maxpooling_op.cc:1010
+tensorflow/core/kernels/maxpooling_op.cc:1418
+
+tokens used
+input: 3,695
+cache read: 4,608
+cache write: 0
+output: 161
+reasoning output: 0
+
+The first window landed on the adjacent grad-grad class, so I’m checking the earlier symbol occurrence where the patched op’s `Compute` method should be.
+
+tool: viewcode
+{
+  "ref": "47612cd69a2fdd76156360ca9102816e156f7e5c",
+  "path": "tensorflow/core/kernels/maxpooling_op.cc",
+  "startline": 990,
+  "endline": 1065
+}
+Here are lines 990 through 1065.
+
+            grad_out_index += cur_batch * output_size_per_batch;
+          }
+          CHECK(grad_out_index >= output_start && grad_out_index < output_end)
+              << "Invalid output gradient index: " << grad_out_index << ", "
+              << output_start << ", " << output_end;
+          grad_out_flat(grad_out_index) += grad_in_flat(index);
+        }
+      }
+    };
+
+    const int64 batch_size = GetTensorDim(grad_out->shape(), FORMAT_NHWC, 'N');
+    const int64 shard_cost = grad_out->NumElements() / batch_size;
+    Shard(worker_threads.num_threads, worker_threads.workers, batch_size,
+          shard_cost, shard);
+  }
+};
+
+template <typename Device, typename T>
+class MaxPoolingGradWithArgmaxOp : public OpKernel {
+ public:
+  explicit MaxPoolingGradWithArgmaxOp(OpKernelConstruction* context)
+      : OpKernel(context) {
+    string data_format_str;
+    auto status = context->GetAttr("data_format", &data_format_str);
+    if (status.ok()) {
+      OP_REQUIRES(context, FormatFromString(data_format_str, &data_format_),
+                  errors::InvalidArgument("Invalid data format"));
+    }
+
+    OP_REQUIRES_OK(context, context->GetAttr("ksize", &ksize_));
+    OP_REQUIRES(context, ksize_.size() == 4,
+                errors::InvalidArgument("Sliding window ksize field must "
+                                        "specify 4 dimensions"));
+    OP_REQUIRES_OK(context, context->GetAttr("strides", &stride_));
+    OP_REQUIRES(context, stride_.size() == 4,
+                errors::InvalidArgument("Sliding window stride field must "
+                                        "specify 4 dimensions"));
+    OP_REQUIRES_OK(context, context->GetAttr("padding", &padding_));
+    OP_REQUIRES(context, ksize_[0] == 1 && stride_[0] == 1,
+                errors::Unimplemented(
+                    "Pooling is not yet supported on the batch dimension."));
+    OP_REQUIRES_OK(context, context->GetAttr("include_batch_in_index",
+                                             &include_batch_in_index_));
+  }
+
+  void Compute(OpKernelContext* context) override {
+    const Tensor& tensor_in = context->input(0);
+    const Tensor& grad_in = context->input(1);
+    const Tensor& argmax = context->input(2);
+
+    PoolParameters params{context,  ksize_,      stride_,
+                          padding_, FORMAT_NHWC, tensor_in.shape()};
+    if (!context->status().ok()) {
+      return;
+    }
+
+    TensorShape out_shape({params.tensor_in_batch, params.tensor_in_rows,
+                           params.tensor_in_cols, params.depth});
+    Tensor* grad_out = nullptr;
+    OP_REQUIRES_OK(context, context->forward_input_or_allocate_output(
+                                {0}, 0, out_shape, &grad_out));
+
+    LaunchMaxPoolingGradWithArgmax<Device, T>::launch(
+        context, params, grad_in, argmax, grad_out, include_batch_in_index_);
+  }
+
+ private:
+  std::vector<int32> ksize_;
+  std::vector<int32> stride_;
+  Padding padding_;
+  TensorFormat data_format_;
+  bool include_batch_in_index_;
+};
+
+template <typename Device, typename T>
+struct LaunchMaxPoolingGradGradWithArgmax;
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tokens used
+input: 1,315
+cache read: 7,680
+cache write: 0
+output: 102
+reasoning output: 25
+
+The target code has the same allocation and launch sequence; I’m applying the same empty-output guard before the kernel launch.
+
+tool: validate
+{
+  "ref": "47612cd69a2fdd76156360ca9102816e156f7e5c",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/maxpooling_op.cc b/tensorflow/core/kernels/maxpooling_op.cc\n--- a/tensorflow/core/kernels/maxpooling_op.cc\n+++ b/tensorflow/core/kernels/maxpooling_op.cc\n@@ -1047,6 +1047,8 @@ class MaxPoolingGradWithArgmaxOp : public OpKernel {\n     OP_REQUIRES_OK(context, context->forward_input_or_allocate_output(\n                                 {0}, 0, out_shape, &grad_out));\n \n+    if (out_shape.num_elements() == 0) return;  // nothing to be done\n+\n     LaunchMaxPoolingGradWithArgmax<Device, T>::launch(\n         context, params, grad_in, argmax, grad_out, include_batch_in_index_);\n   }\n"
+}
+Patch applied successfully
+
+tokens used
+input: 5,263
+cache read: 4,608
+cache write: 0
+output: 259
+reasoning output: 13
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/kernels/maxpooling_op.cc\n@@\n     OP_REQUIRES_OK(context, context->forward_input_or_allocate_output(\n                                 {0}, 0, out_shape, &grad_out));\n \n+    if (out_shape.num_elements() == 0) return;  // nothing to be done\n+\n     LaunchMaxPoolingGradWithArgmax<Device, T>::launch(\n         context, params, grad_in, argmax, grad_out, include_batch_in_index_);\n   }\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/kernels/maxpooling_op.cc
+
+tokens used
+input: 428
+cache read: 9,728
+cache write: 0
+output: 140
+reasoning output: 0
+
+The guarded hunk applied cleanly. I’m checking the final diff to report exactly what changed.
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/kernels/maxpooling_op.cc"
+}
+warning: in the working copy of 'tensorflow/core/kernels/maxpooling_op.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/kernels/maxpooling_op.cc b/tensorflow/core/kernels/maxpooling_op.cc
+index 5652addd00..9ac7ac6132 100644
+--- a/tensorflow/core/kernels/maxpooling_op.cc
++++ b/tensorflow/core/kernels/maxpooling_op.cc
+@@ -1049,6 +1049,8 @@ class MaxPoolingGradWithArgmaxOp : public OpKernel {
+     OP_REQUIRES_OK(context, context->forward_input_or_allocate_output(
+                                 {0}, 0, out_shape, &grad_out));
+ 
++    if (out_shape.num_elements() == 0) return;  // nothing to be done
++
+     LaunchMaxPoolingGradWithArgmax<Device, T>::launch(
+         context, params, grad_in, argmax, grad_out, include_batch_in_index_);
+   }
+
+tokens used
+input: 596
+cache read: 9,728
+cache write: 0
+output: 58
+reasoning output: 14
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/kernels/maxpooling_op.cc b/tensorflow/core/kernels/maxpooling_op.cc
+    index 5652addd00..9ac7ac6132 100644
+    --- a/tensorflow/core/kernels/maxpooling_op.cc
+    +++ b/tensorflow/core/kernels/maxpooling_op.cc
+    @@ -1049,6 +1049,8 @@ class MaxPoolingGradWithArgmaxOp : public OpKernel {
+         OP_REQUIRES_OK(context, context->forward_input_or_allocate_output(
+                                     {0}, 0, out_shape, &grad_out));
+     
+    +    if (out_shape.num_elements() == 0) return;  // nothing to be done
+    +
+         LaunchMaxPoolingGradWithArgmax<Device, T>::launch(
+             context, params, grad_in, argmax, grad_out, include_batch_in_index_);
+       }
+  notes: >
+    Added the empty output guard before launching MaxPoolGradWithArgmax to avoid division by zero on zero-element outputs.
+```
+
+tokens used
+input: 899
+cache read: 9,728
+cache write: 0
+output: 245
+reasoning output: 0

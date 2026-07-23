@@ -1,0 +1,476 @@
+I’ll locate the target-side `FractionalMaxPoolGradOp` implementation, compare the surrounding context to the provided hunk, then apply only the rank/non-empty input validation backport.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target FractionalMaxPoolGradOp context",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Validate candidate hunk against target base",
+      "status": "pending",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply minimal backport edit",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "content": "Inspect final diff",
+      "status": "pending",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target FractionalMaxPoolGradOp context",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Validate candidate hunk against target base",
+    "status": "pending",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply minimal backport edit",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "content": "Inspect final diff",
+    "status": "pending",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 3,868
+cache read: 4,608
+cache write: 0
+output: 134
+reasoning output: 0
+
+tool: viewcode
+{
+  "ref": "47612cd69a2fdd76156360ca9102816e156f7e5c",
+  "path": "tensorflow/core/kernels/fractional_max_pool_op.cc",
+  "startline": 210,
+  "endline": 270
+}
+Here are lines 210 through 270.
+
+  explicit FractionalMaxPoolGradOp(OpKernelConstruction* context)
+      : OpKernel(context) {
+    OP_REQUIRES_OK(context, context->GetAttr("overlapping", &overlapping_));
+  }
+
+  void Compute(OpKernelContext* context) override {
+    // There are two steps when calculating gradient for FractionalMaxPool.
+    // 1) Walk through the process of calculating fractional pooling given
+    //    pooling region; however, in the process, keep track of where the max
+    //    element comes from. (arg_max)
+    // 2) Populate the value of out_backprop to where arg_max indicates. If
+    //    we support overlapping, it is likely to have multiple out_backprop[i]
+    //    propagates back to the same arg_max value.
+    typedef Eigen::Map<const Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic>>
+        ConstEigenMatrixMap;
+    typedef Eigen::Map<Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic>>
+        EigenMatrixMap;
+    typedef Eigen::Map<Eigen::Matrix<int64, Eigen::Dynamic, Eigen::Dynamic>>
+        EigenIndexMatrixMap;
+
+    const Tensor& tensor_in = context->input(0);
+    const Tensor& tensor_out = context->input(1);
+    const Tensor& out_backprop = context->input(2);
+    const Tensor& height_seq_tensor = context->input(3);
+    const Tensor& width_seq_tensor = context->input(4);
+
+    // Just to make it similar to FractionalMaxPoolOp.
+    constexpr int tensor_in_and_out_dims = 4;
+    std::vector<int64> input_size(tensor_in_and_out_dims);
+    std::vector<int64> output_size(tensor_in_and_out_dims);
+    for (int i = 0; i < tensor_in_and_out_dims; ++i) {
+      input_size[i] = tensor_in.dim_size(i);
+    }
+    for (int i = 0; i < tensor_in_and_out_dims; ++i) {
+      output_size[i] = tensor_out.dim_size(i);
+    }
+
+    // ---------
+    // Step 1
+    // ---------
+    Tensor tensor_out_dup;
+    OP_REQUIRES_OK(context, context->forward_input_or_allocate_temp(
+                                {1}, DataTypeToEnum<T>::v(), tensor_out.shape(),
+                                &tensor_out_dup));
+    Tensor tensor_out_arg_max;
+    OP_REQUIRES_OK(context, context->allocate_temp(DataTypeToEnum<int64>::v(),
+                                                   tensor_out.shape(),
+                                                   &tensor_out_arg_max));
+    // Find arg_max for each tensor_out
+    ConstEigenMatrixMap tensor_in_mat(
+        tensor_in.flat<T>().data(), input_size[3],
+        input_size[2] * input_size[1] * input_size[0]);
+    EigenMatrixMap tensor_out_dup_mat(
+        tensor_out_dup.flat<T>().data(), output_size[3],
+        output_size[2] * output_size[1] * output_size[0]);
+    EigenIndexMatrixMap tensor_out_arg_max_mat(
+        tensor_out_arg_max.flat<int64>().data(), output_size[3],
+        output_size[2] * output_size[1] * output_size[0]);
+
+    tensor_out_arg_max.flat<int64>().setConstant(kInvalidMaxPoolingIndex);
+    // Initializes the duplicate output tensor with MIN<T>.
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: locate_symbol
+{
+  "ref": "47612cd69a2fdd76156360ca9102816e156f7e5c",
+  "symbol": "FractionalMaxPoolGradOp"
+}
+tensorflow/core/kernels/fractional_max_pool_op.cc:208
+tensorflow/core/kernels/fractional_max_pool_op.cc:210
+tensorflow/core/kernels/fractional_max_pool_op.cc:367
+
+tokens used
+input: 1,066
+cache read: 7,680
+cache write: 0
+output: 124
+reasoning output: 0
+
+The target implementation matches the provided patch location: it reads `dim_size(i)` immediately after declaring the expected rank, so the missing validation belongs before those loops.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target FractionalMaxPoolGradOp context",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate candidate hunk against target base",
+      "status": "in_progress",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply minimal backport edit",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "content": "Inspect final diff",
+      "status": "pending",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target FractionalMaxPoolGradOp context",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate candidate hunk against target base",
+    "status": "in_progress",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply minimal backport edit",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "content": "Inspect final diff",
+    "status": "pending",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 1,989
+cache read: 7,680
+cache write: 0
+output: 130
+reasoning output: 21
+
+tool: validate
+{
+  "ref": "47612cd69a2fdd76156360ca9102816e156f7e5c",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/fractional_max_pool_op.cc b/tensorflow/core/kernels/fractional_max_pool_op.cc\n--- a/tensorflow/core/kernels/fractional_max_pool_op.cc\n+++ b/tensorflow/core/kernels/fractional_max_pool_op.cc\n@@ -235,6 +235,20 @@ class FractionalMaxPoolGradOp : public OpKernel {\n \n     // Just to make it similar to FractionalMaxPoolOp.\n     constexpr int tensor_in_and_out_dims = 4;\n+    OP_REQUIRES(\n+        context, tensor_in.dims() == tensor_in_and_out_dims,\n+        errors::InvalidArgument(\"orig_input should be a tensor of rank 4, got \",\n+                                tensor_in.DebugString()));\n+    OP_REQUIRES(context, tensor_in.NumElements() > 0,\n+                errors::InvalidArgument(\"orig_input must not be empty, got \",\n+                                        tensor_in.DebugString()));\n+    OP_REQUIRES(context, tensor_out.dims() == tensor_in_and_out_dims,\n+                errors::InvalidArgument(\n+                    \"orig_output should be a tensor of rank 4, got \",\n+                    tensor_out.DebugString()));\n+    OP_REQUIRES(context, tensor_out.NumElements() > 0,\n+                errors::InvalidArgument(\"orig_output must not be empty, got \",\n+                                        tensor_out.DebugString()));\n     std::vector<int64> input_size(tensor_in_and_out_dims);\n     std::vector<int64> output_size(tensor_in_and_out_dims);\n     for (int i = 0; i < tensor_in_and_out_dims; ++i) {\n"
+}
+Patch applied successfully
+
+tokens used
+input: 1,252
+cache read: 8,704
+cache write: 0
+output: 425
+reasoning output: 0
+
+The candidate hunk applies cleanly to the target base. I’m applying the same minimal guard checks now.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target FractionalMaxPoolGradOp context",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate candidate hunk against target base",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply minimal backport edit",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Inspect final diff",
+      "status": "pending",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target FractionalMaxPoolGradOp context",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate candidate hunk against target base",
+    "status": "completed",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply minimal backport edit",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Inspect final diff",
+    "status": "pending",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 666
+cache read: 9,728
+cache write: 0
+output: 118
+reasoning output: 0
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/kernels/fractional_max_pool_op.cc\n@@\n     // Just to make it similar to FractionalMaxPoolOp.\n     constexpr int tensor_in_and_out_dims = 4;\n+    OP_REQUIRES(\n+        context, tensor_in.dims() == tensor_in_and_out_dims,\n+        errors::InvalidArgument(\"orig_input should be a tensor of rank 4, got \",\n+                                tensor_in.DebugString()));\n+    OP_REQUIRES(context, tensor_in.NumElements() > 0,\n+                errors::InvalidArgument(\"orig_input must not be empty, got \",\n+                                        tensor_in.DebugString()));\n+    OP_REQUIRES(context, tensor_out.dims() == tensor_in_and_out_dims,\n+                errors::InvalidArgument(\n+                    \"orig_output should be a tensor of rank 4, got \",\n+                    tensor_out.DebugString()));\n+    OP_REQUIRES(context, tensor_out.NumElements() > 0,\n+                errors::InvalidArgument(\"orig_output must not be empty, got \",\n+                                        tensor_out.DebugString()));\n     std::vector<int64> input_size(tensor_in_and_out_dims);\n     std::vector<int64> output_size(tensor_in_and_out_dims);\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/kernels/fractional_max_pool_op.cc
+
+tokens used
+input: 920
+cache read: 9,728
+cache write: 0
+output: 312
+reasoning output: 0
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target FractionalMaxPoolGradOp context",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate candidate hunk against target base",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply minimal backport edit",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Inspect final diff",
+      "status": "in_progress",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target FractionalMaxPoolGradOp context",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate candidate hunk against target base",
+    "status": "completed",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply minimal backport edit",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Inspect final diff",
+    "status": "in_progress",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 1,262
+cache read: 9,728
+cache write: 0
+output: 89
+reasoning output: 0
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/kernels/fractional_max_pool_op.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0143-47612cd69a2f"
+}
+warning: in the working copy of 'tensorflow/core/kernels/fractional_max_pool_op.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/kernels/fractional_max_pool_op.cc b/tensorflow/core/kernels/fractional_max_pool_op.cc
+index 619a3507ce..1a2a783d13 100644
+--- a/tensorflow/core/kernels/fractional_max_pool_op.cc
++++ b/tensorflow/core/kernels/fractional_max_pool_op.cc
+@@ -235,6 +235,20 @@ class FractionalMaxPoolGradOp : public OpKernel {
+ 
+     // Just to make it similar to FractionalMaxPoolOp.
+     constexpr int tensor_in_and_out_dims = 4;
++    OP_REQUIRES(
++        context, tensor_in.dims() == tensor_in_and_out_dims,
++        errors::InvalidArgument("orig_input should be a tensor of rank 4, got ",
++                                tensor_in.DebugString()));
++    OP_REQUIRES(context, tensor_in.NumElements() > 0,
++                errors::InvalidArgument("orig_input must not be empty, got ",
++                                        tensor_in.DebugString()));
++    OP_REQUIRES(context, tensor_out.dims() == tensor_in_and_out_dims,
++                errors::InvalidArgument(
++                    "orig_output should be a tensor of rank 4, got ",
++                    tensor_out.DebugString()));
++    OP_REQUIRES(context, tensor_out.NumElements() > 0,
++                errors::InvalidArgument("orig_output must not be empty, got ",
++                                        tensor_out.DebugString()));
+     std::vector<int64> input_size(tensor_in_and_out_dims);
+     std::vector<int64> output_size(tensor_in_and_out_dims);
+     for (int i = 0; i < tensor_in_and_out_dims; ++i) {
+
+tokens used
+input: 463
+cache read: 10,752
+cache write: 0
+output: 73
+reasoning output: 0
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target FractionalMaxPoolGradOp context",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate candidate hunk against target base",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply minimal backport edit",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Inspect final diff",
+      "status": "completed",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target FractionalMaxPoolGradOp context",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate candidate hunk against target base",
+    "status": "completed",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply minimal backport edit",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Inspect final diff",
+    "status": "completed",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 946
+cache read: 10,752
+cache write: 0
+output: 88
+reasoning output: 0
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/kernels/fractional_max_pool_op.cc b/tensorflow/core/kernels/fractional_max_pool_op.cc
+    index 619a3507ce..1a2a783d13 100644
+    --- a/tensorflow/core/kernels/fractional_max_pool_op.cc
+    +++ b/tensorflow/core/kernels/fractional_max_pool_op.cc
+    @@ -235,6 +235,20 @@ class FractionalMaxPoolGradOp : public OpKernel {
+     
+         // Just to make it similar to FractionalMaxPoolOp.
+         constexpr int tensor_in_and_out_dims = 4;
+    +    OP_REQUIRES(
+    +        context, tensor_in.dims() == tensor_in_and_out_dims,
+    +        errors::InvalidArgument("orig_input should be a tensor of rank 4, got ",
+    +                                tensor_in.DebugString()));
+    +    OP_REQUIRES(context, tensor_in.NumElements() > 0,
+    +                errors::InvalidArgument("orig_input must not be empty, got ",
+    +                                        tensor_in.DebugString()));
+    +    OP_REQUIRES(context, tensor_out.dims() == tensor_in_and_out_dims,
+    +                errors::InvalidArgument(
+    +                    "orig_output should be a tensor of rank 4, got ",
+    +                    tensor_out.DebugString()));
+    +    OP_REQUIRES(context, tensor_out.NumElements() > 0,
+    +                errors::InvalidArgument("orig_output must not be empty, got ",
+    +                                        tensor_out.DebugString()));
+         std::vector<int64> input_size(tensor_in_and_out_dims);
+         std::vector<int64> output_size(tensor_in_and_out_dims);
+         for (int i = 0; i < tensor_in_and_out_dims; ++i) {
+  notes: >
+    Added rank-4 and non-empty validation for orig_input and orig_output in FractionalMaxPoolGradOp before dim_size access.
+```
+
+tokens used
+input: 1,169
+cache read: 10,752
+cache write: 0
+output: 437
+reasoning output: 0

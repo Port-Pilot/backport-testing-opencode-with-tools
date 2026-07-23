@@ -1,0 +1,1032 @@
+I’ll inspect the target 2.6.4 code around the comparison kernel and tests, then apply the minimal equivalent changes without consulting the held-out backport commit.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Locate target comparison kernel and test context",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Adapt and validate source hunks against target base",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "content": "Apply minimal backport changes",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "content": "Inspect resulting diff and report YAML",
+      "status": "pending",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Locate target comparison kernel and test context",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Adapt and validate source hunks against target base",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "content": "Apply minimal backport changes",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "content": "Inspect resulting diff and report YAML",
+    "status": "pending",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 4,364
+cache read: 4,608
+cache write: 0
+output: 133
+reasoning output: 0
+
+tool: viewcode
+{
+  "ref": "92a6bb06549e74a8bd8cdb8e28552496e5520007",
+  "path": "tensorflow/lite/kernels/comparisons.cc",
+  "startline": 1,
+  "endline": 140
+}
+Here are lines 1 through 140.
+
+/* Copyright 2018 The TensorFlow Authors. All Rights Reserved.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+==============================================================================*/
+#include "tensorflow/lite/kernels/internal/reference/comparisons.h"
+
+#include <stdint.h>
+
+#include "tensorflow/lite/c/common.h"
+#include "tensorflow/lite/kernels/internal/compatibility.h"
+#include "tensorflow/lite/kernels/internal/quantization_util.h"
+#include "tensorflow/lite/kernels/internal/reference/reference_ops.h"
+#include "tensorflow/lite/kernels/internal/tensor.h"
+#include "tensorflow/lite/kernels/internal/tensor_ctypes.h"
+#include "tensorflow/lite/kernels/internal/types.h"
+#include "tensorflow/lite/kernels/kernel_util.h"
+#include "tensorflow/lite/string_util.h"
+
+namespace tflite {
+namespace ops {
+namespace builtin {
+namespace comparisons {
+namespace {
+
+constexpr int kInputTensor1 = 0;
+constexpr int kInputTensor2 = 1;
+constexpr int kOutputTensor = 0;
+
+TfLiteStatus ComparisonPrepareCommon(TfLiteContext* context, TfLiteNode* node,
+                                     bool is_string_allowed) {
+  TF_LITE_ENSURE_EQ(context, NumInputs(node), 2);
+  TF_LITE_ENSURE_EQ(context, NumOutputs(node), 1);
+
+  const TfLiteTensor* input1;
+  TF_LITE_ENSURE_OK(context,
+                    GetInputSafe(context, node, kInputTensor1, &input1));
+  const TfLiteTensor* input2;
+  TF_LITE_ENSURE_OK(context,
+                    GetInputSafe(context, node, kInputTensor2, &input2));
+  TfLiteTensor* output;
+  TF_LITE_ENSURE_OK(context,
+                    GetOutputSafe(context, node, kOutputTensor, &output));
+
+  // Don't support string.
+  if (!is_string_allowed) {
+    TF_LITE_ENSURE(context, input1->type != kTfLiteString);
+  }
+  // Currently only support tensors have the same type.
+  TF_LITE_ENSURE_TYPES_EQ(context, input1->type, input2->type);
+  output->type = kTfLiteBool;
+
+  bool requires_broadcast = !HaveSameShapes(input1, input2);
+
+  TfLiteIntArray* output_size = nullptr;
+  if (requires_broadcast) {
+    TF_LITE_ENSURE_OK(context, CalculateShapeForBroadcast(
+                                   context, input1, input2, &output_size));
+  } else {
+    output_size = TfLiteIntArrayCopy(input1->dims);
+  }
+
+  return context->ResizeTensor(context, output, output_size);
+}
+
+TfLiteStatus ComparisonPrepare(TfLiteContext* context, TfLiteNode* node) {
+  return ComparisonPrepareCommon(context, node, false);
+}
+
+TfLiteStatus ComparisonPrepareStringAllowed(TfLiteContext* context,
+                                            TfLiteNode* node) {
+  return ComparisonPrepareCommon(context, node, true);
+}
+
+template <typename input_dtype, reference_ops::ComparisonFn<int32> opname>
+void ComparisonQuantized(const TfLiteTensor* input1, const TfLiteTensor* input2,
+                         TfLiteTensor* output, bool requires_broadcast) {
+  if (input1->type == kTfLiteUInt8 || input1->type == kTfLiteInt8) {
+    auto input1_offset = -input1->params.zero_point;
+    auto input2_offset = -input2->params.zero_point;
+    const int left_shift = 8;
+
+    int32 input1_multiplier;
+    int input1_shift;
+    QuantizeMultiplierSmallerThanOneExp(input1->params.scale,
+                                        &input1_multiplier, &input1_shift);
+    int32 input2_multiplier;
+    int input2_shift;
+    QuantizeMultiplierSmallerThanOneExp(input2->params.scale,
+                                        &input2_multiplier, &input2_shift);
+
+    ComparisonParams op_params;
+    op_params.left_shift = left_shift;
+    op_params.input1_offset = input1_offset;
+    op_params.input1_multiplier = input1_multiplier;
+    op_params.input1_shift = input1_shift;
+    op_params.input2_offset = input2_offset;
+    op_params.input2_multiplier = input2_multiplier;
+    op_params.input2_shift = input2_shift;
+    if (requires_broadcast) {
+      reference_ops::BroadcastComparison4DSlowWithScaling<input_dtype, opname>(
+          op_params, GetTensorShape(input1), GetTensorData<input_dtype>(input1),
+          GetTensorShape(input2), GetTensorData<input_dtype>(input2),
+          GetTensorShape(output), GetTensorData<bool>(output));
+    } else {
+      reference_ops::ComparisonWithScaling<input_dtype, opname>(
+          op_params, GetTensorShape(input1), GetTensorData<input_dtype>(input1),
+          GetTensorShape(input2), GetTensorData<input_dtype>(input2),
+          GetTensorShape(output), GetTensorData<bool>(output));
+    }
+  }
+}
+
+template <typename T, reference_ops::ComparisonFn<T> opname>
+void Comparison(const TfLiteTensor* input1, const TfLiteTensor* input2,
+                TfLiteTensor* output, bool requires_broadcast) {
+  ComparisonParams op_params;
+  requires_broadcast
+      ? reference_ops::BroadcastComparison4DSlowImpl<T, opname>(
+            op_params, GetTensorShape(input1), GetTensorData<T>(input1),
+            GetTensorShape(input2), GetTensorData<T>(input2),
+            GetTensorShape(output), GetTensorData<bool>(output))
+      : reference_ops::ComparisonImpl<T, opname>(
+            op_params, GetTensorShape(input1), GetTensorData<T>(input1),
+            GetTensorShape(input2), GetTensorData<T>(input2),
+            GetTensorShape(output), GetTensorData<bool>(output));
+}
+
+void ComparisonString(bool (*opname)(const StringRef&, const StringRef&),
+                      const TfLiteTensor* input1, const TfLiteTensor* input2,
+                      TfLiteTensor* output, bool requires_broadcast) {
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: viewcode
+{
+  "ref": "92a6bb06549e74a8bd8cdb8e28552496e5520007",
+  "path": "tensorflow/lite/kernels/comparisons_test.cc",
+  "startline": 620,
+  "endline": 700
+}
+Here are lines 620 through 700.
+
+TEST(ComparisonsTest, QuantizedUInt8GreaterWithBroadcast) {
+  const float kMin = -1.f;
+  const float kMax = 128.f;
+  std::vector<std::vector<int>> test_shapes = {
+      {6}, {2, 3}, {2, 1, 3}, {1, 3, 1, 2}};
+  for (int i = 0; i < test_shapes.size(); ++i) {
+    ComparisonOpModel model({TensorType_UINT8, test_shapes[i], kMin, kMax},
+                            {TensorType_UINT8, {}, kMin, kMax},
+                            TensorType_UINT8, BuiltinOperator_GREATER);
+    model.QuantizeAndPopulate<uint8_t>(model.input1(), {20, 2, 7, 8, 11, 20});
+    model.QuantizeAndPopulate<uint8_t>(model.input2(), {8});
+    model.Invoke();
+    EXPECT_THAT(model.GetOutput(),
+                ElementsAre(true, false, false, false, true, true))
+        << "With shape number " << i;
+  }
+}
+
+TEST(ComparisonsTest, QuantizedInt8GreaterWithBroadcast) {
+  const float kMin = -127.f;
+  const float kMax = 127.f;
+  std::vector<std::vector<int>> test_shapes = {
+      {6}, {2, 3}, {2, 1, 3}, {1, 3, 1, 2}};
+  for (int i = 0; i < test_shapes.size(); ++i) {
+    ComparisonOpModel model({TensorType_INT8, test_shapes[i], kMin, kMax},
+                            {TensorType_INT8, {}, kMin, kMax}, TensorType_INT8,
+                            BuiltinOperator_GREATER);
+    model.QuantizeAndPopulate<int8_t>(model.input1(), {20, -2, -71, 8, 11, 20});
+    model.QuantizeAndPopulate<int8_t>(model.input2(), {8});
+    model.Invoke();
+    EXPECT_THAT(model.GetOutput(),
+                ElementsAre(true, false, false, false, true, true))
+        << "With shape number " << i;
+  }
+}
+
+TEST(ComparisonsTest, QuantizedUInt8GreaterEqualWithBroadcast) {
+  const float kMin = -1.f;
+  const float kMax = 128.f;
+  std::vector<std::vector<int>> test_shapes = {
+      {6}, {2, 3}, {2, 1, 3}, {1, 3, 1, 2}};
+  for (int i = 0; i < test_shapes.size(); ++i) {
+    ComparisonOpModel model({TensorType_UINT8, test_shapes[i], kMin, kMax},
+                            {TensorType_UINT8, {}, kMin, kMax},
+                            TensorType_UINT8, BuiltinOperator_GREATER_EQUAL);
+    model.QuantizeAndPopulate<uint8_t>(model.input1(), {20, 2, 7, 8, 11, 20});
+    model.QuantizeAndPopulate<uint8_t>(model.input2(), {8});
+    model.Invoke();
+    EXPECT_THAT(model.GetOutput(),
+                ElementsAre(true, false, false, true, true, true))
+        << "With shape number " << i;
+  }
+}
+
+TEST(ComparisonsTest, QuantizedInt8GreaterEqualWithBroadcast) {
+  const float kMin = -127.f;
+  const float kMax = 127.f;
+  std::vector<std::vector<int>> test_shapes = {
+      {6}, {2, 3}, {2, 1, 3}, {1, 3, 1, 2}};
+  for (int i = 0; i < test_shapes.size(); ++i) {
+    ComparisonOpModel model({TensorType_INT8, test_shapes[i], kMin, kMax},
+                            {TensorType_INT8, {}, kMin, kMax}, TensorType_INT8,
+                            BuiltinOperator_GREATER_EQUAL);
+    model.QuantizeAndPopulate<int8_t>(model.input1(), {20, -2, -71, 8, 11, 20});
+    model.QuantizeAndPopulate<int8_t>(model.input2(), {8});
+    model.Invoke();
+    EXPECT_THAT(model.GetOutput(),
+                ElementsAre(true, false, false, true, true, true))
+        << "With shape number " << i;
+  }
+}
+
+TEST(ComparisonsTest, QuantizedUInt8LessWithBroadcast) {
+  const float kMin = -1.f;
+  const float kMax = 128.f;
+  std::vector<std::vector<int>> test_shapes = {
+      {6}, {2, 3}, {2, 1, 3}, {1, 3, 1, 2}};
+  for (int i = 0; i < test_shapes.size(); ++i) {
+    ComparisonOpModel model({TensorType_UINT8, test_shapes[i], kMin, kMax},
+                            {TensorType_UINT8, {}, kMin, kMax},
+                            TensorType_UINT8, BuiltinOperator_LESS);
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: locate_symbol
+{
+  "ref": "92a6bb06549e74a8bd8cdb8e28552496e5520007",
+  "symbol": "ComparisonQuantized"
+}
+tensorflow/lite/kernels/comparisons.cc:85
+tensorflow/lite/kernels/comparisons.cc:182
+tensorflow/lite/kernels/comparisons.cc:186
+tensorflow/lite/kernels/comparisons.cc:232
+tensorflow/lite/kernels/comparisons.cc:236
+tensorflow/lite/kernels/comparisons.cc:278
+tensorflow/lite/kernels/comparisons.cc:282
+tensorflow/lite/kernels/comparisons.cc:319
+tensorflow/lite/kernels/comparisons.cc:323
+tensorflow/lite/kernels/comparisons.cc:360
+tensorflow/lite/kernels/comparisons.cc:364
+tensorflow/lite/kernels/comparisons.cc:401
+tensorflow/lite/kernels/comparisons.cc:405
+
+tokens used
+input: 540
+cache read: 8,704
+cache write: 0
+output: 180
+reasoning output: 0
+
+The target code matches the patched locations closely; I’m checking the quantization helper API in 2.6.4 before editing so the wrapper uses an available function signature.
+
+tool: read
+{
+  "filePath": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0232-92a6bb06549e\\tensorflow\\lite\\kernels\\internal\\quantization_util.h",
+  "offset": 1,
+  "limit": 160
+}
+<path>C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0232-92a6bb06549e\tensorflow\lite\kernels\internal\quantization_util.h</path>
+<type>file</type>
+<content>
+1: /* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
+2: 
+3: Licensed under the Apache License, Version 2.0 (the "License");
+4: you may not use this file except in compliance with the License.
+5: You may obtain a copy of the License at
+6: 
+7:     http://www.apache.org/licenses/LICENSE-2.0
+8: 
+9: Unless required by applicable law or agreed to in writing, software
+10: distributed under the License is distributed on an "AS IS" BASIS,
+11: WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+12: See the License for the specific language governing permissions and
+13: limitations under the License.
+14: ==============================================================================*/
+15: #ifndef TENSORFLOW_LITE_KERNELS_INTERNAL_QUANTIZATION_UTIL_H_
+16: #define TENSORFLOW_LITE_KERNELS_INTERNAL_QUANTIZATION_UTIL_H_
+17: 
+18: #include <cmath>
+19: #include <cstdint>
+20: #include <limits>
+21: 
+22: #include "tensorflow/lite/kernels/internal/compatibility.h"
+23: #include "tensorflow/lite/kernels/internal/cppmath.h"
+24: #include "tensorflow/lite/kernels/internal/types.h"
+25: 
+26: namespace tflite {
+27: 
+28: // Given the min and max values of a float array, return
+29: // reasonable quantization parameters to use for this array.
+30: template <typename T>
+31: QuantizationParams ChooseQuantizationParams(double rmin, double rmax,
+32:                                             bool narrow_range) {
+33:   const T qmin = std::numeric_limits<T>::min() + (narrow_range ? 1 : 0);
+34:   const T qmax = std::numeric_limits<T>::max();
+35:   const double qmin_double = qmin;
+36:   const double qmax_double = qmax;
+37:   // 0 should always be a representable value. Let's assume that the initial
+38:   // min,max range contains 0.
+39:   TFLITE_CHECK_LE(rmin, 0.);
+40:   TFLITE_CHECK_GE(rmax, 0.);
+41:   if (rmin == rmax) {
+42:     // Special case where the min,max range is a point. Should be {0}.
+43:     TFLITE_CHECK_EQ(rmin, 0.);
+44:     TFLITE_CHECK_EQ(rmax, 0.);
+45:     QuantizationParams quantization_params;
+46:     quantization_params.zero_point = 0;
+47:     quantization_params.scale = 0.;
+48:     return quantization_params;
+49:   }
+50: 
+51:   // General case.
+52:   //
+53:   // First determine the scale.
+54:   const double scale = (rmax - rmin) / (qmax_double - qmin_double);
+55: 
+56:   // Zero-point computation.
+57:   // First the initial floating-point computation. The zero-point can be
+58:   // determined from solving an affine equation for any known pair
+59:   // (real value, corresponding quantized value).
+60:   // We know two such pairs: (rmin, qmin) and (rmax, qmax).
+61:   // The arithmetic error on the zero point computed from either pair
+62:   // will be roughly machine_epsilon * (sum of absolute values of terms)
+63:   // so we want to use the variant that adds the smaller terms.
+64:   const double zero_point_from_min = qmin_double - rmin / scale;
+65:   const double zero_point_from_max = qmax_double - rmax / scale;
+66:   const double zero_point_from_min_error =
+67:       std::abs(qmin_double) + std::abs(rmin / scale);
+68:   const double zero_point_from_max_error =
+69:       std::abs(qmax_double) + std::abs(rmax / scale);
+70: 
+71:   const double zero_point_double =
+72:       zero_point_from_min_error < zero_point_from_max_error
+73:           ? zero_point_from_min
+74:           : zero_point_from_max;
+75: 
+76:   // Now we need to nudge the zero point to be an integer
+77:   // (our zero points are integer, and this is motivated by the requirement
+78:   // to be able to represent the real value "0" exactly as a quantized value,
+79:   // which is required in multiple places, for example in Im2col with SAME
+80:   // padding).
+81:   T nudged_zero_point = 0;
+82:   if (zero_point_double < qmin_double) {
+83:     nudged_zero_point = qmin;
+84:   } else if (zero_point_double > qmax_double) {
+85:     nudged_zero_point = qmax;
+86:   } else {
+87:     nudged_zero_point = static_cast<T>(round(zero_point_double));
+88:   }
+89:   // The zero point should always be in the range of quantized value,
+90:   // [qmin, qmax].
+91:   TFLITE_CHECK_GE(nudged_zero_point, qmin);
+92:   TFLITE_CHECK_LE(nudged_zero_point, qmax);
+93: 
+94:   // Finally, store the result nudged quantization params.
+95:   QuantizationParams quantization_params;
+96:   quantization_params.zero_point = nudged_zero_point;
+97:   quantization_params.scale = scale;
+98:   return quantization_params;
+99: }
+100: 
+101: template <typename T>
+102: QuantizationParams ChooseQuantizationParams(double rmin, double rmax) {
+103:   return ChooseQuantizationParams<T>(rmin, rmax, false);
+104: }
+105: 
+106: // Converts a floating-point number to an integer. For all inputs x where
+107: // static_cast<IntOut>(x) is legal according to the C++ standard, the result
+108: // is identical to that cast (i.e. the result is x with its fractional part
+109: // truncated whenever that is representable as IntOut).
+110: //
+111: // static_cast would cause undefined behavior for the following cases, which
+112: // have well-defined behavior for this function:
+113: //
+114: //  1. If x is NaN, the result is zero.
+115: //
+116: //  2. If the truncated form of x is above the representable range of IntOut,
+117: //     the result is std::numeric_limits<IntOut>::max().
+118: //
+119: //  3. If the truncated form of x is below the representable range of IntOut,
+120: //     the result is std::numeric_limits<IntOut>::min().
+121: //
+122: // Note that cases #2 and #3 cover infinities as well as finite numbers.
+123: //
+124: // The range of FloatIn must include the range of IntOut, otherwise
+125: // the results are undefined.
+126: // TODO(sfeuz): Replace by absl::SafeCast once available.
+127: template <class IntOut, class FloatIn>
+128: IntOut SafeCast(FloatIn x) {
+129:   static_assert(!std::numeric_limits<FloatIn>::is_integer,
+130:                 "FloatIn is integer");
+131:   static_assert(std::numeric_limits<IntOut>::is_integer,
+132:                 "IntOut is not integer");
+133:   static_assert(std::numeric_limits<IntOut>::radix == 2, "IntOut is base 2");
+134: 
+135:   // Special case NaN, for which the logic below doesn't work.
+136:   if (std::isnan(x)) {
+137:     return 0;
+138:   }
+139: 
+140:   // Negative values all clip to zero for unsigned results.
+141:   if (!std::numeric_limits<IntOut>::is_signed && x < 0) {
+142:     return 0;
+143:   }
+144: 
+145:   // Handle infinities.
+146:   if (std::isinf(x)) {
+147:     return x < 0 ? std::numeric_limits<IntOut>::min()
+148:                  : std::numeric_limits<IntOut>::max();
+149:   }
+150: 
+151:   // Set exp such that x == f * 2^exp for some f with |f| in [0.5, 1.0),
+152:   // unless x is zero in which case exp == 0. Note that this implies that the
+153:   // magnitude of x is strictly less than 2^exp.
+154:   int exp = 0;
+155:   std::frexp(x, &exp);
+156: 
+157:   // Let N be the number of non-sign bits in the representation of IntOut. If
+158:   // the magnitude of x is strictly less than 2^N, the truncated version of x
+159:   // is representable as IntOut. The only representable integer for which this
+160:   // is not the case is kMin for signed types (i.e. -2^N), but that is covered
+
+(Showing lines 1-160 of 292. Use offset=161 to continue.)
+</content>
+
+tool: grep
+{
+  "pattern": "QuantizeMultiplierSmallerThanOneExp",
+  "path": "tensorflow/lite/kernels/internal",
+  "include": "*.h"
+}
+Found 1 matches
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0232-92a6bb06549e\tensorflow\lite\kernels\internal\quantization_util.h:
+  Line 176: void QuantizeMultiplierSmallerThanOneExp(double double_multiplier,
+
+tool: grep
+{
+  "pattern": "QuantizeMultiplierGreaterThanOne",
+  "path": "tensorflow/lite/kernels/internal",
+  "include": "*.h"
+}
+Found 1 matches
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0232-92a6bb06549e\tensorflow\lite\kernels\internal\quantization_util.h:
+  Line 184: void QuantizeMultiplierGreaterThanOne(double double_multiplier,
+
+tokens used
+input: 3,407
+cache read: 8,704
+cache write: 0
+output: 205
+reasoning output: 12
+
+I’m applying the same local helper and regression test in the corresponding target files; no API adaptation beyond matching the existing `int32` style is needed.
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/lite/kernels/comparisons.cc\n@@\n TfLiteStatus ComparisonPrepareStringAllowed(TfLiteContext* context,\n                                             TfLiteNode* node) {\n   return ComparisonPrepareCommon(context, node, true);\n }\n \n+void QuantizeMultiplier(double double_multiplier, int32* quantized_multiplier,\n+                        int* left_shift) {\n+  if (double_multiplier < 1.0) {\n+    QuantizeMultiplierSmallerThanOneExp(double_multiplier, quantized_multiplier,\n+                                        left_shift);\n+  } else {\n+    QuantizeMultiplierGreaterThanOne(double_multiplier, quantized_multiplier,\n+                                     left_shift);\n+  }\n+}\n+\n template <typename input_dtype, reference_ops::ComparisonFn<int32> opname>\n void ComparisonQuantized(const TfLiteTensor* input1, const TfLiteTensor* input2,\n                          TfLiteTensor* output, bool requires_broadcast) {\n@@\n \n     int32 input1_multiplier;\n-    int input1_shift;\n-    QuantizeMultiplierSmallerThanOneExp(input1->params.scale,\n-                                        &input1_multiplier, &input1_shift);\n     int32 input2_multiplier;\n+    int input1_shift;\n     int input2_shift;\n-    QuantizeMultiplierSmallerThanOneExp(input2->params.scale,\n-                                        &input2_multiplier, &input2_shift);\n+    QuantizeMultiplier(input1->params.scale, &input1_multiplier, &input1_shift);\n+    QuantizeMultiplier(input2->params.scale, &input2_multiplier, &input2_shift);\n \n     ComparisonParams op_params;\n*** Update File: tensorflow/lite/kernels/comparisons_test.cc\n@@\n TEST(ComparisonsTest, QuantizedInt8GreaterWithBroadcast) {\n   const float kMin = -127.f;\n   const float kMax = 127.f;\n@@\n   }\n }\n \n+TEST(ComparisonsTest,\n+     QuantizedInt8GreaterWithBroadcastMultiplierGreaterThanOne) {\n+  const float kMin = -127.f;\n+  const float kMax = 127.f;\n+  std::vector<std::vector<int>> test_shapes = {\n+      {6}, {2, 3}, {2, 1, 3}, {1, 3, 1, 2}};\n+  for (int i = 0; i < test_shapes.size(); ++i) {\n+    ComparisonOpModel model({TensorType_INT8, test_shapes[i], kMin, kMax},\n+                            {TensorType_INT8, {}, kMin, kMax}, TensorType_INT8,\n+                            BuiltinOperator_GREATER);\n+    model.QuantizeAndPopulate<int8_t>(model.input1(),\n+                                      {572, -2, -71, 8, 11, 20});\n+    model.QuantizeAndPopulate<int8_t>(model.input2(), {8});\n+    model.Invoke();\n+    EXPECT_THAT(model.GetOutput(),\n+                ElementsAre(true, false, false, false, true, true))\n+        << \"With shape number \" << i;\n+  }\n+}\n+\n TEST(ComparisonsTest, QuantizedUInt8GreaterEqualWithBroadcast) {\n   const float kMin = -1.f;\n   const float kMax = 128.f;\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/lite/kernels/comparisons.cc
+M tensorflow/lite/kernels/comparisons_test.cc
+
+tokens used
+input: 2,795
+cache read: 11,776
+cache write: 0
+output: 826
+reasoning output: 0
+
+The source edits are in place. I’m validating the final diff shape against the target base using hunk validation and checking the working diff.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Locate target comparison kernel and test context",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Adapt and validate source hunks against target base",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Apply minimal backport changes",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Inspect resulting diff and report YAML",
+      "status": "pending",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Locate target comparison kernel and test context",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Adapt and validate source hunks against target base",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Apply minimal backport changes",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Inspect resulting diff and report YAML",
+    "status": "pending",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 1,613
+cache read: 13,824
+cache write: 0
+output: 127
+reasoning output: 0
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/lite/kernels/comparisons.cc tensorflow/lite/kernels/comparisons_test.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0232-92a6bb06549e",
+  "timeout": 120000
+}
+warning: in the working copy of 'tensorflow/lite/kernels/comparisons.cc', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'tensorflow/lite/kernels/comparisons_test.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/lite/kernels/comparisons.cc b/tensorflow/lite/kernels/comparisons.cc
+index d0a1876c5c..f4d99570ff 100644
+--- a/tensorflow/lite/kernels/comparisons.cc
++++ b/tensorflow/lite/kernels/comparisons.cc
+@@ -81,6 +81,17 @@ TfLiteStatus ComparisonPrepareStringAllowed(TfLiteContext* context,
+   return ComparisonPrepareCommon(context, node, true);
+ }
+ 
++void QuantizeMultiplier(double double_multiplier, int32* quantized_multiplier,
++                        int* left_shift) {
++  if (double_multiplier < 1.0) {
++    QuantizeMultiplierSmallerThanOneExp(double_multiplier, quantized_multiplier,
++                                        left_shift);
++  } else {
++    QuantizeMultiplierGreaterThanOne(double_multiplier, quantized_multiplier,
++                                     left_shift);
++  }
++}
++
+ template <typename input_dtype, reference_ops::ComparisonFn<int32> opname>
+ void ComparisonQuantized(const TfLiteTensor* input1, const TfLiteTensor* input2,
+                          TfLiteTensor* output, bool requires_broadcast) {
+@@ -90,13 +101,11 @@ void ComparisonQuantized(const TfLiteTensor* input1, const TfLiteTensor* input2,
+     const int left_shift = 8;
+ 
+     int32 input1_multiplier;
+-    int input1_shift;
+-    QuantizeMultiplierSmallerThanOneExp(input1->params.scale,
+-                                        &input1_multiplier, &input1_shift);
+     int32 input2_multiplier;
++    int input1_shift;
+     int input2_shift;
+-    QuantizeMultiplierSmallerThanOneExp(input2->params.scale,
+-                                        &input2_multiplier, &input2_shift);
++    QuantizeMultiplier(input1->params.scale, &input1_multiplier, &input1_shift);
++    QuantizeMultiplier(input2->params.scale, &input2_multiplier, &input2_shift);
+ 
+     ComparisonParams op_params;
+     op_params.left_shift = left_shift;
+diff --git a/tensorflow/lite/kernels/comparisons_test.cc b/tensorflow/lite/kernels/comparisons_test.cc
+index f8cf6dee74..074d0f1f61 100644
+--- a/tensorflow/lite/kernels/comparisons_test.cc
++++ b/tensorflow/lite/kernels/comparisons_test.cc
+@@ -653,6 +653,26 @@ TEST(ComparisonsTest, QuantizedInt8GreaterWithBroadcast) {
+   }
+ }
+ 
++TEST(ComparisonsTest,
++     QuantizedInt8GreaterWithBroadcastMultiplierGreaterThanOne) {
++  const float kMin = -127.f;
++  const float kMax = 127.f;
++  std::vector<std::vector<int>> test_shapes = {
++      {6}, {2, 3}, {2, 1, 3}, {1, 3, 1, 2}};
++  for (int i = 0; i < test_shapes.size(); ++i) {
++    ComparisonOpModel model({TensorType_INT8, test_shapes[i], kMin, kMax},
++                            {TensorType_INT8, {}, kMin, kMax}, TensorType_INT8,
++                            BuiltinOperator_GREATER);
++    model.QuantizeAndPopulate<int8_t>(model.input1(),
++                                      {572, -2, -71, 8, 11, 20});
++    model.QuantizeAndPopulate<int8_t>(model.input2(), {8});
++    model.Invoke();
++    EXPECT_THAT(model.GetOutput(),
++                ElementsAre(true, false, false, false, true, true))
++        << "With shape number " << i;
++  }
++}
++
+ TEST(ComparisonsTest, QuantizedUInt8GreaterEqualWithBroadcast) {
+   const float kMin = -1.f;
+   const float kMax = 128.f;
+
+tokens used
+input: 855
+cache read: 14,848
+cache write: 0
+output: 86
+reasoning output: 0
+
+tool: validate
+{
+  "ref": "92a6bb06549e74a8bd8cdb8e28552496e5520007",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/lite/kernels/comparisons.cc b/tensorflow/lite/kernels/comparisons.cc\nindex d0a1876c5c..f4d99570ff 100644\n--- a/tensorflow/lite/kernels/comparisons.cc\n+++ b/tensorflow/lite/kernels/comparisons.cc\n@@ -81,6 +81,17 @@ TfLiteStatus ComparisonPrepareStringAllowed(TfLiteContext* context,\n   return ComparisonPrepareCommon(context, node, true);\n }\n \n+void QuantizeMultiplier(double double_multiplier, int32* quantized_multiplier,\n+                        int* left_shift) {\n+  if (double_multiplier < 1.0) {\n+    QuantizeMultiplierSmallerThanOneExp(double_multiplier, quantized_multiplier,\n+                                        left_shift);\n+  } else {\n+    QuantizeMultiplierGreaterThanOne(double_multiplier, quantized_multiplier,\n+                                     left_shift);\n+  }\n+}\n+\n template <typename input_dtype, reference_ops::ComparisonFn<int32> opname>\n void ComparisonQuantized(const TfLiteTensor* input1, const TfLiteTensor* input2,\n                          TfLiteTensor* output, bool requires_broadcast) {\n@@ -90,13 +101,11 @@ void ComparisonQuantized(const TfLiteTensor* input1, const TfLiteTensor* input2,\n     const int left_shift = 8;\n \n     int32 input1_multiplier;\n-    int input1_shift;\n-    QuantizeMultiplierSmallerThanOneExp(input1->params.scale,\n-                                        &input1_multiplier, &input1_shift);\n     int32 input2_multiplier;\n+    int input1_shift;\n     int input2_shift;\n-    QuantizeMultiplierSmallerThanOneExp(input2->params.scale,\n-                                        &input2_multiplier, &input2_shift);\n+    QuantizeMultiplier(input1->params.scale, &input1_multiplier, &input1_shift);\n+    QuantizeMultiplier(input2->params.scale, &input2_multiplier, &input2_shift);\n \n     ComparisonParams op_params;\n     op_params.left_shift = left_shift;\ndiff --git a/tensorflow/lite/kernels/comparisons_test.cc b/tensorflow/lite/kernels/comparisons_test.cc\nindex f8cf6dee74..074d0f1f61 100644\n--- a/tensorflow/lite/kernels/comparisons_test.cc\n+++ b/tensorflow/lite/kernels/comparisons_test.cc\n@@ -653,6 +653,26 @@ TEST(ComparisonsTest, QuantizedInt8GreaterWithBroadcast) {\n   }\n }\n \n+TEST(ComparisonsTest,\n+     QuantizedInt8GreaterWithBroadcastMultiplierGreaterThanOne) {\n+  const float kMin = -127.f;\n+  const float kMax = 127.f;\n+  std::vector<std::vector<int>> test_shapes = {\n+      {6}, {2, 3}, {2, 1, 3}, {1, 3, 1, 2}};\n+  for (int i = 0; i < test_shapes.size(); ++i) {\n+    ComparisonOpModel model({TensorType_INT8, test_shapes[i], kMin, kMax},\n+                            {TensorType_INT8, {}, kMin, kMax}, TensorType_INT8,\n+                            BuiltinOperator_GREATER);\n+    model.QuantizeAndPopulate<int8_t>(model.input1(),\n+                                      {572, -2, -71, 8, 11, 20});\n+    model.QuantizeAndPopulate<int8_t>(model.input2(), {8});\n+    model.Invoke();\n+    EXPECT_THAT(model.GetOutput(),\n+                ElementsAre(true, false, false, false, true, true))\n+        << \"With shape number \" << i;\n+  }\n+}\n+\n TEST(ComparisonsTest, QuantizedUInt8GreaterEqualWithBroadcast) {\n   const float kMin = -1.f;\n   const float kMax = 128.f;"
+}
+This patch does not apply to the target TensorFlow ref.
+Git apply output:
+error: corrupt patch at line 70
+Touched files:
+- tensorflow/lite/kernels/comparisons.cc
+- tensorflow/lite/kernels/comparisons_test.cc
+Fix the patch context against the older TensorFlow version, then run validate again in hunk mode.
+
+tokens used
+input: 1,863
+cache read: 14,848
+cache write: 0
+output: 964
+reasoning output: 19
+
+The first validation input was malformed as a combined hand-copied patch, not a source mismatch. I’m validating the two file hunks separately to isolate formatting from applicability.
+
+tool: validate
+{
+  "ref": "92a6bb06549e74a8bd8cdb8e28552496e5520007",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/lite/kernels/comparisons.cc b/tensorflow/lite/kernels/comparisons.cc\n--- a/tensorflow/lite/kernels/comparisons.cc\n+++ b/tensorflow/lite/kernels/comparisons.cc\n@@ -81,6 +81,17 @@ TfLiteStatus ComparisonPrepareStringAllowed(TfLiteContext* context,\n   return ComparisonPrepareCommon(context, node, true);\n }\n \n+void QuantizeMultiplier(double double_multiplier, int32* quantized_multiplier,\n+                        int* left_shift) {\n+  if (double_multiplier < 1.0) {\n+    QuantizeMultiplierSmallerThanOneExp(double_multiplier, quantized_multiplier,\n+                                        left_shift);\n+  } else {\n+    QuantizeMultiplierGreaterThanOne(double_multiplier, quantized_multiplier,\n+                                     left_shift);\n+  }\n+}\n+\n template <typename input_dtype, reference_ops::ComparisonFn<int32> opname>\n void ComparisonQuantized(const TfLiteTensor* input1, const TfLiteTensor* input2,\n                          TfLiteTensor* output, bool requires_broadcast) {\n@@ -90,13 +101,11 @@ void ComparisonQuantized(const TfLiteTensor* input1, const TfLiteTensor* input2,\n     const int left_shift = 8;\n \n     int32 input1_multiplier;\n-    int input1_shift;\n-    QuantizeMultiplierSmallerThanOneExp(input1->params.scale,\n-                                        &input1_multiplier, &input1_shift);\n     int32 input2_multiplier;\n+    int input1_shift;\n     int input2_shift;\n-    QuantizeMultiplierSmallerThanOneExp(input2->params.scale,\n-                                        &input2_multiplier, &input2_shift);\n+    QuantizeMultiplier(input1->params.scale, &input1_multiplier, &input1_shift);\n+    QuantizeMultiplier(input2->params.scale, &input2_multiplier, &input2_shift);\n \n     ComparisonParams op_params;\n     op_params.left_shift = left_shift;\n"
+}
+Patch applied successfully
+
+tokens used
+input: 1,903
+cache read: 15,872
+cache write: 0
+output: 546
+reasoning output: 173
+
+tool: validate
+{
+  "ref": "92a6bb06549e74a8bd8cdb8e28552496e5520007",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/lite/kernels/comparisons_test.cc b/tensorflow/lite/kernels/comparisons_test.cc\n--- a/tensorflow/lite/kernels/comparisons_test.cc\n+++ b/tensorflow/lite/kernels/comparisons_test.cc\n@@ -653,6 +653,26 @@ TEST(ComparisonsTest, QuantizedInt8GreaterWithBroadcast) {\n   }\n }\n \n+TEST(ComparisonsTest,\n+     QuantizedInt8GreaterWithBroadcastMultiplierGreaterThanOne) {\n+  const float kMin = -127.f;\n+  const float kMax = 127.f;\n+  std::vector<std::vector<int>> test_shapes = {\n+      {6}, {2, 3}, {2, 1, 3}, {1, 3, 1, 2}};\n+  for (int i = 0; i < test_shapes.size(); ++i) {\n+    ComparisonOpModel model({TensorType_INT8, test_shapes[i], kMin, kMax},\n+                            {TensorType_INT8, {}, kMin, kMax}, TensorType_INT8,\n+                            BuiltinOperator_GREATER);\n+    model.QuantizeAndPopulate<int8_t>(model.input1(),\n+                                      {572, -2, -71, 8, 11, 20});\n+    model.QuantizeAndPopulate<int8_t>(model.input2(), {8});\n+    model.Invoke();\n+    EXPECT_THAT(model.GetOutput(),\n+                ElementsAre(true, false, false, false, true, true))\n+        << \"With shape number \" << i;\n+  }\n+}\n+\n TEST(ComparisonsTest, QuantizedUInt8GreaterEqualWithBroadcast) {\n   const float kMin = -1.f;\n   const float kMax = 128.f;\n"
+}
+Patch applied successfully
+
+tokens used
+input: 1,611
+cache read: 16,896
+cache write: 0
+output: 469
+reasoning output: 0
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Locate target comparison kernel and test context",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Adapt and validate source hunks against target base",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Apply minimal backport changes",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Inspect resulting diff and report YAML",
+      "status": "in_progress",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Locate target comparison kernel and test context",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Adapt and validate source hunks against target base",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Apply minimal backport changes",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Inspect resulting diff and report YAML",
+    "status": "in_progress",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 1,069
+cache read: 17,920
+cache write: 0
+output: 94
+reasoning output: 29
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/lite/kernels/comparisons.cc tensorflow/lite/kernels/comparisons_test.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0232-92a6bb06549e",
+  "timeout": 120000
+}
+warning: in the working copy of 'tensorflow/lite/kernels/comparisons.cc', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'tensorflow/lite/kernels/comparisons_test.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/lite/kernels/comparisons.cc b/tensorflow/lite/kernels/comparisons.cc
+index d0a1876c5c..f4d99570ff 100644
+--- a/tensorflow/lite/kernels/comparisons.cc
++++ b/tensorflow/lite/kernels/comparisons.cc
+@@ -81,6 +81,17 @@ TfLiteStatus ComparisonPrepareStringAllowed(TfLiteContext* context,
+   return ComparisonPrepareCommon(context, node, true);
+ }
+ 
++void QuantizeMultiplier(double double_multiplier, int32* quantized_multiplier,
++                        int* left_shift) {
++  if (double_multiplier < 1.0) {
++    QuantizeMultiplierSmallerThanOneExp(double_multiplier, quantized_multiplier,
++                                        left_shift);
++  } else {
++    QuantizeMultiplierGreaterThanOne(double_multiplier, quantized_multiplier,
++                                     left_shift);
++  }
++}
++
+ template <typename input_dtype, reference_ops::ComparisonFn<int32> opname>
+ void ComparisonQuantized(const TfLiteTensor* input1, const TfLiteTensor* input2,
+                          TfLiteTensor* output, bool requires_broadcast) {
+@@ -90,13 +101,11 @@ void ComparisonQuantized(const TfLiteTensor* input1, const TfLiteTensor* input2,
+     const int left_shift = 8;
+ 
+     int32 input1_multiplier;
+-    int input1_shift;
+-    QuantizeMultiplierSmallerThanOneExp(input1->params.scale,
+-                                        &input1_multiplier, &input1_shift);
+     int32 input2_multiplier;
++    int input1_shift;
+     int input2_shift;
+-    QuantizeMultiplierSmallerThanOneExp(input2->params.scale,
+-                                        &input2_multiplier, &input2_shift);
++    QuantizeMultiplier(input1->params.scale, &input1_multiplier, &input1_shift);
++    QuantizeMultiplier(input2->params.scale, &input2_multiplier, &input2_shift);
+ 
+     ComparisonParams op_params;
+     op_params.left_shift = left_shift;
+diff --git a/tensorflow/lite/kernels/comparisons_test.cc b/tensorflow/lite/kernels/comparisons_test.cc
+index f8cf6dee74..074d0f1f61 100644
+--- a/tensorflow/lite/kernels/comparisons_test.cc
++++ b/tensorflow/lite/kernels/comparisons_test.cc
+@@ -653,6 +653,26 @@ TEST(ComparisonsTest, QuantizedInt8GreaterWithBroadcast) {
+   }
+ }
+ 
++TEST(ComparisonsTest,
++     QuantizedInt8GreaterWithBroadcastMultiplierGreaterThanOne) {
++  const float kMin = -127.f;
++  const float kMax = 127.f;
++  std::vector<std::vector<int>> test_shapes = {
++      {6}, {2, 3}, {2, 1, 3}, {1, 3, 1, 2}};
++  for (int i = 0; i < test_shapes.size(); ++i) {
++    ComparisonOpModel model({TensorType_INT8, test_shapes[i], kMin, kMax},
++                            {TensorType_INT8, {}, kMin, kMax}, TensorType_INT8,
++                            BuiltinOperator_GREATER);
++    model.QuantizeAndPopulate<int8_t>(model.input1(),
++                                      {572, -2, -71, 8, 11, 20});
++    model.QuantizeAndPopulate<int8_t>(model.input2(), {8});
++    model.Invoke();
++    EXPECT_THAT(model.GetOutput(),
++                ElementsAre(true, false, false, false, true, true))
++        << "With shape number " << i;
++  }
++}
++
+ TEST(ComparisonsTest, QuantizedUInt8GreaterEqualWithBroadcast) {
+   const float kMin = -1.f;
+   const float kMax = 128.f;
+
+tool: bash
+{
+  "command": "git status --short",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0232-92a6bb06549e",
+  "timeout": 120000
+}
+ M tensorflow/lite/kernels/comparisons.cc
+ M tensorflow/lite/kernels/comparisons_test.cc
+
+tokens used
+input: 1,331
+cache read: 17,920
+cache write: 0
+output: 166
+reasoning output: 0
+
+The adapted hunks validate successfully against the target base, and only the intended two TensorFlow Lite comparison files are modified.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Locate target comparison kernel and test context",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Adapt and validate source hunks against target base",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Apply minimal backport changes",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Inspect resulting diff and report YAML",
+      "status": "completed",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Locate target comparison kernel and test context",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Adapt and validate source hunks against target base",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Apply minimal backport changes",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Inspect resulting diff and report YAML",
+    "status": "completed",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 1,427
+cache read: 18,944
+cache write: 0
+output: 122
+reasoning output: 0
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/lite/kernels/comparisons.cc b/tensorflow/lite/kernels/comparisons.cc
+    index d0a1876c5c..f4d99570ff 100644
+    --- a/tensorflow/lite/kernels/comparisons.cc
+    +++ b/tensorflow/lite/kernels/comparisons.cc
+    @@ -81,6 +81,17 @@ TfLiteStatus ComparisonPrepareStringAllowed(TfLiteContext* context,
+       return ComparisonPrepareCommon(context, node, true);
+     }
+     
+    +void QuantizeMultiplier(double double_multiplier, int32* quantized_multiplier,
+    +                        int* left_shift) {
+    +  if (double_multiplier < 1.0) {
+    +    QuantizeMultiplierSmallerThanOneExp(double_multiplier, quantized_multiplier,
+    +                                        left_shift);
+    +  } else {
+    +    QuantizeMultiplierGreaterThanOne(double_multiplier, quantized_multiplier,
+    +                                     left_shift);
+    +  }
+    +}
+    +
+     template <typename input_dtype, reference_ops::ComparisonFn<int32> opname>
+     void ComparisonQuantized(const TfLiteTensor* input1, const TfLiteTensor* input2,
+                              TfLiteTensor* output, bool requires_broadcast) {
+    @@ -90,13 +101,11 @@ void ComparisonQuantized(const TfLiteTensor* input1, const TfLiteTensor* input2,
+         const int left_shift = 8;
+     
+         int32 input1_multiplier;
+    -    int input1_shift;
+    -    QuantizeMultiplierSmallerThanOneExp(input1->params.scale,
+    -                                        &input1_multiplier, &input1_shift);
+         int32 input2_multiplier;
+    +    int input1_shift;
+         int input2_shift;
+    -    QuantizeMultiplierSmallerThanOneExp(input2->params.scale,
+    -                                        &input2_multiplier, &input2_shift);
+    +    QuantizeMultiplier(input1->params.scale, &input1_multiplier, &input1_shift);
+    +    QuantizeMultiplier(input2->params.scale, &input2_multiplier, &input2_shift);
+     
+         ComparisonParams op_params;
+         op_params.left_shift = left_shift;
+    diff --git a/tensorflow/lite/kernels/comparisons_test.cc b/tensorflow/lite/kernels/comparisons_test.cc
+    index f8cf6dee74..074d0f1f61 100644
+    --- a/tensorflow/lite/kernels/comparisons_test.cc
+    +++ b/tensorflow/lite/kernels/comparisons_test.cc
+    @@ -653,6 +653,26 @@ TEST(ComparisonsTest, QuantizedInt8GreaterWithBroadcast) {
+       }
+     }
+     
+    +TEST(ComparisonsTest,
+    +     QuantizedInt8GreaterWithBroadcastMultiplierGreaterThanOne) {
+    +  const float kMin = -127.f;
+    +  const float kMax = 127.f;
+    +  std::vector<std::vector<int>> test_shapes = {
+    +      {6}, {2, 3}, {2, 1, 3}, {1, 3, 1, 2}};
+    +  for (int i = 0; i < test_shapes.size(); ++i) {
+    +    ComparisonOpModel model({TensorType_INT8, test_shapes[i], kMin, kMax},
+    +                            {TensorType_INT8, {}, kMin, kMax}, TensorType_INT8,
+    +                            BuiltinOperator_GREATER);
+    +    model.QuantizeAndPopulate<int8_t>(model.input1(),
+    +                                      {572, -2, -71, 8, 11, 20});
+    +    model.QuantizeAndPopulate<int8_t>(model.input2(), {8});
+    +    model.Invoke();
+    +    EXPECT_THAT(model.GetOutput(),
+    +                ElementsAre(true, false, false, false, true, true))
+    +        << "With shape number " << i;
+    +  }
+    +}
+    +
+     TEST(ComparisonsTest, QuantizedUInt8GreaterEqualWithBroadcast) {
+       const float kMin = -1.f;
+       const float kMax = 128.f;
+  notes: >
+    Backported the TFLite quantized comparison multiplier handling fix and regression test; both hunks validate against the 2.6.4 target base.
+```
+
+tokens used
+input: 663
+cache read: 19,968
+cache write: 0
+output: 960
+reasoning output: 0

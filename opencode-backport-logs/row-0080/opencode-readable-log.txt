@@ -1,0 +1,184 @@
+I’ll locate the target implementation for `ImmutableExecutorState::BuildControlFlowInfo`, verify the surrounding control-flow logic against the provided hunk, then apply only the null-check backport.
+
+tool: viewcode
+{
+  "ref": "9ce6ba46ac6f29413afdd0dfb6faa803acb2b747",
+  "path": "tensorflow/core/common_runtime/immutable_executor_state.cc",
+  "startline": 280,
+  "endline": 340
+}
+Here are lines 280 through 340.
+
+}
+}  // namespace
+
+Status ImmutableExecutorState::BuildControlFlowInfo(const Graph* g,
+                                                    ControlFlowInfo* cf_info) {
+  const int num_nodes = g->num_node_ids();
+  cf_info->frame_names.resize(num_nodes);
+  std::vector<Node*> parent_nodes;
+  parent_nodes.resize(num_nodes);
+  std::vector<bool> visited;
+  visited.resize(num_nodes);
+
+  string frame_name;
+  std::deque<Node*> ready;
+
+  // Initialize with the root nodes.
+  for (Node* n : g->nodes()) {
+    if (n->in_edges().empty()) {
+      visited[n->id()] = true;
+      cf_info->unique_frame_names.insert(frame_name);
+      ready.push_back(n);
+    }
+  }
+
+  while (!ready.empty()) {
+    Node* curr_node = ready.front();
+    int curr_id = curr_node->id();
+    ready.pop_front();
+
+    Node* parent = nullptr;
+    if (IsEnter(curr_node)) {
+      // Enter a child frame.
+      TF_RETURN_IF_ERROR(
+          GetNodeAttr(curr_node->attrs(), "frame_name", &frame_name));
+      parent = curr_node;
+    } else if (IsExit(curr_node)) {
+      // Exit to the parent frame.
+      parent = parent_nodes[curr_id];
+      frame_name = cf_info->frame_names[parent->id()];
+      parent = parent_nodes[parent->id()];
+    } else {
+      parent = parent_nodes[curr_id];
+      frame_name = cf_info->frame_names[curr_id];
+    }
+
+    for (const Edge* out_edge : curr_node->out_edges()) {
+      Node* out = out_edge->dst();
+      if (IsSink(out)) continue;
+      const int out_id = out->id();
+
+      // Add to ready queue if not visited.
+      bool is_visited = visited[out_id];
+      if (!is_visited) {
+        ready.push_back(out);
+        visited[out_id] = true;
+
+        // Process the node 'out'.
+        cf_info->frame_names[out_id] = frame_name;
+        parent_nodes[out_id] = parent;
+        cf_info->unique_frame_names.insert(frame_name);
+      }
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: locate_symbol
+{
+  "ref": "9ce6ba46ac6f29413afdd0dfb6faa803acb2b747",
+  "symbol": "ImmutableExecutorState::BuildControlFlowInfo"
+}
+tensorflow/core/common_runtime/immutable_executor_state.cc:283
+
+tokens used
+input: 3,690
+cache read: 4,608
+cache write: 0
+output: 171
+reasoning output: 0
+
+The target code matches the patched location: `Exit` currently dereferences `parent_nodes[curr_id]` without checking for a corresponding `Enter`. I’m adding the same `InvalidArgument` guard immediately before that dereference.
+
+tool: validate
+{
+  "ref": "9ce6ba46ac6f29413afdd0dfb6faa803acb2b747",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/common_runtime/immutable_executor_state.cc b/tensorflow/core/common_runtime/immutable_executor_state.cc\n--- a/tensorflow/core/common_runtime/immutable_executor_state.cc\n+++ b/tensorflow/core/common_runtime/immutable_executor_state.cc\n@@ -313,6 +313,10 @@ Status ImmutableExecutorState::BuildControlFlowInfo(const Graph* g,\n     } else if (IsExit(curr_node)) {\n       // Exit to the parent frame.\n       parent = parent_nodes[curr_id];\n+      if (!parent) {\n+        return errors::InvalidArgument(\n+            \"Invalid Exit op: Cannot find a corresponding Enter op.\");\n+      }\n       frame_name = cf_info->frame_names[parent->id()];\n       parent = parent_nodes[parent->id()];\n     } else {\n"
+}
+Patch applied successfully
+
+tokens used
+input: 1,301
+cache read: 7,680
+cache write: 0
+output: 284
+reasoning output: 23
+
+The hunk validates cleanly against the target base, so I’m applying that minimal source change in the checkout.
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/common_runtime/immutable_executor_state.cc\n@@\n     } else if (IsExit(curr_node)) {\n       // Exit to the parent frame.\n       parent = parent_nodes[curr_id];\n+      if (!parent) {\n+        return errors::InvalidArgument(\n+            \"Invalid Exit op: Cannot find a corresponding Enter op.\");\n+      }\n       frame_name = cf_info->frame_names[parent->id()];\n       parent = parent_nodes[parent->id()];\n     } else {\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/common_runtime/immutable_executor_state.cc
+
+tokens used
+input: 597
+cache read: 8,704
+cache write: 0
+output: 174
+reasoning output: 0
+
+I’ll inspect the resulting diff to confirm only the intended TensorFlow source hunk changed.
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/common_runtime/immutable_executor_state.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0080-9ce6ba46ac6f",
+  "timeout": 120000
+}
+warning: in the working copy of 'tensorflow/core/common_runtime/immutable_executor_state.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/common_runtime/immutable_executor_state.cc b/tensorflow/core/common_runtime/immutable_executor_state.cc
+index 03d12a0e98..3cde56bc85 100644
+--- a/tensorflow/core/common_runtime/immutable_executor_state.cc
++++ b/tensorflow/core/common_runtime/immutable_executor_state.cc
+@@ -315,6 +315,10 @@ Status ImmutableExecutorState::BuildControlFlowInfo(const Graph* g,
+     } else if (IsExit(curr_node)) {
+       // Exit to the parent frame.
+       parent = parent_nodes[curr_id];
++      if (!parent) {
++        return errors::InvalidArgument(
++            "Invalid Exit op: Cannot find a corresponding Enter op.");
++      }
+       frame_name = cf_info->frame_names[parent->id()];
+       parent = parent_nodes[parent->id()];
+     } else {
+
+tokens used
+input: 799
+cache read: 8,704
+cache write: 0
+output: 102
+reasoning output: 0
+
+Applied the minimal CVE fix to `tensorflow/core/common_runtime/immutable_executor_state.cc`, adding a null check for an `Exit` op without a corresponding `Enter` op. The hunk was validated against the target base with `validate` in hunk mode.
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/common_runtime/immutable_executor_state.cc b/tensorflow/core/common_runtime/immutable_executor_state.cc
+    index 03d12a0e98..3cde56bc85 100644
+    --- a/tensorflow/core/common_runtime/immutable_executor_state.cc
+    +++ b/tensorflow/core/common_runtime/immutable_executor_state.cc
+    @@ -315,6 +315,10 @@ Status ImmutableExecutorState::BuildControlFlowInfo(const Graph* g,
+         } else if (IsExit(curr_node)) {
+           // Exit to the parent frame.
+           parent = parent_nodes[curr_id];
+    +      if (!parent) {
+    +        return errors::InvalidArgument(
+    +            "Invalid Exit op: Cannot find a corresponding Enter op.");
+    +      }
+           frame_name = cf_info->frame_names[parent->id()];
+           parent = parent_nodes[parent->id()];
+         } else {
+  notes: >
+    Added the missing InvalidArgument guard before dereferencing the parent Enter node for Exit ops.
+```
+
+tokens used
+input: 1,129
+cache read: 8,704
+cache write: 0
+output: 294
+reasoning output: 18

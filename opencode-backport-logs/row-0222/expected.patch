@@ -1,0 +1,12 @@
+diff --git a/tensorflow/lite/kernels/svdf.cc b/tensorflow/lite/kernels/svdf.cc
+index 267f07951f9e76..ef546072d5a538 100644
+--- a/tensorflow/lite/kernels/svdf.cc
++++ b/tensorflow/lite/kernels/svdf.cc
+@@ -274,6 +274,7 @@ TfLiteStatus Eval(TfLiteContext* context, TfLiteNode* node) {
+   TfLiteTensor* scratch = GetTemporary(context, node, /*index=*/0);
+ 
+   TfLiteTensor* state = GetVariableInput(context, node, kStateTensor);
++  TF_LITE_ENSURE(context, state != nullptr);
+   TfLiteTensor* output = GetOutput(context, node, kOutputTensor);
+ 
+   switch (weights_feature->type) {

@@ -1,0 +1,57 @@
+diff --git a/tensorflow/core/kernels/map_stage_op.cc b/tensorflow/core/kernels/map_stage_op.cc
+index fd03d2e187..6cc5af6fb3 100644
+--- a/tensorflow/core/kernels/map_stage_op.cc
++++ b/tensorflow/core/kernels/map_stage_op.cc
+@@ -533,6 +533,11 @@ class MapStageOp : public OpKernel {
+     OP_REQUIRES(ctx, key_tensor->NumElements() > 0,
+                 errors::InvalidArgument("key must not be empty"));
+ 
++    OP_REQUIRES(ctx, key_tensor->NumElements() == 1,
++                errors::InvalidArgument(
++                    "key must be an int64 scalar, got tensor with shape: ",
++                    key_tensor->shape()));
++
+     // Create copy for insertion into Staging Area
+     Tensor key(*key_tensor);
+ 
+diff --git a/tensorflow/python/kernel_tests/map_stage_op_test.py b/tensorflow/python/kernel_tests/map_stage_op_test.py
+index 516fc37517..4c14bc5c2f 100644
+--- a/tensorflow/python/kernel_tests/map_stage_op_test.py
++++ b/tensorflow/python/kernel_tests/map_stage_op_test.py
+@@ -16,8 +16,9 @@ from __future__ import absolute_import
+ from __future__ import division
+ from __future__ import print_function
+ 
+-from tensorflow.python.framework import errors
++from tensorflow.python.framework import constant_op
+ from tensorflow.python.framework import dtypes
++from tensorflow.python.framework import errors
+ from tensorflow.python.framework import ops
+ from tensorflow.python.framework import test_util
+ from tensorflow.python.ops import array_ops
+@@ -125,6 +126,25 @@ class MapStageTest(test.TestCase):
+ 
+     G.finalize()
+ 
++  @test_util.run_deprecated_v1
++  def testNonScalarKeyFails(self):
++    for ordered in [False, True]:
++      with ops.Graph().as_default() as G:
++        with ops.device('/cpu:0'):
++          key = constant_op.constant([0, 1], dtype=dtypes.int64)
++          x = constant_op.constant(1.0)
++        with ops.device(test.gpu_device_name()):
++          stager = data_flow_ops.MapStagingArea([dtypes.float32],
++                                                ordered=ordered)
++          stage = stager.put(key, [x], [0])
++
++      G.finalize()
++
++      with self.session(graph=G) as sess:
++        with self.assertRaisesRegex(errors.InvalidArgumentError,
++                                    "key must be an int64 scalar"):
++          sess.run(stage)
++
+   @test_util.run_deprecated_v1
+   def testPeek(self):
+     with ops.Graph().as_default() as G:

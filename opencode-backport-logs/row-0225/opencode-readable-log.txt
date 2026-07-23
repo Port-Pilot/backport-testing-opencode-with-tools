@@ -1,0 +1,284 @@
+I’ll locate the target-version implementation of `ShapeRefiner::InferShapesForFunctionSubNode`, compare its local API shape to the provided 2.7 patch, then apply only the equivalent resource shape-copy fix.
+
+tool: viewcode
+{
+  "ref": "48945cb96a65d49ab418d96d6f66ef081e46758f",
+  "path": "tensorflow/core/common_runtime/shape_refiner.cc",
+  "startline": 80,
+  "endline": 155
+}
+Here are lines 80 through 155.
+
+          "Function instantiation included invalid input index: ", index,
+          " not in [0, ", outer_context->num_inputs(), ").");
+    }
+
+    // TODO(b/134547156): TEMPORARY WORKAROUND. If input shape handle is not set
+    // in outer context, set _Arg node output shape to unknown.
+    if (outer_context->input(index).SameHandle(ShapeHandle())) {
+      VLOG(1) << "Function instantiation has undefined input shape at "
+              << "index: " << index << " in the outer inference context.";
+      node_context->set_output(0, node_context->UnknownShape());
+    } else {
+      node_context->set_output(0, outer_context->input(index));
+    }
+
+    auto* resource = outer_context->input_handle_shapes_and_types(index);
+    if (resource) {
+      node_context->set_output_handle_shapes_and_types(0, *resource);
+    }
+  } else if (StringPiece(node->type_string()) == kRetvalOp) {
+    // Handle special node: function output.
+    // Shapes inferred for these nodes go into the outer inference
+    // context.
+
+    int index;
+    TF_RETURN_IF_ERROR(GetNodeAttr(AttrSlice(node->def()), "index", &index));
+
+    if (index < 0 || outer_context->num_outputs() <= index) {
+      return errors::Internal(
+          "Function instantiation included invalid output index: ", index,
+          " not in [0, ", outer_context->num_outputs(), ").");
+    }
+
+    // outer_context outlives node_context, therefore we need to create
+    // a new shape handle owned by outer_context instead.
+    ShapeHandle handle;
+    TensorShapeProto proto;
+    node_context->ShapeHandleToProto(node_context->input(0), &proto);
+    TF_RETURN_IF_ERROR(outer_context->MakeShapeFromShapeProto(proto, &handle));
+    outer_context->set_output(index, handle);
+
+    auto* resource = node_context->input_handle_shapes_and_types(0);
+    if (resource) {
+      outer_context->set_output_handle_shapes_and_types(index, *resource);
+    }
+  }
+
+  return Status::OK();
+}
+
+}  // namespace
+
+// TODO(cwhipkey): When an inference context inside function has
+// requested_input_tensor(i) or requested_input_tensor_as_partial_shape(i)
+// set when input(i) is an _Arg op, then this request should propagate to
+// context, and vice versa.
+//
+// NOTE: Recursive user-defined functions are not supported.
+// Maybe we won't support recursive functions at all in TF, because of
+// other maintainability issues.
+Status ShapeRefiner::InferShapesForFunction(
+    const FunctionDef* function_def, AttrSlice attributes,
+    ExtendedInferenceContext* outer_context) {
+  const Graph* graph;
+  auto it = functions_.find(function_def);
+  if (it != functions_.end()) {
+    graph = it->second.get();
+  } else {
+    InstantiationResult result;
+    TF_RETURN_IF_ERROR(InstantiateFunction(
+        *function_def, attributes,
+        [this](const string& op, const OpDef** sig) {
+          return this->function_library_->LookUpOpDef(op, sig);
+        },
+        &result));
+
+    Graph* new_graph = new Graph(function_library_);
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: git_show
+{
+  "ref": "ee119d4a498979525046fba1c3dd3f13a039fbb1",
+  "context": "Status ShapeRefiner::InferShapesForFunctionSubNode"
+}
+commit ee119d4a498979525046fba1c3dd3f13a039fbb1
+Author: Daniel Ellis <danielellis@google.com>
+Date:   Wed Jul 14 12:43:17 2021 -0700
+
+    Fix segmentation fault in shape inference logic.
+    
+    When running shape functions, some functions (such as `MutableHashTableShape`)
+    produce extra output information in the form of a `ShapeAndType` struct.  The
+    shapes embedded in this struct are owned by an inference context that is
+    cleaned up almost immediately; if the upstream code attempts to access this
+    shape information, it can trigger a segfault.
+    
+    `ShapeRefiner` is mitigating this for normal output shapes by cloning them
+    (and thus putting the newly created shape under ownership of an inference
+    context that will not die), but we were not doing the same for shapes and
+    types.  This commit fixes that by doing similar logic on output shapes and
+    types.
+    
+    PiperOrigin-RevId: 384761124
+    Change-Id: I07c0c42d29dfbb55bfa13ec1f09ef825fb0a1a1d
+
+ tensorflow/core/common_runtime/shape_refiner.cc | 21 +++++++++++++++++++--
+ 1 file changed, 19 insertions(+), 2 deletions(-)
+This commit shows that there is a high probability that this code is new, so the corresponding code segment cannot be found in the old version.
+You can call `viewcode` and `locate_symbol` to further check the results step by step. For newly introduced code, we consider that this hunk `need not ported`.
+
+tool: locate_symbol
+{
+  "ref": "48945cb96a65d49ab418d96d6f66ef081e46758f",
+  "symbol": "InferShapesForFunctionSubNode"
+}
+tensorflow/core/common_runtime/shape_refiner.cc:65
+tensorflow/core/common_runtime/shape_refiner.cc:170
+
+tokens used
+input: 3,897
+cache read: 4,608
+cache write: 0
+output: 223
+reasoning output: 0
+
+The equivalent target code is present in `tensorflow/core/common_runtime/shape_refiner.cc` with the same vulnerable direct transfer from `node_context` to `outer_context`. I’m applying the minimal fix there by rebuilding each `ShapeHandle` in the outer inference context before setting handle shapes/types.
+
+tool: validate
+{
+  "ref": "48945cb96a65d49ab418d96d6f66ef081e46758f",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/common_runtime/shape_refiner.cc b/tensorflow/core/common_runtime/shape_refiner.cc\n--- a/tensorflow/core/common_runtime/shape_refiner.cc\n+++ b/tensorflow/core/common_runtime/shape_refiner.cc\n@@ -117,9 +117,26 @@ Status ShapeRefiner::InferShapesForFunctionSubNode(\n     TF_RETURN_IF_ERROR(outer_context->MakeShapeFromShapeProto(proto, &handle));\n     outer_context->set_output(index, handle);\n \n-    auto* resource = node_context->input_handle_shapes_and_types(0);\n+    const std::vector<ShapeAndType>* resource =\n+        node_context->input_handle_shapes_and_types(0);\n     if (resource) {\n-      outer_context->set_output_handle_shapes_and_types(index, *resource);\n+      // `ShapesAndType`s contain `ShapeHandle`s.  These `ShapeHandle`s point\n+      // to `Shape`s that are owned by a different inference context too.  We\n+      // need to copy them to the outer context to prevent them from being\n+      // destroyed before they are used.\n+      std::vector<ShapeAndType> copied_shapes_and_types;\n+      for (auto& shape_and_type : *resource) {\n+        ShapeHandle handle;\n+        TensorShapeProto proto;\n+        node_context->ShapeHandleToProto(shape_and_type.shape, &proto);\n+        TF_RETURN_IF_ERROR(\n+            outer_context->MakeShapeFromShapeProto(proto, &handle));\n+        copied_shapes_and_types.push_back(\n+            ShapeAndType(handle, shape_and_type.dtype, shape_and_type.type));\n+      }\n+\n+      outer_context->set_output_handle_shapes_and_types(\n+          index, copied_shapes_and_types);\n     }\n   }\n"
+}
+This patch does not apply to the target TensorFlow ref.
+Git apply output:
+error: corrupt patch at line 32
+Touched files:
+- tensorflow/core/common_runtime/shape_refiner.cc
+Fix the patch context against the older TensorFlow version, then run validate again in hunk mode.
+
+tokens used
+input: 2,181
+cache read: 7,680
+cache write: 0
+output: 520
+reasoning output: 51
+
+tool: validate
+{
+  "ref": "48945cb96a65d49ab418d96d6f66ef081e46758f",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/common_runtime/shape_refiner.cc b/tensorflow/core/common_runtime/shape_refiner.cc\nindex 0000000..0000000 100644\n--- a/tensorflow/core/common_runtime/shape_refiner.cc\n+++ b/tensorflow/core/common_runtime/shape_refiner.cc\n@@ -113,11 +113,28 @@ Status ShapeRefiner::InferShapesForFunctionSubNode(\n     node_context->ShapeHandleToProto(node_context->input(0), &proto);\n     TF_RETURN_IF_ERROR(outer_context->MakeShapeFromShapeProto(proto, &handle));\n     outer_context->set_output(index, handle);\n \n-    auto* resource = node_context->input_handle_shapes_and_types(0);\n+    const std::vector<ShapeAndType>* resource =\n+        node_context->input_handle_shapes_and_types(0);\n     if (resource) {\n-      outer_context->set_output_handle_shapes_and_types(index, *resource);\n+      // `ShapesAndType`s contain `ShapeHandle`s.  These `ShapeHandle`s point\n+      // to `Shape`s that are owned by a different inference context too.  We\n+      // need to copy them to the outer context to prevent them from being\n+      // destroyed before they are used.\n+      std::vector<ShapeAndType> copied_shapes_and_types;\n+      for (auto& shape_and_type : *resource) {\n+        ShapeHandle handle;\n+        TensorShapeProto proto;\n+        node_context->ShapeHandleToProto(shape_and_type.shape, &proto);\n+        TF_RETURN_IF_ERROR(\n+            outer_context->MakeShapeFromShapeProto(proto, &handle));\n+        copied_shapes_and_types.push_back(\n+            ShapeAndType(handle, shape_and_type.dtype, shape_and_type.type));\n+      }\n+\n+      outer_context->set_output_handle_shapes_and_types(\n+          index, copied_shapes_and_types);\n     }\n   }\n \n   return Status::OK();\n"
+}
+Patch applied successfully
+
+tokens used
+input: 773
+cache read: 9,728
+cache write: 0
+output: 496
+reasoning output: 96
+
+The hunk validates against the target base. I’m now applying it to the checked-out source.
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/common_runtime/shape_refiner.cc\n@@\n-    auto* resource = node_context->input_handle_shapes_and_types(0);\n+    const std::vector<ShapeAndType>* resource =\n+        node_context->input_handle_shapes_and_types(0);\n     if (resource) {\n-      outer_context->set_output_handle_shapes_and_types(index, *resource);\n+      // `ShapesAndType`s contain `ShapeHandle`s.  These `ShapeHandle`s point\n+      // to `Shape`s that are owned by a different inference context too.  We\n+      // need to copy them to the outer context to prevent them from being\n+      // destroyed before they are used.\n+      std::vector<ShapeAndType> copied_shapes_and_types;\n+      for (auto& shape_and_type : *resource) {\n+        ShapeHandle handle;\n+        TensorShapeProto proto;\n+        node_context->ShapeHandleToProto(shape_and_type.shape, &proto);\n+        TF_RETURN_IF_ERROR(\n+            outer_context->MakeShapeFromShapeProto(proto, &handle));\n+        copied_shapes_and_types.push_back(\n+            ShapeAndType(handle, shape_and_type.dtype, shape_and_type.type));\n+      }\n+\n+      outer_context->set_output_handle_shapes_and_types(\n+          index, copied_shapes_and_types);\n     }\n   }\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/common_runtime/shape_refiner.cc
+
+tokens used
+input: 1,378
+cache read: 9,728
+cache write: 0
+output: 362
+reasoning output: 0
+
+The source edit is in place. I’m checking the resulting diff to ensure only the intended backport changed.
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/common_runtime/shape_refiner.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0225-48945cb96a65",
+  "timeout": 120000
+}
+warning: in the working copy of 'tensorflow/core/common_runtime/shape_refiner.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/common_runtime/shape_refiner.cc b/tensorflow/core/common_runtime/shape_refiner.cc
+index a968aaf09b..6a7d1eadfb 100644
+--- a/tensorflow/core/common_runtime/shape_refiner.cc
++++ b/tensorflow/core/common_runtime/shape_refiner.cc
+@@ -117,9 +117,26 @@ Status InferShapesForFunctionSubNode(const Node* node, ShapeRefiner* refiner,
+     TF_RETURN_IF_ERROR(outer_context->MakeShapeFromShapeProto(proto, &handle));
+     outer_context->set_output(index, handle);
+ 
+-    auto* resource = node_context->input_handle_shapes_and_types(0);
++    const std::vector<ShapeAndType>* resource =
++        node_context->input_handle_shapes_and_types(0);
+     if (resource) {
+-      outer_context->set_output_handle_shapes_and_types(index, *resource);
++      // `ShapesAndType`s contain `ShapeHandle`s.  These `ShapeHandle`s point
++      // to `Shape`s that are owned by a different inference context too.  We
++      // need to copy them to the outer context to prevent them from being
++      // destroyed before they are used.
++      std::vector<ShapeAndType> copied_shapes_and_types;
++      for (auto& shape_and_type : *resource) {
++        ShapeHandle handle;
++        TensorShapeProto proto;
++        node_context->ShapeHandleToProto(shape_and_type.shape, &proto);
++        TF_RETURN_IF_ERROR(
++            outer_context->MakeShapeFromShapeProto(proto, &handle));
++        copied_shapes_and_types.push_back(
++            ShapeAndType(handle, shape_and_type.dtype, shape_and_type.type));
++      }
++
++      outer_context->set_output_handle_shapes_and_types(
++          index, copied_shapes_and_types);
+     }
+   }
+
+tokens used
+input: 744
+cache read: 10,752
+cache write: 0
+output: 106
+reasoning output: 14
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/common_runtime/shape_refiner.cc b/tensorflow/core/common_runtime/shape_refiner.cc
+    index a968aaf09b..6a7d1eadfb 100644
+    --- a/tensorflow/core/common_runtime/shape_refiner.cc
+    +++ b/tensorflow/core/common_runtime/shape_refiner.cc
+    @@ -117,9 +117,26 @@ Status InferShapesForFunctionSubNode(const Node* node, ShapeRefiner* refiner,
+         TF_RETURN_IF_ERROR(outer_context->MakeShapeFromShapeProto(proto, &handle));
+         outer_context->set_output(index, handle);
+     
+    -    auto* resource = node_context->input_handle_shapes_and_types(0);
+    +    const std::vector<ShapeAndType>* resource =
+    +        node_context->input_handle_shapes_and_types(0);
+         if (resource) {
+    -      outer_context->set_output_handle_shapes_and_types(index, *resource);
+    +      // `ShapesAndType`s contain `ShapeHandle`s.  These `ShapeHandle`s point
+    +      // to `Shape`s that are owned by a different inference context too.  We
+    +      // need to copy them to the outer context to prevent them from being
+    +      // destroyed before they are used.
+    +      std::vector<ShapeAndType> copied_shapes_and_types;
+    +      for (auto& shape_and_type : *resource) {
+    +        ShapeHandle handle;
+    +        TensorShapeProto proto;
+    +        node_context->ShapeHandleToProto(shape_and_type.shape, &proto);
+    +        TF_RETURN_IF_ERROR(
+    +            outer_context->MakeShapeFromShapeProto(proto, &handle));
+    +        copied_shapes_and_types.push_back(
+    +            ShapeAndType(handle, shape_and_type.dtype, shape_and_type.type));
+    +      }
+    +
+    +      outer_context->set_output_handle_shapes_and_types(
+    +          index, copied_shapes_and_types);
+         }
+       }
+     
+  notes: >
+    Backported the shape-and-type handle ownership fix by copying resource ShapeHandles into the outer inference context before storing them.
+```
+
+tokens used
+input: 1,311
+cache read: 10,752
+cache write: 0
+output: 482
+reasoning output: 30

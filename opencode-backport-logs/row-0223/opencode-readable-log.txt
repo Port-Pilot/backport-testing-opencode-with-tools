@@ -1,0 +1,420 @@
+I’ll locate the target `svdf.cc` implementation at the given base, compare the quantization-scale setup to the provided newer hunk, then apply the minimal equivalent guards and validate the hunk context.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target svdf Prepare quantization context",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Validate and apply minimal backport hunk",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "content": "Review final diff and report YAML",
+      "status": "pending",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target svdf Prepare quantization context",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Validate and apply minimal backport hunk",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "content": "Review final diff and report YAML",
+    "status": "pending",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 3,905
+cache read: 4,608
+cache write: 0
+output: 125
+reasoning output: 0
+
+tool: grep
+{
+  "pattern": "Calculate effective scales|input_params|weights_feature_params|weight_time_params",
+  "path": "tensorflow/lite/kernels",
+  "include": "svdf.cc"
+}
+Found 9 matches
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0223-0a3a3a33f5fe\tensorflow\lite\kernels\svdf.cc:
+  Line 238:     // Calculate effective scales.
+
+  Line 239:     auto* input_params =
+
+  Line 241:     auto* weights_feature_params = reinterpret_cast<TfLiteAffineQuantization*>(
+
+  Line 245:     auto* weight_time_params = reinterpret_cast<TfLiteAffineQuantization*>(
+
+  Line 249:     const double effective_scale_1 = input_params->scale->data[0] *
+
+  Line 250:                                      weights_feature_params->scale->data[0] /
+
+  Line 253:                                      weight_time_params->scale->data[0] /
+
+  Line 322:         auto* input_params = reinterpret_cast<TfLiteAffineQuantization*>(
+
+  Line 335:             op_data->effective_scale_2_b, input_params->zero_point->data[0],
+
+tool: viewcode
+{
+  "ref": "0a3a3a33f5fe8630e85234f33276e3dbe4d7da46",
+  "path": "tensorflow/lite/kernels/svdf.cc",
+  "startline": 220,
+  "endline": 310
+}
+Here are lines 220 through 310.
+
+      TfLiteIntArray* row_sums_size = TfLiteIntArrayCreate(1);
+      row_sums_size->data[0] = row_sums_dims[0];
+      TF_LITE_ENSURE_OK(
+          context, context->ResizeTensor(context, row_sums, row_sums_size));
+    }
+  }
+  if (is_full_integer) {
+    // Allocated one extra tensor.
+    TfLiteIntArray* output_temp_size_array = TfLiteIntArrayCreate(2);
+    output_temp_size_array->data[0] = num_units;
+    output_temp_size_array->data[1] = batch_size;
+    node->temporaries->data[1] = scratch_tensor_index + 1;
+    TfLiteTensor* output_temp = GetTemporary(context, node, /*index=*/1);
+    output_temp->type = kTfLiteInt32;
+    output_temp->allocation_type = kTfLiteArenaRw;
+    TF_LITE_ENSURE_OK(context, context->ResizeTensor(context, output_temp,
+                                                     output_temp_size_array));
+
+    // Calculate effective scales.
+    auto* input_params =
+        reinterpret_cast<TfLiteAffineQuantization*>(input->quantization.params);
+    auto* weights_feature_params = reinterpret_cast<TfLiteAffineQuantization*>(
+        weights_feature->quantization.params);
+    auto* state_params =
+        reinterpret_cast<TfLiteAffineQuantization*>(state->quantization.params);
+    auto* weight_time_params = reinterpret_cast<TfLiteAffineQuantization*>(
+        weights_time->quantization.params);
+    auto* output_params = reinterpret_cast<TfLiteAffineQuantization*>(
+        output->quantization.params);
+    const double effective_scale_1 = input_params->scale->data[0] *
+                                     weights_feature_params->scale->data[0] /
+                                     state_params->scale->data[0];
+    const double effective_scale_2 = state_params->scale->data[0] *
+                                     weight_time_params->scale->data[0] /
+                                     output_params->scale->data[0];
+    QuantizeMultiplier(effective_scale_1, &op_data->effective_scale_1_a,
+                       &op_data->effective_scale_1_b);
+    QuantizeMultiplier(effective_scale_2, &op_data->effective_scale_2_a,
+                       &op_data->effective_scale_2_b);
+  }
+  return kTfLiteOk;
+}
+
+TfLiteStatus Eval(TfLiteContext* context, TfLiteNode* node) {
+  auto* params = reinterpret_cast<TfLiteSVDFParams*>(node->builtin_data);
+  OpData* op_data = reinterpret_cast<OpData*>(node->user_data);
+
+  const TfLiteTensor* input = GetInput(context, node, kInputTensor);
+  const TfLiteTensor* weights_feature =
+      GetInput(context, node, kWeightsFeatureTensor);
+  const TfLiteTensor* weights_time =
+      GetInput(context, node, kWeightsTimeTensor);
+  const TfLiteTensor* bias = GetOptionalInputTensor(context, node, kBiasTensor);
+
+  TfLiteTensor* scratch = GetTemporary(context, node, /*index=*/0);
+
+  TfLiteTensor* state = GetVariableInput(context, node, kStateTensor);
+  TfLiteTensor* output = GetOutput(context, node, kOutputTensor);
+
+  switch (weights_feature->type) {
+    case kTfLiteFloat32: {
+      reference_ops::EvalFloatSVDF(context, node, input, weights_feature,
+                                   weights_time, bias, params, scratch, state,
+                                   output);
+      return kTfLiteOk;
+      break;
+    }
+    case kTfLiteUInt8:
+    case kTfLiteInt8: {
+      if (input->type == kTfLiteFloat32) {
+        TfLiteTensor* input_quantized =
+            GetTemporary(context, node, /*index=*/1);
+        TfLiteTensor* scaling_factors =
+            GetTemporary(context, node, /*index=*/2);
+        TfLiteTensor* float_weights_time =
+            GetTemporary(context, node, /*index=*/3);
+        TfLiteTensor* zero_points = GetTemporary(context, node, /*index=*/4);
+        TfLiteTensor* row_sums = GetTemporary(context, node, /*index=*/5);
+        // Dequantize weights time.
+        // TODO(alanchiao): this dequantization initialization only needs to
+        // happen once per model and should theoretically be placed in either
+        // Init or Prepare. However, TFLite doesn't allocate float_weights_time
+        // until the Eval function.
+        // TODO(alanchiao): refactor logic out into dequantize function.
+        if (!op_data->float_weights_time_initialized) {
+          const float dequantization_scale = weights_time->params.scale;
+          const int8_t* weights_time_ptr = GetTensorData<int8_t>(weights_time);
+          float* float_weights_time_ptr =
+              GetTensorData<float>(float_weights_time);
+          for (int i = 0; i < NumElements(float_weights_time); ++i) {
+            float_weights_time_ptr[i] =
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: locate_symbol
+{
+  "ref": "0a3a3a33f5fe8630e85234f33276e3dbe4d7da46",
+  "symbol": "Prepare"
+}
+tensorflow/core/common_runtime/eager/eager_executor.h:58
+tensorflow/core/distributed_runtime/eager/remote_copy_node.cc:449
+tensorflow/core/distributed_runtime/eager/remote_execute_node.h:90
+tensorflow/core/kernels/cast_op.cc:127
+tensorflow/core/kernels/cast_op.cc:181
+tensorflow/core/kernels/cast_op.cc:264
+tensorflow/core/lib/db/sqlite.cc:163
+tensorflow/core/lib/db/sqlite.cc:170
+tensorflow/lite/delegates/flex/delegate_data.cc:30
+tensorflow/lite/delegates/flex/kernel.cc:431
+tensorflow/lite/delegates/gpu/cl/gpu_api_delegate.cc:90
+tensorflow/lite/delegates/gpu/delegate.cc:118
+tensorflow/lite/delegates/gpu/gl_delegate.cc:131
+tensorflow/lite/delegates/gpu/metal_delegate.mm:258
+tensorflow/lite/delegates/hexagon/hexagon_delegate_kernel.cc:198
+tensorflow/lite/delegates/nnapi/nnapi_delegate.cc:3271
+tensorflow/lite/delegates/nnapi/nnapi_delegate_kernel.h:285
+tensorflow/lite/delegates/utils/dummy_delegate/dummy_delegate.cc:35
+tensorflow/lite/delegates/xnnpack/xnnpack_delegate.cc:271
+tensorflow/lite/experimental/delegates/coreml/coreml_delegate_kernel.mm:174
+
+tokens used
+input: 1,068
+cache read: 7,680
+cache write: 0
+output: 168
+reasoning output: 0
+
+The target file has the same vulnerable quantization parameter dereferences in `Prepare`, so the backport is a direct minimal guard insertion before each cast.
+
+tool: validate
+{
+  "ref": "0a3a3a33f5fe8630e85234f33276e3dbe4d7da46",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/lite/kernels/svdf.cc b/tensorflow/lite/kernels/svdf.cc\n--- a/tensorflow/lite/kernels/svdf.cc\n+++ b/tensorflow/lite/kernels/svdf.cc\n@@ -236,14 +236,21 @@ TfLiteStatus Prepare(TfLiteContext* context, TfLiteNode* node) {\n                                                      output_temp_size_array));\n \n     // Calculate effective scales.\n+    TF_LITE_ENSURE(context, input->quantization.type != kTfLiteNoQuantization);\n     auto* input_params =\n         reinterpret_cast<TfLiteAffineQuantization*>(input->quantization.params);\n+    TF_LITE_ENSURE(context,\n+                   weights_feature->quantization.type != kTfLiteNoQuantization);\n     auto* weights_feature_params = reinterpret_cast<TfLiteAffineQuantization*>(\n         weights_feature->quantization.params);\n+    TF_LITE_ENSURE(context, state->quantization.type != kTfLiteNoQuantization);\n     auto* state_params =\n         reinterpret_cast<TfLiteAffineQuantization*>(state->quantization.params);\n+    TF_LITE_ENSURE(context,\n+                   weights_time->quantization.type != kTfLiteNoQuantization);\n     auto* weight_time_params = reinterpret_cast<TfLiteAffineQuantization*>(\n         weights_time->quantization.params);\n+    TF_LITE_ENSURE(context, output->quantization.type != kTfLiteNoQuantization);\n     auto* output_params = reinterpret_cast<TfLiteAffineQuantization*>(\n         output->quantization.params);\n     const double effective_scale_1 = input_params->scale->data[0] *\n"
+}
+Patch applied successfully
+
+tokens used
+input: 2,871
+cache read: 7,680
+cache write: 0
+output: 467
+reasoning output: 0
+
+The generated hunk applies cleanly to the target base; I’m applying that exact source edit now.
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/lite/kernels/svdf.cc\n@@\n     // Calculate effective scales.\n+    TF_LITE_ENSURE(context, input->quantization.type != kTfLiteNoQuantization);\n     auto* input_params =\n         reinterpret_cast<TfLiteAffineQuantization*>(input->quantization.params);\n+    TF_LITE_ENSURE(context,\n+                   weights_feature->quantization.type != kTfLiteNoQuantization);\n     auto* weights_feature_params = reinterpret_cast<TfLiteAffineQuantization*>(\n         weights_feature->quantization.params);\n+    TF_LITE_ENSURE(context, state->quantization.type != kTfLiteNoQuantization);\n     auto* state_params =\n         reinterpret_cast<TfLiteAffineQuantization*>(state->quantization.params);\n+    TF_LITE_ENSURE(context,\n+                   weights_time->quantization.type != kTfLiteNoQuantization);\n     auto* weight_time_params = reinterpret_cast<TfLiteAffineQuantization*>(\n         weights_time->quantization.params);\n+    TF_LITE_ENSURE(context, output->quantization.type != kTfLiteNoQuantization);\n     auto* output_params = reinterpret_cast<TfLiteAffineQuantization*>(\n         output->quantization.params);\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/lite/kernels/svdf.cc
+
+tokens used
+input: 1,303
+cache read: 9,728
+cache write: 0
+output: 334
+reasoning output: 0
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target svdf Prepare quantization context",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate and apply minimal backport hunk",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Review final diff and report YAML",
+      "status": "in_progress",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target svdf Prepare quantization context",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate and apply minimal backport hunk",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Review final diff and report YAML",
+    "status": "in_progress",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 641
+cache read: 10,752
+cache write: 0
+output: 76
+reasoning output: 0
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/lite/kernels/svdf.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0223-0a3a3a33f5fe"
+}
+warning: in the working copy of 'tensorflow/lite/kernels/svdf.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/lite/kernels/svdf.cc b/tensorflow/lite/kernels/svdf.cc
+index 267f07951f..ec19fb9256 100644
+--- a/tensorflow/lite/kernels/svdf.cc
++++ b/tensorflow/lite/kernels/svdf.cc
+@@ -236,14 +236,21 @@ TfLiteStatus Prepare(TfLiteContext* context, TfLiteNode* node) {
+                                                      output_temp_size_array));
+ 
+     // Calculate effective scales.
++    TF_LITE_ENSURE(context, input->quantization.type != kTfLiteNoQuantization);
+     auto* input_params =
+         reinterpret_cast<TfLiteAffineQuantization*>(input->quantization.params);
++    TF_LITE_ENSURE(context,
++                   weights_feature->quantization.type != kTfLiteNoQuantization);
+     auto* weights_feature_params = reinterpret_cast<TfLiteAffineQuantization*>(
+         weights_feature->quantization.params);
++    TF_LITE_ENSURE(context, state->quantization.type != kTfLiteNoQuantization);
+     auto* state_params =
+         reinterpret_cast<TfLiteAffineQuantization*>(state->quantization.params);
++    TF_LITE_ENSURE(context,
++                   weights_time->quantization.type != kTfLiteNoQuantization);
+     auto* weight_time_params = reinterpret_cast<TfLiteAffineQuantization*>(
+         weights_time->quantization.params);
++    TF_LITE_ENSURE(context, output->quantization.type != kTfLiteNoQuantization);
+     auto* output_params = reinterpret_cast<TfLiteAffineQuantization*>(
+         output->quantization.params);
+     const double effective_scale_1 = input_params->scale->data[0] *
+
+tool: bash
+{
+  "command": "git status --short",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0223-0a3a3a33f5fe"
+}
+ M tensorflow/lite/kernels/svdf.cc
+
+tokens used
+input: 827
+cache read: 10,752
+cache write: 0
+output: 152
+reasoning output: 0
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target svdf Prepare quantization context",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate and apply minimal backport hunk",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Review final diff and report YAML",
+      "status": "completed",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target svdf Prepare quantization context",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate and apply minimal backport hunk",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Review final diff and report YAML",
+    "status": "completed",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 1,412
+cache read: 10,752
+cache write: 0
+output: 77
+reasoning output: 18
+
+Applied the TensorFlow Lite SVDF quantization guard backport in `tensorflow/lite/kernels/svdf.cc`. The hunk was validated with `validate` in `hunk` mode against the target base.
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/lite/kernels/svdf.cc b/tensorflow/lite/kernels/svdf.cc
+    index 267f07951f..ec19fb9256 100644
+    --- a/tensorflow/lite/kernels/svdf.cc
+    +++ b/tensorflow/lite/kernels/svdf.cc
+    @@ -236,14 +236,21 @@ TfLiteStatus Prepare(TfLiteContext* context, TfLiteNode* node) {
+                                                          output_temp_size_array));
+     
+         // Calculate effective scales.
+    +    TF_LITE_ENSURE(context, input->quantization.type != kTfLiteNoQuantization);
+         auto* input_params =
+             reinterpret_cast<TfLiteAffineQuantization*>(input->quantization.params);
+    +    TF_LITE_ENSURE(context,
+    +                   weights_feature->quantization.type != kTfLiteNoQuantization);
+         auto* weights_feature_params = reinterpret_cast<TfLiteAffineQuantization*>(
+             weights_feature->quantization.params);
+    +    TF_LITE_ENSURE(context, state->quantization.type != kTfLiteNoQuantization);
+         auto* state_params =
+             reinterpret_cast<TfLiteAffineQuantization*>(state->quantization.params);
+    +    TF_LITE_ENSURE(context,
+    +                   weights_time->quantization.type != kTfLiteNoQuantization);
+         auto* weight_time_params = reinterpret_cast<TfLiteAffineQuantization*>(
+             weights_time->quantization.params);
+    +    TF_LITE_ENSURE(context, output->quantization.type != kTfLiteNoQuantization);
+         auto* output_params = reinterpret_cast<TfLiteAffineQuantization*>(
+             output->quantization.params);
+         const double effective_scale_1 = input_params->scale->data[0] *
+  notes: >
+    Added missing quantization-type checks before affine quantization parameter dereferences in TFLite SVDF Prepare.
+```
+
+tokens used
+input: 592
+cache read: 11,776
+cache write: 0
+output: 474
+reasoning output: 0

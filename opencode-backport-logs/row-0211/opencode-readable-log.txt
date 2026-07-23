@@ -1,0 +1,576 @@
+I’ll inspect the target implementation for the MKL requantize per-channel op and compare it to the provided newer hunk, then apply the minimal equivalent validation changes in-place.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Locate and inspect target MklRequantizePerChannelOp implementation",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Map newer security validation changes onto TensorFlow 2.3.4 code",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "content": "Apply minimal source patch",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "content": "Validate patch shape and capture final diff",
+      "status": "pending",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Locate and inspect target MklRequantizePerChannelOp implementation",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Map newer security validation changes onto TensorFlow 2.3.4 code",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "content": "Apply minimal source patch",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "content": "Validate patch shape and capture final diff",
+    "status": "pending",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 4,332
+cache read: 4,608
+cache write: 0
+output: 147
+reasoning output: 0
+
+tool: viewcode
+{
+  "ref": "6c1eb9637e0218d2d04c72c8838e17e72ebd00d5",
+  "path": "tensorflow/core/kernels/mkl/mkl_requantize_per_channel_op.cc",
+  "startline": 1,
+  "endline": 160
+}
+This file doesn't exist in this commit.
+
+tool: locate_symbol
+{
+  "ref": "6c1eb9637e0218d2d04c72c8838e17e72ebd00d5",
+  "symbol": "MklRequantizePerChannelOp"
+}
+tensorflow/core/kernels/mkl_requantize_per_channel_op.cc:39
+tensorflow/core/kernels/mkl_requantize_per_channel_op.cc:41
+tensorflow/core/kernels/mkl_requantize_per_channel_op.cc:48
+tensorflow/core/kernels/mkl_requantize_per_channel_op.cc:183
+tensorflow/core/kernels/mkl_requantize_per_channel_op.cc:189
+
+tokens used
+input: 534
+cache read: 8,704
+cache write: 0
+output: 140
+reasoning output: 0
+
+In TensorFlow 2.3.4 the equivalent file is under `tensorflow/core/kernels/` rather than `tensorflow/core/kernels/mkl/`; I’m switching to that target location.
+
+tool: grep
+{
+  "pattern": "requested_output_min|input_min has incorrect size|DCHECK\\(input_requested_min_float",
+  "path": "tensorflow/core/kernels",
+  "include": "mkl_requantize_per_channel_op.cc"
+}
+Found 2 matches
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0211-6c1eb9637e02\tensorflow\core\kernels\mkl_requantize_per_channel_op.cc:
+  Line 73:           errors::InvalidArgument("input_min has incorrect size, expected ",
+
+  Line 80:       if (out_type_ == DT_QINT8) DCHECK(input_requested_min_float < 0.0f);
+
+tool: viewcode
+{
+  "ref": "6c1eb9637e0218d2d04c72c8838e17e72ebd00d5",
+  "path": "tensorflow/core/kernels/mkl_requantize_per_channel_op.cc",
+  "startline": 1,
+  "endline": 150
+}
+Here are lines 1 through 150.
+
+/* Copyright 2019 The TensorFlow Authors. All Rights Reserved.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+==============================================================================*/
+
+// See docs in ../ops/array_ops.cc.
+
+#ifdef INTEL_MKL
+#define EIGEN_USE_THREADS
+#include <math.h>
+
+#include "mkldnn.hpp"
+#include "third_party/eigen3/unsupported/Eigen/CXX11/Tensor"
+#include "tensorflow/core/framework/op.h"
+#include "tensorflow/core/framework/op_kernel.h"
+#include "tensorflow/core/framework/type_traits.h"
+#include "tensorflow/core/framework/types.h"
+#include "tensorflow/core/kernels/meta_support.h"
+#include "tensorflow/core/kernels/no_op.h"
+#include "tensorflow/core/lib/core/errors.h"
+#include "tensorflow/core/util/mkl_types.h"
+#include "tensorflow/core/util/mkl_util.h"
+
+namespace tensorflow {
+
+typedef Eigen::ThreadPoolDevice CPUDevice;
+
+template <typename Device, typename Toutput>
+class MklRequantizePerChannelOp : public OpKernel {
+ public:
+  explicit MklRequantizePerChannelOp(OpKernelConstruction* ctx)
+      : OpKernel(ctx) {
+    OP_REQUIRES_OK(ctx, ctx->GetAttr("out_type", &out_type_));
+    OP_REQUIRES(ctx, out_type_ == DT_QINT8 || out_type_ == DT_QUINT8,
+                errors::InvalidArgument(
+                    "out_type must be qint8 or quint8, but got: ", out_type_));
+  }
+  virtual ~MklRequantizePerChannelOp() {}
+  void Compute(OpKernelContext* ctx) override {
+    try {
+      const Tensor& input = ctx->input(kInputTensorIndex);
+      const Tensor& input_min_vec = ctx->input(kInputMinVecIndex);
+      float* input_min_vec_data = (float*)const_cast<void*>(
+          static_cast<const void*>(input_min_vec.flat<float>().data()));
+      const Tensor& input_max_vec = ctx->input(kInputMaxVecIndex);
+      float* input_max_vec_data = (float*)const_cast<void*>(
+          static_cast<const void*>(input_max_vec.flat<float>().data()));
+
+      const Tensor& input_requested_min = ctx->input(this->kRequestMinIndex);
+      const float input_requested_min_float =
+          input_requested_min.flat<float>()(0);
+      const Tensor& input_requested_max = ctx->input(this->kRequestMaxIndex);
+      const float input_requested_max_float =
+          input_requested_max.flat<float>()(0);
+
+      size_t depth = input_min_vec.NumElements();
+      OP_REQUIRES(
+          ctx, input.dims() == 4,
+          errors::InvalidArgument("Current RequantizePerChannel operator"
+                                  "supports 4D tensors only."));
+      OP_REQUIRES(
+          ctx, input_min_vec.dim_size(0) == depth,
+          errors::InvalidArgument("input_min has incorrect size, expected ",
+                                  depth, " was ", input_min_vec.dim_size(0)));
+      OP_REQUIRES(
+          ctx, input_max_vec.dim_size(0) == depth,
+          errors::InvalidArgument("input_max has incorrect size, expected ",
+                                  depth, " was ", input_max_vec.dim_size(0)));
+
+      if (out_type_ == DT_QINT8) DCHECK(input_requested_min_float < 0.0f);
+
+      const float factor = (out_type_ == DT_QINT8) ? 127.0f : 255.0f;
+      const float requested_min_max =
+          std::max(std::abs(input_requested_min_float),
+                   std::abs(input_requested_max_float));
+      Tensor* output = nullptr;
+      OP_REQUIRES_OK(ctx, ctx->allocate_output(kOutputTensorIndex,
+                                               input.shape(), &output));
+
+      std::vector<float> scales(depth);
+      for (int i = 0; i < depth; ++i) {
+        float min_max_from_vec = std::max(std::abs(input_min_vec_data[i]),
+                                          std::abs(input_max_vec_data[i]));
+        scales[i] = factor * (min_max_from_vec / requested_min_max /
+                              static_cast<float>(1L << 31));
+      }
+
+      mkldnn::primitive_attr reorder_attr;
+      reorder_attr.set_output_scales(2, scales);
+
+      memory::dims dims_mkl_order =
+          TFShapeToMklDnnDimsInNCHW(input.shape(), FORMAT_NHWC);
+      memory::desc input_md = memory::desc(dims_mkl_order, MklDnnType<qint32>(),
+                                           MEMORY_FORMAT::nhwc);
+      memory::desc output_md =
+          (out_type_ == DT_QINT8)
+              ? memory::desc(dims_mkl_order, MklDnnType<qint8>(),
+                             MEMORY_FORMAT::nhwc)
+              : memory::desc(dims_mkl_order, MklDnnType<quint8>(),
+                             MEMORY_FORMAT::nhwc);
+
+      void* input_buf =
+          static_cast<void*>(const_cast<qint32*>(input.flat<qint32>().data()));
+      void* output_buf;
+      if (out_type_ == DT_QINT8) {
+        output_buf = static_cast<void*>(
+            const_cast<qint8*>(output->flat<qint8>().data()));
+      } else {
+        output_buf = static_cast<void*>(
+            const_cast<quint8*>(output->flat<quint8>().data()));
+      }
+
+      std::unique_ptr<memory> input_mem_prim(
+          new MEMORY_CONSTRUCTOR_USING_MD(input_md, cpu_engine_, input_buf));
+      std::unique_ptr<memory> output_mem_prim(
+          new MEMORY_CONSTRUCTOR_USING_MD(output_md, cpu_engine_, output_buf));
+
+      mkldnn::reorder::primitive_desc reorder_pd =
+          REORDER_PD_CONSTRUCTOR_WITH_ATTR(
+              GET_MEMORY_PRIMITIVE_DESC_FROM_MEM_PTR(input_mem_prim),
+              GET_MEMORY_PRIMITIVE_DESC_FROM_MEM_PTR(output_mem_prim),
+              cpu_engine_, reorder_attr);
+      std::shared_ptr<stream> reorder_stream;
+      reorder_stream.reset(CreateStream(ctx, cpu_engine_));
+#ifndef ENABLE_MKLDNN_V1
+      reorder_stream->submit(
+          {mkldnn::reorder(reorder_pd, *input_mem_prim, *output_mem_prim)});
+#else
+      std::unordered_map<int, mkldnn::memory> reorder_args = {
+          {MKLDNN_ARG_FROM, *input_mem_prim},
+          {MKLDNN_ARG_TO, *output_mem_prim}};
+      std::unique_ptr<mkldnn::primitive> reorder_prim(
+          new mkldnn::reorder(reorder_pd));
+      reorder_prim->execute(*reorder_stream, reorder_args);
+#endif  // !ENABLE_MKLDNN_V1
+
+      Tensor* output_min = nullptr;
+      Tensor* output_max = nullptr;
+      OP_REQUIRES_OK(ctx,
+                     ctx->allocate_output(kOutputMinIndex, {}, &output_min));
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tokens used
+input: 782
+cache read: 8,704
+cache write: 0
+output: 185
+reasoning output: 15
+
+The target code matches the vulnerable shape: it reads scalar/vector inputs before validating them and uses a `DCHECK` for the qint8 range condition. I’m preparing the direct backport in `tensorflow/core/kernels/mkl_requantize_per_channel_op.cc`.
+
+tool: validate
+{
+  "ref": "6c1eb9637e0218d2d04c72c8838e17e72ebd00d5",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/mkl_requantize_per_channel_op.cc b/tensorflow/core/kernels/mkl_requantize_per_channel_op.cc\n--- a/tensorflow/core/kernels/mkl_requantize_per_channel_op.cc\n+++ b/tensorflow/core/kernels/mkl_requantize_per_channel_op.cc\n@@ -49,35 +49,45 @@ class MklRequantizePerChannelOp : public OpKernel {\n   void Compute(OpKernelContext* ctx) override {\n     try {\n       const Tensor& input = ctx->input(kInputTensorIndex);\n+      OP_REQUIRES(\n+          ctx, input.dims() == 4,\n+          errors::InvalidArgument(\"Current RequantizePerChannel operator\"\n+                                  \"supports 4D tensors only.\"));\n+\n       const Tensor& input_min_vec = ctx->input(kInputMinVecIndex);\n+      size_t depth = input_min_vec.NumElements();\n       float* input_min_vec_data = (float*)const_cast<void*>(\n           static_cast<const void*>(input_min_vec.flat<float>().data()));\n+\n       const Tensor& input_max_vec = ctx->input(kInputMaxVecIndex);\n+      OP_REQUIRES(\n+          ctx, input_max_vec.NumElements() == depth,\n+          errors::InvalidArgument(\"input_max has incorrect size, expected \",\n+                                  depth, \" was \", input_max_vec.NumElements()));\n       float* input_max_vec_data = (float*)const_cast<void*>(\n           static_cast<const void*>(input_max_vec.flat<float>().data()));\n \n       const Tensor& input_requested_min = ctx->input(this->kRequestMinIndex);\n+      OP_REQUIRES(\n+          ctx, input_requested_min.NumElements() == 1,\n+          errors::InvalidArgument(\"requested_output_min must be a scalar\"));\n       const float input_requested_min_float =\n           input_requested_min.flat<float>()(0);\n+\n       const Tensor& input_requested_max = ctx->input(this->kRequestMaxIndex);\n+      OP_REQUIRES(\n+          ctx, input_requested_min.NumElements() == 1,\n+          errors::InvalidArgument(\"requested_output_max must be a scalar\"));\n       const float input_requested_max_float =\n           input_requested_max.flat<float>()(0);\n \n-      size_t depth = input_min_vec.NumElements();\n-      OP_REQUIRES(\n-          ctx, input.dims() == 4,\n-          errors::InvalidArgument(\"Current RequantizePerChannel operator\"\n-                                  \"supports 4D tensors only.\"));\n-      OP_REQUIRES(\n-          ctx, input_min_vec.dim_size(0) == depth,\n-          errors::InvalidArgument(\"input_min has incorrect size, expected \",\n-                                  depth, \" was \", input_min_vec.dim_size(0)));\n-      OP_REQUIRES(\n-          ctx, input_max_vec.dim_size(0) == depth,\n-          errors::InvalidArgument(\"input_max has incorrect size, expected \",\n-                                  depth, \" was \", input_max_vec.dim_size(0)));\n-\n-      if (out_type_ == DT_QINT8) DCHECK(input_requested_min_float < 0.0f);\n+      if (out_type_ == DT_QINT8) {\n+        OP_REQUIRES(ctx, input_requested_min_float < 0.0f,\n+                    errors::InvalidArgument(\n+                        \"If out_type is QINT8, requested_output_max must be \"\n+                        \"non negative, got \",\n+                        input_requested_min_float));\n+      }\n \n       const float factor = (out_type_ == DT_QINT8) ? 127.0f : 255.0f;\n       const float requested_min_max =\n"
+}
+Patch applied successfully
+
+tokens used
+input: 2,690
+cache read: 8,704
+cache write: 0
+output: 974
+reasoning output: 144
+
+The hunk applies cleanly against the target base. I’m applying that validated change to the current checkout now.
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/kernels/mkl_requantize_per_channel_op.cc\n@@\n   void Compute(OpKernelContext* ctx) override {\n     try {\n       const Tensor& input = ctx->input(kInputTensorIndex);\n+      OP_REQUIRES(\n+          ctx, input.dims() == 4,\n+          errors::InvalidArgument(\"Current RequantizePerChannel operator\"\n+                                  \"supports 4D tensors only.\"));\n+\n       const Tensor& input_min_vec = ctx->input(kInputMinVecIndex);\n+      size_t depth = input_min_vec.NumElements();\n       float* input_min_vec_data = (float*)const_cast<void*>(\n           static_cast<const void*>(input_min_vec.flat<float>().data()));\n+\n       const Tensor& input_max_vec = ctx->input(kInputMaxVecIndex);\n+      OP_REQUIRES(\n+          ctx, input_max_vec.NumElements() == depth,\n+          errors::InvalidArgument(\"input_max has incorrect size, expected \",\n+                                  depth, \" was \", input_max_vec.NumElements()));\n       float* input_max_vec_data = (float*)const_cast<void*>(\n           static_cast<const void*>(input_max_vec.flat<float>().data()));\n \n       const Tensor& input_requested_min = ctx->input(this->kRequestMinIndex);\n+      OP_REQUIRES(\n+          ctx, input_requested_min.NumElements() == 1,\n+          errors::InvalidArgument(\"requested_output_min must be a scalar\"));\n       const float input_requested_min_float =\n           input_requested_min.flat<float>()(0);\n+\n       const Tensor& input_requested_max = ctx->input(this->kRequestMaxIndex);\n+      OP_REQUIRES(\n+          ctx, input_requested_min.NumElements() == 1,\n+          errors::InvalidArgument(\"requested_output_max must be a scalar\"));\n       const float input_requested_max_float =\n           input_requested_max.flat<float>()(0);\n \n-      size_t depth = input_min_vec.NumElements();\n-      OP_REQUIRES(\n-          ctx, input.dims() == 4,\n-          errors::InvalidArgument(\"Current RequantizePerChannel operator\"\n-                                  \"supports 4D tensors only.\"));\n-      OP_REQUIRES(\n-          ctx, input_min_vec.dim_size(0) == depth,\n-          errors::InvalidArgument(\"input_min has incorrect size, expected \",\n-                                  depth, \" was \", input_min_vec.dim_size(0)));\n-      OP_REQUIRES(\n-          ctx, input_max_vec.dim_size(0) == depth,\n-          errors::InvalidArgument(\"input_max has incorrect size, expected \",\n-                                  depth, \" was \", input_max_vec.dim_size(0)));\n-\n-      if (out_type_ == DT_QINT8) DCHECK(input_requested_min_float < 0.0f);\n+      if (out_type_ == DT_QINT8) {\n+        OP_REQUIRES(ctx, input_requested_min_float < 0.0f,\n+                    errors::InvalidArgument(\n+                        \"If out_type is QINT8, requested_output_max must be \"\n+                        \"non negative, got \",\n+                        input_requested_min_float));\n+      }\n \n       const float factor = (out_type_ == DT_QINT8) ? 127.0f : 255.0f;\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/kernels/mkl_requantize_per_channel_op.cc
+
+tokens used
+input: 1,773
+cache read: 10,752
+cache write: 0
+output: 830
+reasoning output: 0
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Locate and inspect target MklRequantizePerChannelOp implementation",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Map newer security validation changes onto TensorFlow 2.3.4 code",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Apply minimal source patch",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate patch shape and capture final diff",
+      "status": "in_progress",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Locate and inspect target MklRequantizePerChannelOp implementation",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Map newer security validation changes onto TensorFlow 2.3.4 code",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Apply minimal source patch",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate patch shape and capture final diff",
+    "status": "in_progress",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 1,611
+cache read: 11,776
+cache write: 0
+output: 104
+reasoning output: 0
+
+The source edit is applied. I’m checking the resulting diff only, without running a full build.
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/kernels/mkl_requantize_per_channel_op.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0211-6c1eb9637e02"
+}
+warning: in the working copy of 'tensorflow/core/kernels/mkl_requantize_per_channel_op.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/kernels/mkl_requantize_per_channel_op.cc b/tensorflow/core/kernels/mkl_requantize_per_channel_op.cc
+index 0a0464f648..4cac0e0ecd 100644
+--- a/tensorflow/core/kernels/mkl_requantize_per_channel_op.cc
++++ b/tensorflow/core/kernels/mkl_requantize_per_channel_op.cc
+@@ -49,35 +49,45 @@ class MklRequantizePerChannelOp : public OpKernel {
+   void Compute(OpKernelContext* ctx) override {
+     try {
+       const Tensor& input = ctx->input(kInputTensorIndex);
++      OP_REQUIRES(
++          ctx, input.dims() == 4,
++          errors::InvalidArgument("Current RequantizePerChannel operator"
++                                  "supports 4D tensors only."));
++
+       const Tensor& input_min_vec = ctx->input(kInputMinVecIndex);
++      size_t depth = input_min_vec.NumElements();
+       float* input_min_vec_data = (float*)const_cast<void*>(
+           static_cast<const void*>(input_min_vec.flat<float>().data()));
++
+       const Tensor& input_max_vec = ctx->input(kInputMaxVecIndex);
++      OP_REQUIRES(
++          ctx, input_max_vec.NumElements() == depth,
++          errors::InvalidArgument("input_max has incorrect size, expected ",
++                                  depth, " was ", input_max_vec.NumElements()));
+       float* input_max_vec_data = (float*)const_cast<void*>(
+           static_cast<const void*>(input_max_vec.flat<float>().data()));
+ 
+       const Tensor& input_requested_min = ctx->input(this->kRequestMinIndex);
++      OP_REQUIRES(
++          ctx, input_requested_min.NumElements() == 1,
++          errors::InvalidArgument("requested_output_min must be a scalar"));
+       const float input_requested_min_float =
+           input_requested_min.flat<float>()(0);
++
+       const Tensor& input_requested_max = ctx->input(this->kRequestMaxIndex);
++      OP_REQUIRES(
++          ctx, input_requested_min.NumElements() == 1,
++          errors::InvalidArgument("requested_output_max must be a scalar"));
+       const float input_requested_max_float =
+           input_requested_max.flat<float>()(0);
+ 
+-      size_t depth = input_min_vec.NumElements();
+-      OP_REQUIRES(
+-          ctx, input.dims() == 4,
+-          errors::InvalidArgument("Current RequantizePerChannel operator"
+-                                  "supports 4D tensors only."));
+-      OP_REQUIRES(
+-          ctx, input_min_vec.dim_size(0) == depth,
+-          errors::InvalidArgument("input_min has incorrect size, expected ",
+-                                  depth, " was ", input_min_vec.dim_size(0)));
+-      OP_REQUIRES(
+-          ctx, input_max_vec.dim_size(0) == depth,
+-          errors::InvalidArgument("input_max has incorrect size, expected ",
+-                                  depth, " was ", input_max_vec.dim_size(0)));
+-
+-      if (out_type_ == DT_QINT8) DCHECK(input_requested_min_float < 0.0f);
++      if (out_type_ == DT_QINT8) {
++        OP_REQUIRES(ctx, input_requested_min_float < 0.0f,
++                    errors::InvalidArgument(
++                        "If out_type is QINT8, requested_output_max must be "
++                        "non negative, got ",
++                        input_requested_min_float));
++      }
+ 
+       const float factor = (out_type_ == DT_QINT8) ? 127.0f : 255.0f;
+       const float requested_min_max =
+
+tool: bash
+{
+  "command": "git status --short",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0211-6c1eb9637e02"
+}
+ M tensorflow/core/kernels/mkl_requantize_per_channel_op.cc
+
+tokens used
+input: 842
+cache read: 12,800
+cache write: 0
+output: 181
+reasoning output: 19
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Locate and inspect target MklRequantizePerChannelOp implementation",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Map newer security validation changes onto TensorFlow 2.3.4 code",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Apply minimal source patch",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate patch shape and capture final diff",
+      "status": "completed",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Locate and inspect target MklRequantizePerChannelOp implementation",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Map newer security validation changes onto TensorFlow 2.3.4 code",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Apply minimal source patch",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate patch shape and capture final diff",
+    "status": "completed",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 1,900
+cache read: 12,800
+cache write: 0
+output: 105
+reasoning output: 45
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/kernels/mkl_requantize_per_channel_op.cc b/tensorflow/core/kernels/mkl_requantize_per_channel_op.cc
+    index 0a0464f648..4cac0e0ecd 100644
+    --- a/tensorflow/core/kernels/mkl_requantize_per_channel_op.cc
+    +++ b/tensorflow/core/kernels/mkl_requantize_per_channel_op.cc
+    @@ -49,35 +49,45 @@ class MklRequantizePerChannelOp : public OpKernel {
+       void Compute(OpKernelContext* ctx) override {
+         try {
+           const Tensor& input = ctx->input(kInputTensorIndex);
+    +      OP_REQUIRES(
+    +          ctx, input.dims() == 4,
+    +          errors::InvalidArgument("Current RequantizePerChannel operator"
+    +                                  "supports 4D tensors only."));
+    +
+           const Tensor& input_min_vec = ctx->input(kInputMinVecIndex);
+    +      size_t depth = input_min_vec.NumElements();
+           float* input_min_vec_data = (float*)const_cast<void*>(
+               static_cast<const void*>(input_min_vec.flat<float>().data()));
+    +
+           const Tensor& input_max_vec = ctx->input(kInputMaxVecIndex);
+    +      OP_REQUIRES(
+    +          ctx, input_max_vec.NumElements() == depth,
+    +          errors::InvalidArgument("input_max has incorrect size, expected ",
+    +                                  depth, " was ", input_max_vec.NumElements()));
+           float* input_max_vec_data = (float*)const_cast<void*>(
+               static_cast<const void*>(input_max_vec.flat<float>().data()));
+     
+           const Tensor& input_requested_min = ctx->input(this->kRequestMinIndex);
+    +      OP_REQUIRES(
+    +          ctx, input_requested_min.NumElements() == 1,
+    +          errors::InvalidArgument("requested_output_min must be a scalar"));
+           const float input_requested_min_float =
+               input_requested_min.flat<float>()(0);
+    +
+           const Tensor& input_requested_max = ctx->input(this->kRequestMaxIndex);
+    +      OP_REQUIRES(
+    +          ctx, input_requested_min.NumElements() == 1,
+    +          errors::InvalidArgument("requested_output_max must be a scalar"));
+           const float input_requested_max_float =
+               input_requested_max.flat<float>()(0);
+     
+    -      size_t depth = input_min_vec.NumElements();
+    -      OP_REQUIRES(
+    -          ctx, input.dims() == 4,
+    -          errors::InvalidArgument("Current RequantizePerChannel operator"
+    -                                  "supports 4D tensors only."));
+    -      OP_REQUIRES(
+    -          ctx, input_min_vec.dim_size(0) == depth,
+    -          errors::InvalidArgument("input_min has incorrect size, expected ",
+    -                                  depth, " was ", input_min_vec.dim_size(0)));
+    -      OP_REQUIRES(
+    -          ctx, input_max_vec.dim_size(0) == depth,
+    -          errors::InvalidArgument("input_max has incorrect size, expected ",
+    -                                  depth, " was ", input_max_vec.dim_size(0)));
+    -
+    -      if (out_type_ == DT_QINT8) DCHECK(input_requested_min_float < 0.0f);
+    +      if (out_type_ == DT_QINT8) {
+    +        OP_REQUIRES(ctx, input_requested_min_float < 0.0f,
+    +                    errors::InvalidArgument(
+    +                        "If out_type is QINT8, requested_output_max must be "
+    +                        "non negative, got ",
+    +                        input_requested_min_float));
+    +      }
+     
+           const float factor = (out_type_ == DT_QINT8) ? 127.0f : 255.0f;
+           const float requested_min_max =
+  notes: >
+    Backported the MKL RequantizePerChannel input validation hardening to the TensorFlow 2.3.4 target file and validated the hunk applies cleanly.
+```
+
+tokens used
+input: 1,176
+cache read: 13,824
+cache write: 0
+output: 894
+reasoning output: 0

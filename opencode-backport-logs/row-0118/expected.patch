@@ -1,0 +1,16 @@
+diff --git a/tensorflow/core/kernels/ragged_tensor_to_tensor_op.cc b/tensorflow/core/kernels/ragged_tensor_to_tensor_op.cc
+index ca9e1836c82127..4a29cab52b1e87 100644
+--- a/tensorflow/core/kernels/ragged_tensor_to_tensor_op.cc
++++ b/tensorflow/core/kernels/ragged_tensor_to_tensor_op.cc
+@@ -345,6 +345,11 @@ class RaggedTensorToTensorBaseOp : public OpKernel {
+ 
+   void Compute(OpKernelContext* context) override {
+     INDEX_TYPE first_dimension;
++    const Tensor first_partition_tensor =
++        context->input(kFirstPartitionInputIndex);
++    OP_REQUIRES(context, first_partition_tensor.NumElements() > 0,
++                errors::InvalidArgument("Invalid first partition input. Tensor "
++                                        "requires at least one element."));
+     OP_REQUIRES_OK(context, GetFirstDimensionSize(context, &first_dimension));
+     vector<INDEX_TYPE> output_size;
+     OP_REQUIRES_OK(context,

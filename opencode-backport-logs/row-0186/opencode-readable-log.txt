@@ -1,0 +1,562 @@
+I’ll locate the older `MaxPooling3dGradGradOp` implementation, compare the local context to the provided 2.6 hunk, then apply the minimal equivalent guard checks.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target MaxPooling3dGradGradOp context",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Validate target hunk context if needed",
+      "status": "pending",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply minimal source change",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "content": "Inspect resulting diff",
+      "status": "pending",
+      "priority": "high"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target MaxPooling3dGradGradOp context",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Validate target hunk context if needed",
+    "status": "pending",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply minimal source change",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "content": "Inspect resulting diff",
+    "status": "pending",
+    "priority": "high"
+  }
+]
+
+tokens used
+input: 3,836
+cache read: 4,608
+cache write: 0
+output: 134
+reasoning output: 0
+
+tool: grep
+{
+  "pattern": "class MaxPooling3dGradGradOp",
+  "path": "tensorflow/core/kernels",
+  "include": "pooling_ops_3d.cc"
+}
+Found 1 matches
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0186-47612cd69a2f\tensorflow\core\kernels\pooling_ops_3d.cc:
+  Line 656: class MaxPooling3dGradGradOp : public OpKernel {
+
+tool: locate_symbol
+{
+  "ref": "47612cd69a2fdd76156360ca9102816e156f7e5c",
+  "symbol": "MaxPooling3dGradGradOp"
+}
+tensorflow/core/kernels/pooling_ops_3d.cc:656
+tensorflow/core/kernels/pooling_ops_3d.cc:658
+tensorflow/core/kernels/pooling_ops_3d.cc:549
+tensorflow/core/kernels/pooling_ops_3d.cc:727
+
+tokens used
+input: 1,034
+cache read: 7,680
+cache write: 0
+output: 104
+reasoning output: 0
+
+tool: read
+{
+  "filePath": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0186-47612cd69a2f\\tensorflow\\core\\kernels\\pooling_ops_3d.cc",
+  "offset": 640,
+  "limit": 90
+}
+<path>C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0186-47612cd69a2f\tensorflow\core\kernels\pooling_ops_3d.cc</path>
+<type>file</type>
+<content>
+640:                 }
+641:               }
+642:             }
+643:           }
+644:         }
+645:       }
+646:     };
+647:     const int64 shard_cost =
+648:         params.out_plane * params.out_height * params.out_width * params.depth *
+649:         params.window_planes * params.window_rows * params.window_cols;
+650:     Shard(worker_threads.num_threads, worker_threads.workers,
+651:           params.tensor_in_batch, shard_cost, shard);
+652:   }
+653: };
+654: 
+655: template <class Device, class T>
+656: class MaxPooling3dGradGradOp : public OpKernel {
+657:  public:
+658:   explicit MaxPooling3dGradGradOp(OpKernelConstruction* context)
+659:       : OpKernel(context) {
+660:     string data_format;
+661:     OP_REQUIRES_OK(context, context->GetAttr("data_format", &data_format));
+662:     OP_REQUIRES(context, FormatFromString(data_format, &data_format_),
+663:                 errors::InvalidArgument("Invalid data format"));
+664:     OP_REQUIRES_OK(context, context->GetAttr("ksize", &ksize_));
+665:     OP_REQUIRES(context, ksize_.size() == 5,
+666:                 errors::InvalidArgument("Sliding window ksize field must "
+667:                                         "specify 5 dimensions"));
+668:     OP_REQUIRES_OK(context, context->GetAttr("strides", &stride_));
+669:     OP_REQUIRES(context, stride_.size() == 5,
+670:                 errors::InvalidArgument("Sliding window strides field must "
+671:                                         "specify 5 dimensions"));
+672:     OP_REQUIRES_OK(context, context->GetAttr("padding", &padding_));
+673:     OP_REQUIRES(context, ksize_[0] == 1 && stride_[0] == 1,
+674:                 errors::Unimplemented(
+675:                     "Pooling is not yet supported on the batch dimension."));
+676:     const int32 ksize_c = GetTensorDim(ksize_, data_format_, 'C');
+677:     const int32 stride_c = GetTensorDim(stride_, data_format_, 'C');
+678:     OP_REQUIRES(context, ksize_c == 1 && stride_c == 1,
+679:                 errors::Unimplemented("MaxPooling3dGradGrad is not yet "
+680:                                       "supported on the depth dimension."));
+681:   }
+682: 
+683:   void Compute(OpKernelContext* context) override {
+684:     const Tensor& tensor_in = context->input(0);
+685:     const Tensor& tensor_out = context->input(1);
+686:     const Tensor& out_grad_backprop = context->input(2);
+687: 
+688:     // For maxpooling3d, tensor_in should have 5 dimensions.
+689:     OP_REQUIRES(context, tensor_in.dims() == 5,
+690:                 errors::InvalidArgument("tensor_in must be 5-dimensional"));
+691:     OP_REQUIRES(context, tensor_out.dims() == 5,
+692:                 errors::InvalidArgument("tensor_out must be 5-dimensional"));
+693:     // For maxpooling3d, out_grad_backprop should have 5 dimensions.
+694:     OP_REQUIRES(
+695:         context, out_grad_backprop.dims() == 5,
+696:         errors::InvalidArgument("out_grad_backprop must be 5-dimensional"));
+697: 
+698:     Pool3dParameters params{context,  ksize_,       stride_,
+699:                             padding_, data_format_, tensor_in.shape()};
+700: 
+701:     Tensor* output = nullptr;
+702:     OP_REQUIRES_OK(context, context->forward_input_or_allocate_output(
+703:                                 {2}, 0, tensor_out.shape(), &output));
+704: 
+705:     LaunchMaxPooling3dGradGradOp<Device, T>::launch(
+706:         context, params, tensor_in, tensor_out, out_grad_backprop, output);
+707:   }
+708: 
+709:  private:
+710:   std::vector<int32> ksize_;
+711:   std::vector<int32> stride_;
+712:   Padding padding_;
+713:   TensorFormat data_format_;
+714: };
+715: 
+716: #define REGISTER_KERNELS(D, T)                                             \
+717:   REGISTER_KERNEL_BUILDER(                                                 \
+718:       Name("MaxPool3D").Device(DEVICE_##D).TypeConstraint<T>("T"),         \
+719:       Pooling3DOp<D##Device, T, MAX>);                                     \
+720:   REGISTER_KERNEL_BUILDER(Name("MaxPool3DGrad")                            \
+721:                               .Device(DEVICE_##D)                          \
+722:                               .TypeConstraint<T>("T")                      \
+723:                               .TypeConstraint<T>("TInput"),                \
+724:                           MaxPooling3dGradOp<D##Device, T>);               \
+725:   REGISTER_KERNEL_BUILDER(                                                 \
+726:       Name("MaxPool3DGradGrad").Device(DEVICE_##D).TypeConstraint<T>("T"), \
+727:       MaxPooling3dGradGradOp<D##Device, T>);                               \
+728:   REGISTER_KERNEL_BUILDER(                                                 \
+729:       Name("AvgPool3D").Device(DEVICE_##D).TypeConstraint<T>("T"),         \
+
+(Showing lines 640-729 of 839. Use offset=730 to continue.)
+</content>
+
+tool: viewcode
+{
+  "ref": "47612cd69a2fdd76156360ca9102816e156f7e5c",
+  "path": "tensorflow/core/kernels/pooling_ops_3d.cc",
+  "startline": 640,
+  "endline": 720
+}
+Here are lines 640 through 720.
+
+                }
+              }
+            }
+          }
+        }
+      }
+    };
+    const int64 shard_cost =
+        params.out_plane * params.out_height * params.out_width * params.depth *
+        params.window_planes * params.window_rows * params.window_cols;
+    Shard(worker_threads.num_threads, worker_threads.workers,
+          params.tensor_in_batch, shard_cost, shard);
+  }
+};
+
+template <class Device, class T>
+class MaxPooling3dGradGradOp : public OpKernel {
+ public:
+  explicit MaxPooling3dGradGradOp(OpKernelConstruction* context)
+      : OpKernel(context) {
+    string data_format;
+    OP_REQUIRES_OK(context, context->GetAttr("data_format", &data_format));
+    OP_REQUIRES(context, FormatFromString(data_format, &data_format_),
+                errors::InvalidArgument("Invalid data format"));
+    OP_REQUIRES_OK(context, context->GetAttr("ksize", &ksize_));
+    OP_REQUIRES(context, ksize_.size() == 5,
+                errors::InvalidArgument("Sliding window ksize field must "
+                                        "specify 5 dimensions"));
+    OP_REQUIRES_OK(context, context->GetAttr("strides", &stride_));
+    OP_REQUIRES(context, stride_.size() == 5,
+                errors::InvalidArgument("Sliding window strides field must "
+                                        "specify 5 dimensions"));
+    OP_REQUIRES_OK(context, context->GetAttr("padding", &padding_));
+    OP_REQUIRES(context, ksize_[0] == 1 && stride_[0] == 1,
+                errors::Unimplemented(
+                    "Pooling is not yet supported on the batch dimension."));
+    const int32 ksize_c = GetTensorDim(ksize_, data_format_, 'C');
+    const int32 stride_c = GetTensorDim(stride_, data_format_, 'C');
+    OP_REQUIRES(context, ksize_c == 1 && stride_c == 1,
+                errors::Unimplemented("MaxPooling3dGradGrad is not yet "
+                                      "supported on the depth dimension."));
+  }
+
+  void Compute(OpKernelContext* context) override {
+    const Tensor& tensor_in = context->input(0);
+    const Tensor& tensor_out = context->input(1);
+    const Tensor& out_grad_backprop = context->input(2);
+
+    // For maxpooling3d, tensor_in should have 5 dimensions.
+    OP_REQUIRES(context, tensor_in.dims() == 5,
+                errors::InvalidArgument("tensor_in must be 5-dimensional"));
+    OP_REQUIRES(context, tensor_out.dims() == 5,
+                errors::InvalidArgument("tensor_out must be 5-dimensional"));
+    // For maxpooling3d, out_grad_backprop should have 5 dimensions.
+    OP_REQUIRES(
+        context, out_grad_backprop.dims() == 5,
+        errors::InvalidArgument("out_grad_backprop must be 5-dimensional"));
+
+    Pool3dParameters params{context,  ksize_,       stride_,
+                            padding_, data_format_, tensor_in.shape()};
+
+    Tensor* output = nullptr;
+    OP_REQUIRES_OK(context, context->forward_input_or_allocate_output(
+                                {2}, 0, tensor_out.shape(), &output));
+
+    LaunchMaxPooling3dGradGradOp<Device, T>::launch(
+        context, params, tensor_in, tensor_out, out_grad_backprop, output);
+  }
+
+ private:
+  std::vector<int32> ksize_;
+  std::vector<int32> stride_;
+  Padding padding_;
+  TensorFormat data_format_;
+};
+
+#define REGISTER_KERNELS(D, T)                                             \
+  REGISTER_KERNEL_BUILDER(                                                 \
+      Name("MaxPool3D").Device(DEVICE_##D).TypeConstraint<T>("T"),         \
+      Pooling3DOp<D##Device, T, MAX>);                                     \
+  REGISTER_KERNEL_BUILDER(Name("MaxPool3DGrad")                            \
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tokens used
+input: 4,364
+cache read: 4,608
+cache write: 0
+output: 153
+reasoning output: 0
+
+The target file has the same class and call site shape as the newer hunk, so the backport is a direct insertion before `LaunchMaxPooling3dGradGradOp`.
+
+tool: validate
+{
+  "ref": "47612cd69a2fdd76156360ca9102816e156f7e5c",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/pooling_ops_3d.cc b/tensorflow/core/kernels/pooling_ops_3d.cc\n--- a/tensorflow/core/kernels/pooling_ops_3d.cc\n+++ b/tensorflow/core/kernels/pooling_ops_3d.cc\n@@ -701,6 +701,19 @@ class MaxPooling3dGradGradOp : public OpKernel {\n     OP_REQUIRES_OK(context, context->forward_input_or_allocate_output(\n                                 {2}, 0, tensor_out.shape(), &output));\n \n+    // Given access patterns in LaunchMaxPooling3dGradGradOp, these tensors must\n+    // have elements.\n+    OP_REQUIRES(context, tensor_in.NumElements() > 0,\n+                errors::InvalidArgument(\"received empty tensor tensor_in: \",\n+                                        tensor_in.DebugString()));\n+    OP_REQUIRES(context, tensor_out.NumElements() > 0,\n+                errors::InvalidArgument(\"received empty tensor tensor_out: \",\n+                                        tensor_out.DebugString()));\n+    OP_REQUIRES(\n+        context, out_grad_backprop.NumElements() > 0,\n+        errors::InvalidArgument(\"received empty tensor out_grad_backprop: \",\n+                                out_grad_backprop.DebugString()));\n+\n     LaunchMaxPooling3dGradGradOp<Device, T>::launch(\n         context, params, tensor_in, tensor_out, out_grad_backprop, output);\n   }\n"
+}
+Patch applied successfully
+
+tokens used
+input: 3,554
+cache read: 7,680
+cache write: 0
+output: 423
+reasoning output: 13
+
+The hunk validates cleanly against the target base; I’m applying exactly that minimal guard insertion.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target MaxPooling3dGradGradOp context",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate target hunk context if needed",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply minimal source change",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Inspect resulting diff",
+      "status": "pending",
+      "priority": "high"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target MaxPooling3dGradGradOp context",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate target hunk context if needed",
+    "status": "completed",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply minimal source change",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Inspect resulting diff",
+    "status": "pending",
+    "priority": "high"
+  }
+]
+
+tokens used
+input: 931
+cache read: 10,752
+cache write: 0
+output: 116
+reasoning output: 0
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/kernels/pooling_ops_3d.cc\n@@\n     Tensor* output = nullptr;\n     OP_REQUIRES_OK(context, context->forward_input_or_allocate_output(\n                                 {2}, 0, tensor_out.shape(), &output));\n \n+    // Given access patterns in LaunchMaxPooling3dGradGradOp, these tensors must\n+    // have elements.\n+    OP_REQUIRES(context, tensor_in.NumElements() > 0,\n+                errors::InvalidArgument(\"received empty tensor tensor_in: \",\n+                                        tensor_in.DebugString()));\n+    OP_REQUIRES(context, tensor_out.NumElements() > 0,\n+                errors::InvalidArgument(\"received empty tensor tensor_out: \",\n+                                        tensor_out.DebugString()));\n+    OP_REQUIRES(\n+        context, out_grad_backprop.NumElements() > 0,\n+        errors::InvalidArgument(\"received empty tensor out_grad_backprop: \",\n+                                out_grad_backprop.DebugString()));\n+\n     LaunchMaxPooling3dGradGradOp<Device, T>::launch(\n         context, params, tensor_in, tensor_out, out_grad_backprop, output);\n   }\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/kernels/pooling_ops_3d.cc
+
+tokens used
+input: 1,183
+cache read: 10,752
+cache write: 0
+output: 296
+reasoning output: 0
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target MaxPooling3dGradGradOp context",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate target hunk context if needed",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply minimal source change",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Inspect resulting diff",
+      "status": "in_progress",
+      "priority": "high"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target MaxPooling3dGradGradOp context",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate target hunk context if needed",
+    "status": "completed",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply minimal source change",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Inspect resulting diff",
+    "status": "in_progress",
+    "priority": "high"
+  }
+]
+
+tokens used
+input: 485
+cache read: 11,776
+cache write: 0
+output: 89
+reasoning output: 0
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/kernels/pooling_ops_3d.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0186-47612cd69a2f"
+}
+warning: in the working copy of 'tensorflow/core/kernels/pooling_ops_3d.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/kernels/pooling_ops_3d.cc b/tensorflow/core/kernels/pooling_ops_3d.cc
+index 7345ccf69e..40c69a4f2a 100644
+--- a/tensorflow/core/kernels/pooling_ops_3d.cc
++++ b/tensorflow/core/kernels/pooling_ops_3d.cc
+@@ -702,6 +702,19 @@ class MaxPooling3dGradGradOp : public OpKernel {
+     OP_REQUIRES_OK(context, context->forward_input_or_allocate_output(
+                                 {2}, 0, tensor_out.shape(), &output));
+ 
++    // Given access patterns in LaunchMaxPooling3dGradGradOp, these tensors must
++    // have elements.
++    OP_REQUIRES(context, tensor_in.NumElements() > 0,
++                errors::InvalidArgument("received empty tensor tensor_in: ",
++                                        tensor_in.DebugString()));
++    OP_REQUIRES(context, tensor_out.NumElements() > 0,
++                errors::InvalidArgument("received empty tensor tensor_out: ",
++                                        tensor_out.DebugString()));
++    OP_REQUIRES(
++        context, out_grad_backprop.NumElements() > 0,
++        errors::InvalidArgument("received empty tensor out_grad_backprop: ",
++                                out_grad_backprop.DebugString()));
++
+     LaunchMaxPooling3dGradGradOp<Device, T>::launch(
+         context, params, tensor_in, tensor_out, out_grad_backprop, output);
+   }
+
+tokens used
+input: 710
+cache read: 11,776
+cache write: 0
+output: 73
+reasoning output: 0
+
+The resulting diff is limited to `tensorflow/core/kernels/pooling_ops_3d.cc` and matches the security intent: reject empty tensors before the grad-grad launch accesses them.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target MaxPooling3dGradGradOp context",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate target hunk context if needed",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply minimal source change",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Inspect resulting diff",
+      "status": "completed",
+      "priority": "high"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target MaxPooling3dGradGradOp context",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate target hunk context if needed",
+    "status": "completed",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply minimal source change",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Inspect resulting diff",
+    "status": "completed",
+    "priority": "high"
+  }
+]
+
+tokens used
+input: 1,152
+cache read: 11,776
+cache write: 0
+output: 131
+reasoning output: 0
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/kernels/pooling_ops_3d.cc b/tensorflow/core/kernels/pooling_ops_3d.cc
+    index 7345ccf69e..40c69a4f2a 100644
+    --- a/tensorflow/core/kernels/pooling_ops_3d.cc
+    +++ b/tensorflow/core/kernels/pooling_ops_3d.cc
+    @@ -702,6 +702,19 @@ class MaxPooling3dGradGradOp : public OpKernel {
+         OP_REQUIRES_OK(context, context->forward_input_or_allocate_output(
+                                     {2}, 0, tensor_out.shape(), &output));
+     
+    +    // Given access patterns in LaunchMaxPooling3dGradGradOp, these tensors must
+    +    // have elements.
+    +    OP_REQUIRES(context, tensor_in.NumElements() > 0,
+    +                errors::InvalidArgument("received empty tensor tensor_in: ",
+    +                                        tensor_in.DebugString()));
+    +    OP_REQUIRES(context, tensor_out.NumElements() > 0,
+    +                errors::InvalidArgument("received empty tensor tensor_out: ",
+    +                                        tensor_out.DebugString()));
+    +    OP_REQUIRES(
+    +        context, out_grad_backprop.NumElements() > 0,
+    +        errors::InvalidArgument("received empty tensor out_grad_backprop: ",
+    +                                out_grad_backprop.DebugString()));
+    +
+         LaunchMaxPooling3dGradGradOp<Device, T>::launch(
+             context, params, tensor_in, tensor_out, out_grad_backprop, output);
+       }
+  notes: >
+    Added the MaxPool3DGradGrad empty tensor validation guards before launching the kernel.
+```
+
+tokens used
+input: 4,490
+cache read: 8,704
+cache write: 0
+output: 386
+reasoning output: 0

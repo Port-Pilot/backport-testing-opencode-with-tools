@@ -1,0 +1,56 @@
+diff --git a/tensorflow/core/kernels/pooling_ops_3d.cc b/tensorflow/core/kernels/pooling_ops_3d.cc
+index 56a55bc2ec..327a3be3b4 100644
+--- a/tensorflow/core/kernels/pooling_ops_3d.cc
++++ b/tensorflow/core/kernels/pooling_ops_3d.cc
+@@ -16,6 +16,7 @@ limitations under the License.
+ 
+ #include "tensorflow/core/kernels/pooling_ops_3d.h"
+ 
++#include <algorithm>
+ #include <array>
+ 
+ #include "third_party/eigen3/Eigen/Core"
+@@ -141,6 +142,11 @@ class Pooling3DOp : public UnaryOp<T> {
+     OP_REQUIRES(context, ksize_.size() == 5,
+                 errors::InvalidArgument("Sliding window ksize field must "
+                                         "specify 5 dimensions"));
++    bool non_negative =
++        std::all_of(ksize_.begin(), ksize_.end(), [](int k) { return k > 0; });
++    OP_REQUIRES(context, non_negative,
++                errors::InvalidArgument("Sliding window ksize field must "
++                                        "have non-negative dimensions"));
+     OP_REQUIRES_OK(context, context->GetAttr("strides", &stride_));
+     OP_REQUIRES(context, stride_.size() == 5,
+                 errors::InvalidArgument("Sliding window stride field must "
+diff --git a/tensorflow/python/kernel_tests/pooling_ops_3d_test.py b/tensorflow/python/kernel_tests/pooling_ops_3d_test.py
+index 051f7e1168..83d26e27d9 100644
+--- a/tensorflow/python/kernel_tests/pooling_ops_3d_test.py
++++ b/tensorflow/python/kernel_tests/pooling_ops_3d_test.py
+@@ -21,6 +21,7 @@ from __future__ import print_function
+ import numpy as np
+ 
+ from tensorflow.python.framework import constant_op
++from tensorflow.python.framework import errors
+ from tensorflow.python.framework import test_util
+ from tensorflow.python.ops import gradient_checker
+ from tensorflow.python.ops import gradients_impl
+@@ -505,6 +506,19 @@ class PoolingTest(test.TestCase):
+         strides=(1, 1, 1),
+         padding="SAME")
+ 
++  def testMaxPool3DZeroPoolSize(self):
++    # Test case for GitHub issue 51936.
++    for f in [nn_ops.max_pool3d, nn_ops.avg_pool3d]:
++      with self.session():
++        with self.assertRaises((errors.InvalidArgumentError, ValueError)):
++          input_sizes = [3, 4, 10, 11, 12]
++
++          input_data = 1.
++          input_tensor = constant_op.constant(
++              input_data, shape=input_sizes, name="input")
++          pool_3d = f(input_tensor, ksize=[2, 2, 0], strides=1, padding="VALID")
++          self.evaluate(pool_3d)
++
+ 
+ if __name__ == "__main__":
+   test.main()

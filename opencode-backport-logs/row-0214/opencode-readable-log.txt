@@ -1,0 +1,434 @@
+I’ll locate the target-side `CombinedNonMaxSuppressionOp` implementation, compare the surrounding scalar validation, then apply the minimal guard for positive `max_size_per_class`.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect source patch context and target equivalent code",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Validate and apply minimal backport hunk",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "content": "Inspect final diff and report YAML result",
+      "status": "pending",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect source patch context and target equivalent code",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Validate and apply minimal backport hunk",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "content": "Inspect final diff and report YAML result",
+    "status": "pending",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 3,764
+cache read: 4,608
+cache write: 0
+output: 119
+reasoning output: 0
+
+tool: git_show
+{
+  "ref": "b5cdbf12ffcaaffecf98f22a6be5a64bb96e4f58",
+  "context": "const int max_size_per_class = max_output_size.scalar<int>()();\n    OP_REQUIRES(context, max_size_per_class > 0,\n                errors::InvalidArgument(\"max_size_per_class must be positive\"));"
+}
+commit b5cdbf12ffcaaffecf98f22a6be5a64bb96e4f58
+Author: Mihai Maruseac <mihaimaruseac@google.com>
+Date:   Thu Jul 29 22:24:52 2021 -0700
+
+    Prevent overflow due to integer conversion to unsigned.
+    
+    PiperOrigin-RevId: 387738045
+    Change-Id: Id7e95bc07e02df1c66b72bd09f389608c87bdebe
+
+ tensorflow/core/kernels/image/non_max_suppression_op.cc | 2 ++
+ 1 file changed, 2 insertions(+)
+This commit shows that there is a high probability that this code is new, so the corresponding code segment cannot be found in the old version.
+You can call `viewcode` and `locate_symbol` to further check the results step by step. For newly introduced code, we consider that this hunk `need not ported`.
+
+tool: locate_symbol
+{
+  "ref": "6c1eb9637e0218d2d04c72c8838e17e72ebd00d5",
+  "symbol": "CombinedNonMaxSuppressionOp"
+}
+tensorflow/core/kernels/non_max_suppression_op.cc:900
+tensorflow/core/kernels/non_max_suppression_op.cc:902
+tensorflow/core/kernels/non_max_suppression_op.cc:1009
+
+tokens used
+input: 3,994
+cache read: 4,608
+cache write: 0
+output: 159
+reasoning output: 0
+
+The target release has the same op in `tensorflow/core/kernels/non_max_suppression_op.cc` rather than the newer `image/` subdirectory, so I’m checking that implementation and will patch there if the logic matches.
+
+tool: viewcode
+{
+  "ref": "6c1eb9637e0218d2d04c72c8838e17e72ebd00d5",
+  "path": "tensorflow/core/kernels/non_max_suppression_op.cc",
+  "startline": 880,
+  "endline": 970
+}
+Here are lines 880 through 970.
+
+        errors::InvalidArgument("score_threshold must be 0-D, got shape ",
+                                score_threshold.shape().DebugString()));
+    const float score_threshold_val = score_threshold.scalar<float>()();
+
+    int num_boxes = 0;
+    ParseAndCheckOverlapSizes(context, overlaps, &num_boxes);
+    CheckScoreSizes(context, num_boxes, scores);
+    if (!context->status().ok()) {
+      return;
+    }
+    auto similarity_fn = CreateOverlapSimilarityFn<float>(overlaps);
+
+    const float dummy_soft_nms_sigma = static_cast<float>(0.0);
+    DoNonMaxSuppressionOp<float>(context, scores, num_boxes, max_output_size,
+                                 overlap_threshold_val, score_threshold_val,
+                                 dummy_soft_nms_sigma, similarity_fn);
+  }
+};
+
+template <typename Device>
+class CombinedNonMaxSuppressionOp : public OpKernel {
+ public:
+  explicit CombinedNonMaxSuppressionOp(OpKernelConstruction* context)
+      : OpKernel(context) {
+    OP_REQUIRES_OK(context, context->GetAttr("pad_per_class", &pad_per_class_));
+    OP_REQUIRES_OK(context, context->GetAttr("clip_boxes", &clip_boxes_));
+  }
+
+  void Compute(OpKernelContext* context) override {
+    // boxes: [batch_size, num_anchors, q, 4]
+    const Tensor& boxes = context->input(0);
+    // scores: [batch_size, num_anchors, num_classes]
+    const Tensor& scores = context->input(1);
+    OP_REQUIRES(
+        context, (boxes.dim_size(0) == scores.dim_size(0)),
+        errors::InvalidArgument("boxes and scores must have same batch size"));
+
+    // max_output_size: scalar
+    const Tensor& max_output_size = context->input(2);
+    OP_REQUIRES(
+        context, TensorShapeUtils::IsScalar(max_output_size.shape()),
+        errors::InvalidArgument("max_size_per_class must be 0-D, got shape ",
+                                max_output_size.shape().DebugString()));
+    const int max_size_per_class = max_output_size.scalar<int>()();
+    // max_total_size: scalar
+    const Tensor& max_total_size = context->input(3);
+    OP_REQUIRES(
+        context, TensorShapeUtils::IsScalar(max_total_size.shape()),
+        errors::InvalidArgument("max_total_size must be 0-D, got shape ",
+                                max_total_size.shape().DebugString()));
+    const int max_total_size_per_batch = max_total_size.scalar<int>()();
+    OP_REQUIRES(context, max_total_size_per_batch > 0,
+                errors::InvalidArgument("max_total_size must be > 0"));
+    // iou_threshold: scalar
+    const Tensor& iou_threshold = context->input(4);
+    OP_REQUIRES(context, TensorShapeUtils::IsScalar(iou_threshold.shape()),
+                errors::InvalidArgument("iou_threshold must be 0-D, got shape ",
+                                        iou_threshold.shape().DebugString()));
+    const float iou_threshold_val = iou_threshold.scalar<float>()();
+
+    // score_threshold: scalar
+    const Tensor& score_threshold = context->input(5);
+    OP_REQUIRES(
+        context, TensorShapeUtils::IsScalar(score_threshold.shape()),
+        errors::InvalidArgument("score_threshold must be 0-D, got shape ",
+                                score_threshold.shape().DebugString()));
+    const float score_threshold_val = score_threshold.scalar<float>()();
+
+    OP_REQUIRES(context, iou_threshold_val >= 0 && iou_threshold_val <= 1,
+                errors::InvalidArgument("iou_threshold must be in [0, 1]"));
+    int num_boxes = 0;
+    const int num_classes = scores.dim_size(2);
+    ParseAndCheckCombinedNMSBoxSizes(context, boxes, &num_boxes, num_classes);
+    CheckCombinedNMSScoreSizes(context, num_boxes, scores);
+
+    if (!context->status().ok()) {
+      return;
+    }
+    BatchedNonMaxSuppressionOp(context, boxes, scores, num_boxes,
+                               max_size_per_class, max_total_size_per_batch,
+                               score_threshold_val, iou_threshold_val,
+                               pad_per_class_, clip_boxes_);
+  }
+
+ private:
+  bool pad_per_class_;
+  bool clip_boxes_;
+};
+
+REGISTER_KERNEL_BUILDER(Name("NonMaxSuppression").Device(DEVICE_CPU),
+                        NonMaxSuppressionOp<CPUDevice>);
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tokens used
+input: 1,357
+cache read: 7,680
+cache write: 0
+output: 124
+reasoning output: 17
+
+The equivalent code is present and lacks only the positive check before `max_size_per_class` is passed into batched NMS. I’m validating the small target hunk before applying it.
+
+tool: validate
+{
+  "ref": "6c1eb9637e0218d2d04c72c8838e17e72ebd00d5",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/non_max_suppression_op.cc b/tensorflow/core/kernels/non_max_suppression_op.cc\n--- a/tensorflow/core/kernels/non_max_suppression_op.cc\n+++ b/tensorflow/core/kernels/non_max_suppression_op.cc\n@@ -918,6 +918,8 @@ class CombinedNonMaxSuppressionOp : public OpKernel {\n                                 max_output_size.shape().DebugString()));\n     const int max_size_per_class = max_output_size.scalar<int>()();\n+    OP_REQUIRES(context, max_size_per_class > 0,\n+                errors::InvalidArgument(\"max_size_per_class must be positive\"));\n     // max_total_size: scalar\n     const Tensor& max_total_size = context->input(3);\n     OP_REQUIRES(\n"
+}
+This patch does not apply to the target TensorFlow ref.
+Git apply output:
+error: corrupt patch at line 12
+Touched files:
+- tensorflow/core/kernels/non_max_suppression_op.cc
+Fix the patch context against the older TensorFlow version, then run validate again in hunk mode.
+
+tokens used
+input: 1,433
+cache read: 8,704
+cache write: 0
+output: 278
+reasoning output: 20
+
+tool: validate
+{
+  "ref": "6c1eb9637e0218d2d04c72c8838e17e72ebd00d5",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/non_max_suppression_op.cc b/tensorflow/core/kernels/non_max_suppression_op.cc\nindex 000000000000..000000000000 100644\n--- a/tensorflow/core/kernels/non_max_suppression_op.cc\n+++ b/tensorflow/core/kernels/non_max_suppression_op.cc\n@@ -918,10 +918,12 @@ class CombinedNonMaxSuppressionOp : public OpKernel {\n     OP_REQUIRES(\n         context, TensorShapeUtils::IsScalar(max_output_size.shape()),\n         errors::InvalidArgument(\"max_size_per_class must be 0-D, got shape \",\n                                 max_output_size.shape().DebugString()));\n     const int max_size_per_class = max_output_size.scalar<int>()();\n+    OP_REQUIRES(context, max_size_per_class > 0,\n+                errors::InvalidArgument(\"max_size_per_class must be positive\"));\n     // max_total_size: scalar\n     const Tensor& max_total_size = context->input(3);\n     OP_REQUIRES(\n         context, TensorShapeUtils::IsScalar(max_total_size.shape()),\n"
+}
+This patch does not apply to the target TensorFlow ref.
+Git apply output:
+error: corrupt patch at line 17
+Touched files:
+- tensorflow/core/kernels/non_max_suppression_op.cc
+Fix the patch context against the older TensorFlow version, then run validate again in hunk mode.
+
+tokens used
+input: 778
+cache read: 9,728
+cache write: 0
+output: 309
+reasoning output: 87
+
+The first validation attempts were malformed patch snippets, not code mismatches. I’m correcting the hunk metadata/context and re-validating.
+
+tool: validate
+{
+  "ref": "6c1eb9637e0218d2d04c72c8838e17e72ebd00d5",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/non_max_suppression_op.cc b/tensorflow/core/kernels/non_max_suppression_op.cc\n--- a/tensorflow/core/kernels/non_max_suppression_op.cc\n+++ b/tensorflow/core/kernels/non_max_suppression_op.cc\n@@ -918,11 +918,13 @@ class CombinedNonMaxSuppressionOp : public OpKernel {\n     OP_REQUIRES(\n         context, TensorShapeUtils::IsScalar(max_output_size.shape()),\n         errors::InvalidArgument(\"max_size_per_class must be 0-D, got shape \",\n                                 max_output_size.shape().DebugString()));\n     const int max_size_per_class = max_output_size.scalar<int>()();\n+    OP_REQUIRES(context, max_size_per_class > 0,\n+                errors::InvalidArgument(\"max_size_per_class must be positive\"));\n     // max_total_size: scalar\n     const Tensor& max_total_size = context->input(3);\n     OP_REQUIRES(\n         context, TensorShapeUtils::IsScalar(max_total_size.shape()),\n         errors::InvalidArgument(\"max_total_size must be 0-D, got shape \",\n"
+}
+This patch does not apply to the target TensorFlow ref.
+Git apply output:
+error: corrupt patch at line 17
+Touched files:
+- tensorflow/core/kernels/non_max_suppression_op.cc
+Fix the patch context against the older TensorFlow version, then run validate again in hunk mode.
+
+tokens used
+input: 1,245
+cache read: 9,728
+cache write: 0
+output: 349
+reasoning output: 102
+
+I’m adding the final context line required by the hunk count; the target location itself still matches.
+
+tool: validate
+{
+  "ref": "6c1eb9637e0218d2d04c72c8838e17e72ebd00d5",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/non_max_suppression_op.cc b/tensorflow/core/kernels/non_max_suppression_op.cc\n--- a/tensorflow/core/kernels/non_max_suppression_op.cc\n+++ b/tensorflow/core/kernels/non_max_suppression_op.cc\n@@ -918,11 +918,13 @@ class CombinedNonMaxSuppressionOp : public OpKernel {\n     OP_REQUIRES(\n         context, TensorShapeUtils::IsScalar(max_output_size.shape()),\n         errors::InvalidArgument(\"max_size_per_class must be 0-D, got shape \",\n                                 max_output_size.shape().DebugString()));\n     const int max_size_per_class = max_output_size.scalar<int>()();\n+    OP_REQUIRES(context, max_size_per_class > 0,\n+                errors::InvalidArgument(\"max_size_per_class must be positive\"));\n     // max_total_size: scalar\n     const Tensor& max_total_size = context->input(3);\n     OP_REQUIRES(\n         context, TensorShapeUtils::IsScalar(max_total_size.shape()),\n         errors::InvalidArgument(\"max_total_size must be 0-D, got shape \",\n                                 max_total_size.shape().DebugString()));\n"
+}
+Patch applied successfully
+
+tokens used
+input: 743
+cache read: 10,752
+cache write: 0
+output: 354
+reasoning output: 62
+
+The target hunk validates cleanly. I’m applying the same guard in the older file path.
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/kernels/non_max_suppression_op.cc\n@@\n     OP_REQUIRES(\n         context, TensorShapeUtils::IsScalar(max_output_size.shape()),\n         errors::InvalidArgument(\"max_size_per_class must be 0-D, got shape \",\n                                 max_output_size.shape().DebugString()));\n     const int max_size_per_class = max_output_size.scalar<int>()();\n+    OP_REQUIRES(context, max_size_per_class > 0,\n+                errors::InvalidArgument(\"max_size_per_class must be positive\"));\n     // max_total_size: scalar\n     const Tensor& max_total_size = context->input(3);\n     OP_REQUIRES(\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/kernels/non_max_suppression_op.cc
+
+tokens used
+input: 1,172
+cache read: 10,752
+cache write: 0
+output: 211
+reasoning output: 13
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect source patch context and target equivalent code",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate and apply minimal backport hunk",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Inspect final diff and report YAML result",
+      "status": "in_progress",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect source patch context and target equivalent code",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate and apply minimal backport hunk",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Inspect final diff and report YAML result",
+    "status": "in_progress",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 402
+cache read: 11,776
+cache write: 0
+output: 77
+reasoning output: 0
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/kernels/non_max_suppression_op.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0214-6c1eb9637e02"
+}
+warning: in the working copy of 'tensorflow/core/kernels/non_max_suppression_op.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/kernels/non_max_suppression_op.cc b/tensorflow/core/kernels/non_max_suppression_op.cc
+index 20ae3a2e0d..913209dfd3 100644
+--- a/tensorflow/core/kernels/non_max_suppression_op.cc
++++ b/tensorflow/core/kernels/non_max_suppression_op.cc
+@@ -921,6 +921,8 @@ class CombinedNonMaxSuppressionOp : public OpKernel {
+         errors::InvalidArgument("max_size_per_class must be 0-D, got shape ",
+                                 max_output_size.shape().DebugString()));
+     const int max_size_per_class = max_output_size.scalar<int>()();
++    OP_REQUIRES(context, max_size_per_class > 0,
++                errors::InvalidArgument("max_size_per_class must be positive"));
+     // max_total_size: scalar
+     const Tensor& max_total_size = context->input(3);
+     OP_REQUIRES(
+
+tokens used
+input: 590
+cache read: 11,776
+cache write: 0
+output: 76
+reasoning output: 15
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect source patch context and target equivalent code",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate and apply minimal backport hunk",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Inspect final diff and report YAML result",
+      "status": "completed",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect source patch context and target equivalent code",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate and apply minimal backport hunk",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Inspect final diff and report YAML result",
+    "status": "completed",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 934
+cache read: 11,776
+cache write: 0
+output: 78
+reasoning output: 31
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/kernels/non_max_suppression_op.cc b/tensorflow/core/kernels/non_max_suppression_op.cc
+    index 20ae3a2e0d..913209dfd3 100644
+    --- a/tensorflow/core/kernels/non_max_suppression_op.cc
+    +++ b/tensorflow/core/kernels/non_max_suppression_op.cc
+    @@ -921,6 +921,8 @@ class CombinedNonMaxSuppressionOp : public OpKernel {
+             errors::InvalidArgument("max_size_per_class must be 0-D, got shape ",
+                                     max_output_size.shape().DebugString()));
+         const int max_size_per_class = max_output_size.scalar<int>()();
+    +    OP_REQUIRES(context, max_size_per_class > 0,
+    +                errors::InvalidArgument("max_size_per_class must be positive"));
+         // max_total_size: scalar
+         const Tensor& max_total_size = context->input(3);
+         OP_REQUIRES(
+  notes: >
+    Added the missing positive validation for max_size_per_class in the TensorFlow 2.3.4 CombinedNonMaxSuppressionOp equivalent location; hunk validation succeeded.
+```
+
+tokens used
+input: 1,153
+cache read: 11,776
+cache write: 0
+output: 276
+reasoning output: 0

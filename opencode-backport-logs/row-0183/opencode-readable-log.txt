@@ -1,0 +1,357 @@
+I’ll locate the equivalent kernel code in the target 2.1.4 checkout, verify the surrounding API/context against the source patch, then apply only the necessary guard.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target kernel context for ParameterizedTruncatedNormalOp",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Validate minimal backport hunk against target base",
+      "status": "pending",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply source change and capture final diff",
+      "status": "pending",
+      "priority": "high"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target kernel context for ParameterizedTruncatedNormalOp",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Validate minimal backport hunk against target base",
+    "status": "pending",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply source change and capture final diff",
+    "status": "pending",
+    "priority": "high"
+  }
+]
+
+tokens used
+input: 8,337
+cache read: 0
+cache write: 0
+output: 123
+reasoning output: 0
+
+tool: locate_symbol
+{
+  "ref": "47612cd69a2fdd76156360ca9102816e156f7e5c",
+  "symbol": "ParameterizedTruncatedNormalOp"
+}
+tensorflow/compiler/tf2xla/kernels/random_ops.cc:313
+tensorflow/core/kernels/parameterized_truncated_normal_op.cc:318
+tensorflow/compiler/tf2xla/kernels/random_ops.cc:315
+tensorflow/core/kernels/parameterized_truncated_normal_op.cc:323
+tensorflow/compiler/tf2xla/kernels/random_ops.cc:350
+tensorflow/core/kernels/parameterized_truncated_normal_op.cc:436
+tensorflow/core/kernels/parameterized_truncated_normal_op.cc:445
+tensorflow/core/kernels/parameterized_truncated_normal_op.cc:460
+tensorflow/python/kernel_tests/parameterized_truncated_normal_op_test.py:15
+tensorflow/python/kernel_tests/parameterized_truncated_normal_op_test.py:343
+
+tool: grep
+{
+  "pattern": "class ParameterizedTruncatedNormalOp",
+  "path": "tensorflow/core/kernels",
+  "include": "*.cc"
+}
+Found 1 matches
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0183-47612cd69a2f\tensorflow\core\kernels\parameterized_truncated_normal_op.cc:
+  Line 318: class ParameterizedTruncatedNormalOp : public OpKernel {
+
+tokens used
+input: 3,967
+cache read: 4,608
+cache write: 0
+output: 96
+reasoning output: 0
+
+tool: viewcode
+{
+  "ref": "47612cd69a2fdd76156360ca9102816e156f7e5c",
+  "path": "tensorflow/core/kernels/parameterized_truncated_normal_op.cc",
+  "startline": 300,
+  "endline": 370
+}
+Here are lines 300 through 370.
+
+        Eigen::internal::functor_traits<
+            Eigen::internal::scalar_exp_op<T>>::Cost +
+        Eigen::TensorOpCost::MulCost<T>() + Eigen::TensorOpCost::AddCost<T>();
+    // Estimate the cost for an entire batch.
+    // Assume we use uniform sampling, and accept the 2nd sample on average.
+    const int64 batchCost =
+        batchInitCost + uniformRejectionSamplingCost * 2 * samples_per_batch;
+    Shard(worker_threads.num_threads, worker_threads.workers, num_batches,
+          batchCost, DoWork);
+  }
+};
+
+}  // namespace functor
+
+namespace {
+
+// Samples from a truncated normal distribution, using the given parameters.
+template <typename Device, typename T>
+class ParameterizedTruncatedNormalOp : public OpKernel {
+  // Reshape batches so each batch is this size if possible.
+  static const int32 kDesiredBatchSize = 100;
+
+ public:
+  explicit ParameterizedTruncatedNormalOp(OpKernelConstruction* context)
+      : OpKernel(context) {
+    OP_REQUIRES_OK(context, generator_.Init(context));
+  }
+
+  void Compute(OpKernelContext* ctx) override {
+    const Tensor& shape_tensor = ctx->input(0);
+    const Tensor& means_tensor = ctx->input(1);
+    const Tensor& stddevs_tensor = ctx->input(2);
+    const Tensor& minvals_tensor = ctx->input(3);
+    const Tensor& maxvals_tensor = ctx->input(4);
+
+    OP_REQUIRES(
+        ctx, TensorShapeUtils::IsVector(shape_tensor.shape()),
+        errors::InvalidArgument("Input shape should be a vector, got shape: ",
+                                shape_tensor.shape().DebugString()));
+    int32 num_batches = shape_tensor.flat<int32>()(0);
+
+    int32 samples_per_batch = 1;
+    const int32 num_dims = shape_tensor.dim_size(0);
+    for (int32 i = 1; i < num_dims; i++) {
+      samples_per_batch *= shape_tensor.flat<int32>()(i);
+    }
+    const int32 num_elements = num_batches * samples_per_batch;
+
+    // Allocate the output before fudging num_batches and samples_per_batch.
+    auto shape_vec = shape_tensor.flat<int32>();
+    TensorShape tensor_shape;
+    OP_REQUIRES_OK(ctx, TensorShapeUtils::MakeShape(
+                            shape_vec.data(), shape_vec.size(), &tensor_shape));
+    Tensor* samples_tensor;
+    OP_REQUIRES_OK(ctx, ctx->allocate_output(0, tensor_shape, &samples_tensor));
+
+    // Parameters must be 0-d or 1-d.
+    OP_REQUIRES(ctx, means_tensor.dims() <= 1,
+                errors::InvalidArgument(
+                    "Input means should be a scalar or vector, got shape: ",
+                    means_tensor.shape().DebugString()));
+    OP_REQUIRES(ctx, stddevs_tensor.dims() <= 1,
+                errors::InvalidArgument(
+                    "Input stddevs should be a scalar or vector, got shape: ",
+                    stddevs_tensor.shape().DebugString()));
+    OP_REQUIRES(ctx, minvals_tensor.dims() <= 1,
+                errors::InvalidArgument(
+                    "Input minvals should be a scalar or vector, got shape: ",
+                    minvals_tensor.shape().DebugString()));
+    OP_REQUIRES(ctx, maxvals_tensor.dims() <= 1,
+                errors::InvalidArgument(
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tokens used
+input: 1,240
+cache read: 7,680
+cache write: 0
+output: 64
+reasoning output: 0
+
+The target kernel has the same vulnerable access pattern: it checks that `shape_tensor` is a vector, then immediately reads element 0. I’m validating the minimal guard at that exact location before editing.
+
+tool: validate
+{
+  "ref": "47612cd69a2fdd76156360ca9102816e156f7e5c",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/parameterized_truncated_normal_op.cc b/tensorflow/core/kernels/parameterized_truncated_normal_op.cc\n--- a/tensorflow/core/kernels/parameterized_truncated_normal_op.cc\n+++ b/tensorflow/core/kernels/parameterized_truncated_normal_op.cc\n@@ -330,6 +330,9 @@ class ParameterizedTruncatedNormalOp : public OpKernel {\n         ctx, TensorShapeUtils::IsVector(shape_tensor.shape()),\n         errors::InvalidArgument(\"Input shape should be a vector, got shape: \",\n                                 shape_tensor.shape().DebugString()));\n+    OP_REQUIRES(ctx, shape_tensor.NumElements() > 0,\n+                errors::InvalidArgument(\"Shape tensor must not be empty, got \",\n+                                        shape_tensor.DebugString()));\n     int32 num_batches = shape_tensor.flat<int32>()(0);\n \n     int32 samples_per_batch = 1;\n"
+}
+Patch applied successfully
+
+tokens used
+input: 2,059
+cache read: 7,680
+cache write: 0
+output: 307
+reasoning output: 36
+
+The hunk applies cleanly to the target base. I’m applying the same empty-shape validation to the checked-out source file now.
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/kernels/parameterized_truncated_normal_op.cc\n@@\n     OP_REQUIRES(\n         ctx, TensorShapeUtils::IsVector(shape_tensor.shape()),\n         errors::InvalidArgument(\"Input shape should be a vector, got shape: \",\n                                 shape_tensor.shape().DebugString()));\n+    OP_REQUIRES(ctx, shape_tensor.NumElements() > 0,\n+                errors::InvalidArgument(\"Shape tensor must not be empty, got \",\n+                                        shape_tensor.DebugString()));\n     int32 num_batches = shape_tensor.flat<int32>()(0);\n \n     int32 samples_per_batch = 1;\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/kernels/parameterized_truncated_normal_op.cc
+
+tokens used
+input: 1,391
+cache read: 8,704
+cache write: 0
+output: 207
+reasoning output: 0
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target kernel context for ParameterizedTruncatedNormalOp",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate minimal backport hunk against target base",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply source change and capture final diff",
+      "status": "in_progress",
+      "priority": "high"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target kernel context for ParameterizedTruncatedNormalOp",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate minimal backport hunk against target base",
+    "status": "completed",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply source change and capture final diff",
+    "status": "in_progress",
+    "priority": "high"
+  }
+]
+
+tokens used
+input: 1,629
+cache read: 8,704
+cache write: 0
+output: 81
+reasoning output: 0
+
+The source edit is in place. I’m checking the resulting diff only; no full build or full validation will be run.
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/kernels/parameterized_truncated_normal_op.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0183-47612cd69a2f"
+}
+warning: in the working copy of 'tensorflow/core/kernels/parameterized_truncated_normal_op.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/kernels/parameterized_truncated_normal_op.cc b/tensorflow/core/kernels/parameterized_truncated_normal_op.cc
+index b0b720b4e0..62d996ed00 100644
+--- a/tensorflow/core/kernels/parameterized_truncated_normal_op.cc
++++ b/tensorflow/core/kernels/parameterized_truncated_normal_op.cc
+@@ -336,6 +336,9 @@ class ParameterizedTruncatedNormalOp : public OpKernel {
+         ctx, TensorShapeUtils::IsVector(shape_tensor.shape()),
+         errors::InvalidArgument("Input shape should be a vector, got shape: ",
+                                 shape_tensor.shape().DebugString()));
++    OP_REQUIRES(ctx, shape_tensor.NumElements() > 0,
++                errors::InvalidArgument("Shape tensor must not be empty, got ",
++                                        shape_tensor.DebugString()));
+     int32 num_batches = shape_tensor.flat<int32>()(0);
+ 
+     int32 samples_per_batch = 1;
+
+tool: bash
+{
+  "command": "git status --short",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0183-47612cd69a2f"
+}
+ M tensorflow/core/kernels/parameterized_truncated_normal_op.cc
+
+tokens used
+input: 801
+cache read: 9,728
+cache write: 0
+output: 181
+reasoning output: 0
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target kernel context for ParameterizedTruncatedNormalOp",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate minimal backport hunk against target base",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply source change and capture final diff",
+      "status": "completed",
+      "priority": "high"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target kernel context for ParameterizedTruncatedNormalOp",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate minimal backport hunk against target base",
+    "status": "completed",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply source change and capture final diff",
+    "status": "completed",
+    "priority": "high"
+  }
+]
+
+tokens used
+input: 1,264
+cache read: 9,728
+cache write: 0
+output: 80
+reasoning output: 0
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/kernels/parameterized_truncated_normal_op.cc b/tensorflow/core/kernels/parameterized_truncated_normal_op.cc
+    index b0b720b4e0..62d996ed00 100644
+    --- a/tensorflow/core/kernels/parameterized_truncated_normal_op.cc
+    +++ b/tensorflow/core/kernels/parameterized_truncated_normal_op.cc
+    @@ -336,6 +336,9 @@ class ParameterizedTruncatedNormalOp : public OpKernel {
+             ctx, TensorShapeUtils::IsVector(shape_tensor.shape()),
+             errors::InvalidArgument("Input shape should be a vector, got shape: ",
+                                     shape_tensor.shape().DebugString()));
+    +    OP_REQUIRES(ctx, shape_tensor.NumElements() > 0,
+    +                errors::InvalidArgument("Shape tensor must not be empty, got ",
+    +                                        shape_tensor.DebugString()));
+         int32 num_batches = shape_tensor.flat<int32>()(0);
+     
+         int32 samples_per_batch = 1;
+  notes: >
+    Added the missing empty shape tensor validation before reading element 0 in ParameterizedTruncatedNormalOp.
+```
+
+tokens used
+input: 434
+cache read: 10,752
+cache write: 0
+output: 268
+reasoning output: 0

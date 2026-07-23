@@ -1,0 +1,356 @@
+I’ll inspect the target file at the specified base commit and compare the relevant function signatures and assertions before applying the minimal security fix.
+
+tool: viewcode
+{
+  "ref": "a5d613d23c2aa234d370d04b19ccabe3824c284d",
+  "path": "tensorflow/core/kernels/ragged_tensor_to_tensor_op.cc",
+  "startline": 180,
+  "endline": 330
+}
+Here are lines 180 through 330.
+
+  }
+
+  /**
+   * The output_index represents the index in the output tensor
+   * where the first element of a particular dimension would be written.
+   * If it is -1, it indicates that the index is out of scope.
+   * Example, given first_dimension = 10, first_dimension_output = 6,
+   * and output_index_multiplier = 100:
+   * result = [0 100 200 300 400 500 -1 -1 -1 -1]
+   * If first_dimension_output = 11 instead, then:
+   * result = [0 100 200 300 400 500 600 700 800 900]
+   */
+  void CalculateFirstParentOutputIndex(INDEX_TYPE first_dimension,
+                                       INDEX_TYPE output_index_multiplier,
+                                       INDEX_TYPE first_dimension_output,
+                                       vector<INDEX_TYPE>* result) {
+    const INDEX_TYPE min_dimension =
+        std::min(first_dimension, first_dimension_output);
+    result->reserve(first_dimension);
+    int current_output_index = 0;
+    for (INDEX_TYPE i = 0; i < min_dimension;
+         ++i, current_output_index += output_index_multiplier) {
+      result->push_back(current_output_index);
+    }
+    for (INDEX_TYPE i = min_dimension; i < first_dimension; ++i) {
+      result->push_back(-1);
+    }
+    DCHECK_EQ(result->size(), first_dimension);
+  }
+
+  void CalculateOutputIndexRowSplit(
+      const RowPartitionTensor& row_split,
+      const vector<INDEX_TYPE>& parent_output_index,
+      INDEX_TYPE output_index_multiplier, INDEX_TYPE output_size,
+      vector<INDEX_TYPE>* result) {
+    INDEX_TYPE row_split_size = row_split.size();
+    if (row_split_size > 0) {
+      result->reserve(row_split(row_split_size - 1));
+    }
+    for (INDEX_TYPE i = 0; i < row_split_size - 1; ++i) {
+      INDEX_TYPE row_length = row_split(i + 1) - row_split(i);
+      INDEX_TYPE real_length = std::min(output_size, row_length);
+      INDEX_TYPE parent_output_index_current = parent_output_index[i];
+
+      if (parent_output_index_current == -1) {
+        real_length = 0;
+      }
+      for (INDEX_TYPE j = 0; j < real_length; ++j) {
+        result->push_back(parent_output_index_current);
+        parent_output_index_current += output_index_multiplier;
+      }
+      for (INDEX_TYPE j = 0; j < row_length - real_length; ++j) {
+        result->push_back(-1);
+      }
+    }
+    if (row_split_size > 0) {
+      DCHECK_EQ(result->size(), row_split(row_split_size - 1));
+    }
+  }
+
+  // Calculate the output index of the first element of a list.
+  // The parent_output_index is the same computation for the previous list.
+  // -1 indicates an element or list that is out of range.
+  // The output_index_multiplier is the number of output indices one moves
+  // forward for each column.
+  // E.g., given:
+  // value_rowids:[0 1 2 2 2 3 5 5 6]
+  // parent_output_index:[1000 1100 2000 2100 -1 3000 4000]
+  // output_index_multiplier: 10
+  // output_size: 2
+  // You get:
+  // result = [1000 1100 2000 2010 -1 2100 -1 -1 3000]
+  // result[0] = parent_output_index[value_rowids[0]]
+  // result[1] = parent_output_index[value_rowids[1]]
+  // result[2] = parent_output_index[value_rowids[2]]
+  // result[3] = parent_output_index[value_rowids[2] + 10]
+  // result[4] = -1 because it is the third element the size is 2.
+  // result[5] = parent_output_index[value_rowids[3]]
+  // result[6] = -1 because parent_output_index[value_rowids[6]] == -1
+  // result[7] = -1 because parent_output_index[value_rowids[6]] == -1
+  // result[8] = parent_output_index[value_rowids[7]]
+  void CalculateOutputIndexValueRowID(
+      const RowPartitionTensor& value_rowids,
+      const vector<INDEX_TYPE>& parent_output_index,
+      INDEX_TYPE output_index_multiplier, INDEX_TYPE output_size,
+      vector<INDEX_TYPE>* result) {
+    const INDEX_TYPE index_size = value_rowids.size();
+    result->reserve(index_size);
+    if (index_size == 0) {
+      return;
+    }
+
+    INDEX_TYPE current_output_column = 0;
+    INDEX_TYPE current_value_rowid = value_rowids(0);
+    DCHECK_LT(current_value_rowid, parent_output_index.size());
+    INDEX_TYPE current_output_index = parent_output_index[current_value_rowid];
+    result->push_back(current_output_index);
+    for (INDEX_TYPE i = 1; i < index_size; ++i) {
+      INDEX_TYPE next_value_rowid = value_rowids(i);
+      if (next_value_rowid == current_value_rowid) {
+        if (current_output_index >= 0) {
+          ++current_output_column;
+          if (current_output_column < output_size) {
+            current_output_index += output_index_multiplier;
+          } else {
+            current_output_index = -1;
+          }
+        }
+      } else {
+        current_output_column = 0;
+        current_value_rowid = next_value_rowid;
+        DCHECK_LT(next_value_rowid, parent_output_index.size());
+        current_output_index = parent_output_index[next_value_rowid];
+      }
+      result->push_back(current_output_index);
+    }
+    DCHECK_EQ(result->size(), value_rowids.size());
+  }
+
+  Status CalculateOutputIndex(OpKernelContext* context, int dimension,
+                              const vector<INDEX_TYPE>& parent_output_index,
+                              INDEX_TYPE output_index_multiplier,
+                              INDEX_TYPE output_size,
+                              vector<INDEX_TYPE>* result) {
+    const RowPartitionTensor row_partition_tensor =
+        GetRowPartitionTensor(context, dimension);
+    auto partition_type = GetRowPartitionTypeByDimension(dimension);
+    switch (partition_type) {
+      case RowPartitionType::VALUE_ROWIDS:
+        CalculateOutputIndexValueRowID(
+            row_partition_tensor, parent_output_index, output_index_multiplier,
+            output_size, result);
+        return tensorflow::Status::OK();
+      case RowPartitionType::ROW_SPLITS:
+        CalculateOutputIndexRowSplit(row_partition_tensor, parent_output_index,
+                                     output_index_multiplier, output_size,
+                                     result);
+        return tensorflow::Status::OK();
+      default:
+        return errors::InvalidArgument(
+            "Unsupported partition type:",
+            RowPartitionTypeToString(partition_type));
+    }
+  }
+
+  Status GetFirstDimensionSize(OpKernelContext* context, INDEX_TYPE* result) {
+    const Tensor first_partition_tensor =
+        context->input(kFirstPartitionInputIndex);
+    const RowPartitionType first_partition_type = row_partition_types_[0];
+    switch (first_partition_type) {
+      case RowPartitionType::FIRST_DIM_SIZE:
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tokens used
+input: 4,204
+cache read: 4,608
+cache write: 0
+output: 98
+reasoning output: 0
+
+The target implementation matches the patched region directly: the vulnerable checks are debug-only `DCHECK_EQ` assertions in the same helper functions, so I’m replacing them with runtime `OP_REQUIRES` checks and threading `OpKernelContext*` through the two helper calls.
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/kernels/ragged_tensor_to_tensor_op.cc\n@@\n   void CalculateOutputIndexRowSplit(\n-      const RowPartitionTensor& row_split,\n+      OpKernelContext* context, const RowPartitionTensor& row_split,\n       const vector<INDEX_TYPE>& parent_output_index,\n       INDEX_TYPE output_index_multiplier, INDEX_TYPE output_size,\n       vector<INDEX_TYPE>* result) {\n@@\n     }\n     if (row_split_size > 0) {\n-      DCHECK_EQ(result->size(), row_split(row_split_size - 1));\n+      OP_REQUIRES(context, result->size() == row_split(row_split_size - 1),\n+                  errors::InvalidArgument(\"Invalid row split size.\"));\n     }\n   }\n@@\n   void CalculateOutputIndexValueRowID(\n-      const RowPartitionTensor& value_rowids,\n+      OpKernelContext* context, const RowPartitionTensor& value_rowids,\n       const vector<INDEX_TYPE>& parent_output_index,\n       INDEX_TYPE output_index_multiplier, INDEX_TYPE output_size,\n       vector<INDEX_TYPE>* result) {\n@@\n       result->push_back(current_output_index);\n     }\n-    DCHECK_EQ(result->size(), value_rowids.size());\n+    OP_REQUIRES(context, result->size() == value_rowids.size(),\n+                errors::InvalidArgument(\"Invalid row ids.\"));\n   }\n@@\n       case RowPartitionType::VALUE_ROWIDS:\n         CalculateOutputIndexValueRowID(\n-            row_partition_tensor, parent_output_index, output_index_multiplier,\n-            output_size, result);\n+            context, row_partition_tensor, parent_output_index,\n+            output_index_multiplier, output_size, result);\n         return tensorflow::Status::OK();\n       case RowPartitionType::ROW_SPLITS:\n-        CalculateOutputIndexRowSplit(row_partition_tensor, parent_output_index,\n-                                     output_index_multiplier, output_size,\n-                                     result);\n+        CalculateOutputIndexRowSplit(\n+            context, row_partition_tensor, parent_output_index,\n+            output_index_multiplier, output_size, result);\n         return tensorflow::Status::OK();\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/kernels/ragged_tensor_to_tensor_op.cc
+
+tokens used
+input: 1,760
+cache read: 8,704
+cache write: 0
+output: 576
+reasoning output: 33
+
+The source change is applied. I’ll now inspect the resulting diff and validate the hunk against the target base without running full builds.
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/kernels/ragged_tensor_to_tensor_op.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0116-a5d613d23c2a"
+}
+warning: in the working copy of 'tensorflow/core/kernels/ragged_tensor_to_tensor_op.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/kernels/ragged_tensor_to_tensor_op.cc b/tensorflow/core/kernels/ragged_tensor_to_tensor_op.cc
+index ca9e1836c8..6f5c07e25c 100644
+--- a/tensorflow/core/kernels/ragged_tensor_to_tensor_op.cc
++++ b/tensorflow/core/kernels/ragged_tensor_to_tensor_op.cc
+@@ -208,7 +208,7 @@ class RaggedTensorToTensorBaseOp : public OpKernel {
+   }
+ 
+   void CalculateOutputIndexRowSplit(
+-      const RowPartitionTensor& row_split,
++      OpKernelContext* context, const RowPartitionTensor& row_split,
+       const vector<INDEX_TYPE>& parent_output_index,
+       INDEX_TYPE output_index_multiplier, INDEX_TYPE output_size,
+       vector<INDEX_TYPE>* result) {
+@@ -233,7 +233,8 @@ class RaggedTensorToTensorBaseOp : public OpKernel {
+       }
+     }
+     if (row_split_size > 0) {
+-      DCHECK_EQ(result->size(), row_split(row_split_size - 1));
++      OP_REQUIRES(context, result->size() == row_split(row_split_size - 1),
++                  errors::InvalidArgument("Invalid row split size."));
+     }
+   }
+ 
+@@ -259,7 +260,7 @@ class RaggedTensorToTensorBaseOp : public OpKernel {
+   // result[7] = -1 because parent_output_index[value_rowids[6]] == -1
+   // result[8] = parent_output_index[value_rowids[7]]
+   void CalculateOutputIndexValueRowID(
+-      const RowPartitionTensor& value_rowids,
++      OpKernelContext* context, const RowPartitionTensor& value_rowids,
+       const vector<INDEX_TYPE>& parent_output_index,
+       INDEX_TYPE output_index_multiplier, INDEX_TYPE output_size,
+       vector<INDEX_TYPE>* result) {
+@@ -293,7 +294,8 @@ class RaggedTensorToTensorBaseOp : public OpKernel {
+       }
+       result->push_back(current_output_index);
+     }
+-    DCHECK_EQ(result->size(), value_rowids.size());
++    OP_REQUIRES(context, result->size() == value_rowids.size(),
++                errors::InvalidArgument("Invalid row ids."));
+   }
+ 
+   Status CalculateOutputIndex(OpKernelContext* context, int dimension,
+@@ -307,13 +309,13 @@ class RaggedTensorToTensorBaseOp : public OpKernel {
+     switch (partition_type) {
+       case RowPartitionType::VALUE_ROWIDS:
+         CalculateOutputIndexValueRowID(
+-            row_partition_tensor, parent_output_index, output_index_multiplier,
+-            output_size, result);
++            context, row_partition_tensor, parent_output_index,
++            output_index_multiplier, output_size, result);
+         return tensorflow::Status::OK();
+       case RowPartitionType::ROW_SPLITS:
+-        CalculateOutputIndexRowSplit(row_partition_tensor, parent_output_index,
+-                                     output_index_multiplier, output_size,
+-                                     result);
++        CalculateOutputIndexRowSplit(
++            context, row_partition_tensor, parent_output_index,
++            output_index_multiplier, output_size, result);
+         return tensorflow::Status::OK();
+       default:
+         return errors::InvalidArgument(
+
+tokens used
+input: 1,376
+cache read: 9,728
+cache write: 0
+output: 109
+reasoning output: 0
+
+tool: validate
+{
+  "ref": "a5d613d23c2aa234d370d04b19ccabe3824c284d",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/ragged_tensor_to_tensor_op.cc b/tensorflow/core/kernels/ragged_tensor_to_tensor_op.cc\nindex ca9e1836c8..6f5c07e25c 100644\n--- a/tensorflow/core/kernels/ragged_tensor_to_tensor_op.cc\n+++ b/tensorflow/core/kernels/ragged_tensor_to_tensor_op.cc\n@@ -208,7 +208,7 @@ class RaggedTensorToTensorBaseOp : public OpKernel {\n   }\n \n   void CalculateOutputIndexRowSplit(\n-      const RowPartitionTensor& row_split,\n+      OpKernelContext* context, const RowPartitionTensor& row_split,\n       const vector<INDEX_TYPE>& parent_output_index,\n       INDEX_TYPE output_index_multiplier, INDEX_TYPE output_size,\n       vector<INDEX_TYPE>* result) {\n@@ -233,7 +233,8 @@ class RaggedTensorToTensorBaseOp : public OpKernel {\n       }\n     }\n     if (row_split_size > 0) {\n-      DCHECK_EQ(result->size(), row_split(row_split_size - 1));\n+      OP_REQUIRES(context, result->size() == row_split(row_split_size - 1),\n+                  errors::InvalidArgument(\"Invalid row split size.\"));\n     }\n   }\n \n@@ -259,7 +260,7 @@ class RaggedTensorToTensorBaseOp : public OpKernel {\n   // result[7] = -1 because parent_output_index[value_rowids[6]] == -1\n   // result[8] = parent_output_index[value_rowids[7]]\n   void CalculateOutputIndexValueRowID(\n-      const RowPartitionTensor& value_rowids,\n+      OpKernelContext* context, const RowPartitionTensor& value_rowids,\n       const vector<INDEX_TYPE>& parent_output_index,\n       INDEX_TYPE output_index_multiplier, INDEX_TYPE output_size,\n       vector<INDEX_TYPE>* result) {\n@@ -293,7 +294,8 @@ class RaggedTensorToTensorBaseOp : public OpKernel {\n       }\n       result->push_back(current_output_index);\n     }\n-    DCHECK_EQ(result->size(), value_rowids.size());\n+    OP_REQUIRES(context, result->size() == value_rowids.size(),\n+                errors::InvalidArgument(\"Invalid row ids.\"));\n   }\n \n   Status CalculateOutputIndex(OpKernelContext* context, int dimension,\n@@ -307,13 +309,13 @@ class RaggedTensorToTensorBaseOp : public OpKernel {\n     switch (partition_type) {\n       case RowPartitionType::VALUE_ROWIDS:\n         CalculateOutputIndexValueRowID(\n-            row_partition_tensor, parent_output_index, output_index_multiplier,\n-            output_size, result);\n+            context, row_partition_tensor, parent_output_index,\n+            output_index_multiplier, output_size, result);\n         return tensorflow::Status::OK();\n       case RowPartitionType::ROW_SPLITS:\n-        CalculateOutputIndexRowSplit(row_partition_tensor, parent_output_index,\n-                                     output_index_multiplier, output_size,\n-                                     result);\n+        CalculateOutputIndexRowSplit(\n+            context, row_partition_tensor, parent_output_index,\n+            output_index_multiplier, output_size, result);\n         return tensorflow::Status::OK();\n       default:\n         return errors::InvalidArgument(\n"
+}
+Patch applied successfully
+
+tokens used
+input: 1,195
+cache read: 10,752
+cache write: 0
+output: 804
+reasoning output: 15
+
+Applied and hunk-validated the security backport for `RaggedTensorToTensor`.
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/kernels/ragged_tensor_to_tensor_op.cc b/tensorflow/core/kernels/ragged_tensor_to_tensor_op.cc
+    index ca9e1836c8..6f5c07e25c 100644
+    --- a/tensorflow/core/kernels/ragged_tensor_to_tensor_op.cc
+    +++ b/tensorflow/core/kernels/ragged_tensor_to_tensor_op.cc
+    @@ -208,7 +208,7 @@ class RaggedTensorToTensorBaseOp : public OpKernel {
+       }
+     
+       void CalculateOutputIndexRowSplit(
+    -      const RowPartitionTensor& row_split,
+    +      OpKernelContext* context, const RowPartitionTensor& row_split,
+           const vector<INDEX_TYPE>& parent_output_index,
+           INDEX_TYPE output_index_multiplier, INDEX_TYPE output_size,
+           vector<INDEX_TYPE>* result) {
+    @@ -233,7 +233,8 @@ class RaggedTensorToTensorBaseOp : public OpKernel {
+           }
+         }
+         if (row_split_size > 0) {
+    -      DCHECK_EQ(result->size(), row_split(row_split_size - 1));
+    +      OP_REQUIRES(context, result->size() == row_split(row_split_size - 1),
+    +                  errors::InvalidArgument("Invalid row split size."));
+         }
+       }
+     
+    @@ -259,7 +260,7 @@ class RaggedTensorToTensorBaseOp : public OpKernel {
+       // result[7] = -1 because parent_output_index[value_rowids[6]] == -1
+       // result[8] = parent_output_index[value_rowids[7]]
+       void CalculateOutputIndexValueRowID(
+    -      const RowPartitionTensor& value_rowids,
+    +      OpKernelContext* context, const RowPartitionTensor& value_rowids,
+           const vector<INDEX_TYPE>& parent_output_index,
+           INDEX_TYPE output_index_multiplier, INDEX_TYPE output_size,
+           vector<INDEX_TYPE>* result) {
+    @@ -293,7 +294,8 @@ class RaggedTensorToTensorBaseOp : public OpKernel {
+           }
+           result->push_back(current_output_index);
+         }
+    -    DCHECK_EQ(result->size(), value_rowids.size());
+    +    OP_REQUIRES(context, result->size() == value_rowids.size(),
+    +                errors::InvalidArgument("Invalid row ids."));
+       }
+     
+       Status CalculateOutputIndex(OpKernelContext* context, int dimension,
+    @@ -307,13 +309,13 @@ class RaggedTensorToTensorBaseOp : public OpKernel {
+         switch (partition_type) {
+           case RowPartitionType::VALUE_ROWIDS:
+             CalculateOutputIndexValueRowID(
+    -            row_partition_tensor, parent_output_index, output_index_multiplier,
+    -            output_size, result);
+    +            context, row_partition_tensor, parent_output_index,
+    +            output_index_multiplier, output_size, result);
+             return tensorflow::Status::OK();
+           case RowPartitionType::ROW_SPLITS:
+    -        CalculateOutputIndexRowSplit(row_partition_tensor, parent_output_index,
+    -                                     output_index_multiplier, output_size,
+    -                                     result);
+    +        CalculateOutputIndexRowSplit(
+    +            context, row_partition_tensor, parent_output_index,
+    +            output_index_multiplier, output_size, result);
+             return tensorflow::Status::OK();
+           default:
+             return errors::InvalidArgument(
+  notes: >
+    Replaced debug-only ragged row partition size checks with runtime OP_REQUIRES validation and passed OpKernelContext through the helper calls; validated with hunk mode.
+```
+
+tokens used
+input: 1,003
+cache read: 11,776
+cache write: 0
+output: 798
+reasoning output: 23

@@ -1,0 +1,180 @@
+I’ll locate the target-side `UnicodeEncodeOp` implementation and compare the exact surrounding context before applying the single guard from the source patch.
+
+tool: viewcode
+{
+  "ref": "52ca09cb2cb8ab288b9635d74a339b4663a68068",
+  "path": "tensorflow/core/kernels/unicode_ops.cc",
+  "startline": 500,
+  "endline": 555
+}
+Here are lines 500 through 555.
+
+                        UnicodeDecodeWithOffsetsOp<int64>);
+REGISTER_KERNEL_BUILDER(
+    Name("UnicodeDecode").Device(DEVICE_CPU).TypeConstraint<int32>("Tsplits"),
+    UnicodeDecodeOp<int32>);
+REGISTER_KERNEL_BUILDER(Name("UnicodeDecodeWithOffsets")
+                            .Device(DEVICE_CPU)
+                            .TypeConstraint<int32>("Tsplits"),
+                        UnicodeDecodeWithOffsetsOp<int32>);
+
+template <typename SPLITS_TYPE>
+class UnicodeEncodeOp : public OpKernel {
+ public:
+  explicit UnicodeEncodeOp(OpKernelConstruction* ctx) : OpKernel(ctx) {
+    string encoding_tmp;
+    OP_REQUIRES_OK(ctx, ctx->GetAttr("output_encoding", &encoding_tmp));
+    OP_REQUIRES_OK(ctx, ParseUnicodeEncoding(encoding_tmp, &encoding_));
+    OP_REQUIRES_OK(ctx, GetErrorOptions(ctx, &error_options_));
+  }
+
+  /**
+   * Encodes Unicode codepoints into the desired string representation.
+   *
+   * We lose a dimension while encoding, since a series of integer codepoints is
+   * encoded into a single string.
+   *
+   * This accepts two input tensors: a rank 1 tensor of code point values and
+   * a single rank 1 tensor of splits which determine where each string begins
+   * and ends from the provided code points.
+   */
+  void Compute(OpKernelContext* context) override {
+    // Get inputs
+    const Tensor& input_tensor = context->input(0);
+    const auto input_tensor_flat = input_tensor.flat<int32>();
+    const Tensor& input_splits = context->input(1);
+    const auto input_splits_flat = input_splits.flat<SPLITS_TYPE>();
+
+    // Operation will treat first argument in input_splits as if it were zero
+    // regardless of its actual value since splits should begin with zero and
+    // end with the length of the input values vector.
+    OP_REQUIRES(
+        context, input_splits_flat(0) == 0,
+        errors::InvalidArgument("First value in input_splits must be zero."));
+    OP_REQUIRES(context,
+                input_splits_flat(input_splits_flat.size() - 1) ==
+                    input_tensor_flat.size(),
+                errors::InvalidArgument("Last value in input_splits must be "
+                                        "equal to length of input_tensor."));
+    // Since we limit to a 2-D input (flat_values of rank 1 and a single splits
+    // tensor), our output dimension will be 1 with it's size equal to the
+    // number of splits (outer dimension or ragged tensor).
+    TensorShape output_shape({input_splits.dim_size(0) - 1});
+    Tensor* output_tensor;
+    OP_REQUIRES_OK(context, context->allocate_output("output", output_shape,
+                                                     &output_tensor));
+    auto output_tensor_flat = output_tensor->flat<tstring>();
+
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: locate_symbol
+{
+  "ref": "52ca09cb2cb8ab288b9635d74a339b4663a68068",
+  "symbol": "UnicodeEncodeOp"
+}
+tensorflow/core/kernels/unicode_ops.cc:510
+tensorflow/core/kernels/unicode_ops.cc:512
+tensorflow/core/kernels/unicode_ops.cc:598
+tensorflow/core/kernels/unicode_ops.cc:601
+
+tokens used
+input: 3,723
+cache read: 4,608
+cache write: 0
+output: 153
+reasoning output: 0
+
+The target implementation matches the patched context: `input_splits_flat(0)` is read before checking that `input_splits` is non-empty, so the source guard ports directly.
+
+tool: validate
+{
+  "ref": "52ca09cb2cb8ab288b9635d74a339b4663a68068",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/unicode_ops.cc b/tensorflow/core/kernels/unicode_ops.cc\n--- a/tensorflow/core/kernels/unicode_ops.cc\n+++ b/tensorflow/core/kernels/unicode_ops.cc\n@@ -533,6 +533,10 @@ class UnicodeEncodeOp : public OpKernel {\n     const Tensor& input_splits = context->input(1);\n     const auto input_splits_flat = input_splits.flat<SPLITS_TYPE>();\n \n+    OP_REQUIRES(\n+        context, input_splits.NumElements() > 0,\n+        errors::InvalidArgument(\"Input_splits should contain elements, but \"\n+                                \"given input_values has 0 elements\"));\n     // Operation will treat first argument in input_splits as if it were zero\n     // regardless of its actual value since splits should begin with zero and\n     // end with the length of the input values vector.\n"
+}
+Patch applied successfully
+
+tokens used
+input: 1,499
+cache read: 7,680
+cache write: 0
+output: 300
+reasoning output: 12
+
+The hunk applies cleanly against the target base. I’m applying only that guard to `tensorflow/core/kernels/unicode_ops.cc`.
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/kernels/unicode_ops.cc\n@@\n     const Tensor& input_splits = context->input(1);\n     const auto input_splits_flat = input_splits.flat<SPLITS_TYPE>();\n \n+    OP_REQUIRES(\n+        context, input_splits.NumElements() > 0,\n+        errors::InvalidArgument(\"Input_splits should contain elements, but \"\n+                                \"given input_values has 0 elements\"));\n     // Operation will treat first argument in input_splits as if it were zero\n     // regardless of its actual value since splits should begin with zero and\n     // end with the length of the input values vector.\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/kernels/unicode_ops.cc
+
+tokens used
+input: 800
+cache read: 8,704
+cache write: 0
+output: 212
+reasoning output: 0
+
+The source edit is applied. I’ll inspect the resulting diff to confirm it matches the intended minimal backport.
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/kernels/unicode_ops.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0102-52ca09cb2cb8",
+  "timeout": 120000
+}
+warning: in the working copy of 'tensorflow/core/kernels/unicode_ops.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/kernels/unicode_ops.cc b/tensorflow/core/kernels/unicode_ops.cc
+index e6c8f4dfc4..ab09dbe1d5 100644
+--- a/tensorflow/core/kernels/unicode_ops.cc
++++ b/tensorflow/core/kernels/unicode_ops.cc
+@@ -533,6 +533,10 @@ class UnicodeEncodeOp : public OpKernel {
+     const Tensor& input_splits = context->input(1);
+     const auto input_splits_flat = input_splits.flat<SPLITS_TYPE>();
+ 
++    OP_REQUIRES(
++        context, input_splits.NumElements() > 0,
++        errors::InvalidArgument("Input_splits should contain elements, but "
++                                "given input_values has 0 elements"));
+     // Operation will treat first argument in input_splits as if it were zero
+     // regardless of its actual value since splits should begin with zero and
+     // end with the length of the input values vector.
+
+tokens used
+input: 1,039
+cache read: 8,704
+cache write: 0
+output: 104
+reasoning output: 0
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/kernels/unicode_ops.cc b/tensorflow/core/kernels/unicode_ops.cc
+    index e6c8f4dfc4..ab09dbe1d5 100644
+    --- a/tensorflow/core/kernels/unicode_ops.cc
+    +++ b/tensorflow/core/kernels/unicode_ops.cc
+    @@ -533,6 +533,10 @@ class UnicodeEncodeOp : public OpKernel {
+         const Tensor& input_splits = context->input(1);
+         const auto input_splits_flat = input_splits.flat<SPLITS_TYPE>();
+     
+    +    OP_REQUIRES(
+    +        context, input_splits.NumElements() > 0,
+    +        errors::InvalidArgument("Input_splits should contain elements, but "
+    +                                "given input_values has 0 elements"));
+         // Operation will treat first argument in input_splits as if it were zero
+         // regardless of its actual value since splits should begin with zero and
+         // end with the length of the input values vector.
+  notes: >
+    Added the missing non-empty input_splits validation before UnicodeEncodeOp indexes input_splits_flat.
+```
+
+tokens used
+input: 1,402
+cache read: 8,704
+cache write: 0
+output: 272
+reasoning output: 0

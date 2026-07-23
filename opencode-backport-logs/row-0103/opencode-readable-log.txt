@@ -1,0 +1,468 @@
+I’ll inspect the target-side boosted trees stats op around the patched loop, then validate and apply the minimal equivalent hunk without consulting the held-out backport commit.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Locate equivalent target code for the patched stats_summary_indices loop",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Validate the backport hunk against target base",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "content": "Apply the minimal source change",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "content": "Inspect resulting diff for correctness",
+      "status": "pending",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Locate equivalent target code for the patched stats_summary_indices loop",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Validate the backport hunk against target base",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "content": "Apply the minimal source change",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "content": "Inspect resulting diff for correctness",
+    "status": "pending",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 8,408
+cache read: 0
+cache write: 0
+output: 135
+reasoning output: 0
+
+tool: viewcode
+{
+  "ref": "52ca09cb2cb8ab288b9635d74a339b4663a68068",
+  "path": "tensorflow/core/kernels/boosted_trees/stats_ops.cc",
+  "startline": 1020,
+  "endline": 1085
+}
+Here are lines 1020 through 1085.
+
+        f_map.clear();
+      }
+      previous_node_id = node_id;
+      DCHECK_LE(node_id_first, node_id);
+      DCHECK_LT(node_id, node_id_last);
+      const int32 feature_dim = stats_summary_indices(idx, 1);
+      const int32 bucket_id = stats_summary_indices(idx, 2);
+      const int32 stat_dim = stats_summary_indices(idx, 3);
+      std::pair<FeatureMapIterator, bool> const& f_insert_result = f_map.insert(
+          FeatureMapIterator::value_type(feature_dim, BucketMap()));
+      auto& b_map = f_insert_result.first->second;
+      std::pair<BucketMapIterator, bool> const& b_insert_result =
+          b_map.insert(BucketMapIterator::value_type(
+              bucket_id, std::vector<float>(stats_dims)));
+      auto& stats = b_insert_result.first->second;
+      stats[stat_dim] = stats_summary_values(idx);
+    }  // for node_id
+    // process the last node id
+    process_node(f_map, &output_node_ids, &output_gains,
+                 &output_feature_dimensions, &output_thresholds,
+                 &output_left_node_contribs, &output_right_node_contribs,
+                 &output_split_types, previous_node_id, min_node_weight, l1, l2,
+                 num_buckets);
+
+    const int num_nodes = output_node_ids.size();
+    // output_node_ids
+    Tensor* output_node_ids_t = nullptr;
+    OP_REQUIRES_OK(context, context->allocate_output("node_ids", {num_nodes},
+                                                     &output_node_ids_t));
+    auto output_node_ids_vec = output_node_ids_t->vec<int32>();
+
+    // output_gains
+    Tensor* output_gains_t;
+    OP_REQUIRES_OK(context, context->allocate_output("gains", {num_nodes},
+                                                     &output_gains_t));
+    auto output_gains_vec = output_gains_t->vec<float>();
+
+    // output_feature_dimensions
+    Tensor* output_feature_dimension_t;
+    OP_REQUIRES_OK(context,
+                   context->allocate_output("feature_dimensions", {num_nodes},
+                                            &output_feature_dimension_t));
+    auto output_feature_dimensions_vec =
+        output_feature_dimension_t->vec<int32>();
+
+    // output_thresholds
+    Tensor* output_thresholds_t;
+    OP_REQUIRES_OK(context, context->allocate_output("thresholds", {num_nodes},
+                                                     &output_thresholds_t));
+    auto output_thresholds_vec = output_thresholds_t->vec<int32>();
+
+    // output_left_node_contribs
+    Tensor* output_left_node_contribs_t;
+    OP_REQUIRES_OK(
+        context, context->allocate_output("left_node_contribs", {num_nodes, 1},
+                                          &output_left_node_contribs_t));
+    auto output_left_node_contribs_matrix =
+        output_left_node_contribs_t->matrix<float>();
+
+    // output_right_node_contribs
+    Tensor* output_right_node_contribs_t;
+    OP_REQUIRES_OK(
+        context, context->allocate_output("right_node_contribs", {num_nodes, 1},
+                                          &output_right_node_contribs_t));
+    auto output_right_node_contribs_matrix =
+        output_right_node_contribs_t->matrix<float>();
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: locate_symbol
+{
+  "ref": "52ca09cb2cb8ab288b9635d74a339b4663a68068",
+  "symbol": "BoostedTreesSparseCalculateBestFeatureSplitOp"
+}
+tensorflow/core/kernels/boosted_trees/stats_ops.cc:946
+tensorflow/core/kernels/boosted_trees/stats_ops.cc:948
+tensorflow/core/kernels/boosted_trees/stats_ops.cc:1240
+
+tokens used
+input: 1,005
+cache read: 7,680
+cache write: 0
+output: 131
+reasoning output: 0
+
+The equivalent loop is present in `tensorflow/core/kernels/boosted_trees/stats_ops.cc`; this target uses `int32` aliases rather than `int32_t`, so the guard can be inserted directly after `stat_dim` with local style preserved.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Locate equivalent target code for the patched stats_summary_indices loop",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate the backport hunk against target base",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Apply the minimal source change",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "content": "Inspect resulting diff for correctness",
+      "status": "pending",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Locate equivalent target code for the patched stats_summary_indices loop",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate the backport hunk against target base",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Apply the minimal source change",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "content": "Inspect resulting diff for correctness",
+    "status": "pending",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 1,920
+cache read: 7,680
+cache write: 0
+output: 157
+reasoning output: 42
+
+tool: validate
+{
+  "ref": "52ca09cb2cb8ab288b9635d74a339b4663a68068",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/boosted_trees/stats_ops.cc b/tensorflow/core/kernels/boosted_trees/stats_ops.cc\n--- a/tensorflow/core/kernels/boosted_trees/stats_ops.cc\n+++ b/tensorflow/core/kernels/boosted_trees/stats_ops.cc\n@@ -1025,6 +1025,13 @@\n       const int32 feature_dim = stats_summary_indices(idx, 1);\n       const int32 bucket_id = stats_summary_indices(idx, 2);\n       const int32 stat_dim = stats_summary_indices(idx, 3);\n+      OP_REQUIRES(context, stat_dim < stats_dims,\n+                  errors::InvalidArgument(\n+                      \"Stat dim, the sum of logits dim and hessian dim in \"\n+                      \"stats_summary_indices, cannot be greater than stats \"\n+                      \"dims, the last value in stats_summary_shape, which was \",\n+                      stats_dims, \". At index (\", idx,\n+                      \", 4), stats_summary_indices contains value \", stat_dim));\n       std::pair<FeatureMapIterator, bool> const& f_insert_result = f_map.insert(\n           FeatureMapIterator::value_type(feature_dim, BucketMap()));\n       auto& b_map = f_insert_result.first->second;\n"
+}
+Patch applied successfully
+
+tokens used
+input: 1,237
+cache read: 8,704
+cache write: 0
+output: 340
+reasoning output: 0
+
+The candidate hunk applies cleanly to the target base. I’m applying only that bounds check now.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Locate equivalent target code for the patched stats_summary_indices loop",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate the backport hunk against target base",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Apply the minimal source change",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Inspect resulting diff for correctness",
+      "status": "pending",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Locate equivalent target code for the patched stats_summary_indices loop",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate the backport hunk against target base",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Apply the minimal source change",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Inspect resulting diff for correctness",
+    "status": "pending",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 566
+cache read: 9,728
+cache write: 0
+output: 123
+reasoning output: 0
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/kernels/boosted_trees/stats_ops.cc\n@@\n       const int32 feature_dim = stats_summary_indices(idx, 1);\n       const int32 bucket_id = stats_summary_indices(idx, 2);\n       const int32 stat_dim = stats_summary_indices(idx, 3);\n+      OP_REQUIRES(context, stat_dim < stats_dims,\n+                  errors::InvalidArgument(\n+                      \"Stat dim, the sum of logits dim and hessian dim in \"\n+                      \"stats_summary_indices, cannot be greater than stats \"\n+                      \"dims, the last value in stats_summary_shape, which was \",\n+                      stats_dims, \". At index (\", idx,\n+                      \", 4), stats_summary_indices contains value \", stat_dim));\n       std::pair<FeatureMapIterator, bool> const& f_insert_result = f_map.insert(\n           FeatureMapIterator::value_type(feature_dim, BucketMap()));\n       auto& b_map = f_insert_result.first->second;\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/kernels/boosted_trees/stats_ops.cc
+
+tokens used
+input: 831
+cache read: 9,728
+cache write: 0
+output: 254
+reasoning output: 0
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Locate equivalent target code for the patched stats_summary_indices loop",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate the backport hunk against target base",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Apply the minimal source change",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Inspect resulting diff for correctness",
+      "status": "in_progress",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Locate equivalent target code for the patched stats_summary_indices loop",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate the backport hunk against target base",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Apply the minimal source change",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Inspect resulting diff for correctness",
+    "status": "in_progress",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 1,117
+cache read: 9,728
+cache write: 0
+output: 95
+reasoning output: 0
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/kernels/boosted_trees/stats_ops.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0103-52ca09cb2cb8",
+  "timeout": 120000
+}
+warning: in the working copy of 'tensorflow/core/kernels/boosted_trees/stats_ops.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/kernels/boosted_trees/stats_ops.cc b/tensorflow/core/kernels/boosted_trees/stats_ops.cc
+index 851e5b78e8..41fce815e7 100644
+--- a/tensorflow/core/kernels/boosted_trees/stats_ops.cc
++++ b/tensorflow/core/kernels/boosted_trees/stats_ops.cc
+@@ -1025,6 +1025,13 @@ class BoostedTreesSparseCalculateBestFeatureSplitOp : public OpKernel {
+       const int32 feature_dim = stats_summary_indices(idx, 1);
+       const int32 bucket_id = stats_summary_indices(idx, 2);
+       const int32 stat_dim = stats_summary_indices(idx, 3);
++      OP_REQUIRES(context, stat_dim < stats_dims,
++                  errors::InvalidArgument(
++                      "Stat dim, the sum of logits dim and hessian dim in "
++                      "stats_summary_indices, cannot be greater than stats "
++                      "dims, the last value in stats_summary_shape, which was ",
++                      stats_dims, ". At index (", idx,
++                      ", 4), stats_summary_indices contains value ", stat_dim));
+       std::pair<FeatureMapIterator, bool> const& f_insert_result = f_map.insert(
+           FeatureMapIterator::value_type(feature_dim, BucketMap()));
+       auto& b_map = f_insert_result.first->second;
+
+tokens used
+input: 330
+cache read: 10,752
+cache write: 0
+output: 80
+reasoning output: 0
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Locate equivalent target code for the patched stats_summary_indices loop",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate the backport hunk against target base",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Apply the minimal source change",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Inspect resulting diff for correctness",
+      "status": "completed",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Locate equivalent target code for the patched stats_summary_indices loop",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate the backport hunk against target base",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Apply the minimal source change",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Inspect resulting diff for correctness",
+    "status": "completed",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 762
+cache read: 10,752
+cache write: 0
+output: 96
+reasoning output: 15
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/kernels/boosted_trees/stats_ops.cc b/tensorflow/core/kernels/boosted_trees/stats_ops.cc
+    index 851e5b78e8..41fce815e7 100644
+    --- a/tensorflow/core/kernels/boosted_trees/stats_ops.cc
+    +++ b/tensorflow/core/kernels/boosted_trees/stats_ops.cc
+    @@ -1025,6 +1025,13 @@ class BoostedTreesSparseCalculateBestFeatureSplitOp : public OpKernel {
+           const int32 feature_dim = stats_summary_indices(idx, 1);
+           const int32 bucket_id = stats_summary_indices(idx, 2);
+           const int32 stat_dim = stats_summary_indices(idx, 3);
+    +      OP_REQUIRES(context, stat_dim < stats_dims,
+    +                  errors::InvalidArgument(
+    +                      "Stat dim, the sum of logits dim and hessian dim in "
+    +                      "stats_summary_indices, cannot be greater than stats "
+    +                      "dims, the last value in stats_summary_shape, which was ",
+    +                      stats_dims, ". At index (", idx,
+    +                      ", 4), stats_summary_indices contains value ", stat_dim));
+           std::pair<FeatureMapIterator, bool> const& f_insert_result = f_map.insert(
+               FeatureMapIterator::value_type(feature_dim, BucketMap()));
+           auto& b_map = f_insert_result.first->second;
+  notes: >
+    Added the missing stat_dim bounds check before indexing stats to prevent out-of-bounds reads.
+```
+
+tokens used
+input: 1,014
+cache read: 10,752
+cache write: 0
+output: 362
+reasoning output: 0

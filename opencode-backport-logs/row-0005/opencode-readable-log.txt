@@ -1,0 +1,359 @@
+I’ll locate the older `RaggedTensorToVariantOp` implementation, compare its context to the provided 2.5.0 hunk, then apply the minimal equivalent guard in-place without inspecting the known backport.
+
+tool: git_show
+{
+  "ref": "b055b9c474cd376259dde8779908f9eeaf097d93",
+  "context": "class RaggedTensorToVariantOp : public OpKernel {\n  void Compute(OpKernelContext* context) override {\n    // Unbatch the Ragged Tensor and encode the components.\n    std::vector<RaggedTensorVariant> unbatched_ragged_input;"
+}
+commit b055b9c474cd376259dde8779908f9eeaf097d93
+Author: Amit Patankar <amitpatankar@google.com>
+Date:   Tue Apr 13 14:49:50 2021 -0700
+
+    Fix `tf.raw_ops.RaggedTensorToVariant` invalid resize.
+    
+    PiperOrigin-RevId: 368299574
+    Change-Id: I751c186325aa0bab397928845e790e60c2d90918
+
+ tensorflow/core/kernels/ragged_tensor_to_variant_op.cc | 5 +++++
+ 1 file changed, 5 insertions(+)
+This commit shows that there is a high probability that this code is new, so the corresponding code segment cannot be found in the old version.
+You can call `viewcode` and `locate_symbol` to further check the results step by step. For newly introduced code, we consider that this hunk `need not ported`.
+
+tool: locate_symbol
+{
+  "ref": "9323859dd3d8d24c892201ef5a78591fcc592f25",
+  "symbol": "RaggedTensorToVariantOp"
+}
+tensorflow/core/kernels/ragged_tensor_to_variant_op.cc:142
+tensorflow/core/kernels/ragged_tensor_to_variant_op.cc:144
+tensorflow/core/kernels/ragged_tensor_to_variant_op.cc:207
+
+tokens used
+input: 3,739
+cache read: 4,608
+cache write: 0
+output: 211
+reasoning output: 0
+
+The symbol exists in the target file despite the source-context matcher being uncertain, so I’m inspecting the target implementation directly and will patch the matching unbatch path if present.
+
+tool: grep
+{
+  "pattern": "UnbatchRaggedZerothDim|batched_ragged_input|RaggedTensorToVariantOp",
+  "path": "tensorflow/core/kernels",
+  "include": "ragged_tensor_to_variant_op.cc"
+}
+Found 11 matches
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0005-9323859dd3d8\tensorflow\core\kernels\ragged_tensor_to_variant_op.cc:
+  Line 47: Status UnbatchRaggedZerothDim(const RaggedTensor& batched_ragged,
+
+  Line 142: class RaggedTensorToVariantOp : public OpKernel {
+
+  Line 144:   explicit RaggedTensorToVariantOp(OpKernelConstruction* context)
+
+  Line 155:     RaggedTensor batched_ragged_input;
+
+  Line 157:     batched_ragged_input.values = context->input(ragged_nested_splits_len);
+
+  Line 158:     batched_ragged_input.nested_splits.reserve(ragged_nested_splits_len);
+
+  Line 160:       batched_ragged_input.nested_splits.push_back(ragged_nested_splits_in[i]);
+
+  Line 167:                      RaggedToVariant(batched_ragged_input, &encoded_list));
+
+  Line 178:     OP_REQUIRES_OK(context, UnbatchRaggedZerothDim<VALUE_TYPE, SPLIT_TYPE>(
+
+  Line 179:                                 batched_ragged_input, &ragged_components));
+
+  Line 207:                           RaggedTensorToVariantOp<value_type, split_type>);
+
+tool: viewcode
+{
+  "ref": "9323859dd3d8d24c892201ef5a78591fcc592f25",
+  "path": "tensorflow/core/kernels/ragged_tensor_to_variant_op.cc",
+  "startline": 120,
+  "endline": 190
+}
+Here are lines 120 through 190.
+
+        ragged_component_splits_vec[num_splits - 1](last_split_size - 1);
+  }
+
+  // Unbatch values.
+  int value_index = 0;
+  for (int i = 0; i < num_components; i++) {
+    int num_values = ragged_component_values_size[i];
+    values_shape.set_dim(0, num_values);
+    (*ragged_components)[i].values =
+        Tensor(DataTypeToEnum<VALUE_TYPE>::value, values_shape);
+    auto ragged_component_values_flat =
+        (*ragged_components)[i].values.flat<VALUE_TYPE>();
+    for (int j = 0; j < num_values * num_inner_elems; j++, value_index++) {
+      ragged_component_values_flat(j) = batched_flat(value_index);
+    }
+  }
+
+  return Status::OK();
+}
+}  // namespace
+
+template <typename VALUE_TYPE, typename SPLIT_TYPE>
+class RaggedTensorToVariantOp : public OpKernel {
+ public:
+  explicit RaggedTensorToVariantOp(OpKernelConstruction* context)
+      : OpKernel(context) {
+    OP_REQUIRES_OK(context, context->GetAttr("batched_input", &batched_input_));
+  }
+
+  void Compute(OpKernelContext* context) override {
+    // Read ragged_splits inputs.
+    OpInputList ragged_nested_splits_in;
+    OP_REQUIRES_OK(context, context->input_list("rt_nested_splits",
+                                                &ragged_nested_splits_in));
+    const int ragged_nested_splits_len = ragged_nested_splits_in.size();
+    RaggedTensor batched_ragged_input;
+    // Read ragged_values input.
+    batched_ragged_input.values = context->input(ragged_nested_splits_len);
+    batched_ragged_input.nested_splits.reserve(ragged_nested_splits_len);
+    for (int i = 0; i < ragged_nested_splits_len; i++) {
+      batched_ragged_input.nested_splits.push_back(ragged_nested_splits_in[i]);
+    }
+
+    if (!batched_input_) {
+      // Encode the input as is.
+      Tensor encoded_list;
+      OP_REQUIRES_OK(context,
+                     RaggedToVariant(batched_ragged_input, &encoded_list));
+      // Encode as a Scalar Variant Tensor.
+      Tensor* encoded_scalar;
+      OP_REQUIRES_OK(context, context->allocate_output(0, TensorShape({}),
+                                                       &encoded_scalar));
+      encoded_scalar->scalar<Variant>()() = std::move(encoded_list);
+      return;
+    }
+
+    // Unbatch the Ragged Tensor and encode the components.
+    std::vector<RaggedTensor> ragged_components;
+    OP_REQUIRES_OK(context, UnbatchRaggedZerothDim<VALUE_TYPE, SPLIT_TYPE>(
+                                batched_ragged_input, &ragged_components));
+    std::vector<Tensor> encoded_components(ragged_components.size());
+    for (int i = 0; i < ragged_components.size(); i++) {
+      OP_REQUIRES_OK(context, RaggedToVariant(ragged_components[i],
+                                              &encoded_components[i]));
+    }
+
+    // Bundle the encoded scalar Variant Tensors into a rank-1 Variant Tensor.
+    Tensor* encoded_ragged;
+    int output_size = ragged_components.size();
+    OP_REQUIRES_OK(context,
+                   context->allocate_output(0, TensorShape({output_size}),
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tokens used
+input: 1,149
+cache read: 7,680
+cache write: 0
+output: 174
+reasoning output: 0
+
+I found the equivalent older code: it uses `std::vector<RaggedTensor>` instead of `RaggedTensorVariant`, but the same `UnbatchRaggedZerothDim` call is present. I’m adding the split-size validation immediately before that call, matching the security fix’s intent.
+
+tool: viewcode
+{
+  "ref": "9323859dd3d8d24c892201ef5a78591fcc592f25",
+  "path": "tensorflow/core/kernels/ragged_tensor_to_variant_op.cc",
+  "startline": 1,
+  "endline": 80
+}
+Here are lines 1 through 80.
+
+/* Copyright 2019 The TensorFlow Authors. All Rights Reserved.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+==============================================================================*/
+#include <utility>
+#include <vector>
+
+#include "tensorflow/core/framework/op_kernel.h"
+#include "tensorflow/core/framework/register_types.h"
+#include "tensorflow/core/framework/tensor.h"
+#include "tensorflow/core/framework/variant.h"
+#include "tensorflow/core/framework/variant_encode_decode.h"
+#include "tensorflow/core/lib/core/errors.h"
+#include "tensorflow/core/lib/core/status.h"
+
+namespace tensorflow {
+namespace {
+
+struct RaggedTensor {
+  Tensor values;
+  std::vector<Tensor> nested_splits;
+};
+
+Status RaggedToVariant(const RaggedTensor& ragged, Tensor* encoded_list) {
+  // Encode as a rank-1 Variant Tensor.
+  int ragged_rank = ragged.nested_splits.size();
+  *encoded_list = Tensor(DT_VARIANT, TensorShape({ragged_rank + 1}));
+  auto encoded_vec = encoded_list->vec<Variant>();
+  for (int i = 0; i < ragged_rank; i++) {
+    encoded_vec(i) = ragged.nested_splits[i];
+  }
+  encoded_vec(ragged_rank) = ragged.values;
+  return Status::OK();
+}
+
+template <typename VALUE_TYPE, typename SPLIT_TYPE>
+Status UnbatchRaggedZerothDim(const RaggedTensor& batched_ragged,
+                              std::vector<RaggedTensor>* ragged_components) {
+  // Set up the component Ragged Tensors.
+  int ragged_rank = batched_ragged.nested_splits.size();
+  auto batched_splits_top_vec =
+      batched_ragged.nested_splits[0].vec<SPLIT_TYPE>();
+  int num_components = batched_splits_top_vec.size() - 1;
+  int num_splits = ragged_rank - 1;
+  ragged_components->resize(num_components);
+  for (RaggedTensor ragged_component : *ragged_components) {
+    ragged_component.nested_splits.reserve(num_splits);
+  }
+  const auto& batched_flat = batched_ragged.values.flat<VALUE_TYPE>();
+  int num_inner_elems = batched_ragged.values.NumElements();
+  if (batched_ragged.values.dim_size(0) > 1) {
+    num_inner_elems /= batched_ragged.values.dim_size(0);
+  }
+  TensorShape values_shape = batched_ragged.values.shape();
+
+  // Corner case: ragged_rank == 1, e.g. [[1, 2, 3], [4, 5]]
+  if (num_splits == 0) {
+    for (int i = 0; i < num_components; i++) {
+      int start = batched_splits_top_vec(i);
+      int limit = batched_splits_top_vec(i + 1);
+      int num_values = limit - start;
+      values_shape.set_dim(0, num_values);
+      (*ragged_components)[i].values =
+          Tensor(DataTypeToEnum<VALUE_TYPE>::value, values_shape);
+      auto ragged_component_values_flat =
+          (*ragged_components)[i].values.flat<VALUE_TYPE>();
+      for (int j = 0; j < num_values * num_inner_elems; j++) {
+        ragged_component_values_flat(j) =
+            batched_flat(j + start * num_inner_elems);
+      }
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: grep
+{
+  "pattern": "class RaggedTensor|struct RaggedTensor|splits\\(",
+  "path": "tensorflow/core",
+  "include": "*.h"
+}
+No files found
+
+tokens used
+input: 1,387
+cache read: 8,704
+cache write: 0
+output: 188
+reasoning output: 38
+
+tool: validate
+{
+  "ref": "9323859dd3d8d24c892201ef5a78591fcc592f25",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/ragged_tensor_to_variant_op.cc b/tensorflow/core/kernels/ragged_tensor_to_variant_op.cc\n--- a/tensorflow/core/kernels/ragged_tensor_to_variant_op.cc\n+++ b/tensorflow/core/kernels/ragged_tensor_to_variant_op.cc\n@@ -174,6 +174,11 @@ class RaggedTensorToVariantOp : public OpKernel {\n \n     // Unbatch the Ragged Tensor and encode the components.\n     std::vector<RaggedTensor> ragged_components;\n+    auto batched_splits_top_vec =\n+        batched_ragged_input.nested_splits[0].vec<SPLIT_TYPE>();\n+    int num_components = batched_splits_top_vec.size() - 1;\n+    OP_REQUIRES(context, num_components >= 0,\n+                errors::Internal(\"Invalid split argument.\"));\n     OP_REQUIRES_OK(context, UnbatchRaggedZerothDim<VALUE_TYPE, SPLIT_TYPE>(\n                                 batched_ragged_input, &ragged_components));\n     std::vector<Tensor> encoded_components(ragged_components.size());\n"
+}
+Patch applied successfully
+
+tokens used
+input: 1,460
+cache read: 9,728
+cache write: 0
+output: 309
+reasoning output: 164
+
+The backport hunk applies cleanly against the target base. I’m applying that exact minimal change to the working tree now.
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/kernels/ragged_tensor_to_variant_op.cc\n@@\n \n     // Unbatch the Ragged Tensor and encode the components.\n     std::vector<RaggedTensor> ragged_components;\n+    auto batched_splits_top_vec =\n+        batched_ragged_input.nested_splits[0].vec<SPLIT_TYPE>();\n+    int num_components = batched_splits_top_vec.size() - 1;\n+    OP_REQUIRES(context, num_components >= 0,\n+                errors::Internal(\"Invalid split argument.\"));\n     OP_REQUIRES_OK(context, UnbatchRaggedZerothDim<VALUE_TYPE, SPLIT_TYPE>(\n                                 batched_ragged_input, &ragged_components));\n     std::vector<Tensor> encoded_components(ragged_components.size());\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/kernels/ragged_tensor_to_variant_op.cc
+
+tokens used
+input: 922
+cache read: 10,752
+cache write: 0
+output: 249
+reasoning output: 0
+
+I’ll inspect the final diff to confirm only the intended TensorFlow kernel change is present.
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/kernels/ragged_tensor_to_variant_op.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0005-9323859dd3d8"
+}
+warning: in the working copy of 'tensorflow/core/kernels/ragged_tensor_to_variant_op.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/kernels/ragged_tensor_to_variant_op.cc b/tensorflow/core/kernels/ragged_tensor_to_variant_op.cc
+index 7a5ae1c624..49c4a2411b 100644
+--- a/tensorflow/core/kernels/ragged_tensor_to_variant_op.cc
++++ b/tensorflow/core/kernels/ragged_tensor_to_variant_op.cc
+@@ -175,6 +175,11 @@ class RaggedTensorToVariantOp : public OpKernel {
+ 
+     // Unbatch the Ragged Tensor and encode the components.
+     std::vector<RaggedTensor> ragged_components;
++    auto batched_splits_top_vec =
++        batched_ragged_input.nested_splits[0].vec<SPLIT_TYPE>();
++    int num_components = batched_splits_top_vec.size() - 1;
++    OP_REQUIRES(context, num_components >= 0,
++                errors::Internal("Invalid split argument."));
+     OP_REQUIRES_OK(context, UnbatchRaggedZerothDim<VALUE_TYPE, SPLIT_TYPE>(
+                                 batched_ragged_input, &ragged_components));
+     std::vector<Tensor> encoded_components(ragged_components.size());
+
+tokens used
+input: 1,202
+cache read: 10,752
+cache write: 0
+output: 101
+reasoning output: 13
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/kernels/ragged_tensor_to_variant_op.cc b/tensorflow/core/kernels/ragged_tensor_to_variant_op.cc
+    index 7a5ae1c624..49c4a2411b 100644
+    --- a/tensorflow/core/kernels/ragged_tensor_to_variant_op.cc
+    +++ b/tensorflow/core/kernels/ragged_tensor_to_variant_op.cc
+    @@ -175,6 +175,11 @@ class RaggedTensorToVariantOp : public OpKernel {
+     
+         // Unbatch the Ragged Tensor and encode the components.
+         std::vector<RaggedTensor> ragged_components;
+    +    auto batched_splits_top_vec =
+    +        batched_ragged_input.nested_splits[0].vec<SPLIT_TYPE>();
+    +    int num_components = batched_splits_top_vec.size() - 1;
+    +    OP_REQUIRES(context, num_components >= 0,
+    +                errors::Internal("Invalid split argument."));
+         OP_REQUIRES_OK(context, UnbatchRaggedZerothDim<VALUE_TYPE, SPLIT_TYPE>(
+                                     batched_ragged_input, &ragged_components));
+         std::vector<Tensor> encoded_components(ragged_components.size());
+  notes: >
+    Added the split-size validation before unbatching RaggedTensorToVariant in the TensorFlow 2.1.4 kernel; the hunk was validated against the target base.
+```
+
+tokens used
+input: 602
+cache read: 11,776
+cache write: 0
+output: 339
+reasoning output: 17

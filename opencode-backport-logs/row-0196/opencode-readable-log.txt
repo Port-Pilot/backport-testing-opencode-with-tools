@@ -1,0 +1,461 @@
+I’ll locate the target implementation of `MatrixDiagPartOp`, compare the surrounding 2.3.4 code to the provided newer hunk, then apply only the scalar padding validation needed for the null dereference fix.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target MatrixDiagPartOp context",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Validate adapted hunk against target base",
+      "status": "pending",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply minimal source change",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "content": "Capture resulting diff for final YAML",
+      "status": "pending",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target MatrixDiagPartOp context",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Validate adapted hunk against target base",
+    "status": "pending",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply minimal source change",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "content": "Capture resulting diff for final YAML",
+    "status": "pending",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 3,748
+cache read: 4,608
+cache write: 0
+output: 141
+reasoning output: 0
+
+tool: viewcode
+{
+  "ref": "b7f78808c68e52882a85c8c198f12cfaad3d352c",
+  "path": "tensorflow/core/kernels/linalg/matrix_diag_op.cc",
+  "startline": 60,
+  "endline": 120
+}
+This file doesn't exist in this commit.
+
+tool: git_show
+{
+  "ref": "482da92095c4d48f8784b1f00dda4f81c28d2988",
+  "context": "padding_value = context->input(2).flat<T>()(0);"
+}
+commit 482da92095c4d48f8784b1f00dda4f81c28d2988
+Author: Laura Pak <lpak@google.com>
+Date:   Mon Aug 2 15:07:31 2021 -0700
+
+    Ensure non-empty padding_value input to tf.raw_ops.MatrixDiagPartV2, if a padding_value is input
+    
+    PiperOrigin-RevId: 388314614
+    Change-Id: If0b51ad58d5d8543a6be6ce8f42ae4755c80d55f
+
+ tensorflow/core/kernels/linalg/matrix_diag_op.cc | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+This commit shows that there is a high probability that this code is new, so the corresponding code segment cannot be found in the old version.
+You can call `viewcode` and `locate_symbol` to further check the results step by step. For newly introduced code, we consider that this hunk `need not ported`.
+
+tool: locate_symbol
+{
+  "ref": "b7f78808c68e52882a85c8c198f12cfaad3d352c",
+  "symbol": "MatrixDiagPartOp"
+}
+tensorflow/compiler/tf2xla/kernels/matrix_diag_ops.cc:343
+tensorflow/core/kernels/matrix_diag_op.cc:47
+tensorflow/compiler/tf2xla/kernels/matrix_diag_ops.cc:345
+tensorflow/core/kernels/matrix_diag_op.cc:49
+tensorflow/compiler/tf2xla/kernels/matrix_diag_ops.cc:443
+tensorflow/compiler/tf2xla/kernels/matrix_diag_ops.cc:447
+tensorflow/compiler/tf2xla/kernels/matrix_diag_ops.cc:451
+tensorflow/core/kernels/matrix_diag_op.cc:147
+tensorflow/core/kernels/matrix_diag_op.cc:294
+tensorflow/core/kernels/matrix_diag_op.cc:297
+tensorflow/core/kernels/matrix_diag_op.cc:300
+tensorflow/core/kernels/matrix_diag_op.cc:314
+tensorflow/core/kernels/matrix_diag_op.cc:512
+tensorflow/core/kernels/matrix_diag_op.cc:518
+tensorflow/core/kernels/matrix_diag_op.cc:524
+tensorflow/core/kernels/matrix_diag_op.cc:538
+
+tokens used
+input: 953
+cache read: 7,680
+cache write: 0
+output: 183
+reasoning output: 0
+
+The target release has the equivalent kernel in `tensorflow/core/kernels/matrix_diag_op.cc` rather than the newer `linalg/` path, so I’m adapting the same check there.
+
+tool: glob
+{
+  "pattern": "tensorflow/core/kernels/**/matrix_diag_op.cc"
+}
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0196-b7f78808c68e\tensorflow\core\kernels\matrix_diag_op.cc
+
+tool: viewcode
+{
+  "ref": "b7f78808c68e52882a85c8c198f12cfaad3d352c",
+  "path": "tensorflow/core/kernels/matrix_diag_op.cc",
+  "startline": 35,
+  "endline": 90
+}
+Here are lines 35 through 90.
+
+#include "tensorflow/core/framework/types.h"
+#include "tensorflow/core/lib/core/errors.h"
+#include "tensorflow/core/lib/core/threadpool.h"
+#include "tensorflow/core/platform/logging.h"
+#include "tensorflow/core/platform/macros.h"
+
+namespace tensorflow {
+
+typedef Eigen::ThreadPoolDevice CPUDevice;
+typedef Eigen::GpuDevice GPUDevice;
+
+template <typename Device, typename T>
+class MatrixDiagPartOp : public OpKernel {
+ public:
+  explicit MatrixDiagPartOp(OpKernelConstruction* context) : OpKernel(context) {
+    // MatrixDiagPartV3-specific.
+    if (context->HasAttr("align")) {
+      functor::ReadAlignment(context, &left_align_superdiagonal_,
+                             &left_align_subdiagonal_);
+    }
+  }
+
+  void Compute(OpKernelContext* context) override {
+    const Tensor& input = context->input(0);
+
+    // MatrixDiagPart and MatrixDiagPartV2 both use this OpKernel.
+    // MatrixDiagPart only has one input, so we have to check the number of
+    // inputs before reading additional parameters in MatrixDiagV2.
+    int32 lower_diag_index = 0;
+    int32 upper_diag_index = 0;
+    T padding_value(0);
+
+    // MatrixDiagPartV2-specific.
+    if (context->num_inputs() > kNumV1Inputs) {
+      auto& diag_index = context->input(1);
+      OP_REQUIRES(context,
+                  TensorShapeUtils::IsScalar(diag_index.shape()) ||
+                      TensorShapeUtils::IsVector(diag_index.shape()),
+                  errors::InvalidArgument(
+                      "diag_index must be a scalar or vector, received shape: ",
+                      diag_index.shape().DebugString()));
+      lower_diag_index = diag_index.flat<int32>()(0);
+      upper_diag_index = lower_diag_index;
+      if (TensorShapeUtils::IsVector(diag_index.shape())) {
+        auto diag_index_size = diag_index.dim_size(0);
+        OP_REQUIRES(
+            context, 0 < diag_index_size && diag_index_size <= 2,
+            errors::InvalidArgument(
+                "diag_index must have only one or two elements, received ",
+                diag_index_size, " elements."));
+        if (diag_index_size > 1) {
+          upper_diag_index = diag_index.flat<int32>()(1);
+        }
+      }
+      padding_value = context->input(2).flat<T>()(0);
+    }
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: grep
+{
+  "pattern": "padding_value = context->input\\(2\\)\\.flat",
+  "path": "tensorflow",
+  "include": "*.cc"
+}
+Found 1 matches
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0196-b7f78808c68e\tensorflow\core\kernels\matrix_diag_op.cc:
+  Line 89:       padding_value = context->input(2).flat<T>()(0);
+
+tokens used
+input: 1,618
+cache read: 7,680
+cache write: 0
+output: 185
+reasoning output: 28
+
+I found an exact equivalent statement in the older kernel. I’ll validate the adapted hunk with the old file path before editing.
+
+tool: validate
+{
+  "ref": "b7f78808c68e52882a85c8c198f12cfaad3d352c",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/matrix_diag_op.cc b/tensorflow/core/kernels/matrix_diag_op.cc\n--- a/tensorflow/core/kernels/matrix_diag_op.cc\n+++ b/tensorflow/core/kernels/matrix_diag_op.cc\n@@ -86,7 +86,10 @@ class MatrixDiagPartOp : public OpKernel {\n           upper_diag_index = diag_index.flat<int32>()(1);\n         }\n       }\n-      padding_value = context->input(2).flat<T>()(0);\n+      const Tensor& padding_in = context->input(2);\n+      OP_REQUIRES(context, padding_in.NumElements() == 1,\n+                  errors::InvalidArgument(\"Padding must be scalar.\"));\n+      padding_value = padding_in.flat<T>()(0);\n     }\n     const TensorShape& input_shape = input.shape();\n"
+}
+This patch does not apply to the target TensorFlow ref.
+Git apply output:
+error: corrupt patch at line 15
+Touched files:
+- tensorflow/core/kernels/matrix_diag_op.cc
+Fix the patch context against the older TensorFlow version, then run validate again in hunk mode.
+
+tokens used
+input: 5,593
+cache read: 4,608
+cache write: 0
+output: 278
+reasoning output: 9
+
+The first validation failed due to patch formatting/context, not because the code location is absent. I’m tightening the hunk around the exact target lines and re-validating.
+
+tool: validate
+{
+  "ref": "b7f78808c68e52882a85c8c198f12cfaad3d352c",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/matrix_diag_op.cc b/tensorflow/core/kernels/matrix_diag_op.cc\nindex 0000000..0000000 100644\n--- a/tensorflow/core/kernels/matrix_diag_op.cc\n+++ b/tensorflow/core/kernels/matrix_diag_op.cc\n@@ -80,13 +80,16 @@ class MatrixDiagPartOp : public OpKernel {\n             errors::InvalidArgument(\n                 \"diag_index must have only one or two elements, received \",\n                 diag_index_size, \" elements.\"));\n         if (diag_index_size > 1) {\n           upper_diag_index = diag_index.flat<int32>()(1);\n         }\n       }\n-      padding_value = context->input(2).flat<T>()(0);\n+      const Tensor& padding_in = context->input(2);\n+      OP_REQUIRES(context, padding_in.NumElements() == 1,\n+                  errors::InvalidArgument(\"Padding must be scalar.\"));\n+      padding_value = padding_in.flat<T>()(0);\n     }\n     const TensorShape& input_shape = input.shape();\n \n     OP_REQUIRES(context, TensorShapeUtils::IsMatrixOrHigher(input_shape),\n"
+}
+This patch does not apply to the target TensorFlow ref.
+Git apply output:
+error: corrupt patch at line 22
+Touched files:
+- tensorflow/core/kernels/matrix_diag_op.cc
+Fix the patch context against the older TensorFlow version, then run validate again in hunk mode.
+
+tokens used
+input: 829
+cache read: 9,728
+cache write: 0
+output: 368
+reasoning output: 72
+
+The validate tool is still rejecting the hunk as malformed because my line counts were off. I’m correcting the unified diff header and then applying the same minimal code change.
+
+tool: validate
+{
+  "ref": "b7f78808c68e52882a85c8c198f12cfaad3d352c",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/matrix_diag_op.cc b/tensorflow/core/kernels/matrix_diag_op.cc\nindex 0000000..0000000 100644\n--- a/tensorflow/core/kernels/matrix_diag_op.cc\n+++ b/tensorflow/core/kernels/matrix_diag_op.cc\n@@ -80,11 +80,14 @@ class MatrixDiagPartOp : public OpKernel {\n             errors::InvalidArgument(\n                 \"diag_index must have only one or two elements, received \",\n                 diag_index_size, \" elements.\"));\n         if (diag_index_size > 1) {\n           upper_diag_index = diag_index.flat<int32>()(1);\n         }\n       }\n-      padding_value = context->input(2).flat<T>()(0);\n+      const Tensor& padding_in = context->input(2);\n+      OP_REQUIRES(context, padding_in.NumElements() == 1,\n+                  errors::InvalidArgument(\"Padding must be scalar.\"));\n+      padding_value = padding_in.flat<T>()(0);\n     }\n     const TensorShape& input_shape = input.shape();\n \n"
+}
+Patch applied successfully
+
+tokens used
+input: 2,362
+cache read: 8,704
+cache write: 0
+output: 348
+reasoning output: 49
+
+The adapted hunk applies cleanly to the target base. I’m applying it directly to the current checkout now.
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/kernels/matrix_diag_op.cc\n@@\n-      padding_value = context->input(2).flat<T>()(0);\n+      const Tensor& padding_in = context->input(2);\n+      OP_REQUIRES(context, padding_in.NumElements() == 1,\n+                  errors::InvalidArgument(\"Padding must be scalar.\"));\n+      padding_value = padding_in.flat<T>()(0);\n     }\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/kernels/matrix_diag_op.cc
+
+tokens used
+input: 724
+cache read: 10,752
+cache write: 0
+output: 155
+reasoning output: 0
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target MatrixDiagPartOp context",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate adapted hunk against target base",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply minimal source change",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Capture resulting diff for final YAML",
+      "status": "in_progress",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target MatrixDiagPartOp context",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate adapted hunk against target base",
+    "status": "completed",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply minimal source change",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Capture resulting diff for final YAML",
+    "status": "in_progress",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 907
+cache read: 10,752
+cache write: 0
+output: 89
+reasoning output: 0
+
+I’ll capture the final diff to confirm only the intended kernel file changed.
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/kernels/matrix_diag_op.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0196-b7f78808c68e"
+}
+warning: in the working copy of 'tensorflow/core/kernels/matrix_diag_op.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/kernels/matrix_diag_op.cc b/tensorflow/core/kernels/matrix_diag_op.cc
+index 016356dfa5..16a9e1817b 100644
+--- a/tensorflow/core/kernels/matrix_diag_op.cc
++++ b/tensorflow/core/kernels/matrix_diag_op.cc
+@@ -86,7 +86,10 @@ class MatrixDiagPartOp : public OpKernel {
+           upper_diag_index = diag_index.flat<int32>()(1);
+         }
+       }
+-      padding_value = context->input(2).flat<T>()(0);
++      const Tensor& padding_in = context->input(2);
++      OP_REQUIRES(context, padding_in.NumElements() == 1,
++                  errors::InvalidArgument("Padding must be scalar."));
++      padding_value = padding_in.flat<T>()(0);
+     }
+     const TensorShape& input_shape = input.shape();
+
+tool: bash
+{
+  "command": "git status --short",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0196-b7f78808c68e"
+}
+ M tensorflow/core/kernels/matrix_diag_op.cc
+
+tokens used
+input: 1,132
+cache read: 10,752
+cache write: 0
+output: 168
+reasoning output: 0
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target MatrixDiagPartOp context",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate adapted hunk against target base",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply minimal source change",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Capture resulting diff for final YAML",
+      "status": "completed",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target MatrixDiagPartOp context",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate adapted hunk against target base",
+    "status": "completed",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply minimal source change",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Capture resulting diff for final YAML",
+    "status": "completed",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 538
+cache read: 11,776
+cache write: 0
+output: 90
+reasoning output: 13
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/kernels/matrix_diag_op.cc b/tensorflow/core/kernels/matrix_diag_op.cc
+    index 016356dfa5..16a9e1817b 100644
+    --- a/tensorflow/core/kernels/matrix_diag_op.cc
+    +++ b/tensorflow/core/kernels/matrix_diag_op.cc
+    @@ -86,7 +86,10 @@ class MatrixDiagPartOp : public OpKernel {
+               upper_diag_index = diag_index.flat<int32>()(1);
+             }
+           }
+    -      padding_value = context->input(2).flat<T>()(0);
+    +      const Tensor& padding_in = context->input(2);
+    +      OP_REQUIRES(context, padding_in.NumElements() == 1,
+    +                  errors::InvalidArgument("Padding must be scalar."));
+    +      padding_value = padding_in.flat<T>()(0);
+         }
+         const TensorShape& input_shape = input.shape();
+         
+  notes: >
+    Added scalar padding validation to the TensorFlow 2.3.4 MatrixDiagPartOp equivalent and validated the adapted hunk against the target base.
+```
+
+tokens used
+input: 776
+cache read: 11,776
+cache write: 0
+output: 266
+reasoning output: 0

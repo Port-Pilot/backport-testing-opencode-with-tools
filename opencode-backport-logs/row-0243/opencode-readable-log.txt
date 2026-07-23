@@ -1,0 +1,524 @@
+I’ll locate the target implementation of `AddManySparseToTensorsMapOp`, compare it against the provided newer hunk, then apply the minimal equivalent change and validate the hunk context before editing.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target sparse_tensors_map_ops.cc context",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Validate minimal backport hunk against target base",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "content": "Apply source change in current checkout",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "content": "Inspect final diff",
+      "status": "pending",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target sparse_tensors_map_ops.cc context",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Validate minimal backport hunk against target base",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "content": "Apply source change in current checkout",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "content": "Inspect final diff",
+    "status": "pending",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 3,863
+cache read: 4,608
+cache write: 0
+output: 140
+reasoning output: 0
+
+tool: locate_symbol
+{
+  "ref": "7aa19516e1fecf75ba55bd0c1b9ac9871ea449de",
+  "symbol": "AddManySparseToTensorsMapOp"
+}
+tensorflow/core/kernels/sparse_tensors_map_ops.cc:217
+tensorflow/core/kernels/sparse_tensors_map_ops.cc:219
+tensorflow/core/kernels/sparse_tensors_map_ops.cc:371
+
+tokens used
+input: 1,070
+cache read: 7,680
+cache write: 0
+output: 52
+reasoning output: 0
+
+tool: viewcode
+{
+  "ref": "7aa19516e1fecf75ba55bd0c1b9ac9871ea449de",
+  "path": "tensorflow/core/kernels/sparse_tensors_map_ops.cc",
+  "startline": 230,
+  "endline": 300
+}
+Here are lines 230 through 300.
+
+    OP_REQUIRES_OK(context, context->input("sparse_shape", &input_shape));
+    OP_REQUIRES_OK(context, GetMap(context, true /* is_writing */, &map));
+
+    OP_REQUIRES(context, TensorShapeUtils::IsMatrix(input_indices->shape()),
+                errors::InvalidArgument(
+                    "Input indices should be a matrix but received shape ",
+                    input_indices->shape().DebugString()));
+    OP_REQUIRES(context, TensorShapeUtils::IsVector(input_values->shape()),
+                errors::InvalidArgument(
+                    "Input values should be a vector but received shape ",
+                    input_values->shape().DebugString()));
+    OP_REQUIRES(context, TensorShapeUtils::IsVector(input_shape->shape()),
+                errors::InvalidArgument(
+                    "Input shape should be a vector but received shape ",
+                    input_shape->shape().DebugString()));
+    OP_REQUIRES(
+        context,
+        input_values->shape().dim_size(0) == input_indices->shape().dim_size(0),
+        errors::InvalidArgument(
+            "Number of values must match first dimension of indices. ", "Got ",
+            input_values->shape().dim_size(0),
+            " values, indices shape: ", input_indices->shape().DebugString()));
+    OP_REQUIRES(
+        context,
+        input_shape->shape().dim_size(0) == input_indices->shape().dim_size(1),
+        errors::InvalidArgument(
+            "Number of dimensions must match second dimension of indices. ",
+            "Got ", input_shape->shape().dim_size(0),
+            " dimensions, indices shape: ",
+            input_indices->shape().DebugString()));
+
+    int rank = input_shape->NumElements();
+
+    OP_REQUIRES(
+        context, rank > 1,
+        errors::InvalidArgument(
+            "Rank of input SparseTensor should be > 1, but saw rank: ", rank));
+
+    auto input_shape_vec = input_shape->vec<int64>();
+    int new_num_elements = 1;
+    bool overflow_ocurred = false;
+    for (int i = 0; i < input_shape_vec.size(); i++) {
+      new_num_elements =
+          MultiplyWithoutOverflow(new_num_elements, input_shape_vec(i));
+      if (new_num_elements < 0) {
+        overflow_ocurred = true;
+      }
+    }
+
+    OP_REQUIRES(
+        context, !overflow_ocurred,
+        errors::Internal("Encountered overflow from large input shape."));
+
+    TensorShape tensor_input_shape(input_shape_vec);
+    gtl::InlinedVector<int64, 8> std_order(rank);
+    std::iota(std_order.begin(), std_order.end(), 0);
+    SparseTensor input_st;
+    OP_REQUIRES_OK(context, SparseTensor::Create(*input_indices, *input_values,
+                                                 tensor_input_shape, std_order,
+                                                 &input_st));
+
+    const int64 N = input_shape_vec(0);
+
+    Tensor sparse_handles(DT_INT64, TensorShape({N}));
+    auto sparse_handles_t = sparse_handles.vec<int64>();
+
+    OP_REQUIRES_OK(context, input_st.IndicesValid());
+
+    // We can generate the output shape proto string now, for all
+    // minibatch entries.
+    TensorShape output_shape;
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tokens used
+input: 1,175
+cache read: 7,680
+cache write: 0
+output: 64
+reasoning output: 0
+
+The target code has the same vulnerable manual overflow check and direct `TensorShape` construction, with older `int64` spelling. I’ll replace that block with `TensorShape::BuildTensorShape` using the target’s type aliases.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target sparse_tensors_map_ops.cc context",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate minimal backport hunk against target base",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Apply source change in current checkout",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "content": "Inspect final diff",
+      "status": "pending",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target sparse_tensors_map_ops.cc context",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate minimal backport hunk against target base",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Apply source change in current checkout",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "content": "Inspect final diff",
+    "status": "pending",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 930
+cache read: 8,704
+cache write: 0
+output: 148
+reasoning output: 18
+
+tool: validate
+{
+  "ref": "7aa19516e1fecf75ba55bd0c1b9ac9871ea449de",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/sparse_tensors_map_ops.cc b/tensorflow/core/kernels/sparse_tensors_map_ops.cc\n--- a/tensorflow/core/kernels/sparse_tensors_map_ops.cc\n+++ b/tensorflow/core/kernels/sparse_tensors_map_ops.cc\n@@ -263,22 +263,10 @@ class AddManySparseToTensorsMapOp : public SparseTensorAccessingOp {\n             \"Rank of input SparseTensor should be > 1, but saw rank: \", rank));\n \n     auto input_shape_vec = input_shape->vec<int64>();\n-    int new_num_elements = 1;\n-    bool overflow_ocurred = false;\n-    for (int i = 0; i < input_shape_vec.size(); i++) {\n-      new_num_elements =\n-          MultiplyWithoutOverflow(new_num_elements, input_shape_vec(i));\n-      if (new_num_elements < 0) {\n-        overflow_ocurred = true;\n-      }\n-    }\n-\n-    OP_REQUIRES(\n-        context, !overflow_ocurred,\n-        errors::Internal(\"Encountered overflow from large input shape.\"));\n \n-    TensorShape tensor_input_shape(input_shape_vec);\n+    TensorShape tensor_input_shape;\n+    OP_REQUIRES_OK(context, TensorShape::BuildTensorShape(input_shape_vec,\n+                                                          &tensor_input_shape));\n     gtl::InlinedVector<int64, 8> std_order(rank);\n     std::iota(std_order.begin(), std_order.end(), 0);\n     SparseTensor input_st;\n"
+}
+This patch does not apply to the target TensorFlow ref.
+Git apply output:
+error: corrupt patch at line 29
+Touched files:
+- tensorflow/core/kernels/sparse_tensors_map_ops.cc
+Fix the patch context against the older TensorFlow version, then run validate again in hunk mode.
+
+tokens used
+input: 1,235
+cache read: 8,704
+cache write: 0
+output: 408
+reasoning output: 22
+
+tool: validate
+{
+  "ref": "7aa19516e1fecf75ba55bd0c1b9ac9871ea449de",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/sparse_tensors_map_ops.cc b/tensorflow/core/kernels/sparse_tensors_map_ops.cc\n--- a/tensorflow/core/kernels/sparse_tensors_map_ops.cc\n+++ b/tensorflow/core/kernels/sparse_tensors_map_ops.cc\n@@ -263,21 +263,9 @@ class AddManySparseToTensorsMapOp : public SparseTensorAccessingOp {\n             \"Rank of input SparseTensor should be > 1, but saw rank: \", rank));\n \n     auto input_shape_vec = input_shape->vec<int64>();\n-    int new_num_elements = 1;\n-    bool overflow_ocurred = false;\n-    for (int i = 0; i < input_shape_vec.size(); i++) {\n-      new_num_elements =\n-          MultiplyWithoutOverflow(new_num_elements, input_shape_vec(i));\n-      if (new_num_elements < 0) {\n-        overflow_ocurred = true;\n-      }\n-    }\n-\n-    OP_REQUIRES(\n-        context, !overflow_ocurred,\n-        errors::Internal(\"Encountered overflow from large input shape.\"));\n-\n-    TensorShape tensor_input_shape(input_shape_vec);\n+    TensorShape tensor_input_shape;\n+    OP_REQUIRES_OK(context, TensorShape::BuildTensorShape(input_shape_vec,\n+                                                          &tensor_input_shape));\n     gtl::InlinedVector<int64, 8> std_order(rank);\n     std::iota(std_order.begin(), std_order.end(), 0);\n     SparseTensor input_st;\n"
+}
+Patch applied successfully
+
+tokens used
+input: 712
+cache read: 9,728
+cache write: 0
+output: 408
+reasoning output: 285
+
+The adjusted hunk validates against the target base. I’m applying the same minimal source change now.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target sparse_tensors_map_ops.cc context",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate minimal backport hunk against target base",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Apply source change in current checkout",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Inspect final diff",
+      "status": "pending",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target sparse_tensors_map_ops.cc context",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate minimal backport hunk against target base",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Apply source change in current checkout",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Inspect final diff",
+    "status": "pending",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 1,418
+cache read: 9,728
+cache write: 0
+output: 119
+reasoning output: 0
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/kernels/sparse_tensors_map_ops.cc\n@@\n     auto input_shape_vec = input_shape->vec<int64>();\n-    int new_num_elements = 1;\n-    bool overflow_ocurred = false;\n-    for (int i = 0; i < input_shape_vec.size(); i++) {\n-      new_num_elements =\n-          MultiplyWithoutOverflow(new_num_elements, input_shape_vec(i));\n-      if (new_num_elements < 0) {\n-        overflow_ocurred = true;\n-      }\n-    }\n-\n-    OP_REQUIRES(\n-        context, !overflow_ocurred,\n-        errors::Internal(\"Encountered overflow from large input shape.\"));\n-\n-    TensorShape tensor_input_shape(input_shape_vec);\n+    TensorShape tensor_input_shape;\n+    OP_REQUIRES_OK(context, TensorShape::BuildTensorShape(input_shape_vec,\n+                                                          &tensor_input_shape));\n     gtl::InlinedVector<int64, 8> std_order(rank);\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/kernels/sparse_tensors_map_ops.cc
+
+tokens used
+input: 652
+cache read: 10,752
+cache write: 0
+output: 262
+reasoning output: 0
+
+The source change is applied. I’ll inspect the resulting diff to confirm only the intended file and hunk changed.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target sparse_tensors_map_ops.cc context",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate minimal backport hunk against target base",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Apply source change in current checkout",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Inspect final diff",
+      "status": "in_progress",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target sparse_tensors_map_ops.cc context",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate minimal backport hunk against target base",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Apply source change in current checkout",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Inspect final diff",
+    "status": "in_progress",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 944
+cache read: 10,752
+cache write: 0
+output: 122
+reasoning output: 0
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/kernels/sparse_tensors_map_ops.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0243-7aa19516e1fe",
+  "timeout": 120000
+}
+warning: in the working copy of 'tensorflow/core/kernels/sparse_tensors_map_ops.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/kernels/sparse_tensors_map_ops.cc b/tensorflow/core/kernels/sparse_tensors_map_ops.cc
+index 1899dc0849..5c84c51068 100644
+--- a/tensorflow/core/kernels/sparse_tensors_map_ops.cc
++++ b/tensorflow/core/kernels/sparse_tensors_map_ops.cc
+@@ -266,21 +266,9 @@ class AddManySparseToTensorsMapOp : public SparseTensorAccessingOp {
+             "Rank of input SparseTensor should be > 1, but saw rank: ", rank));
+ 
+     auto input_shape_vec = input_shape->vec<int64>();
+-    int new_num_elements = 1;
+-    bool overflow_ocurred = false;
+-    for (int i = 0; i < input_shape_vec.size(); i++) {
+-      new_num_elements =
+-          MultiplyWithoutOverflow(new_num_elements, input_shape_vec(i));
+-      if (new_num_elements < 0) {
+-        overflow_ocurred = true;
+-      }
+-    }
+-
+-    OP_REQUIRES(
+-        context, !overflow_ocurred,
+-        errors::Internal("Encountered overflow from large input shape."));
+-
+-    TensorShape tensor_input_shape(input_shape_vec);
++    TensorShape tensor_input_shape;
++    OP_REQUIRES_OK(context, TensorShape::BuildTensorShape(input_shape_vec,
++                                                          &tensor_input_shape));
+     gtl::InlinedVector<int64, 8> std_order(rank);
+     std::iota(std_order.begin(), std_order.end(), 0);
+     SparseTensor input_st;
+
+tokens used
+input: 7,349
+cache read: 4,608
+cache write: 0
+output: 78
+reasoning output: 0
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target sparse_tensors_map_ops.cc context",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate minimal backport hunk against target base",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Apply source change in current checkout",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Inspect final diff",
+      "status": "completed",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target sparse_tensors_map_ops.cc context",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate minimal backport hunk against target base",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Apply source change in current checkout",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Inspect final diff",
+    "status": "completed",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 648
+cache read: 11,776
+cache write: 0
+output: 93
+reasoning output: 14
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/kernels/sparse_tensors_map_ops.cc b/tensorflow/core/kernels/sparse_tensors_map_ops.cc
+    index 1899dc0849..5c84c51068 100644
+    --- a/tensorflow/core/kernels/sparse_tensors_map_ops.cc
+    +++ b/tensorflow/core/kernels/sparse_tensors_map_ops.cc
+    @@ -266,21 +266,9 @@ class AddManySparseToTensorsMapOp : public SparseTensorAccessingOp {
+                 "Rank of input SparseTensor should be > 1, but saw rank: ", rank));
+     
+         auto input_shape_vec = input_shape->vec<int64>();
+    -    int new_num_elements = 1;
+    -    bool overflow_ocurred = false;
+    -    for (int i = 0; i < input_shape_vec.size(); i++) {
+    -      new_num_elements =
+    -          MultiplyWithoutOverflow(new_num_elements, input_shape_vec(i));
+    -      if (new_num_elements < 0) {
+    -        overflow_ocurred = true;
+    -      }
+    -    }
+    -
+    -    OP_REQUIRES(
+    -        context, !overflow_ocurred,
+    -        errors::Internal("Encountered overflow from large input shape."));
+    -
+    -    TensorShape tensor_input_shape(input_shape_vec);
+    +    TensorShape tensor_input_shape;
+    +    OP_REQUIRES_OK(context, TensorShape::BuildTensorShape(input_shape_vec,
+    +                                                          &tensor_input_shape));
+         gtl::InlinedVector<int64, 8> std_order(rank);
+         std::iota(std_order.begin(), std_order.end(), 0);
+         SparseTensor input_st;
+  notes: >
+    Replaced the manual overflow-prone shape element multiplication with TensorShape::BuildTensorShape in AddManySparseToTensorsMapOp; the hunk was validated against the target base.
+```
+
+tokens used
+input: 893
+cache read: 11,776
+cache write: 0
+output: 431
+reasoning output: 0

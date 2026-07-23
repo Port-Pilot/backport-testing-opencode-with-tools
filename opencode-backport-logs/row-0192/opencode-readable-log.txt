@@ -1,0 +1,672 @@
+I’ll inspect the target implementation of `CompressElement`/`UncompressElement` and compare it only against the supplied newer patch, then apply the minimal null-buffer guards in the matching locations.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Locate target compression utility implementation",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Validate target hunk context against base commit",
+      "status": "pending",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply minimal backport changes",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "content": "Inspect final diff",
+      "status": "pending",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Locate target compression utility implementation",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Validate target hunk context against base commit",
+    "status": "pending",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply minimal backport changes",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "content": "Inspect final diff",
+    "status": "pending",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 4,067
+cache read: 4,608
+cache write: 0
+output: 132
+reasoning output: 0
+
+tool: grep
+{
+  "pattern": "Status CompressElement|UncompressElement|DMAHelper::buffer",
+  "path": "tensorflow/core/data",
+  "include": "compression_utils.cc"
+}
+Found 5 matches
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0192-3929ffacfbef\tensorflow\core\data\compression_utils.cc:
+  Line 24: Status CompressElement(const std::vector<Tensor>& element,
+
+  Line 34:       total_size += DMAHelper::buffer(&component)->size();
+
+  Line 55:       const TensorBuffer* buffer = DMAHelper::buffer(&component);
+
+  Line 76: Status UncompressElement(const CompressedElement& compressed,
+
+  Line 96:       TensorBuffer* buffer = DMAHelper::buffer(&out->back());
+
+tool: viewcode
+{
+  "ref": "3929ffacfbef7c431e8397920d040aaf47acff19",
+  "path": "tensorflow/core/data/compression_utils.cc",
+  "startline": 1,
+  "endline": 140
+}
+Here are lines 1 through 140.
+
+/* Copyright 2020 The TensorFlow Authors. All Rights Reserved.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+==============================================================================*/
+#include "tensorflow/core/data/compression_utils.h"
+
+#include "tensorflow/core/common_runtime/dma_helper.h"
+#include "tensorflow/core/framework/tensor.pb.h"
+#include "tensorflow/core/platform/snappy.h"
+
+namespace tensorflow {
+namespace data {
+
+Status CompressElement(const std::vector<Tensor>& element,
+                       CompressedElement* out) {
+  // Step 1: Determine the total uncompressed size. This requires serializing
+  // non-memcopyable tensors, which we save to use again later.
+  std::vector<TensorProto> non_memcpy_components;
+  int64 total_size = 0;
+  for (auto& component : element) {
+    if (DataTypeCanUseMemcpy(component.dtype())) {
+      // Some datatypes can be memcopied, allowing us to save two copies
+      // (AsProtoTensorContent and SerializeToArray).
+      total_size += DMAHelper::buffer(&component)->size();
+    } else {
+      non_memcpy_components.emplace_back();
+      component.AsProtoTensorContent(&non_memcpy_components.back());
+      total_size += non_memcpy_components.back().ByteSizeLong();
+    }
+  }
+
+  // Step 2: Write the tensor data to a buffer, and compress that buffer.
+  // We use tstring for access to resize_uninitialized.
+  tstring uncompressed;
+  uncompressed.resize_uninitialized(total_size);
+  // Position in `uncompressed` to write the next component.
+  char* position = uncompressed.mdata();
+  int non_memcpy_component_index = 0;
+  for (auto& component : element) {
+    CompressedComponentMetadata* metadata =
+        out->mutable_component_metadata()->Add();
+    metadata->set_dtype(component.dtype());
+    component.shape().AsProto(metadata->mutable_tensor_shape());
+    if (DataTypeCanUseMemcpy(component.dtype())) {
+      const TensorBuffer* buffer = DMAHelper::buffer(&component);
+      memcpy(position, buffer->data(), buffer->size());
+      metadata->set_tensor_size_bytes(buffer->size());
+    } else {
+      TensorProto& proto = non_memcpy_components[non_memcpy_component_index++];
+      proto.SerializeToArray(position, proto.ByteSizeLong());
+      metadata->set_tensor_size_bytes(proto.ByteSizeLong());
+    }
+    position += metadata->tensor_size_bytes();
+  }
+  DCHECK_EQ(position, uncompressed.mdata() + total_size);
+
+  if (!port::Snappy_Compress(uncompressed.mdata(), total_size,
+                             out->mutable_data())) {
+    return errors::Internal("Failed to compress using snappy.");
+  }
+  VLOG(3) << "Compressed element from " << total_size << " bytes to "
+          << out->data().size() << " bytes";
+  return Status::OK();
+}
+
+Status UncompressElement(const CompressedElement& compressed,
+                         std::vector<Tensor>* out) {
+  int num_components = compressed.component_metadata_size();
+  out->clear();
+  out->reserve(num_components);
+
+  // Step 1: Prepare the memory that we will uncompress into.
+  std::vector<struct iovec> iov(num_components);
+  // We use tstring for access to resize_uninitialized.
+  std::vector<tstring> tensor_proto_strs;
+  // num_components is a conservative estimate. It is important to reserve
+  // vector space so that the vector doesn't resize itself, which could
+  // invalidate pointers to its strings' data.
+  tensor_proto_strs.reserve(num_components);
+  int64 total_size = 0;
+  for (int i = 0; i < num_components; ++i) {
+    const CompressedComponentMetadata& metadata =
+        compressed.component_metadata(i);
+    if (DataTypeCanUseMemcpy(metadata.dtype())) {
+      out->emplace_back(metadata.dtype(), metadata.tensor_shape());
+      TensorBuffer* buffer = DMAHelper::buffer(&out->back());
+      iov[i].iov_base = buffer->data();
+      iov[i].iov_len = buffer->size();
+    } else {
+      // Allocate an empty Tensor. We will fill it out later after
+      // uncompressing into the tensor_proto_str.
+      out->emplace_back();
+      tensor_proto_strs.emplace_back();
+      tstring& tensor_proto_str = tensor_proto_strs.back();
+      tensor_proto_str.resize_uninitialized(metadata.tensor_size_bytes());
+      iov[i].iov_base = tensor_proto_str.mdata();
+      iov[i].iov_len = tensor_proto_str.size();
+    }
+    total_size += iov[i].iov_len;
+  }
+
+  // Step 2: Uncompress into the iovec.
+  const std::string& compressed_data = compressed.data();
+  size_t uncompressed_size;
+  if (!port::Snappy_GetUncompressedLength(
+          compressed_data.data(), compressed_data.size(), &uncompressed_size)) {
+    return errors::Internal("Could not get snappy uncompressed length");
+  }
+  if (uncompressed_size != total_size) {
+    return errors::Internal(
+        "Uncompressed size mismatch. Snappy expects ", uncompressed_size,
+        " whereas the tensor metadata suggests ", total_size);
+  }
+  if (!port::Snappy_UncompressToIOVec(compressed_data.data(),
+                                      compressed_data.size(), iov.data(),
+                                      num_components)) {
+    return errors::Internal("Failed to perform snappy decompression.");
+  }
+
+  // Step 3: Deserialize tensor proto strings to tensors.
+  int tensor_proto_strs_index = 0;
+  for (int i = 0; i < num_components; ++i) {
+    if (DataTypeCanUseMemcpy(compressed.component_metadata(i).dtype())) {
+      continue;
+    }
+    TensorProto tp;
+    if (!tp.ParseFromString(tensor_proto_strs[tensor_proto_strs_index++])) {
+      return errors::Internal("Could not parse TensorProto");
+    }
+    if (!out->at(i).FromProto(tp)) {
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: locate_symbol
+{
+  "ref": "3929ffacfbef7c431e8397920d040aaf47acff19",
+  "symbol": "CompressElement"
+}
+tensorflow/core/data/compression_utils.cc:24
+tensorflow/core/data/compression_utils.h:29
+tensorflow/go/op/wrappers.go:30948
+tensorflow/core/data/compression_utils_test.cc:31
+tensorflow/core/kernels/data/experimental/compression_ops.cc:34
+tensorflow/core/api_def/base_api/api_def_CompressElement.pbtxt:2
+tensorflow/core/kernels/data/experimental/compression_ops.cc:69
+tensorflow/core/ops/compat/ops_history_v2/CompressElement.pbtxt:2
+tensorflow/core/ops/experimental_dataset_ops.cc:135
+tensorflow/core/ops/ops.pbtxt:7768
+tensorflow/go/op/wrappers.go:30953
+tensorflow/tools/api/golden/v1/tensorflow.raw_ops.pbtxt:784
+tensorflow/tools/api/golden/v2/tensorflow.raw_ops.pbtxt:784
+
+tokens used
+input: 1,260
+cache read: 7,680
+cache write: 0
+output: 151
+reasoning output: 0
+
+The target file matches the vulnerable code shape exactly, so the backport is the same three guard changes in `tensorflow/core/data/compression_utils.cc`. I’ll validate the hunk context against the specified base before editing.
+
+tool: validate
+{
+  "ref": "3929ffacfbef7c431e8397920d040aaf47acff19",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/data/compression_utils.cc b/tensorflow/core/data/compression_utils.cc\n--- a/tensorflow/core/data/compression_utils.cc\n+++ b/tensorflow/core/data/compression_utils.cc\n@@ -29,9 +29,10 @@ Status CompressElement(const std::vector<Tensor>& element,\n   int64 total_size = 0;\n   for (auto& component : element) {\n     if (DataTypeCanUseMemcpy(component.dtype())) {\n-      // Some datatypes can be memcopied, allowing us to save two copies\n-      // (AsProtoTensorContent and SerializeToArray).\n-      total_size += DMAHelper::buffer(&component)->size();\n+      const TensorBuffer* buffer = DMAHelper::buffer(&component);\n+      if (buffer) {\n+        total_size += buffer->size();\n+      }\n     } else {\n       non_memcpy_components.emplace_back();\n       component.AsProtoTensorContent(&non_memcpy_components.back());\n@@ -53,8 +54,10 @@ Status CompressElement(const std::vector<Tensor>& element,\n     component.shape().AsProto(metadata->mutable_tensor_shape());\n     if (DataTypeCanUseMemcpy(component.dtype())) {\n       const TensorBuffer* buffer = DMAHelper::buffer(&component);\n-      memcpy(position, buffer->data(), buffer->size());\n-      metadata->set_tensor_size_bytes(buffer->size());\n+      if (buffer) {\n+        memcpy(position, buffer->data(), buffer->size());\n+        metadata->set_tensor_size_bytes(buffer->size());\n+      }\n     } else {\n       TensorProto& proto = non_memcpy_components[non_memcpy_component_index++];\n       proto.SerializeToArray(position, proto.ByteSizeLong());\n@@ -94,8 +97,13 @@ Status UncompressElement(const CompressedElement& compressed,\n     if (DataTypeCanUseMemcpy(metadata.dtype())) {\n       out->emplace_back(metadata.dtype(), metadata.tensor_shape());\n       TensorBuffer* buffer = DMAHelper::buffer(&out->back());\n-      iov[i].iov_base = buffer->data();\n-      iov[i].iov_len = buffer->size();\n+      if (buffer) {\n+        iov[i].iov_base = buffer->data();\n+        iov[i].iov_len = buffer->size();\n+      } else {\n+        iov[i].iov_base = nullptr;\n+        iov[i].iov_len = 0;\n+      }\n     } else {\n       // Allocate an empty Tensor. We will fill it out later after\n       // uncompressing into the tensor_proto_str.\n"
+}
+Patch applied successfully
+
+tokens used
+input: 2,107
+cache read: 8,704
+cache write: 0
+output: 695
+reasoning output: 0
+
+The patch hunk applies cleanly to the target base. I’ll update the source file now.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Locate target compression utility implementation",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate target hunk context against base commit",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply minimal backport changes",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Inspect final diff",
+      "status": "pending",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Locate target compression utility implementation",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate target hunk context against base commit",
+    "status": "completed",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply minimal backport changes",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Inspect final diff",
+    "status": "pending",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 767
+cache read: 10,752
+cache write: 0
+output: 113
+reasoning output: 0
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/data/compression_utils.cc\n@@\n   int64 total_size = 0;\n   for (auto& component : element) {\n     if (DataTypeCanUseMemcpy(component.dtype())) {\n-      // Some datatypes can be memcopied, allowing us to save two copies\n-      // (AsProtoTensorContent and SerializeToArray).\n-      total_size += DMAHelper::buffer(&component)->size();\n+      const TensorBuffer* buffer = DMAHelper::buffer(&component);\n+      if (buffer) {\n+        total_size += buffer->size();\n+      }\n     } else {\n       non_memcpy_components.emplace_back();\n       component.AsProtoTensorContent(&non_memcpy_components.back());\n@@\n     component.shape().AsProto(metadata->mutable_tensor_shape());\n     if (DataTypeCanUseMemcpy(component.dtype())) {\n       const TensorBuffer* buffer = DMAHelper::buffer(&component);\n-      memcpy(position, buffer->data(), buffer->size());\n-      metadata->set_tensor_size_bytes(buffer->size());\n+      if (buffer) {\n+        memcpy(position, buffer->data(), buffer->size());\n+        metadata->set_tensor_size_bytes(buffer->size());\n+      }\n     } else {\n       TensorProto& proto = non_memcpy_components[non_memcpy_component_index++];\n       proto.SerializeToArray(position, proto.ByteSizeLong());\n@@\n     if (DataTypeCanUseMemcpy(metadata.dtype())) {\n       out->emplace_back(metadata.dtype(), metadata.tensor_shape());\n       TensorBuffer* buffer = DMAHelper::buffer(&out->back());\n-      iov[i].iov_base = buffer->data();\n-      iov[i].iov_len = buffer->size();\n+      if (buffer) {\n+        iov[i].iov_base = buffer->data();\n+        iov[i].iov_len = buffer->size();\n+      } else {\n+        iov[i].iov_base = nullptr;\n+        iov[i].iov_len = 0;\n+      }\n     } else {\n       // Allocate an empty Tensor. We will fill it out later after\n       // uncompressing into the tensor_proto_str.\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/data/compression_utils.cc
+
+tokens used
+input: 1,013
+cache read: 10,752
+cache write: 0
+output: 529
+reasoning output: 0
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Locate target compression utility implementation",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate target hunk context against base commit",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply minimal backport changes",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Inspect final diff",
+      "status": "in_progress",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Locate target compression utility implementation",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate target hunk context against base commit",
+    "status": "completed",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply minimal backport changes",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Inspect final diff",
+    "status": "in_progress",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 1,568
+cache read: 10,752
+cache write: 0
+output: 86
+reasoning output: 0
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/data/compression_utils.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0192-3929ffacfbef"
+}
+warning: in the working copy of 'tensorflow/core/data/compression_utils.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/data/compression_utils.cc b/tensorflow/core/data/compression_utils.cc
+index d132bdca8d..f550b150ce 100644
+--- a/tensorflow/core/data/compression_utils.cc
++++ b/tensorflow/core/data/compression_utils.cc
+@@ -29,9 +29,10 @@ Status CompressElement(const std::vector<Tensor>& element,
+   int64 total_size = 0;
+   for (auto& component : element) {
+     if (DataTypeCanUseMemcpy(component.dtype())) {
+-      // Some datatypes can be memcopied, allowing us to save two copies
+-      // (AsProtoTensorContent and SerializeToArray).
+-      total_size += DMAHelper::buffer(&component)->size();
++      const TensorBuffer* buffer = DMAHelper::buffer(&component);
++      if (buffer) {
++        total_size += buffer->size();
++      }
+     } else {
+       non_memcpy_components.emplace_back();
+       component.AsProtoTensorContent(&non_memcpy_components.back());
+@@ -53,8 +54,10 @@ Status CompressElement(const std::vector<Tensor>& element,
+     component.shape().AsProto(metadata->mutable_tensor_shape());
+     if (DataTypeCanUseMemcpy(component.dtype())) {
+       const TensorBuffer* buffer = DMAHelper::buffer(&component);
+-      memcpy(position, buffer->data(), buffer->size());
+-      metadata->set_tensor_size_bytes(buffer->size());
++      if (buffer) {
++        memcpy(position, buffer->data(), buffer->size());
++        metadata->set_tensor_size_bytes(buffer->size());
++      }
+     } else {
+       TensorProto& proto = non_memcpy_components[non_memcpy_component_index++];
+       proto.SerializeToArray(position, proto.ByteSizeLong());
+@@ -94,8 +97,13 @@ Status UncompressElement(const CompressedElement& compressed,
+     if (DataTypeCanUseMemcpy(metadata.dtype())) {
+       out->emplace_back(metadata.dtype(), metadata.tensor_shape());
+       TensorBuffer* buffer = DMAHelper::buffer(&out->back());
+-      iov[i].iov_base = buffer->data();
+-      iov[i].iov_len = buffer->size();
++      if (buffer) {
++        iov[i].iov_base = buffer->data();
++        iov[i].iov_len = buffer->size();
++      } else {
++        iov[i].iov_base = nullptr;
++        iov[i].iov_len = 0;
++      }
+     } else {
+       // Allocate an empty Tensor. We will fill it out later after
+       // uncompressing into the tensor_proto_str.
+
+tool: viewcode
+{
+  "ref": "3929ffacfbef7c431e8397920d040aaf47acff19",
+  "path": "tensorflow/core/data/compression_utils.cc",
+  "startline": 24,
+  "endline": 112
+}
+Here are lines 24 through 112.
+
+Status CompressElement(const std::vector<Tensor>& element,
+                       CompressedElement* out) {
+  // Step 1: Determine the total uncompressed size. This requires serializing
+  // non-memcopyable tensors, which we save to use again later.
+  std::vector<TensorProto> non_memcpy_components;
+  int64 total_size = 0;
+  for (auto& component : element) {
+    if (DataTypeCanUseMemcpy(component.dtype())) {
+      // Some datatypes can be memcopied, allowing us to save two copies
+      // (AsProtoTensorContent and SerializeToArray).
+      total_size += DMAHelper::buffer(&component)->size();
+    } else {
+      non_memcpy_components.emplace_back();
+      component.AsProtoTensorContent(&non_memcpy_components.back());
+      total_size += non_memcpy_components.back().ByteSizeLong();
+    }
+  }
+
+  // Step 2: Write the tensor data to a buffer, and compress that buffer.
+  // We use tstring for access to resize_uninitialized.
+  tstring uncompressed;
+  uncompressed.resize_uninitialized(total_size);
+  // Position in `uncompressed` to write the next component.
+  char* position = uncompressed.mdata();
+  int non_memcpy_component_index = 0;
+  for (auto& component : element) {
+    CompressedComponentMetadata* metadata =
+        out->mutable_component_metadata()->Add();
+    metadata->set_dtype(component.dtype());
+    component.shape().AsProto(metadata->mutable_tensor_shape());
+    if (DataTypeCanUseMemcpy(component.dtype())) {
+      const TensorBuffer* buffer = DMAHelper::buffer(&component);
+      memcpy(position, buffer->data(), buffer->size());
+      metadata->set_tensor_size_bytes(buffer->size());
+    } else {
+      TensorProto& proto = non_memcpy_components[non_memcpy_component_index++];
+      proto.SerializeToArray(position, proto.ByteSizeLong());
+      metadata->set_tensor_size_bytes(proto.ByteSizeLong());
+    }
+    position += metadata->tensor_size_bytes();
+  }
+  DCHECK_EQ(position, uncompressed.mdata() + total_size);
+
+  if (!port::Snappy_Compress(uncompressed.mdata(), total_size,
+                             out->mutable_data())) {
+    return errors::Internal("Failed to compress using snappy.");
+  }
+  VLOG(3) << "Compressed element from " << total_size << " bytes to "
+          << out->data().size() << " bytes";
+  return Status::OK();
+}
+
+Status UncompressElement(const CompressedElement& compressed,
+                         std::vector<Tensor>* out) {
+  int num_components = compressed.component_metadata_size();
+  out->clear();
+  out->reserve(num_components);
+
+  // Step 1: Prepare the memory that we will uncompress into.
+  std::vector<struct iovec> iov(num_components);
+  // We use tstring for access to resize_uninitialized.
+  std::vector<tstring> tensor_proto_strs;
+  // num_components is a conservative estimate. It is important to reserve
+  // vector space so that the vector doesn't resize itself, which could
+  // invalidate pointers to its strings' data.
+  tensor_proto_strs.reserve(num_components);
+  int64 total_size = 0;
+  for (int i = 0; i < num_components; ++i) {
+    const CompressedComponentMetadata& metadata =
+        compressed.component_metadata(i);
+    if (DataTypeCanUseMemcpy(metadata.dtype())) {
+      out->emplace_back(metadata.dtype(), metadata.tensor_shape());
+      TensorBuffer* buffer = DMAHelper::buffer(&out->back());
+      iov[i].iov_base = buffer->data();
+      iov[i].iov_len = buffer->size();
+    } else {
+      // Allocate an empty Tensor. We will fill it out later after
+      // uncompressing into the tensor_proto_str.
+      out->emplace_back();
+      tensor_proto_strs.emplace_back();
+      tstring& tensor_proto_str = tensor_proto_strs.back();
+      tensor_proto_str.resize_uninitialized(metadata.tensor_size_bytes());
+      iov[i].iov_base = tensor_proto_str.mdata();
+      iov[i].iov_len = tensor_proto_str.size();
+    }
+    total_size += iov[i].iov_len;
+  }
+
+  // Step 2: Uncompress into the iovec.
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tokens used
+input: 763
+cache read: 11,776
+cache write: 0
+output: 138
+reasoning output: 0
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Locate target compression utility implementation",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate target hunk context against base commit",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply minimal backport changes",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Inspect final diff",
+      "status": "completed",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Locate target compression utility implementation",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate target hunk context against base commit",
+    "status": "completed",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply minimal backport changes",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Inspect final diff",
+    "status": "completed",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 2,435
+cache read: 11,776
+cache write: 0
+output: 87
+reasoning output: 56
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/data/compression_utils.cc b/tensorflow/core/data/compression_utils.cc
+    index d132bdca8d..f550b150ce 100644
+    --- a/tensorflow/core/data/compression_utils.cc
+    +++ b/tensorflow/core/data/compression_utils.cc
+    @@ -29,9 +29,10 @@ Status CompressElement(const std::vector<Tensor>& element,
+       int64 total_size = 0;
+       for (auto& component : element) {
+         if (DataTypeCanUseMemcpy(component.dtype())) {
+    -      // Some datatypes can be memcopied, allowing us to save two copies
+    -      // (AsProtoTensorContent and SerializeToArray).
+    -      total_size += DMAHelper::buffer(&component)->size();
+    +      const TensorBuffer* buffer = DMAHelper::buffer(&component);
+    +      if (buffer) {
+    +        total_size += buffer->size();
+    +      }
+         } else {
+           non_memcpy_components.emplace_back();
+           component.AsProtoTensorContent(&non_memcpy_components.back());
+    @@ -53,8 +54,10 @@ Status CompressElement(const std::vector<Tensor>& element,
+         component.shape().AsProto(metadata->mutable_tensor_shape());
+         if (DataTypeCanUseMemcpy(component.dtype())) {
+           const TensorBuffer* buffer = DMAHelper::buffer(&component);
+    -      memcpy(position, buffer->data(), buffer->size());
+    -      metadata->set_tensor_size_bytes(buffer->size());
+    +      if (buffer) {
+    +        memcpy(position, buffer->data(), buffer->size());
+    +        metadata->set_tensor_size_bytes(buffer->size());
+    +      }
+         } else {
+           TensorProto& proto = non_memcpy_components[non_memcpy_component_index++];
+           proto.SerializeToArray(position, proto.ByteSizeLong());
+    @@ -94,8 +97,13 @@ Status UncompressElement(const CompressedElement& compressed,
+         if (DataTypeCanUseMemcpy(metadata.dtype())) {
+           out->emplace_back(metadata.dtype(), metadata.tensor_shape());
+           TensorBuffer* buffer = DMAHelper::buffer(&out->back());
+    -      iov[i].iov_base = buffer->data();
+    -      iov[i].iov_len = buffer->size();
+    +      if (buffer) {
+    +        iov[i].iov_base = buffer->data();
+    +        iov[i].iov_len = buffer->size();
+    +      } else {
+    +        iov[i].iov_base = nullptr;
+    +        iov[i].iov_len = 0;
+    +      }
+         } else {
+           // Allocate an empty Tensor. We will fill it out later after
+           // uncompressing into the tensor_proto_str.
+  notes: >
+    Backported the null TensorBuffer guards in CompressElement and UncompressElement; hunk validation against the target base succeeded.
+```
+
+tokens used
+input: 662
+cache read: 13,824
+cache write: 0
+output: 637
+reasoning output: 0

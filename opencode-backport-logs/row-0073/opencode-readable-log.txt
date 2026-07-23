@@ -1,0 +1,381 @@
+I’ll locate the target implementation of `SparseBincountOp`, compare the surrounding code to the supplied hunk, validate the minimal hunk against the target commit, then apply only that source change.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target SparseBincountOp context",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Validate minimal backport hunk",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "content": "Apply source change",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "content": "Capture final diff",
+      "status": "pending",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target SparseBincountOp context",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Validate minimal backport hunk",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "content": "Apply source change",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "content": "Capture final diff",
+    "status": "pending",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 3,792
+cache read: 4,608
+cache write: 0
+output: 133
+reasoning output: 0
+
+tool: viewcode
+{
+  "ref": "9ce6ba46ac6f29413afdd0dfb6faa803acb2b747",
+  "path": "tensorflow/core/kernels/bincount_op.cc",
+  "startline": 360,
+  "endline": 440
+}
+Here are lines 360 through 440.
+
+          ctx, ctx->allocate_output(0, TensorShape({num_rows, size}), &out_t));
+      const auto out = out_t->matrix<T>();
+      fill(ctx->eigen_device<Device>(), out_t->flat<T>());
+      const auto indices_mat = indices.matrix<int64>();
+      for (int64 i = 0; i < indices_mat.dimension(0); ++i) {
+        const int64 batch = indices_mat(i, 0);
+        const Tidx bin = values(i);
+        if (bin < size) {
+          if (binary_output_) {
+            out(batch, bin) = T(1);
+          } else {
+            if (weights_size) {
+              out(batch, bin) += weights(i);
+            } else {
+              out(batch, bin) += T(1);
+            }
+          }
+        }
+      }
+    }
+  }
+
+ private:
+  bool binary_output_;
+};
+
+#define REGISTER_KERNELS(Tidx, T)                            \
+  REGISTER_KERNEL_BUILDER(Name("SparseBincount")             \
+                              .Device(DEVICE_CPU)            \
+                              .TypeConstraint<T>("T")        \
+                              .TypeConstraint<Tidx>("Tidx"), \
+                          SparseBincountOp<CPUDevice, Tidx, T>);
+#define REGISTER_CPU_KERNELS(T) \
+  REGISTER_KERNELS(int32, T);   \
+  REGISTER_KERNELS(int64, T);
+
+TF_CALL_NUMBER_TYPES(REGISTER_CPU_KERNELS);
+#undef REGISTER_CPU_KERNELS
+#undef REGISTER_KERNELS
+
+template <typename Device, typename Tidx, typename T>
+class RaggedBincountOp : public OpKernel {
+ public:
+  explicit RaggedBincountOp(OpKernelConstruction* ctx) : OpKernel(ctx) {
+    OP_REQUIRES_OK(ctx, ctx->GetAttr("binary_output", &binary_output_));
+  }
+
+  void Compute(OpKernelContext* ctx) override {
+    const auto splits = ctx->input(0).flat<int64>();
+    const auto values = ctx->input(1).flat<Tidx>();
+    const Tensor& size_t = ctx->input(2);
+    const auto weights = ctx->input(3).flat<T>();
+    const int64 weights_size = weights.size();
+
+    Tidx size = size_t.scalar<Tidx>()();
+    OP_REQUIRES(
+        ctx, size >= 0,
+        errors::InvalidArgument("size (", size, ") must be non-negative"));
+
+    int num_rows = splits.size() - 1;
+    int num_values = values.size();
+    int batch_idx = 0;
+
+    OP_REQUIRES(ctx, splits(0) == 0,
+                errors::InvalidArgument("Splits must start with 0, not with ",
+                                        splits(0)));
+
+    OP_REQUIRES(ctx, splits(num_rows) == num_values,
+                errors::InvalidArgument(
+                    "Splits must end with the number of values, got ",
+                    splits(num_rows), " instead of ", num_values));
+
+    Tensor* out_t;
+    OP_REQUIRES_OK(
+        ctx, ctx->allocate_output(0, TensorShape({num_rows, size}), &out_t));
+    functor::SetZeroFunctor<Device, T> fill;
+    fill(ctx->eigen_device<Device>(), out_t->flat<T>());
+    const auto out = out_t->matrix<T>();
+
+    for (int idx = 0; idx < num_values; ++idx) {
+      while (idx >= splits(batch_idx)) {
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: locate_symbol
+{
+  "ref": "9ce6ba46ac6f29413afdd0dfb6faa803acb2b747",
+  "symbol": "SparseBincountOp"
+}
+tensorflow/core/kernels/bincount_op.cc:320
+tensorflow/core/kernels/bincount_op.cc:322
+tensorflow/core/kernels/bincount_op.cc:391
+
+tokens used
+input: 985
+cache read: 7,680
+cache write: 0
+output: 123
+reasoning output: 0
+
+The equivalent target code is in `tensorflow/core/kernels/bincount_op.cc` with the same loop structure, but it uses TensorFlow’s `int64` typedef rather than `int64_t`. I’ll validate a context-adjusted hunk that adds the same bounds checks at that location.
+
+tool: validate
+{
+  "ref": "9ce6ba46ac6f29413afdd0dfb6faa803acb2b747",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/bincount_op.cc b/tensorflow/core/kernels/bincount_op.cc\n--- a/tensorflow/core/kernels/bincount_op.cc\n+++ b/tensorflow/core/kernels/bincount_op.cc\n@@ -363,6 +363,16 @@ class SparseBincountOp : public OpKernel {\n       for (int64 i = 0; i < indices_mat.dimension(0); ++i) {\n         const int64 batch = indices_mat(i, 0);\n         const Tidx bin = values(i);\n+        OP_REQUIRES(\n+            ctx, batch < out.dimension(0),\n+            errors::InvalidArgument(\"Index out of bound. `batch` (\", batch,\n+                                    \") must be less than the dimension size (\",\n+                                    out.dimension(0), \").\"));\n+        OP_REQUIRES(\n+            ctx, bin < out.dimension(1),\n+            errors::InvalidArgument(\"Index out ouf bound. `bin` (\", bin,\n+                                    \") must be less then the dimension size (\",\n+                                    out.dimension(1), \").\"));\n         if (bin < size) {\n           if (binary_output_) {\n             out(batch, bin) = T(1);\n"
+}
+Patch applied successfully
+
+tokens used
+input: 1,911
+cache read: 7,680
+cache write: 0
+output: 407
+reasoning output: 176
+
+The hunk applies cleanly to the target base. I’ll now apply the same minimal source edit in the working tree.
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/kernels/bincount_op.cc\n@@\n       for (int64 i = 0; i < indices_mat.dimension(0); ++i) {\n         const int64 batch = indices_mat(i, 0);\n         const Tidx bin = values(i);\n+        OP_REQUIRES(\n+            ctx, batch < out.dimension(0),\n+            errors::InvalidArgument(\"Index out of bound. `batch` (\", batch,\n+                                    \") must be less than the dimension size (\",\n+                                    out.dimension(0), \").\"));\n+        OP_REQUIRES(\n+            ctx, bin < out.dimension(1),\n+            errors::InvalidArgument(\"Index out ouf bound. `bin` (\", bin,\n+                                    \") must be less then the dimension size (\",\n+                                    out.dimension(1), \").\"));\n         if (bin < size) {\n           if (binary_output_) {\n             out(batch, bin) = T(1);\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/kernels/bincount_op.cc
+
+tokens used
+input: 1,483
+cache read: 8,704
+cache write: 0
+output: 287
+reasoning output: 0
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target SparseBincountOp context",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate minimal backport hunk",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Apply source change",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Capture final diff",
+      "status": "in_progress",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target SparseBincountOp context",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate minimal backport hunk",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Apply source change",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Capture final diff",
+    "status": "in_progress",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 774
+cache read: 9,728
+cache write: 0
+output: 85
+reasoning output: 0
+
+The source change is applied. I’ll capture the working diff for the final YAML block.
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/kernels/bincount_op.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0073-9ce6ba46ac6f",
+  "timeout": 120000
+}
+warning: in the working copy of 'tensorflow/core/kernels/bincount_op.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/kernels/bincount_op.cc b/tensorflow/core/kernels/bincount_op.cc
+index 258266ab29..6299ca3e3b 100644
+--- a/tensorflow/core/kernels/bincount_op.cc
++++ b/tensorflow/core/kernels/bincount_op.cc
+@@ -364,6 +364,16 @@ class SparseBincountOp : public OpKernel {
+       for (int64 i = 0; i < indices_mat.dimension(0); ++i) {
+         const int64 batch = indices_mat(i, 0);
+         const Tidx bin = values(i);
++        OP_REQUIRES(
++            ctx, batch < out.dimension(0),
++            errors::InvalidArgument("Index out of bound. `batch` (", batch,
++                                    ") must be less than the dimension size (",
++                                    out.dimension(0), ")."));
++        OP_REQUIRES(
++            ctx, bin < out.dimension(1),
++            errors::InvalidArgument("Index out ouf bound. `bin` (", bin,
++                                    ") must be less then the dimension size (",
++                                    out.dimension(1), ")."));
+         if (bin < size) {
+           if (binary_output_) {
+             out(batch, bin) = T(1);
+
+tokens used
+input: 991
+cache read: 9,728
+cache write: 0
+output: 102
+reasoning output: 0
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target SparseBincountOp context",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate minimal backport hunk",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Apply source change",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Capture final diff",
+      "status": "completed",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target SparseBincountOp context",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate minimal backport hunk",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Apply source change",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Capture final diff",
+    "status": "completed",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 1,418
+cache read: 9,728
+cache write: 0
+output: 84
+reasoning output: 0
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/kernels/bincount_op.cc b/tensorflow/core/kernels/bincount_op.cc
+    index 258266ab29..6299ca3e3b 100644
+    --- a/tensorflow/core/kernels/bincount_op.cc
+    +++ b/tensorflow/core/kernels/bincount_op.cc
+    @@ -364,6 +364,16 @@ class SparseBincountOp : public OpKernel {
+           for (int64 i = 0; i < indices_mat.dimension(0); ++i) {
+             const int64 batch = indices_mat(i, 0);
+             const Tidx bin = values(i);
+    +        OP_REQUIRES(
+    +            ctx, batch < out.dimension(0),
+    +            errors::InvalidArgument("Index out of bound. `batch` (", batch,
+    +                                    ") must be less than the dimension size (",
+    +                                    out.dimension(0), ")."));
+    +        OP_REQUIRES(
+    +            ctx, bin < out.dimension(1),
+    +            errors::InvalidArgument("Index out ouf bound. `bin` (", bin,
+    +                                    ") must be less then the dimension size (",
+    +                                    out.dimension(1), ")."));
+             if (bin < size) {
+               if (binary_output_) {
+                 out(batch, bin) = T(1);
+  notes: >
+    Added the SparseBincount batch and bin upper-bound checks matching the supplied security fix, adjusted to the target file context.
+```
+
+tokens used
+input: 609
+cache read: 10,752
+cache write: 0
+output: 349
+reasoning output: 0

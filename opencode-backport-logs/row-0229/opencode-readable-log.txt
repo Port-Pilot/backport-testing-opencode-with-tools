@@ -1,0 +1,670 @@
+I’ll inspect the target-side op registrations and tests, then apply the minimal shape-function validation matching the newer security patch.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Locate equivalent QuantizeAndDequantize shape functions and tests in target release",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Apply minimal axis validation backport",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "content": "Validate patch context and inspect final diff",
+      "status": "pending",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Locate equivalent QuantizeAndDequantize shape functions and tests in target release",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Apply minimal axis validation backport",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "content": "Validate patch context and inspect final diff",
+    "status": "pending",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 4,507
+cache read: 4,608
+cache write: 0
+output: 113
+reasoning output: 0
+
+tool: grep
+{
+  "pattern": "REGISTER_OP\\(\"QuantizeAndDequantizeV[234]",
+  "path": "tensorflow/core/ops",
+  "include": "array_ops.cc"
+}
+Found 4 matches
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0229-9ce6ba46ac6f\tensorflow\core\ops\array_ops.cc:
+  Line 2779: REGISTER_OP("QuantizeAndDequantizeV2")
+
+  Line 2811: REGISTER_OP("QuantizeAndDequantizeV4")
+
+  Line 2843: REGISTER_OP("QuantizeAndDequantizeV4Grad")
+
+  Line 2875: REGISTER_OP("QuantizeAndDequantizeV3")
+
+tool: grep
+{
+  "pattern": "QuantizeAndDequantizeV2_ShapeFn|QuantizeAndDequantizeV4|QuantizeAndDequantizeV3",
+  "path": "tensorflow/core/ops",
+  "include": "array_ops_test.cc"
+}
+Found 1 matches
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0229-9ce6ba46ac6f\tensorflow\core\ops\array_ops_test.cc:
+  Line 1345: TEST(ArrayOpsTest, QuantizeAndDequantizeV2_ShapeFn) {
+
+tokens used
+input: 640
+cache read: 8,704
+cache write: 0
+output: 116
+reasoning output: 0
+
+tool: read
+{
+  "filePath": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0229-9ce6ba46ac6f\\tensorflow\\core\\ops\\array_ops_test.cc",
+  "offset": 1330,
+  "limit": 70
+}
+<path>C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0229-9ce6ba46ac6f\tensorflow\core\ops\array_ops_test.cc</path>
+<type>file</type>
+<content>
+1330:   set_op({1, 2, 2, 1}, {1, 1, 1, 1}, {1, 2, 2, 1}, "VALID");
+1331:   INFER_OK(op, "[1,7,7,2]", "[d0_0,5,5,8]");
+1332:   // With ksizes as 1x1, the output depth is now exactly the last value of the
+1333:   // input and output spatial is reduced as well.
+1334:   set_op({1, 1, 1, 1}, {1, 1, 1, 1}, {1, 2, 2, 1}, "VALID");
+1335:   INFER_OK(op, "[1,7,7,2]", "[d0_0,7,7,d0_3]");
+1336: 
+1337:   // Bad ksize rank
+1338:   set_op({1, 2, 2, 1, 1}, {1, 1, 1, 1}, {1, 2, 2, 1}, "VALID");
+1339:   INFER_ERROR(
+1340:       "ExtractImagePatches requires the ksizes attribute to contain 4 values, "
+1341:       "but got: 5",
+1342:       op, "[1,7,7,2]");
+1343: }
+1344: 
+1345: TEST(ArrayOpsTest, QuantizeAndDequantizeV2_ShapeFn) {
+1346:   ShapeInferenceTestOp op("QuantizeAndDequantizeV2");
+1347:   op.input_tensors.resize(3);
+1348:   TF_ASSERT_OK(NodeDefBuilder("test", "QuantizeAndDequantizeV2")
+1349:                    .Input("input", 0, DT_FLOAT)
+1350:                    .Input("input_min", 1, DT_FLOAT)
+1351:                    .Input("input_max", 2, DT_FLOAT)
+1352:                    .Attr("signed_input", true)
+1353:                    .Attr("num_bits", 8)
+1354:                    .Attr("range_given", false)
+1355:                    .Attr("narrow_range", false)
+1356:                    .Attr("axis", -1)
+1357:                    .Finalize(&op.node_def));
+1358:   INFER_OK(op, "?;?;?", "in0");
+1359:   INFER_OK(op, "[];?;?", "in0");
+1360:   INFER_OK(op, "[1,2,?,4,5];?;?", "in0");
+1361: 
+1362:   INFER_ERROR("Shape must be rank 0 but is rank 1", op, "[1,2,?,4,5];[1];[]");
+1363:   INFER_ERROR("Shapes must be equal rank, but are 1 and 0", op,
+1364:               "[1,2,?,4,5];[];[1]");
+1365:   INFER_ERROR("Shape must be rank 0 but is rank 1", op, "[1,2,?,4,5];[1];[1]");
+1366: }
+1367: 
+1368: TEST(ArrayOpsTest, SpaceToBatch_ShapeFn) {
+1369:   ShapeInferenceTestOp op("SpaceToBatch");
+1370:   op.input_tensors.resize(2);
+1371:   TF_ASSERT_OK(NodeDefBuilder("test", "SpaceToBatch")
+1372:                    .Input("input", 0, DT_FLOAT)
+1373:                    .Input("paddings", 1, DT_INT32)
+1374:                    .Attr("block_size", 2)
+1375:                    .Finalize(&op.node_def));
+1376: 
+1377:   // Paddings not known, but batch size can be computed.
+1378:   INFER_OK(op, "[1,10,10,3];[2,2]", "[4,?,?,d0_3]");
+1379: 
+1380:   // Unknown paddings means width and height.
+1381:   INFER_OK(op, "[1,10,10,3];?", "[4,?,?,d0_3]");
+1382: 
+1383:   // Paddings not correct shape
+1384:   INFER_ERROR("rank", op, "[1,10,10,3];[4]");
+1385:   INFER_ERROR("3 and 2", op, "[1,10,10,3];[2,3]");
+1386: 
+1387:   Tensor paddings = test::AsTensor<int32>({4, 2, 2, 4}, {{2, 2}});
+1388:   op.input_tensors[1] = &paddings;
+1389:   INFER_OK(op, "[1,10,10,3];[2,2]", "[4,8,8,d0_3]");
+1390:   paddings = test::AsTensor<int64>({4, 2, 2, 4}, {{2, 2}});
+1391:   INFER_OK(op, "[1,10,10,3];[2,2]", "[4,8,8,d0_3]");
+1392: 
+1393:   // Bad paddings values
+1394:   paddings = test::AsTensor<int32>({1, 2, 3, 4}, {{2, 2}});
+1395:   op.input_tensors[1] = &paddings;
+1396:   INFER_ERROR("Dimension size must be evenly divisible by 2 but is 13", op,
+1397:               "[1,10,10,3];[2,2]");
+1398: 
+1399:   // Negative paddings
+
+(Showing lines 1330-1399 of 1856. Use offset=1400 to continue.)
+</content>
+
+tool: read
+{
+  "filePath": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0229-9ce6ba46ac6f\\tensorflow\\core\\ops\\array_ops.cc",
+  "offset": 2760,
+  "limit": 140
+}
+<path>C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0229-9ce6ba46ac6f\tensorflow\core\ops\array_ops.cc</path>
+<type>file</type>
+<content>
+2760:       TF_RETURN_IF_ERROR(c->Concatenate(front, back, &out));
+2761:       c->set_output(0, out);
+2762:       return Status::OK();
+2763:     });
+2764: 
+2765: // EXPERIMENTAL. DO NOT USE OR DEPEND ON THIS YET.
+2766: REGISTER_OP("QuantizeAndDequantize")
+2767:     .Input("input: T")
+2768:     .Attr("signed_input: bool = true")
+2769:     .Attr("num_bits: int = 8")
+2770:     .Attr("range_given: bool = false")
+2771:     .Attr("input_min: float = 0")
+2772:     .Attr("input_max: float = 0")
+2773:     .Output("output: T")
+2774:     .Attr("T: {bfloat16, half, float, double}")
+2775:     .SetShapeFn(shape_inference::UnchangedShape)
+2776:     .Deprecated(22, "Replaced by QuantizeAndDequantizeV2");
+2777: 
+2778: // TODO(suharshs): Deprecate QuantizeAndDequantizeV2.
+2779: REGISTER_OP("QuantizeAndDequantizeV2")
+2780:     .Input("input: T")
+2781:     .Input("input_min: T")
+2782:     .Input("input_max: T")
+2783:     .Attr("signed_input: bool = true")
+2784:     .Attr("num_bits: int = 8")
+2785:     .Attr("range_given: bool = false")
+2786:     .Output("output: T")
+2787:     .Attr("T: {bfloat16, half, float, double}")
+2788:     .Attr(
+2789:         "round_mode: {'HALF_TO_EVEN', 'HALF_UP'} = "
+2790:         "'HALF_TO_EVEN'")
+2791:     .Attr("narrow_range: bool = false")
+2792:     .Attr("axis: int = -1")
+2793:     .SetShapeFn([](InferenceContext* c) {
+2794:       int axis;
+2795:       TF_RETURN_IF_ERROR(c->GetAttr("axis", &axis));
+2796:       const int minmax_rank = (axis == -1) ? 0 : 1;
+2797:       ShapeHandle minmax;
+2798:       TF_RETURN_IF_ERROR(c->WithRank(c->input(1), minmax_rank, &minmax));
+2799:       TF_RETURN_IF_ERROR(c->Merge(c->input(2), minmax, &minmax));
+2800:       if (axis != -1) {
+2801:         ShapeHandle input;
+2802:         TF_RETURN_IF_ERROR(c->WithRankAtLeast(c->input(0), axis + 1, &input));
+2803:         DimensionHandle depth;
+2804:         TF_RETURN_IF_ERROR(
+2805:             c->Merge(c->Dim(minmax, 0), c->Dim(input, axis), &depth));
+2806:       }
+2807:       c->set_output(0, c->input(0));
+2808:       return Status::OK();
+2809:     });
+2810: 
+2811: REGISTER_OP("QuantizeAndDequantizeV4")
+2812:     .Input("input: T")
+2813:     .Input("input_min: T")
+2814:     .Input("input_max: T")
+2815:     .Attr("signed_input: bool = true")
+2816:     .Attr("num_bits: int = 8")
+2817:     .Attr("range_given: bool = false")
+2818:     .Output("output: T")
+2819:     .Attr("T: {bfloat16, half, float, double}")
+2820:     .Attr(
+2821:         "round_mode: {'HALF_TO_EVEN', 'HALF_UP'} = "
+2822:         "'HALF_TO_EVEN'")
+2823:     .Attr("narrow_range: bool = false")
+2824:     .Attr("axis: int = -1")
+2825:     .SetShapeFn([](InferenceContext* c) {
+2826:       int axis;
+2827:       TF_RETURN_IF_ERROR(c->GetAttr("axis", &axis));
+2828:       const int minmax_rank = (axis == -1) ? 0 : 1;
+2829:       ShapeHandle minmax;
+2830:       TF_RETURN_IF_ERROR(c->WithRank(c->input(1), minmax_rank, &minmax));
+2831:       TF_RETURN_IF_ERROR(c->Merge(c->input(2), minmax, &minmax));
+2832:       if (axis != -1) {
+2833:         ShapeHandle input;
+2834:         TF_RETURN_IF_ERROR(c->WithRankAtLeast(c->input(0), axis + 1, &input));
+2835:         DimensionHandle depth;
+2836:         TF_RETURN_IF_ERROR(
+2837:             c->Merge(c->Dim(minmax, 0), c->Dim(input, axis), &depth));
+2838:       }
+2839:       c->set_output(0, c->input(0));
+2840:       return Status::OK();
+2841:     });
+2842: 
+2843: REGISTER_OP("QuantizeAndDequantizeV4Grad")
+2844:     .Input("gradients: T")
+2845:     .Input("input: T")
+2846:     .Input("input_min: T")
+2847:     .Input("input_max: T")
+2848:     .Output("input_backprop: T")
+2849:     .Output("input_min_backprop: T")
+2850:     .Output("input_max_backprop: T")
+2851:     .Attr("T: {bfloat16, half, float, double}")
+2852:     .Attr("axis: int = -1")
+2853:     .SetShapeFn([](InferenceContext* c) {
+2854:       int axis;
+2855:       TF_RETURN_IF_ERROR(c->GetAttr("axis", &axis));
+2856:       const int minmax_rank = (axis == -1) ? 0 : 1;
+2857:       ShapeHandle minmax;
+2858:       TF_RETURN_IF_ERROR(c->WithRank(c->input(2), minmax_rank, &minmax));
+2859:       TF_RETURN_IF_ERROR(c->Merge(c->input(3), minmax, &minmax));
+2860:       if (axis != -1) {
+2861:         ShapeHandle input;
+2862:         TF_RETURN_IF_ERROR(c->WithRankAtLeast(c->input(0), axis + 1, &input));
+2863:         DimensionHandle depth;
+2864:         TF_RETURN_IF_ERROR(
+2865:             c->Merge(c->Dim(minmax, 0), c->Dim(input, axis), &depth));
+2866:       }
+2867:       ShapeHandle inputs;
+2868:       TF_RETURN_IF_ERROR(c->Merge(c->input(0), c->input(1), &inputs));
+2869:       c->set_output(0, inputs);
+2870:       c->set_output(1, minmax);
+2871:       c->set_output(2, minmax);
+2872:       return Status::OK();
+2873:     });
+2874: 
+2875: REGISTER_OP("QuantizeAndDequantizeV3")
+2876:     .Input("input: T")
+2877:     .Input("input_min: T")
+2878:     .Input("input_max: T")
+2879:     .Input("num_bits: int32")
+2880:     .Attr("signed_input: bool = true")
+2881:     .Attr("range_given: bool = true")
+2882:     .Output("output: T")
+2883:     .Attr("T: {bfloat16, half, float, double}")
+2884:     .Attr("narrow_range: bool = false")
+2885:     .Attr("axis: int = -1")
+2886:     .SetShapeFn([](InferenceContext* c) {
+2887:       int axis;
+2888:       TF_RETURN_IF_ERROR(c->GetAttr("axis", &axis));
+2889:       const int minmax_rank = (axis == -1) ? 0 : 1;
+2890:       ShapeHandle minmax;
+2891:       TF_RETURN_IF_ERROR(c->WithRank(c->input(1), minmax_rank, &minmax));
+2892:       TF_RETURN_IF_ERROR(c->Merge(c->input(2), minmax, &minmax));
+2893:       if (axis != -1) {
+2894:         ShapeHandle input;
+2895:         TF_RETURN_IF_ERROR(c->WithRankAtLeast(c->input(0), axis + 1, &input));
+2896:         DimensionHandle depth;
+2897:         TF_RETURN_IF_ERROR(
+2898:             c->Merge(c->Dim(minmax, 0), c->Dim(input, axis), &depth));
+2899:       }
+
+(Showing lines 2760-2899 of 3358. Use offset=2900 to continue.)
+</content>
+
+tokens used
+input: 989
+cache read: 8,704
+cache write: 0
+output: 163
+reasoning output: 0
+
+The target release has the same four shape functions and the V2 shape inference test, with matching vulnerable `axis != -1` checks. I’m applying the same lower-bound validation at those locations plus the targeted regression test.
+
+tool: read
+{
+  "filePath": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0229-9ce6ba46ac6f\\tensorflow\\core\\ops\\array_ops.cc",
+  "offset": 2890,
+  "limit": 25
+}
+<path>C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0229-9ce6ba46ac6f\tensorflow\core\ops\array_ops.cc</path>
+<type>file</type>
+<content>
+2890:       ShapeHandle minmax;
+2891:       TF_RETURN_IF_ERROR(c->WithRank(c->input(1), minmax_rank, &minmax));
+2892:       TF_RETURN_IF_ERROR(c->Merge(c->input(2), minmax, &minmax));
+2893:       if (axis != -1) {
+2894:         ShapeHandle input;
+2895:         TF_RETURN_IF_ERROR(c->WithRankAtLeast(c->input(0), axis + 1, &input));
+2896:         DimensionHandle depth;
+2897:         TF_RETURN_IF_ERROR(
+2898:             c->Merge(c->Dim(minmax, 0), c->Dim(input, axis), &depth));
+2899:       }
+2900:       ShapeHandle unused;
+2901:       TF_RETURN_IF_ERROR(c->WithRank(c->input(3), 0, &unused));
+2902:       c->set_output(0, c->input(0));
+2903:       return Status::OK();
+2904:     });
+2905: 
+2906: REGISTER_OP("QuantizeV2")
+2907:     .Input("input: float")
+2908:     .Input("min_range: float")
+2909:     .Input("max_range: float")
+2910:     .Output("output: T")
+2911:     .Output("output_min: float")
+2912:     .Output("output_max: float")
+2913:     .Attr("T: quantizedtype")
+2914:     .Attr("mode: {'MIN_COMBINED', 'MIN_FIRST', 'SCALED'} = 'MIN_COMBINED'")
+
+(Showing lines 2890-2914 of 3358. Use offset=2915 to continue.)
+</content>
+
+tokens used
+input: 4,590
+cache read: 8,704
+cache write: 0
+output: 129
+reasoning output: 23
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/ops/array_ops.cc\n@@\n-      if (axis != -1) {\n+      if (axis < -1) {\n+        return errors::InvalidArgument(\"axis should be at least -1, got \",\n+                                       axis);\n+      } else if (axis != -1) {\n         ShapeHandle input;\n         TF_RETURN_IF_ERROR(c->WithRankAtLeast(c->input(0), axis + 1, &input));\n         DimensionHandle depth;\n@@\n-      if (axis != -1) {\n+      if (axis < -1) {\n+        return errors::InvalidArgument(\"axis should be at least -1, got \",\n+                                       axis);\n+      } else if (axis != -1) {\n         ShapeHandle input;\n         TF_RETURN_IF_ERROR(c->WithRankAtLeast(c->input(0), axis + 1, &input));\n         DimensionHandle depth;\n@@\n-      if (axis != -1) {\n+      if (axis < -1) {\n+        return errors::InvalidArgument(\"axis should be at least -1, got \",\n+                                       axis);\n+      } else if (axis != -1) {\n         ShapeHandle input;\n         TF_RETURN_IF_ERROR(c->WithRankAtLeast(c->input(0), axis + 1, &input));\n         DimensionHandle depth;\n@@\n-      if (axis != -1) {\n+      if (axis < -1) {\n+        return errors::InvalidArgument(\"axis should be at least -1, got \",\n+                                       axis);\n+      } else if (axis != -1) {\n         ShapeHandle input;\n         TF_RETURN_IF_ERROR(c->WithRankAtLeast(c->input(0), axis + 1, &input));\n         DimensionHandle depth;\n*** Update File: tensorflow/core/ops/array_ops_test.cc\n@@\n   INFER_ERROR(\"Shapes must be equal rank, but are 1 and 0\", op,\n               \"[1,2,?,4,5];[];[1]\");\n   INFER_ERROR(\"Shape must be rank 0 but is rank 1\", op, \"[1,2,?,4,5];[1];[1]\");\n+  (*op.node_def.mutable_attr())[\"axis\"].set_i(-2);\n+  INFER_ERROR(\"axis should be at least -1, got -2\", op, \"?;?;?\");\n }\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/ops/array_ops.cc
+M tensorflow/core/ops/array_ops_test.cc
+
+tokens used
+input: 1,094
+cache read: 12,800
+cache write: 0
+output: 598
+reasoning output: 0
+
+The source changes are in place. I’ll validate the generated patch against the target base in hunk mode and inspect the final diff.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Locate equivalent QuantizeAndDequantize shape functions and tests in target release",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Apply minimal axis validation backport",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate patch context and inspect final diff",
+      "status": "in_progress",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Locate equivalent QuantizeAndDequantize shape functions and tests in target release",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Apply minimal axis validation backport",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate patch context and inspect final diff",
+    "status": "in_progress",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 9,922
+cache read: 4,608
+cache write: 0
+output: 116
+reasoning output: 0
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/ops/array_ops.cc tensorflow/core/ops/array_ops_test.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0229-9ce6ba46ac6f",
+  "timeout": 120000
+}
+warning: in the working copy of 'tensorflow/core/ops/array_ops.cc', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'tensorflow/core/ops/array_ops_test.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/ops/array_ops.cc b/tensorflow/core/ops/array_ops.cc
+index 2806f1decd..826499a353 100644
+--- a/tensorflow/core/ops/array_ops.cc
++++ b/tensorflow/core/ops/array_ops.cc
+@@ -2797,7 +2797,10 @@ REGISTER_OP("QuantizeAndDequantizeV2")
+       ShapeHandle minmax;
+       TF_RETURN_IF_ERROR(c->WithRank(c->input(1), minmax_rank, &minmax));
+       TF_RETURN_IF_ERROR(c->Merge(c->input(2), minmax, &minmax));
+-      if (axis != -1) {
++      if (axis < -1) {
++        return errors::InvalidArgument("axis should be at least -1, got ",
++                                       axis);
++      } else if (axis != -1) {
+         ShapeHandle input;
+         TF_RETURN_IF_ERROR(c->WithRankAtLeast(c->input(0), axis + 1, &input));
+         DimensionHandle depth;
+@@ -2829,7 +2832,10 @@ REGISTER_OP("QuantizeAndDequantizeV4")
+       ShapeHandle minmax;
+       TF_RETURN_IF_ERROR(c->WithRank(c->input(1), minmax_rank, &minmax));
+       TF_RETURN_IF_ERROR(c->Merge(c->input(2), minmax, &minmax));
+-      if (axis != -1) {
++      if (axis < -1) {
++        return errors::InvalidArgument("axis should be at least -1, got ",
++                                       axis);
++      } else if (axis != -1) {
+         ShapeHandle input;
+         TF_RETURN_IF_ERROR(c->WithRankAtLeast(c->input(0), axis + 1, &input));
+         DimensionHandle depth;
+@@ -2857,7 +2863,10 @@ REGISTER_OP("QuantizeAndDequantizeV4Grad")
+       ShapeHandle minmax;
+       TF_RETURN_IF_ERROR(c->WithRank(c->input(2), minmax_rank, &minmax));
+       TF_RETURN_IF_ERROR(c->Merge(c->input(3), minmax, &minmax));
+-      if (axis != -1) {
++      if (axis < -1) {
++        return errors::InvalidArgument("axis should be at least -1, got ",
++                                       axis);
++      } else if (axis != -1) {
+         ShapeHandle input;
+         TF_RETURN_IF_ERROR(c->WithRankAtLeast(c->input(0), axis + 1, &input));
+         DimensionHandle depth;
+@@ -2890,7 +2899,10 @@ REGISTER_OP("QuantizeAndDequantizeV3")
+       ShapeHandle minmax;
+       TF_RETURN_IF_ERROR(c->WithRank(c->input(1), minmax_rank, &minmax));
+       TF_RETURN_IF_ERROR(c->Merge(c->input(2), minmax, &minmax));
+-      if (axis != -1) {
++      if (axis < -1) {
++        return errors::InvalidArgument("axis should be at least -1, got ",
++                                       axis);
++      } else if (axis != -1) {
+         ShapeHandle input;
+         TF_RETURN_IF_ERROR(c->WithRankAtLeast(c->input(0), axis + 1, &input));
+         DimensionHandle depth;
+diff --git a/tensorflow/core/ops/array_ops_test.cc b/tensorflow/core/ops/array_ops_test.cc
+index 412c926d38..2fe45474bf 100644
+--- a/tensorflow/core/ops/array_ops_test.cc
++++ b/tensorflow/core/ops/array_ops_test.cc
+@@ -1363,6 +1363,8 @@ TEST(ArrayOpsTest, QuantizeAndDequantizeV2_ShapeFn) {
+   INFER_ERROR("Shapes must be equal rank, but are 1 and 0", op,
+               "[1,2,?,4,5];[];[1]");
+   INFER_ERROR("Shape must be rank 0 but is rank 1", op, "[1,2,?,4,5];[1];[1]");
++  (*op.node_def.mutable_attr())["axis"].set_i(-2);
++  INFER_ERROR("axis should be at least -1, got -2", op, "?;?;?");
+ }
+ 
+ TEST(ArrayOpsTest, SpaceToBatch_ShapeFn) {
+
+tokens used
+input: 938
+cache read: 13,824
+cache write: 0
+output: 85
+reasoning output: 0
+
+tool: validate
+{
+  "ref": "9ce6ba46ac6f29413afdd0dfb6faa803acb2b747",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/ops/array_ops.cc b/tensorflow/core/ops/array_ops.cc\nindex 2806f1decd..826499a353 100644\n--- a/tensorflow/core/ops/array_ops.cc\n+++ b/tensorflow/core/ops/array_ops.cc\n@@ -2797,7 +2797,10 @@ REGISTER_OP(\"QuantizeAndDequantizeV2\")\n       ShapeHandle minmax;\n       TF_RETURN_IF_ERROR(c->WithRank(c->input(1), minmax_rank, &minmax));\n       TF_RETURN_IF_ERROR(c->Merge(c->input(2), minmax, &minmax));\n-      if (axis != -1) {\n+      if (axis < -1) {\n+        return errors::InvalidArgument(\"axis should be at least -1, got \",\n+                                       axis);\n+      } else if (axis != -1) {\n         ShapeHandle input;\n         TF_RETURN_IF_ERROR(c->WithRankAtLeast(c->input(0), axis + 1, &input));\n         DimensionHandle depth;\n@@ -2829,7 +2832,10 @@ REGISTER_OP(\"QuantizeAndDequantizeV4\")\n       ShapeHandle minmax;\n       TF_RETURN_IF_ERROR(c->WithRank(c->input(1), minmax_rank, &minmax));\n       TF_RETURN_IF_ERROR(c->Merge(c->input(2), minmax, &minmax));\n-      if (axis != -1) {\n+      if (axis < -1) {\n+        return errors::InvalidArgument(\"axis should be at least -1, got \",\n+                                       axis);\n+      } else if (axis != -1) {\n         ShapeHandle input;\n         TF_RETURN_IF_ERROR(c->WithRankAtLeast(c->input(0), axis + 1, &input));\n         DimensionHandle depth;\n@@ -2857,7 +2863,10 @@ REGISTER_OP(\"QuantizeAndDequantizeV4Grad\")\n       ShapeHandle minmax;\n       TF_RETURN_IF_ERROR(c->WithRank(c->input(2), minmax_rank, &minmax));\n       TF_RETURN_IF_ERROR(c->Merge(c->input(3), minmax, &minmax));\n-      if (axis != -1) {\n+      if (axis < -1) {\n+        return errors::InvalidArgument(\"axis should be at least -1, got \",\n+                                       axis);\n+      } else if (axis != -1) {\n         ShapeHandle input;\n         TF_RETURN_IF_ERROR(c->WithRankAtLeast(c->input(0), axis + 1, &input));\n         DimensionHandle depth;\n@@ -2890,7 +2899,10 @@ REGISTER_OP(\"QuantizeAndDequantizeV3\")\n       ShapeHandle minmax;\n       TF_RETURN_IF_ERROR(c->WithRank(c->input(1), minmax_rank, &minmax));\n       TF_RETURN_IF_ERROR(c->Merge(c->input(2), minmax, &minmax));\n-      if (axis != -1) {\n+      if (axis < -1) {\n+        return errors::InvalidArgument(\"axis should be at least -1, got \",\n+                                       axis);\n+      } else if (axis != -1) {\n         ShapeHandle input;\n         TF_RETURN_IF_ERROR(c->WithRankAtLeast(c->input(0), axis + 1, &input));\n         DimensionHandle depth;\ndiff --git a/tensorflow/core/ops/array_ops_test.cc b/tensorflow/core/ops/array_ops_test.cc\nindex 412c926d38..2fe45474bf 100644\n--- a/tensorflow/core/ops/array_ops_test.cc\n+++ b/tensorflow/core/ops/array_ops_test.cc\n@@ -1363,6 +1363,8 @@ TEST(ArrayOpsTest, QuantizeAndDequantizeV2_ShapeFn) {\n   INFER_ERROR(\"Shapes must be equal rank, but are 1 and 0\", op,\n               \"[1,2,?,4,5];[];[1]\");\n   INFER_ERROR(\"Shape must be rank 0 but is rank 1\", op, \"[1,2,?,4,5];[1];[1]\");\n+  (*op.node_def.mutable_attr())[\"axis\"].set_i(-2);\n+  INFER_ERROR(\"axis should be at least -1, got -2\", op, \"?;?;?\");\n }\n \n TEST(ArrayOpsTest, SpaceToBatch_ShapeFn) {\n"
+}
+Patch applied successfully
+
+tokens used
+input: 2,051
+cache read: 13,824
+cache write: 0
+output: 1,094
+reasoning output: 15
+
+Hunk validation succeeded against the target base. I’m checking status before finalizing.
+
+tool: bash
+{
+  "command": "git status --short",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0229-9ce6ba46ac6f",
+  "timeout": 120000
+}
+ M tensorflow/core/ops/array_ops.cc
+ M tensorflow/core/ops/array_ops_test.cc
+
+tokens used
+input: 3,173
+cache read: 13,824
+cache write: 0
+output: 93
+reasoning output: 0
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Locate equivalent QuantizeAndDequantize shape functions and tests in target release",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Apply minimal axis validation backport",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate patch context and inspect final diff",
+      "status": "completed",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Locate equivalent QuantizeAndDequantize shape functions and tests in target release",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Apply minimal axis validation backport",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate patch context and inspect final diff",
+    "status": "completed",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 226
+cache read: 16,896
+cache write: 0
+output: 81
+reasoning output: 0
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/ops/array_ops.cc b/tensorflow/core/ops/array_ops.cc
+    index 2806f1decd..826499a353 100644
+    --- a/tensorflow/core/ops/array_ops.cc
+    +++ b/tensorflow/core/ops/array_ops.cc
+    @@ -2797,7 +2797,10 @@ REGISTER_OP("QuantizeAndDequantizeV2")
+           ShapeHandle minmax;
+           TF_RETURN_IF_ERROR(c->WithRank(c->input(1), minmax_rank, &minmax));
+           TF_RETURN_IF_ERROR(c->Merge(c->input(2), minmax, &minmax));
+    -      if (axis != -1) {
+    +      if (axis < -1) {
+    +        return errors::InvalidArgument("axis should be at least -1, got ",
+    +                                       axis);
+    +      } else if (axis != -1) {
+             ShapeHandle input;
+             TF_RETURN_IF_ERROR(c->WithRankAtLeast(c->input(0), axis + 1, &input));
+             DimensionHandle depth;
+    @@ -2829,7 +2832,10 @@ REGISTER_OP("QuantizeAndDequantizeV4")
+           ShapeHandle minmax;
+           TF_RETURN_IF_ERROR(c->WithRank(c->input(1), minmax_rank, &minmax));
+           TF_RETURN_IF_ERROR(c->Merge(c->input(2), minmax, &minmax));
+    -      if (axis != -1) {
+    +      if (axis < -1) {
+    +        return errors::InvalidArgument("axis should be at least -1, got ",
+    +                                       axis);
+    +      } else if (axis != -1) {
+             ShapeHandle input;
+             TF_RETURN_IF_ERROR(c->WithRankAtLeast(c->input(0), axis + 1, &input));
+             DimensionHandle depth;
+    @@ -2857,7 +2863,10 @@ REGISTER_OP("QuantizeAndDequantizeV4Grad")
+           ShapeHandle minmax;
+           TF_RETURN_IF_ERROR(c->WithRank(c->input(2), minmax_rank, &minmax));
+           TF_RETURN_IF_ERROR(c->Merge(c->input(3), minmax, &minmax));
+    -      if (axis != -1) {
+    +      if (axis < -1) {
+    +        return errors::InvalidArgument("axis should be at least -1, got ",
+    +                                       axis);
+    +      } else if (axis != -1) {
+             ShapeHandle input;
+             TF_RETURN_IF_ERROR(c->WithRankAtLeast(c->input(0), axis + 1, &input));
+             DimensionHandle depth;
+    @@ -2890,7 +2899,10 @@ REGISTER_OP("QuantizeAndDequantizeV3")
+           ShapeHandle minmax;
+           TF_RETURN_IF_ERROR(c->WithRank(c->input(1), minmax_rank, &minmax));
+           TF_RETURN_IF_ERROR(c->Merge(c->input(2), minmax, &minmax));
+    -      if (axis != -1) {
+    +      if (axis < -1) {
+    +        return errors::InvalidArgument("axis should be at least -1, got ",
+    +                                       axis);
+    +      } else if (axis != -1) {
+             ShapeHandle input;
+             TF_RETURN_IF_ERROR(c->WithRankAtLeast(c->input(0), axis + 1, &input));
+             DimensionHandle depth;
+    diff --git a/tensorflow/core/ops/array_ops_test.cc b/tensorflow/core/ops/array_ops_test.cc
+    index 412c926d38..2fe45474bf 100644
+    --- a/tensorflow/core/ops/array_ops_test.cc
+    +++ b/tensorflow/core/ops/array_ops_test.cc
+    @@ -1363,6 +1363,8 @@ TEST(ArrayOpsTest, QuantizeAndDequantizeV2_ShapeFn) {
+       INFER_ERROR("Shapes must be equal rank, but are 1 and 0", op,
+                   "[1,2,?,4,5];[];[1]");
+       INFER_ERROR("Shape must be rank 0 but is rank 1", op, "[1,2,?,4,5];[1];[1]");
+    +  (*op.node_def.mutable_attr())["axis"].set_i(-2);
+    +  INFER_ERROR("axis should be at least -1, got -2", op, "?;?;?");
+     }
+     
+     TEST(ArrayOpsTest, SpaceToBatch_ShapeFn) {
+  notes: >
+    Added axis lower-bound validation to QuantizeAndDequantizeV2/V3/V4/V4Grad shape functions and the V2 regression test; hunk validation succeeded.
+```
+
+tokens used
+input: 422
+cache read: 16,896
+cache write: 0
+output: 1,056
+reasoning output: 23

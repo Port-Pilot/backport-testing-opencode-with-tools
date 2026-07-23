@@ -1,0 +1,553 @@
+I’ll locate the target implementations in the 2.3.4 checkout, compare the surrounding code with the provided 2.7.0 patch, then apply the minimal equivalent input validation changes only in the matching kernel file.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target boosted trees stats ops locations and surrounding code",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Validate candidate hunks against target base when context is uncertain",
+      "status": "pending",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply minimal backport changes",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "content": "Inspect final diff and report YAML result",
+      "status": "pending",
+      "priority": "high"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target boosted trees stats ops locations and surrounding code",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Validate candidate hunks against target base when context is uncertain",
+    "status": "pending",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply minimal backport changes",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "content": "Inspect final diff and report YAML result",
+    "status": "pending",
+    "priority": "high"
+  }
+]
+
+tokens used
+input: 4,137
+cache read: 4,608
+cache write: 0
+output: 151
+reasoning output: 0
+
+tool: locate_symbol
+{
+  "ref": "52ca09cb2cb8ab288b9635d74a339b4663a68068",
+  "symbol": "BoostedTreesCalculateBestGainsPerFeatureOp"
+}
+tensorflow/core/kernels/boosted_trees/stats_ops.cc:41
+tensorflow/core/kernels/boosted_trees/stats_ops.cc:43
+tensorflow/core/kernels/boosted_trees/stats_ops.cc:231
+
+tool: locate_symbol
+{
+  "ref": "52ca09cb2cb8ab288b9635d74a339b4663a68068",
+  "symbol": "BoostedTreesCalculateBestFeatureSplitV2"
+}
+tensorflow/core/kernels/boosted_trees/stats_ops.cc:557
+tensorflow/core/kernels/boosted_trees/stats_ops.cc:559
+tensorflow/go/op/wrappers.go:3516
+tensorflow/core/api_def/base_api/api_def_BoostedTreesCalculateBestFeatureSplitV2.pbtxt:2
+tensorflow/core/kernels/boosted_trees/stats_ops.cc:936
+tensorflow/core/kernels/boosted_trees/stats_ops.cc:937
+tensorflow/core/ops/boosted_trees_ops.cc:144
+tensorflow/core/ops/compat/ops_history_v1/BoostedTreesCalculateBestFeatureSplitV2.pbtxt:2
+tensorflow/core/ops/compat/ops_history_v2/BoostedTreesCalculateBestFeatureSplitV2.pbtxt:2
+tensorflow/core/ops/ops.pbtxt:5557
+tensorflow/go/op/wrappers.go:3522
+tensorflow/tools/api/golden/v1/tensorflow.raw_ops.pbtxt:548
+tensorflow/tools/api/golden/v2/tensorflow.raw_ops.pbtxt:548
+
+tool: grep
+{
+  "pattern": "class BoostedTreesCalculateBest(GainsPerFeatureOp|FeatureSplitV2)",
+  "path": "tensorflow/core/kernels",
+  "include": "*.cc"
+}
+Found 2 matches
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0209-52ca09cb2cb8\tensorflow\core\kernels\boosted_trees\stats_ops.cc:
+  Line 41: class BoostedTreesCalculateBestGainsPerFeatureOp : public OpKernel {
+
+  Line 557: class BoostedTreesCalculateBestFeatureSplitV2 : public OpKernel {
+
+tokens used
+input: 1,361
+cache read: 7,680
+cache write: 0
+output: 159
+reasoning output: 0
+
+The target release has both affected kernels in the same file and at nearly matching locations, so this looks like a direct minimal backport. I’m checking the exact local context before editing.
+
+tool: read
+{
+  "filePath": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0209-52ca09cb2cb8\\tensorflow\\core\\kernels\\boosted_trees\\stats_ops.cc",
+  "offset": 35,
+  "limit": 60
+}
+<path>C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0209-52ca09cb2cb8\tensorflow\core\kernels\boosted_trees\stats_ops.cc</path>
+<type>file</type>
+<content>
+35: using VectorMap = Eigen::Map<Eigen::VectorXf>;
+36: 
+37: constexpr char kInequalitySplit[] = "inequality";
+38: constexpr char kEqualitySplit[] = "equality";
+39: 
+40: // V1 Op. Deprecated. BoostedTreesCalculateBestFeatureSplitOpV2 is V2.
+41: class BoostedTreesCalculateBestGainsPerFeatureOp : public OpKernel {
+42:  public:
+43:   explicit BoostedTreesCalculateBestGainsPerFeatureOp(
+44:       OpKernelConstruction* const context)
+45:       : OpKernel(context) {
+46:     OP_REQUIRES_OK(context, context->GetAttr("max_splits", &max_splits_));
+47:     OP_REQUIRES_OK(context, context->GetAttr("num_features", &num_features_));
+48:   }
+49: 
+50:   void Compute(OpKernelContext* const context) override {
+51:     // node_id_range
+52:     const Tensor* node_id_range_t;
+53:     OP_REQUIRES_OK(context, context->input("node_id_range", &node_id_range_t));
+54:     const auto node_id_range = node_id_range_t->vec<int32>();
+55:     const int32 node_id_first = node_id_range(0);  // inclusive
+56:     const int32 node_id_last = node_id_range(1);   // exclusive
+57:     // stats_summary_list
+58:     OpInputList stats_summary_list;
+59:     OP_REQUIRES_OK(context, context->input_list("stats_summary_list",
+60:                                                 &stats_summary_list));
+61:     const int64 num_buckets = stats_summary_list[0].dim_size(1);
+62:     // Check for single logit: 1 gradient + 1 hessian value.
+63:     DCHECK_EQ(stats_summary_list[0].dim_size(2), 2);
+64:     std::vector<TTypes<float, 3>::ConstTensor> stats_summary;
+65:     stats_summary.reserve(stats_summary_list.size());
+66:     for (const auto& tensor : stats_summary_list) {
+67:       stats_summary.emplace_back(tensor.tensor<float, 3>());
+68:     }
+69:     const Tensor* l1_t;
+70:     OP_REQUIRES_OK(context, context->input("l1", &l1_t));
+71:     const auto l1 = l1_t->scalar<float>()();
+72:     const Tensor* l2_t;
+73:     OP_REQUIRES_OK(context, context->input("l2", &l2_t));
+74:     const auto l2 = l2_t->scalar<float>()();
+75:     const Tensor* tree_complexity_t;
+76:     OP_REQUIRES_OK(context,
+77:                    context->input("tree_complexity", &tree_complexity_t));
+78:     const auto tree_complexity = tree_complexity_t->scalar<float>()();
+79:     const Tensor* min_node_weight_t;
+80:     OP_REQUIRES_OK(context,
+81:                    context->input("min_node_weight", &min_node_weight_t));
+82:     const auto min_node_weight = min_node_weight_t->scalar<float>()();
+83: 
+84:     // Allocate output lists of tensors:
+85:     OpOutputList output_node_ids_list;
+86:     OP_REQUIRES_OK(
+87:         context, context->output_list("node_ids_list", &output_node_ids_list));
+88:     OpOutputList output_gains_list;
+89:     OP_REQUIRES_OK(context,
+90:                    context->output_list("gains_list", &output_gains_list));
+91:     OpOutputList output_thresholds_list;
+92:     OP_REQUIRES_OK(context, context->output_list("thresholds_list",
+93:                                                  &output_thresholds_list));
+94:     OpOutputList output_left_node_contribs_list;
+
+(Showing lines 35-94 of 1651. Use offset=95 to continue.)
+</content>
+
+tool: viewcode
+{
+  "ref": "52ca09cb2cb8ab288b9635d74a339b4663a68068",
+  "path": "tensorflow/core/kernels/boosted_trees/stats_ops.cc",
+  "startline": 35,
+  "endline": 80
+}
+Here are lines 35 through 80.
+
+using VectorMap = Eigen::Map<Eigen::VectorXf>;
+
+constexpr char kInequalitySplit[] = "inequality";
+constexpr char kEqualitySplit[] = "equality";
+
+// V1 Op. Deprecated. BoostedTreesCalculateBestFeatureSplitOpV2 is V2.
+class BoostedTreesCalculateBestGainsPerFeatureOp : public OpKernel {
+ public:
+  explicit BoostedTreesCalculateBestGainsPerFeatureOp(
+      OpKernelConstruction* const context)
+      : OpKernel(context) {
+    OP_REQUIRES_OK(context, context->GetAttr("max_splits", &max_splits_));
+    OP_REQUIRES_OK(context, context->GetAttr("num_features", &num_features_));
+  }
+
+  void Compute(OpKernelContext* const context) override {
+    // node_id_range
+    const Tensor* node_id_range_t;
+    OP_REQUIRES_OK(context, context->input("node_id_range", &node_id_range_t));
+    const auto node_id_range = node_id_range_t->vec<int32>();
+    const int32 node_id_first = node_id_range(0);  // inclusive
+    const int32 node_id_last = node_id_range(1);   // exclusive
+    // stats_summary_list
+    OpInputList stats_summary_list;
+    OP_REQUIRES_OK(context, context->input_list("stats_summary_list",
+                                                &stats_summary_list));
+    const int64 num_buckets = stats_summary_list[0].dim_size(1);
+    // Check for single logit: 1 gradient + 1 hessian value.
+    DCHECK_EQ(stats_summary_list[0].dim_size(2), 2);
+    std::vector<TTypes<float, 3>::ConstTensor> stats_summary;
+    stats_summary.reserve(stats_summary_list.size());
+    for (const auto& tensor : stats_summary_list) {
+      stats_summary.emplace_back(tensor.tensor<float, 3>());
+    }
+    const Tensor* l1_t;
+    OP_REQUIRES_OK(context, context->input("l1", &l1_t));
+    const auto l1 = l1_t->scalar<float>()();
+    const Tensor* l2_t;
+    OP_REQUIRES_OK(context, context->input("l2", &l2_t));
+    const auto l2 = l2_t->scalar<float>()();
+    const Tensor* tree_complexity_t;
+    OP_REQUIRES_OK(context,
+                   context->input("tree_complexity", &tree_complexity_t));
+    const auto tree_complexity = tree_complexity_t->scalar<float>()();
+    const Tensor* min_node_weight_t;
+    OP_REQUIRES_OK(context,
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: viewcode
+{
+  "ref": "52ca09cb2cb8ab288b9635d74a339b4663a68068",
+  "path": "tensorflow/core/kernels/boosted_trees/stats_ops.cc",
+  "startline": 550,
+  "endline": 590
+}
+Here are lines 550 through 590.
+
+
+// Deprecated op. Use BoostedTreesCalculateBestFeatureSplitOpV2.
+REGISTER_KERNEL_BUILDER(
+    Name("BoostedTreesCalculateBestFeatureSplit").Device(DEVICE_CPU),
+    BoostedTreesCalculateBestFeatureSplitOp);
+
+// V2 Op.
+class BoostedTreesCalculateBestFeatureSplitV2 : public OpKernel {
+ public:
+  explicit BoostedTreesCalculateBestFeatureSplitV2(
+      OpKernelConstruction* const context)
+      : OpKernel(context) {
+    OP_REQUIRES_OK(context, context->GetAttr("logits_dimension", &logits_dim_));
+    OP_REQUIRES_OK(context, context->GetAttr("num_features", &num_features_));
+  }
+
+  void Compute(OpKernelContext* const context) override {
+    // node_id_range
+    const Tensor* node_id_range_t;
+    OP_REQUIRES_OK(context, context->input("node_id_range", &node_id_range_t));
+    const auto node_id_range = node_id_range_t->vec<int32>();
+    const int32 node_id_first = node_id_range(0);  // Inclusive.
+    const int32 node_id_last = node_id_range(1);   // Exclusive.
+
+    // Get stats_summaries_list.
+    OpInputList stats_summaries_list;
+    OP_REQUIRES_OK(context, context->input_list("stats_summaries_list",
+                                                &stats_summaries_list));
+
+    // Infer dimensions of a stats_summary.
+    DCHECK_GT(stats_summaries_list.size(), 0);
+    const int32 feature_dims = stats_summaries_list[0].dim_size(1);
+    // The last bucket is for default/missing value.
+    const int32 num_buckets = stats_summaries_list[0].dim_size(2) - 1;
+    const int32 logits_dim = logits_dim_;
+    const int32 hessian_dim = stats_summaries_list[0].dim_size(3) - logits_dim;
+    DCHECK_GT(hessian_dim, 0);
+    DCHECK_LE(hessian_dim, logits_dim * logits_dim);
+
+    // Vector of stats_summaries; each element is stats for feature of shape
+    // [max_splits, feature_dim, num_buckets, logits_dim + hessian_dim].
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tokens used
+input: 898
+cache read: 8,704
+cache write: 0
+output: 261
+reasoning output: 0
+
+I found the vulnerable `node_id_range` assumptions in both kernels. I’m adding the same rank and length checks before the range values are indexed, using the older branch’s `int32` style unchanged.
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/kernels/boosted_trees/stats_ops.cc\n@@\n     // node_id_range\n     const Tensor* node_id_range_t;\n     OP_REQUIRES_OK(context, context->input(\"node_id_range\", &node_id_range_t));\n+    OP_REQUIRES(\n+        context, node_id_range_t->dims() == 1,\n+        errors::InvalidArgument(\"node_id_range must be a rank 1 tensor, but \"\n+                                \"given node_id_range has dims of \",\n+                                node_id_range_t->dims()));\n+    OP_REQUIRES(context, node_id_range_t->dim_size(0) == 2,\n+                errors::InvalidArgument(\n+                    \"node_id_range must be a rank 1 tensor with shape=[2], but \"\n+                    \"given node_id_range has shape \",\n+                    node_id_range_t->dim_size(0), \" on its first dim\"));\n     const auto node_id_range = node_id_range_t->vec<int32>();\n     const int32 node_id_first = node_id_range(0);  // inclusive\n     const int32 node_id_last = node_id_range(1);   // exclusive\n@@\n     // node_id_range\n     const Tensor* node_id_range_t;\n     OP_REQUIRES_OK(context, context->input(\"node_id_range\", &node_id_range_t));\n+    OP_REQUIRES(\n+        context, node_id_range_t->dims() == 1,\n+        errors::InvalidArgument(\"node_id_range must be a rank 1 tensor, but \"\n+                                \"given node_id_range has dims of \",\n+                                node_id_range_t->dims()));\n+    OP_REQUIRES(context, node_id_range_t->dim_size(0) == 2,\n+                errors::InvalidArgument(\n+                    \"node_id_range must be a rank 1 tensor with shape=[2], but \"\n+                    \"given node_id_range has shape \",\n+                    node_id_range_t->dim_size(0), \" on its first dim\"));\n     const auto node_id_range = node_id_range_t->vec<int32>();\n     const int32 node_id_first = node_id_range(0);  // Inclusive.\n     const int32 node_id_last = node_id_range(1);   // Exclusive.\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/kernels/boosted_trees/stats_ops.cc
+
+tokens used
+input: 3,182
+cache read: 8,704
+cache write: 0
+output: 606
+reasoning output: 297
+
+The source change is applied. I’m now checking the resulting diff and validating that the hunk applies cleanly to the specified target base without doing a full build.
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/kernels/boosted_trees/stats_ops.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0209-52ca09cb2cb8",
+  "timeout": 120000
+}
+warning: in the working copy of 'tensorflow/core/kernels/boosted_trees/stats_ops.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/kernels/boosted_trees/stats_ops.cc b/tensorflow/core/kernels/boosted_trees/stats_ops.cc
+index 851e5b78e8..2e386106ac 100644
+--- a/tensorflow/core/kernels/boosted_trees/stats_ops.cc
++++ b/tensorflow/core/kernels/boosted_trees/stats_ops.cc
+@@ -51,6 +51,16 @@ class BoostedTreesCalculateBestGainsPerFeatureOp : public OpKernel {
+     // node_id_range
+     const Tensor* node_id_range_t;
+     OP_REQUIRES_OK(context, context->input("node_id_range", &node_id_range_t));
++    OP_REQUIRES(
++        context, node_id_range_t->dims() == 1,
++        errors::InvalidArgument("node_id_range must be a rank 1 tensor, but "
++                                "given node_id_range has dims of ",
++                                node_id_range_t->dims()));
++    OP_REQUIRES(context, node_id_range_t->dim_size(0) == 2,
++                errors::InvalidArgument(
++                    "node_id_range must be a rank 1 tensor with shape=[2], but "
++                    "given node_id_range has shape ",
++                    node_id_range_t->dim_size(0), " on its first dim"));
+     const auto node_id_range = node_id_range_t->vec<int32>();
+     const int32 node_id_first = node_id_range(0);  // inclusive
+     const int32 node_id_last = node_id_range(1);   // exclusive
+@@ -567,6 +577,16 @@ class BoostedTreesCalculateBestFeatureSplitV2 : public OpKernel {
+     // node_id_range
+     const Tensor* node_id_range_t;
+     OP_REQUIRES_OK(context, context->input("node_id_range", &node_id_range_t));
++    OP_REQUIRES(
++        context, node_id_range_t->dims() == 1,
++        errors::InvalidArgument("node_id_range must be a rank 1 tensor, but "
++                                "given node_id_range has dims of ",
++                                node_id_range_t->dims()));
++    OP_REQUIRES(context, node_id_range_t->dim_size(0) == 2,
++                errors::InvalidArgument(
++                    "node_id_range must be a rank 1 tensor with shape=[2], but "
++                    "given node_id_range has shape ",
++                    node_id_range_t->dim_size(0), " on its first dim"));
+     const auto node_id_range = node_id_range_t->vec<int32>();
+     const int32 node_id_first = node_id_range(0);  // Inclusive.
+     const int32 node_id_last = node_id_range(1);   // Exclusive.
+
+tool: bash
+{
+  "command": "git status --short",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0209-52ca09cb2cb8",
+  "timeout": 120000
+}
+ M tensorflow/core/kernels/boosted_trees/stats_ops.cc
+
+tokens used
+input: 1,045
+cache read: 11,776
+cache write: 0
+output: 200
+reasoning output: 30
+
+The only modified file is the affected kernel source. I’m running hunk validation against the requested base ref now.
+
+tool: validate
+{
+  "ref": "52ca09cb2cb8ab288b9635d74a339b4663a68068",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/boosted_trees/stats_ops.cc b/tensorflow/core/kernels/boosted_trees/stats_ops.cc\nindex 851e5b78e8..2e386106ac 100644\n--- a/tensorflow/core/kernels/boosted_trees/stats_ops.cc\n+++ b/tensorflow/core/kernels/boosted_trees/stats_ops.cc\n@@ -51,6 +51,16 @@ class BoostedTreesCalculateBestGainsPerFeatureOp : public OpKernel {\n     // node_id_range\n     const Tensor* node_id_range_t;\n     OP_REQUIRES_OK(context, context->input(\"node_id_range\", &node_id_range_t));\n+    OP_REQUIRES(\n+        context, node_id_range_t->dims() == 1,\n+        errors::InvalidArgument(\"node_id_range must be a rank 1 tensor, but \"\n+                                \"given node_id_range has dims of \",\n+                                node_id_range_t->dims()));\n+    OP_REQUIRES(context, node_id_range_t->dim_size(0) == 2,\n+                errors::InvalidArgument(\n+                    \"node_id_range must be a rank 1 tensor with shape=[2], but \"\n+                    \"given node_id_range has shape \",\n+                    node_id_range_t->dim_size(0), \" on its first dim\"));\n     const auto node_id_range = node_id_range_t->vec<int32>();\n     const int32 node_id_first = node_id_range(0);  // inclusive\n     const int32 node_id_last = node_id_range(1);   // exclusive\n@@ -567,6 +577,16 @@ class BoostedTreesCalculateBestFeatureSplitV2 : public OpKernel {\n     // node_id_range\n     const Tensor* node_id_range_t;\n     OP_REQUIRES_OK(context, context->input(\"node_id_range\", &node_id_range_t));\n+    OP_REQUIRES(\n+        context, node_id_range_t->dims() == 1,\n+        errors::InvalidArgument(\"node_id_range must be a rank 1 tensor, but \"\n+                                \"given node_id_range has dims of \",\n+                                node_id_range_t->dims()));\n+    OP_REQUIRES(context, node_id_range_t->dim_size(0) == 2,\n+                errors::InvalidArgument(\n+                    \"node_id_range must be a rank 1 tensor with shape=[2], but \"\n+                    \"given node_id_range has shape \",\n+                    node_id_range_t->dim_size(0), \" on its first dim\"));\n     const auto node_id_range = node_id_range_t->vec<int32>();\n     const int32 node_id_first = node_id_range(0);  // Inclusive.\n     const int32 node_id_last = node_id_range(1);   // Exclusive.\n"
+}
+Patch applied successfully
+
+tokens used
+input: 1,944
+cache read: 11,776
+cache write: 0
+output: 728
+reasoning output: 13
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target boosted trees stats ops locations and surrounding code",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate candidate hunks against target base when context is uncertain",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply minimal backport changes",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Inspect final diff and report YAML result",
+      "status": "in_progress",
+      "priority": "high"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target boosted trees stats ops locations and surrounding code",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate candidate hunks against target base when context is uncertain",
+    "status": "completed",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply minimal backport changes",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Inspect final diff and report YAML result",
+    "status": "in_progress",
+    "priority": "high"
+  }
+]
+
+tokens used
+input: 1,674
+cache read: 12,800
+cache write: 0
+output: 100
+reasoning output: 15
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target boosted trees stats ops locations and surrounding code",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate candidate hunks against target base when context is uncertain",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply minimal backport changes",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Inspect final diff and report YAML result",
+      "status": "completed",
+      "priority": "high"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target boosted trees stats ops locations and surrounding code",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate candidate hunks against target base when context is uncertain",
+    "status": "completed",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply minimal backport changes",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Inspect final diff and report YAML result",
+    "status": "completed",
+    "priority": "high"
+  }
+]
+
+tokens used
+input: 910
+cache read: 13,824
+cache write: 0
+output: 99
+reasoning output: 11
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/kernels/boosted_trees/stats_ops.cc b/tensorflow/core/kernels/boosted_trees/stats_ops.cc
+    index 851e5b78e8..2e386106ac 100644
+    --- a/tensorflow/core/kernels/boosted_trees/stats_ops.cc
+    +++ b/tensorflow/core/kernels/boosted_trees/stats_ops.cc
+    @@ -51,6 +51,16 @@ class BoostedTreesCalculateBestGainsPerFeatureOp : public OpKernel {
+         // node_id_range
+         const Tensor* node_id_range_t;
+         OP_REQUIRES_OK(context, context->input("node_id_range", &node_id_range_t));
+    +    OP_REQUIRES(
+    +        context, node_id_range_t->dims() == 1,
+    +        errors::InvalidArgument("node_id_range must be a rank 1 tensor, but "
+    +                                "given node_id_range has dims of ",
+    +                                node_id_range_t->dims()));
+    +    OP_REQUIRES(context, node_id_range_t->dim_size(0) == 2,
+    +                errors::InvalidArgument(
+    +                    "node_id_range must be a rank 1 tensor with shape=[2], but "
+    +                    "given node_id_range has shape ",
+    +                    node_id_range_t->dim_size(0), " on its first dim"));
+         const auto node_id_range = node_id_range_t->vec<int32>();
+         const int32 node_id_first = node_id_range(0);  // inclusive
+         const int32 node_id_last = node_id_range(1);   // exclusive
+    @@ -567,6 +577,16 @@ class BoostedTreesCalculateBestFeatureSplitV2 : public OpKernel {
+         // node_id_range
+         const Tensor* node_id_range_t;
+         OP_REQUIRES_OK(context, context->input("node_id_range", &node_id_range_t));
+    +    OP_REQUIRES(
+    +        context, node_id_range_t->dims() == 1,
+    +        errors::InvalidArgument("node_id_range must be a rank 1 tensor, but "
+    +                                "given node_id_range has dims of ",
+    +                                node_id_range_t->dims()));
+    +    OP_REQUIRES(context, node_id_range_t->dim_size(0) == 2,
+    +                errors::InvalidArgument(
+    +                    "node_id_range must be a rank 1 tensor with shape=[2], but "
+    +                    "given node_id_range has shape ",
+    +                    node_id_range_t->dim_size(0), " on its first dim"));
+         const auto node_id_range = node_id_range_t->vec<int32>();
+         const int32 node_id_first = node_id_range(0);  // Inclusive.
+         const int32 node_id_last = node_id_range(1);   // Exclusive.
+  notes: >
+    Added node_id_range rank and shape validation to both affected boosted trees kernels; hunk validation against the target base succeeded.
+```
+
+tokens used
+input: 1,164
+cache read: 13,824
+cache write: 0
+output: 675
+reasoning output: 0

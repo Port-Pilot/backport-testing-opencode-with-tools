@@ -1,0 +1,758 @@
+I’ll inspect the target-side files and symbols around `ImmutableConstantOp` and its tests, then apply the minimal matching security guard and regression test without looking at the held-out backport commit.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target ImmutableConstantOp implementation and tests",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Validate uncertain patch hunks against target base",
+      "status": "pending",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply minimal backport changes",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "content": "Review resulting diff",
+      "status": "pending",
+      "priority": "high"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target ImmutableConstantOp implementation and tests",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Validate uncertain patch hunks against target base",
+    "status": "pending",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply minimal backport changes",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "content": "Review resulting diff",
+    "status": "pending",
+    "priority": "high"
+  }
+]
+
+tokens used
+input: 4,568
+cache read: 4,608
+cache write: 0
+output: 135
+reasoning output: 0
+
+tool: viewcode
+{
+  "ref": "995d2015c6e4e62fe9d8fb8085a245a40c54dbda",
+  "path": "tensorflow/core/kernels/immutable_constant_op.cc",
+  "startline": 1,
+  "endline": 140
+}
+This file only has 117 lines. Here are lines 1 through 117.
+
+/* Copyright 2016 The TensorFlow Authors. All Rights Reserved.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+==============================================================================*/
+
+#include "tensorflow/core/kernels/immutable_constant_op.h"
+
+#include <unordered_set>
+
+#include "tensorflow/core/framework/types.pb.h"
+
+namespace tensorflow {
+
+namespace {
+class MemmappedTensorAllocator : public Allocator {
+ public:
+  MemmappedTensorAllocator() {}
+
+  Status InitializeFromRegion(const string& name, Env* env) {
+    const auto status =
+        env->NewReadOnlyMemoryRegionFromFile(name, &memory_region_);
+    if (!status.ok()) {
+      return status;
+    }
+    return Status::OK();
+  }
+  string Name() override { return "MemmappedTensorAllocator"; }
+
+  void* AllocateRaw(size_t alignment, size_t num_bytes) override {
+    if ((reinterpret_cast<intptr_t>(memory_region_->data())) % alignment != 0) {
+      allocation_status_ =
+          errors::Internal("Readonly memory region has wrong alignment");
+      return nullptr;
+    }
+    if (num_bytes > memory_region_->length()) {
+      allocation_status_ = errors::Internal(
+          "Readonly memory region has wrong length (", memory_region_->length(),
+          ") when allocating ", num_bytes);
+      return nullptr;
+    }
+    return const_cast<void*>(memory_region_->data());
+  }
+
+  void DeallocateRaw(void* ptr) override {
+    if (ptr != memory_region_->data()) {
+      LOG(ERROR)
+          << "Deallocating not allocated region for readonly memory region";
+    }
+    if (delete_on_deallocate_) {
+      delete this;
+    }
+  }
+  const Status& allocation_status() const { return allocation_status_; }
+
+  void set_delete_on_deallocate() { delete_on_deallocate_ = true; }
+
+  // Make sure tensors or complex types (strings, variants, resources) don't get
+  // their constructor called via a placement new since that would require
+  // writing to immutable data.
+  // See also: tensorflow/core/framework/typed_allocator.h
+  bool AllocatesOpaqueHandle() const override { return true; }
+
+ private:
+  std::unique_ptr<ReadOnlyMemoryRegion> memory_region_;
+  // If there is an error during allocation we keep it in this status.
+  Status allocation_status_;
+
+  // When the allocator is owned by TensorBuffer it will be deleted on
+  // de-allocation.
+  bool delete_on_deallocate_ = false;
+
+  TF_DISALLOW_COPY_AND_ASSIGN(MemmappedTensorAllocator);
+};
+}  // namespace
+
+ImmutableConstantOp::ImmutableConstantOp(OpKernelConstruction* context)
+    : OpKernel(context) {
+  OP_REQUIRES_OK(context,
+                 context->GetAttr(kMemoryRegionNameAttr, &region_name_));
+  OP_REQUIRES_OK(context, context->GetAttr(kDTypeAttr, &dtype_));
+  OP_REQUIRES(context, dtype_ != DT_RESOURCE && dtype_ != DT_VARIANT,
+              errors::InvalidArgument(
+                  "Resource and variant dtypes are invalid for this op."));
+  OP_REQUIRES_OK(context, context->GetAttr(kShapeAttr, &shape_));
+}
+
+void ImmutableConstantOp::Compute(OpKernelContext* ctx) {
+  std::unique_ptr<MemmappedTensorAllocator> allocator(
+      new MemmappedTensorAllocator());
+
+  OP_REQUIRES_OK(ctx,
+                 allocator->InitializeFromRegion(region_name_, ctx->env()));
+  ctx->set_output(0, Tensor(allocator.get(), dtype_, shape_));
+  OP_REQUIRES_OK(ctx, allocator->allocation_status());
+  // Allocator is owned by the tensor from this point.
+  allocator.release()->set_delete_on_deallocate();
+}
+
+ImmutableConstantOp::~ImmutableConstantOp() {}
+constexpr char const* ImmutableConstantOp::kDTypeAttr;
+constexpr char const* ImmutableConstantOp::kShapeAttr;
+constexpr char const* ImmutableConstantOp::kMemoryRegionNameAttr;
+
+REGISTER_KERNEL_BUILDER(Name("ImmutableConst").Device(DEVICE_CPU),
+                        ImmutableConstantOp);
+}  // namespace tensorflow
+
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: viewcode
+{
+  "ref": "995d2015c6e4e62fe9d8fb8085a245a40c54dbda",
+  "path": "tensorflow/core/kernels/immutable_constant_op_test.cc",
+  "startline": 1,
+  "endline": 240
+}
+This file only has 195 lines. Here are lines 1 through 195.
+
+/* Copyright 2016 The TensorFlow Authors. All Rights Reserved.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+==============================================================================*/
+#include "tensorflow/core/kernels/immutable_constant_op.h"
+
+#include <algorithm>
+#include <tuple>
+
+#include "tensorflow/cc/ops/standard_ops.h"
+#include "tensorflow/core/framework/allocator.h"
+#include "tensorflow/core/framework/tensor.h"
+#include "tensorflow/core/graph/graph_def_builder.h"
+#include "tensorflow/core/lib/core/status_test_util.h"
+#include "tensorflow/core/lib/io/path.h"
+#include "tensorflow/core/platform/null_file_system.h"
+#include "tensorflow/core/platform/test.h"
+#include "tensorflow/core/platform/test_benchmark.h"
+#include "tensorflow/core/public/session.h"
+
+namespace tensorflow {
+namespace {
+// A safe alignment that equal to memmapped page alignment on many modern
+// architectures.
+constexpr size_t kTestAlignment = 4096;
+constexpr size_t kTestTensorSize = 4;
+constexpr size_t kTestTensorSizeBytes = kTestTensorSize * sizeof(float);
+
+// A test ReadOnlyMemoryRegion implementation.
+class TestReadOnlyMemoryRegion : public ReadOnlyMemoryRegion {
+ public:
+  TestReadOnlyMemoryRegion() = delete;
+  explicit TestReadOnlyMemoryRegion(uint64 length)
+      : memptr_(cpu_allocator()->AllocateRaw(kTestAlignment, length)),
+        length_(length) {}
+  ~TestReadOnlyMemoryRegion() override {
+    cpu_allocator()->DeallocateRaw(memptr_);
+  }
+  const void* data() override { return memptr_; }
+  float* GetWritableDataStart() { return reinterpret_cast<float*>(memptr_); }
+  uint64 length() override { return length_; }
+
+ protected:
+  void* memptr_;
+  uint64 length_;
+};
+
+// A mock file system and environment class that creates ReadOnlyMemoryRegion
+// from allocated memory.
+class TestFileSystem : public NullFileSystem {
+ public:
+  ~TestFileSystem() override = default;
+
+  // import non-transactional method from the base class
+  using NullFileSystem::NewReadOnlyMemoryRegionFromFile;
+
+  Status NewReadOnlyMemoryRegionFromFile(
+      const string& fname, TransactionToken* token,
+      std::unique_ptr<ReadOnlyMemoryRegion>* result) override {
+    float val = 0;
+    StringPiece scheme, host, path;
+    io::ParseURI(fname, &scheme, &host, &path);
+    // For the tests create in-memory regions with float values equal to the
+    // region name.
+    if (path == "/2") {
+      val = 2.0f;
+    } else if (path == "/3") {
+      val = 3.0f;
+    } else {
+      val = 0.0f;
+    }
+
+    auto region = new TestReadOnlyMemoryRegion(kTestTensorSizeBytes);
+    std::fill_n(region->GetWritableDataStart(), kTestTensorSize, val);
+    result->reset(region);
+    return Status::OK();
+  }
+};
+
+REGISTER_FILE_SYSTEM("test", TestFileSystem);
+
+struct ImmutableConstantOpTest {};
+
+TEST(ImmutableConstantOpTest, Simple) {
+  const TensorShape kTestTensorShape({4, 1});
+  const TensorShape kTestTensorShapeT({1, 4});
+  auto root = Scope::NewRootScope().ExitOnError();
+  auto node1 =
+      ops::ImmutableConst(root, DT_FLOAT, kTestTensorShape, "test:///2");
+  auto node2 =
+      ops::ImmutableConst(root, DT_FLOAT, kTestTensorShapeT, "test:///3");
+  auto result = ops::MatMul(root, node1, node2);
+  GraphDef graph_def;
+  TF_ASSERT_OK(root.ToGraphDef(&graph_def));
+  SessionOptions session_options;
+  session_options.env = Env::Default();
+  session_options.config.mutable_graph_options()
+      ->mutable_optimizer_options()
+      ->set_opt_level(OptimizerOptions::L0);
+  std::unique_ptr<Session> session(NewSession(session_options));
+  ASSERT_TRUE(session != nullptr) << "Failed to create session";
+  TF_ASSERT_OK(session->Create(graph_def)) << "Can't create test graph";
+  std::vector<Tensor> outputs;
+  TF_ASSERT_OK(session->Run({}, {result.node()->name() + ":0"}, {}, &outputs));
+  ASSERT_EQ(outputs.size(), 1);
+  EXPECT_EQ(outputs.front().flat<float>()(0), 2.0f * 3.0f);
+  EXPECT_EQ(outputs.front().flat<float>()(1), 2.0f * 3.0f);
+  EXPECT_EQ(outputs.front().flat<float>()(2), 2.0f * 3.0f);
+  EXPECT_EQ(outputs.front().flat<float>()(kTestTensorSize - 1), 2.0f * 3.0f);
+}
+
+// Creates a test graph with two immutable_const tensors and a simple math
+// operation, one of nodes has wrong size, check that error properly reported.
+
+TEST(ImmutableConstantOpTest, ExecutionError) {
+  const TensorShape kBadTensorShape({40, 100});
+  const TensorShape kTestTensorShapeT({1, 4});
+
+  auto root = Scope::DisabledShapeInferenceScope().ExitOnError();
+  auto node1 =
+      ops::ImmutableConst(root, DT_FLOAT, kBadTensorShape, "test:///2");
+  auto node2 =
+      ops::ImmutableConst(root, DT_FLOAT, kTestTensorShapeT, "test:///3");
+  auto result = ops::MatMul(root, node1, node2);
+  GraphDef graph_def;
+  TF_ASSERT_OK(root.ToGraphDef(&graph_def));
+  SessionOptions session_options;
+  session_options.env = Env::Default();
+  std::unique_ptr<Session> session(NewSession(session_options));
+  ASSERT_TRUE(session != nullptr) << "Failed to create session";
+  TF_ASSERT_OK(session->Create(graph_def)) << "Can't create test graph";
+  std::vector<Tensor> outputs;
+  // Check that the run returned error.
+  EXPECT_EQ(
+      session->Run({}, {result.node()->name() + ":0"}, {}, &outputs).code(),
+      error::INTERNAL);
+}
+
+Status CreateTempFile(Env* env, float value, uint64 size, string* filename) {
+  const string dir = testing::TmpDir();
+  *filename = io::JoinPath(dir, strings::StrCat("file_", value));
+  std::unique_ptr<WritableFile> file;
+  TF_RETURN_IF_ERROR(env->NewWritableFile(*filename, &file));
+  for (uint64 i = 0; i < size; ++i) {
+    StringPiece sp(static_cast<char*>(static_cast<void*>(&value)),
+                   sizeof(value));
+    TF_RETURN_IF_ERROR(file->Append(sp));
+  }
+  TF_RETURN_IF_ERROR(file->Close());
+  return Status::OK();
+}
+
+TEST(ImmutableConstantOpTest, FromFile) {
+  const TensorShape kFileTensorShape({1000, 1});
+  Env* env = Env::Default();
+  auto root = Scope::NewRootScope().ExitOnError();
+
+  string two_file, three_file;
+  TF_ASSERT_OK(CreateTempFile(env, 2.0f, 1000, &two_file));
+  TF_ASSERT_OK(CreateTempFile(env, 3.0f, 1000, &three_file));
+  auto node1 = ops::ImmutableConst(root, DT_FLOAT, kFileTensorShape, two_file);
+  auto node2 =
+      ops::ImmutableConst(root, DT_FLOAT, kFileTensorShape, three_file);
+  auto result = ops::MatMul(root, node1, node2, ops::MatMul::TransposeB(true));
+
+  GraphDef graph_def;
+  TF_ASSERT_OK(root.ToGraphDef(&graph_def));
+  SessionOptions session_options;
+  session_options.config.mutable_graph_options()
+      ->mutable_optimizer_options()
+      ->set_opt_level(OptimizerOptions::L0);
+  std::unique_ptr<Session> session(NewSession(session_options));
+  ASSERT_TRUE(session != nullptr) << "Failed to create session";
+  TF_ASSERT_OK(session->Create(graph_def)) << "Can't create test graph";
+  std::vector<Tensor> outputs;
+  TF_ASSERT_OK(session->Run({}, {result.node()->name() + ":0"}, {}, &outputs));
+  ASSERT_EQ(outputs.size(), 1);
+  EXPECT_EQ(outputs.front().flat<float>()(0), 2.0f * 3.0f);
+  EXPECT_EQ(outputs.front().flat<float>()(1), 2.0f * 3.0f);
+  EXPECT_EQ(outputs.front().flat<float>()(2), 2.0f * 3.0f);
+}
+
+}  // namespace
+}  // namespace tensorflow
+
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: locate_symbol
+{
+  "ref": "995d2015c6e4e62fe9d8fb8085a245a40c54dbda",
+  "symbol": "ImmutableConstantOp"
+}
+tensorflow/core/kernels/immutable_constant_op.h:28
+tensorflow/core/kernels/immutable_constant_op.cc:86
+tensorflow/core/kernels/immutable_constant_op.cc:109
+tensorflow/core/kernels/immutable_constant_op.h:30
+tensorflow/core/kernels/immutable_constant_op.h:33
+tensorflow/core/kernels/immutable_constant_op.cc:97
+tensorflow/core/kernels/immutable_constant_op.cc:110
+tensorflow/core/kernels/immutable_constant_op.cc:111
+tensorflow/core/kernels/immutable_constant_op.cc:112
+tensorflow/core/kernels/immutable_constant_op.cc:115
+tensorflow/core/kernels/immutable_constant_op.h:44
+
+tokens used
+input: 743
+cache read: 8,704
+cache write: 0
+output: 186
+reasoning output: 0
+
+The target files match the provided patch context closely. I’m going to validate the small source/test hunks against the target base, then apply them directly.
+
+tool: validate
+{
+  "ref": "995d2015c6e4e62fe9d8fb8085a245a40c54dbda",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/immutable_constant_op.cc b/tensorflow/core/kernels/immutable_constant_op.cc\n--- a/tensorflow/core/kernels/immutable_constant_op.cc\n+++ b/tensorflow/core/kernels/immutable_constant_op.cc\n@@ -100,6 +100,9 @@ void ImmutableConstantOp::Compute(OpKernelContext* ctx) {\n \n   OP_REQUIRES_OK(ctx,\n                  allocator->InitializeFromRegion(region_name_, ctx->env()));\n+  OP_REQUIRES(ctx, dtype_ != DT_STRING,\n+              errors::Unimplemented(\"Sorry, DT_STRING is not currently \"\n+                                    \"supported for ImmutableConstOp.\"));\n   ctx->set_output(0, Tensor(allocator.get(), dtype_, shape_));\n   OP_REQUIRES_OK(ctx, allocator->allocation_status());\n   // Allocator is owned by the tensor from this point.\ndiff --git a/tensorflow/core/kernels/immutable_constant_op_test.cc b/tensorflow/core/kernels/immutable_constant_op_test.cc\n--- a/tensorflow/core/kernels/immutable_constant_op_test.cc\n+++ b/tensorflow/core/kernels/immutable_constant_op_test.cc\n@@ -146,7 +146,8 @@ TEST(ImmutableConstantOpTest, ExecutionError) {\n       error::INTERNAL);\n }\n \n-Status CreateTempFile(Env* env, float value, uint64 size, string* filename) {\n+Status CreateTempFileFloat(Env* env, float value, uint64 size,\n+                           string* filename) {\n   const string dir = testing::TmpDir();\n   *filename = io::JoinPath(dir, strings::StrCat(\"file_\", value));\n   std::unique_ptr<WritableFile> file;\n@@ -166,8 +167,8 @@ TEST(ImmutableConstantOpTest, FromFile) {\n   auto root = Scope::NewRootScope().ExitOnError();\n \n   string two_file, three_file;\n-  TF_ASSERT_OK(CreateTempFile(env, 2.0f, 1000, &two_file));\n-  TF_ASSERT_OK(CreateTempFile(env, 3.0f, 1000, &three_file));\n+  TF_ASSERT_OK(CreateTempFileFloat(env, 2.0f, 1000, &two_file));\n+  TF_ASSERT_OK(CreateTempFileFloat(env, 3.0f, 1000, &three_file));\n   auto node1 = ops::ImmutableConst(root, DT_FLOAT, kFileTensorShape, two_file);\n   auto node2 =\n       ops::ImmutableConst(root, DT_FLOAT, kFileTensorShape, three_file);\n@@ -190,5 +191,39 @@ TEST(ImmutableConstantOpTest, FromFile) {\n   EXPECT_EQ(outputs.front().flat<float>()(2), 2.0f * 3.0f);\n }\n \n+Status CreateTempFileBadString(Env* env, char value, uint64 size,\n+                               const string suffix, string* filename) {\n+  const string dir = testing::TmpDir();\n+  *filename = io::JoinPath(dir, strings::StrCat(\"file_\", suffix));\n+  std::unique_ptr<WritableFile> file;\n+  TF_RETURN_IF_ERROR(env->NewWritableFile(*filename, &file));\n+  TF_RETURN_IF_ERROR(file->Append(std::string(size, value)));\n+  TF_RETURN_IF_ERROR(file->Close());\n+  return Status::OK();\n+}\n+\n+TEST(ImmutableConstantOpTest, FromFileStringUnimplmented) {\n+  const TensorShape kFileTensorShape({1});\n+  Env* env = Env::Default();\n+  auto root = Scope::NewRootScope().ExitOnError();\n+\n+  string bad_file;\n+  TF_ASSERT_OK(CreateTempFileBadString(env, '\\xe2', 128, \"bad_e2\", &bad_file));\n+  auto result =\n+      ops::ImmutableConst(root, DT_STRING, kFileTensorShape, bad_file);\n+  GraphDef graph_def;\n+  TF_ASSERT_OK(root.ToGraphDef(&graph_def));\n+  SessionOptions session_options;\n+  session_options.env = Env::Default();\n+  std::unique_ptr<Session> session(NewSession(session_options));\n+  ASSERT_TRUE(session != nullptr) << \"Failed to create session\";\n+  TF_ASSERT_OK(session->Create(graph_def)) << \"Can't create test graph\";\n+  std::vector<Tensor> outputs;\n+  // Check that the run returned error.\n+  EXPECT_EQ(\n+      session->Run({}, {result.node()->name() + \":0\"}, {}, &outputs).code(),\n+      error::UNIMPLEMENTED);\n+}\n+\n }  // namespace\n }  // namespace tensorflow\n"
+}
+Patch applied successfully
+
+tokens used
+input: 4,007
+cache read: 8,704
+cache write: 0
+output: 1,178
+reasoning output: 32
+
+Validation succeeded. I’m applying the same minimal changes: reject `DT_STRING` before constructing the tensor, and add the regression coverage for string-backed files.
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/kernels/immutable_constant_op.cc\n@@\n   OP_REQUIRES_OK(ctx,\n                  allocator->InitializeFromRegion(region_name_, ctx->env()));\n+  OP_REQUIRES(ctx, dtype_ != DT_STRING,\n+              errors::Unimplemented(\"Sorry, DT_STRING is not currently \"\n+                                    \"supported for ImmutableConstOp.\"));\n   ctx->set_output(0, Tensor(allocator.get(), dtype_, shape_));\n   OP_REQUIRES_OK(ctx, allocator->allocation_status());\n   // Allocator is owned by the tensor from this point.\n*** Update File: tensorflow/core/kernels/immutable_constant_op_test.cc\n@@\n-Status CreateTempFile(Env* env, float value, uint64 size, string* filename) {\n+Status CreateTempFileFloat(Env* env, float value, uint64 size,\n+                           string* filename) {\n   const string dir = testing::TmpDir();\n   *filename = io::JoinPath(dir, strings::StrCat(\"file_\", value));\n   std::unique_ptr<WritableFile> file;\n@@\n \n   string two_file, three_file;\n-  TF_ASSERT_OK(CreateTempFile(env, 2.0f, 1000, &two_file));\n-  TF_ASSERT_OK(CreateTempFile(env, 3.0f, 1000, &three_file));\n+  TF_ASSERT_OK(CreateTempFileFloat(env, 2.0f, 1000, &two_file));\n+  TF_ASSERT_OK(CreateTempFileFloat(env, 3.0f, 1000, &three_file));\n   auto node1 = ops::ImmutableConst(root, DT_FLOAT, kFileTensorShape, two_file);\n   auto node2 =\n       ops::ImmutableConst(root, DT_FLOAT, kFileTensorShape, three_file);\n@@\n   EXPECT_EQ(outputs.front().flat<float>()(2), 2.0f * 3.0f);\n }\n \n+Status CreateTempFileBadString(Env* env, char value, uint64 size,\n+                               const string suffix, string* filename) {\n+  const string dir = testing::TmpDir();\n+  *filename = io::JoinPath(dir, strings::StrCat(\"file_\", suffix));\n+  std::unique_ptr<WritableFile> file;\n+  TF_RETURN_IF_ERROR(env->NewWritableFile(*filename, &file));\n+  TF_RETURN_IF_ERROR(file->Append(std::string(size, value)));\n+  TF_RETURN_IF_ERROR(file->Close());\n+  return Status::OK();\n+}\n+\n+TEST(ImmutableConstantOpTest, FromFileStringUnimplmented) {\n+  const TensorShape kFileTensorShape({1});\n+  Env* env = Env::Default();\n+  auto root = Scope::NewRootScope().ExitOnError();\n+\n+  string bad_file;\n+  TF_ASSERT_OK(CreateTempFileBadString(env, '\\xe2', 128, \"bad_e2\", &bad_file));\n+  auto result =\n+      ops::ImmutableConst(root, DT_STRING, kFileTensorShape, bad_file);\n+  GraphDef graph_def;\n+  TF_ASSERT_OK(root.ToGraphDef(&graph_def));\n+  SessionOptions session_options;\n+  session_options.env = Env::Default();\n+  std::unique_ptr<Session> session(NewSession(session_options));\n+  ASSERT_TRUE(session != nullptr) << \"Failed to create session\";\n+  TF_ASSERT_OK(session->Create(graph_def)) << \"Can't create test graph\";\n+  std::vector<Tensor> outputs;\n+  // Check that the run returned error.\n+  EXPECT_EQ(\n+      session->Run({}, {result.node()->name() + \":0\"}, {}, &outputs).code(),\n+      error::UNIMPLEMENTED);\n+}\n+\n }  // namespace\n }  // namespace tensorflow\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/kernels/immutable_constant_op.cc
+M tensorflow/core/kernels/immutable_constant_op_test.cc
+
+tokens used
+input: 2,158
+cache read: 11,776
+cache write: 0
+output: 958
+reasoning output: 0
+
+The source changes are in place. I’m reviewing the final diff and status now; no full build will be run per the task constraints.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target ImmutableConstantOp implementation and tests",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate uncertain patch hunks against target base",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply minimal backport changes",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Review resulting diff",
+      "status": "in_progress",
+      "priority": "high"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target ImmutableConstantOp implementation and tests",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate uncertain patch hunks against target base",
+    "status": "completed",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply minimal backport changes",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Review resulting diff",
+    "status": "in_progress",
+    "priority": "high"
+  }
+]
+
+tokens used
+input: 1,108
+cache read: 13,824
+cache write: 0
+output: 124
+reasoning output: 0
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/kernels/immutable_constant_op.cc tensorflow/core/kernels/immutable_constant_op_test.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0071-995d2015c6e4",
+  "timeout": 120000
+}
+warning: in the working copy of 'tensorflow/core/kernels/immutable_constant_op.cc', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'tensorflow/core/kernels/immutable_constant_op_test.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/kernels/immutable_constant_op.cc b/tensorflow/core/kernels/immutable_constant_op.cc
+index 19aa865c1f..df0d76ce63 100644
+--- a/tensorflow/core/kernels/immutable_constant_op.cc
++++ b/tensorflow/core/kernels/immutable_constant_op.cc
+@@ -100,6 +100,9 @@ void ImmutableConstantOp::Compute(OpKernelContext* ctx) {
+ 
+   OP_REQUIRES_OK(ctx,
+                  allocator->InitializeFromRegion(region_name_, ctx->env()));
++  OP_REQUIRES(ctx, dtype_ != DT_STRING,
++              errors::Unimplemented("Sorry, DT_STRING is not currently "
++                                    "supported for ImmutableConstOp."));
+   ctx->set_output(0, Tensor(allocator.get(), dtype_, shape_));
+   OP_REQUIRES_OK(ctx, allocator->allocation_status());
+   // Allocator is owned by the tensor from this point.
+diff --git a/tensorflow/core/kernels/immutable_constant_op_test.cc b/tensorflow/core/kernels/immutable_constant_op_test.cc
+index d52a8b55a3..40ce8918a3 100644
+--- a/tensorflow/core/kernels/immutable_constant_op_test.cc
++++ b/tensorflow/core/kernels/immutable_constant_op_test.cc
+@@ -146,7 +146,8 @@ TEST(ImmutableConstantOpTest, ExecutionError) {
+       error::INTERNAL);
+ }
+ 
+-Status CreateTempFile(Env* env, float value, uint64 size, string* filename) {
++Status CreateTempFileFloat(Env* env, float value, uint64 size,
++                           string* filename) {
+   const string dir = testing::TmpDir();
+   *filename = io::JoinPath(dir, strings::StrCat("file_", value));
+   std::unique_ptr<WritableFile> file;
+@@ -166,8 +167,8 @@ TEST(ImmutableConstantOpTest, FromFile) {
+   auto root = Scope::NewRootScope().ExitOnError();
+ 
+   string two_file, three_file;
+-  TF_ASSERT_OK(CreateTempFile(env, 2.0f, 1000, &two_file));
+-  TF_ASSERT_OK(CreateTempFile(env, 3.0f, 1000, &three_file));
++  TF_ASSERT_OK(CreateTempFileFloat(env, 2.0f, 1000, &two_file));
++  TF_ASSERT_OK(CreateTempFileFloat(env, 3.0f, 1000, &three_file));
+   auto node1 = ops::ImmutableConst(root, DT_FLOAT, kFileTensorShape, two_file);
+   auto node2 =
+       ops::ImmutableConst(root, DT_FLOAT, kFileTensorShape, three_file);
+@@ -190,5 +191,39 @@ TEST(ImmutableConstantOpTest, FromFile) {
+   EXPECT_EQ(outputs.front().flat<float>()(2), 2.0f * 3.0f);
+ }
+ 
++Status CreateTempFileBadString(Env* env, char value, uint64 size,
++                               const string suffix, string* filename) {
++  const string dir = testing::TmpDir();
++  *filename = io::JoinPath(dir, strings::StrCat("file_", suffix));
++  std::unique_ptr<WritableFile> file;
++  TF_RETURN_IF_ERROR(env->NewWritableFile(*filename, &file));
++  TF_RETURN_IF_ERROR(file->Append(std::string(size, value)));
++  TF_RETURN_IF_ERROR(file->Close());
++  return Status::OK();
++}
++
++TEST(ImmutableConstantOpTest, FromFileStringUnimplmented) {
++  const TensorShape kFileTensorShape({1});
++  Env* env = Env::Default();
++  auto root = Scope::NewRootScope().ExitOnError();
++
++  string bad_file;
++  TF_ASSERT_OK(CreateTempFileBadString(env, '\xe2', 128, "bad_e2", &bad_file));
++  auto result =
++      ops::ImmutableConst(root, DT_STRING, kFileTensorShape, bad_file);
++  GraphDef graph_def;
++  TF_ASSERT_OK(root.ToGraphDef(&graph_def));
++  SessionOptions session_options;
++  session_options.env = Env::Default();
++  std::unique_ptr<Session> session(NewSession(session_options));
++  ASSERT_TRUE(session != nullptr) << "Failed to create session";
++  TF_ASSERT_OK(session->Create(graph_def)) << "Can't create test graph";
++  std::vector<Tensor> outputs;
++  // Check that the run returned error.
++  EXPECT_EQ(
++      session->Run({}, {result.node()->name() + ":0"}, {}, &outputs).code(),
++      error::UNIMPLEMENTED);
++}
++
+ }  // namespace
+ }  // namespace tensorflow
+
+tool: bash
+{
+  "command": "git status --short",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0071-995d2015c6e4",
+  "timeout": 120000
+}
+ M tensorflow/core/kernels/immutable_constant_op.cc
+ M tensorflow/core/kernels/immutable_constant_op_test.cc
+
+tokens used
+input: 344
+cache read: 14,848
+cache write: 0
+output: 168
+reasoning output: 0
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target ImmutableConstantOp implementation and tests",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate uncertain patch hunks against target base",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply minimal backport changes",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Review resulting diff",
+      "status": "completed",
+      "priority": "high"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target ImmutableConstantOp implementation and tests",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate uncertain patch hunks against target base",
+    "status": "completed",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply minimal backport changes",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Review resulting diff",
+    "status": "completed",
+    "priority": "high"
+  }
+]
+
+tokens used
+input: 1,643
+cache read: 14,848
+cache write: 0
+output: 90
+reasoning output: 19
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/kernels/immutable_constant_op.cc b/tensorflow/core/kernels/immutable_constant_op.cc
+    index 19aa865c1f..df0d76ce63 100644
+    --- a/tensorflow/core/kernels/immutable_constant_op.cc
+    +++ b/tensorflow/core/kernels/immutable_constant_op.cc
+    @@ -100,6 +100,9 @@ void ImmutableConstantOp::Compute(OpKernelContext* ctx) {
+     
+       OP_REQUIRES_OK(ctx,
+                      allocator->InitializeFromRegion(region_name_, ctx->env()));
+    +  OP_REQUIRES(ctx, dtype_ != DT_STRING,
+    +              errors::Unimplemented("Sorry, DT_STRING is not currently "
+    +                                    "supported for ImmutableConstOp."));
+       ctx->set_output(0, Tensor(allocator.get(), dtype_, shape_));
+       OP_REQUIRES_OK(ctx, allocator->allocation_status());
+       // Allocator is owned by the tensor from this point.
+    diff --git a/tensorflow/core/kernels/immutable_constant_op_test.cc b/tensorflow/core/kernels/immutable_constant_op_test.cc
+    index d52a8b55a3..40ce8918a3 100644
+    --- a/tensorflow/core/kernels/immutable_constant_op_test.cc
+    +++ b/tensorflow/core/kernels/immutable_constant_op_test.cc
+    @@ -146,7 +146,8 @@ TEST(ImmutableConstantOpTest, ExecutionError) {
+           error::INTERNAL);
+     }
+     
+    -Status CreateTempFile(Env* env, float value, uint64 size, string* filename) {
+    +Status CreateTempFileFloat(Env* env, float value, uint64 size,
+    +                           string* filename) {
+       const string dir = testing::TmpDir();
+       *filename = io::JoinPath(dir, strings::StrCat("file_", value));
+       std::unique_ptr<WritableFile> file;
+    @@ -166,8 +167,8 @@ TEST(ImmutableConstantOpTest, FromFile) {
+       auto root = Scope::NewRootScope().ExitOnError();
+     
+       string two_file, three_file;
+    -  TF_ASSERT_OK(CreateTempFile(env, 2.0f, 1000, &two_file));
+    -  TF_ASSERT_OK(CreateTempFile(env, 3.0f, 1000, &three_file));
+    +  TF_ASSERT_OK(CreateTempFileFloat(env, 2.0f, 1000, &two_file));
+    +  TF_ASSERT_OK(CreateTempFileFloat(env, 3.0f, 1000, &three_file));
+       auto node1 = ops::ImmutableConst(root, DT_FLOAT, kFileTensorShape, two_file);
+       auto node2 =
+           ops::ImmutableConst(root, DT_FLOAT, kFileTensorShape, three_file);
+    @@ -190,5 +191,39 @@ TEST(ImmutableConstantOpTest, FromFile) {
+       EXPECT_EQ(outputs.front().flat<float>()(2), 2.0f * 3.0f);
+     }
+     
+    +Status CreateTempFileBadString(Env* env, char value, uint64 size,
+    +                               const string suffix, string* filename) {
+    +  const string dir = testing::TmpDir();
+    +  *filename = io::JoinPath(dir, strings::StrCat("file_", suffix));
+    +  std::unique_ptr<WritableFile> file;
+    +  TF_RETURN_IF_ERROR(env->NewWritableFile(*filename, &file));
+    +  TF_RETURN_IF_ERROR(file->Append(std::string(size, value)));
+    +  TF_RETURN_IF_ERROR(file->Close());
+    +  return Status::OK();
+    +}
+    +
+    +TEST(ImmutableConstantOpTest, FromFileStringUnimplmented) {
+    +  const TensorShape kFileTensorShape({1});
+    +  Env* env = Env::Default();
+    +  auto root = Scope::NewRootScope().ExitOnError();
+    +
+    +  string bad_file;
+    +  TF_ASSERT_OK(CreateTempFileBadString(env, '\xe2', 128, "bad_e2", &bad_file));
+    +  auto result =
+    +      ops::ImmutableConst(root, DT_STRING, kFileTensorShape, bad_file);
+    +  GraphDef graph_def;
+    +  TF_ASSERT_OK(root.ToGraphDef(&graph_def));
+    +  SessionOptions session_options;
+    +  session_options.env = Env::Default();
+    +  std::unique_ptr<Session> session(NewSession(session_options));
+    +  ASSERT_TRUE(session != nullptr) << "Failed to create session";
+    +  TF_ASSERT_OK(session->Create(graph_def)) << "Can't create test graph";
+    +  std::vector<Tensor> outputs;
+    +  // Check that the run returned error.
+    +  EXPECT_EQ(
+    +      session->Run({}, {result.node()->name() + ":0"}, {}, &outputs).code(),
+    +      error::UNIMPLEMENTED);
+    +}
+    +
+     }  // namespace
+     }  // namespace tensorflow
+  notes: >
+    Backported the ImmutableConst DT_STRING rejection and regression test; hunk validation succeeded against the target base.
+```
+
+tokens used
+input: 863
+cache read: 15,872
+cache write: 0
+output: 1,132
+reasoning output: 0

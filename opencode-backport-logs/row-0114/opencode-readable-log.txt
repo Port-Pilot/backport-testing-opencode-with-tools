@@ -1,0 +1,460 @@
+I’ll inspect the target implementation around `SparseAddOp`, compare it to the provided hunk locations, then apply the minimal equivalent validation changes without looking at the held-out backport commit.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target SparseAddOp context",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Validate and apply minimal backport hunks",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "content": "Review final diff and report YAML",
+      "status": "pending",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target SparseAddOp context",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Validate and apply minimal backport hunks",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "content": "Review final diff and report YAML",
+    "status": "pending",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 4,024
+cache read: 4,608
+cache write: 0
+output: 119
+reasoning output: 0
+
+tool: viewcode
+{
+  "ref": "b6cedf78b7856c63622f0956882bd92665813ab3",
+  "path": "tensorflow/core/kernels/sparse_add_op.cc",
+  "startline": 1,
+  "endline": 150
+}
+Here are lines 1 through 150.
+
+/* Copyright 2016 The TensorFlow Authors. All Rights Reserved.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+==============================================================================*/
+
+#include "tensorflow/core/framework/op_kernel.h"
+#include "tensorflow/core/framework/op_requires.h"
+#include "tensorflow/core/framework/register_types.h"
+#include "tensorflow/core/framework/tensor.h"
+#include "tensorflow/core/framework/tensor_util.h"
+#include "tensorflow/core/framework/types.h"
+#include "tensorflow/core/util/sparse/sparse_tensor.h"
+
+namespace tensorflow {
+
+template <typename T, typename Treal>
+class SparseAddOp : public OpKernel {
+ public:
+  explicit SparseAddOp(OpKernelConstruction *ctx) : OpKernel(ctx) {}
+
+  void Compute(OpKernelContext *ctx) override {
+    // (0) validations
+    const Tensor *a_indices, *b_indices, *a_values_t, *b_values_t, *a_shape,
+        *b_shape, *thresh_t;
+
+    OP_REQUIRES_OK(ctx, ctx->input("a_indices", &a_indices));
+    OP_REQUIRES_OK(ctx, ctx->input("b_indices", &b_indices));
+    OP_REQUIRES(ctx,
+                TensorShapeUtils::IsMatrix(a_indices->shape()) &&
+                    TensorShapeUtils::IsMatrix(b_indices->shape()),
+                errors::InvalidArgument(
+                    "Input indices should be matrices but received shapes: ",
+                    a_indices->shape().DebugString(), " and ",
+                    b_indices->shape().DebugString()));
+    const int64 a_nnz = a_indices->dim_size(0);
+    const int64 b_nnz = b_indices->dim_size(0);
+
+    OP_REQUIRES_OK(ctx, ctx->input("a_values", &a_values_t));
+    OP_REQUIRES_OK(ctx, ctx->input("b_values", &b_values_t));
+
+    OP_REQUIRES(ctx,
+                TensorShapeUtils::IsVector(a_values_t->shape()) &&
+                    TensorShapeUtils::IsVector(b_values_t->shape()),
+                errors::InvalidArgument(
+                    "Input values should be vectors but received shapes: ",
+                    a_values_t->shape().DebugString(), " and ",
+                    b_values_t->shape().DebugString()));
+    auto a_values = ctx->input(1).vec<T>();
+    auto b_values = ctx->input(4).vec<T>();
+    OP_REQUIRES(
+        ctx, a_values.size() == a_nnz && b_values.size() == b_nnz,
+        errors::InvalidArgument("Expected ", a_nnz, " and ", b_nnz,
+                                " non-empty input values, got ",
+                                a_values.size(), " and ", b_values.size()));
+
+    OP_REQUIRES_OK(ctx, ctx->input("a_shape", &a_shape));
+    OP_REQUIRES_OK(ctx, ctx->input("b_shape", &b_shape));
+    OP_REQUIRES(ctx,
+                TensorShapeUtils::IsVector(a_shape->shape()) &&
+                    TensorShapeUtils::IsVector(b_shape->shape()),
+                errors::InvalidArgument(
+                    "Input shapes should be a vector but received shapes ",
+                    a_shape->shape().DebugString(), " and ",
+                    b_shape->shape().DebugString()));
+    OP_REQUIRES(
+        ctx, a_shape->IsSameSize(*b_shape),
+        errors::InvalidArgument(
+            "Operands do not have the same ranks; got shapes: ",
+            a_shape->SummarizeValue(10), " and ", b_shape->SummarizeValue(10)));
+    const auto a_shape_flat = a_shape->flat<int64>();
+    const auto b_shape_flat = b_shape->flat<int64>();
+    for (int i = 0; i < a_shape->NumElements(); ++i) {
+      OP_REQUIRES(ctx, a_shape_flat(i) == b_shape_flat(i),
+                  errors::InvalidArgument(
+                      "Operands' shapes do not match: got ", a_shape_flat(i),
+                      " and ", b_shape_flat(i), " for dimension ", i));
+    }
+
+    OP_REQUIRES_OK(ctx, ctx->input("thresh", &thresh_t));
+    OP_REQUIRES(ctx, TensorShapeUtils::IsScalar(thresh_t->shape()),
+                errors::InvalidArgument(
+                    "The magnitude threshold must be a scalar: got shape ",
+                    thresh_t->shape().DebugString()));
+    // std::abs() so that it works for complex{64,128} values as well
+    const Treal thresh = thresh_t->scalar<Treal>()();
+
+    // (1) do a pass over inputs, and append values and indices to vectors
+    auto a_indices_mat = a_indices->matrix<int64>();
+    auto b_indices_mat = b_indices->matrix<int64>();
+    std::vector<std::pair<bool, int64>> entries_to_copy;  // from_a?, idx
+    entries_to_copy.reserve(a_nnz + b_nnz);
+    std::vector<T> out_values;
+    const int num_dims = a_shape->dim_size(0);
+
+    OP_REQUIRES(ctx, num_dims > 0,
+                errors::InvalidArgument("Invalid input_a shape. Received: ",
+                                        a_shape->DebugString()));
+
+    // The input and output sparse tensors are assumed to be ordered along
+    // increasing dimension number.
+    int64 i = 0, j = 0;
+    T s;
+    while (i < a_nnz && j < b_nnz) {
+      switch (sparse::DimComparator::cmp(a_indices_mat, b_indices_mat, i, j,
+                                         num_dims)) {
+        case -1:
+          entries_to_copy.emplace_back(true, i);
+          out_values.push_back(a_values(i));
+          ++i;
+          break;
+        case 0:
+          s = a_values(i) + b_values(j);
+          if (thresh <= std::abs(s)) {
+            entries_to_copy.emplace_back(true, i);
+            out_values.push_back(s);
+          }
+          ++i;
+          ++j;
+          break;
+        case 1:
+          entries_to_copy.emplace_back(false, j);
+          out_values.push_back(b_values(j));
+          ++j;
+          break;
+      }
+    }
+
+#define HANDLE_LEFTOVERS(A_OR_B, IDX, IS_A)     \
+  while (IDX < A_OR_B##_nnz) {                  \
+    entries_to_copy.emplace_back(IS_A, IDX);    \
+    out_values.push_back(A_OR_B##_values(IDX)); \
+    ++IDX;                                      \
+  }
+
+    // at most one of these calls appends new values
+    HANDLE_LEFTOVERS(a, i, true);
+    HANDLE_LEFTOVERS(b, j, false);
+#undef HANDLE_LEFTOVERS
+
+    // (2) allocate and fill output tensors
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: locate_symbol
+{
+  "ref": "b6cedf78b7856c63622f0956882bd92665813ab3",
+  "symbol": "SparseAddOp"
+}
+tensorflow/core/kernels/sparse_add_op.cc:27
+tensorflow/core/kernels/sparse_add_op.cc:29
+tensorflow/core/kernels/sparse_add_op.cc:175
+
+tokens used
+input: 1,179
+cache read: 7,680
+cache write: 0
+output: 117
+reasoning output: 0
+
+The target file matches the provided patch closely. I’m moving `num_dims` to derive from `a_indices->dim_size(1)`, adding the missing rank consistency checks, and removing the later shape-derived `num_dims` block.
+
+tool: validate
+{
+  "ref": "b6cedf78b7856c63622f0956882bd92665813ab3",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/sparse_add_op.cc b/tensorflow/core/kernels/sparse_add_op.cc\n--- a/tensorflow/core/kernels/sparse_add_op.cc\n+++ b/tensorflow/core/kernels/sparse_add_op.cc\n@@ -44,6 +44,11 @@ class SparseAddOp : public OpKernel {\n                     b_indices->shape().DebugString()));\n     const int64 a_nnz = a_indices->dim_size(0);\n     const int64 b_nnz = b_indices->dim_size(0);\n+    const int num_dims = a_indices->dim_size(1);\n+    OP_REQUIRES(ctx, b_indices->dim_size(1) == num_dims,\n+                errors::InvalidArgument(\n+                    \"Input indices must have the same dimension, got \",\n+                    num_dims, \" and \", b_indices->dim_size(1)));\n \n     OP_REQUIRES_OK(ctx, ctx->input(\"a_values\", &a_values_t));\n     OP_REQUIRES_OK(ctx, ctx->input(\"b_values\", &b_values_t));\n@@ -72,6 +77,13 @@ class SparseAddOp : public OpKernel {\n                     \"Input shapes should be a vector but received shapes \",\n                     a_shape->shape().DebugString(), \" and \",\n                     b_shape->shape().DebugString()));\n+    OP_REQUIRES(\n+        ctx, a_shape->NumElements() == num_dims,\n+        errors::InvalidArgument(\"Second dimension of a_indices and length of \"\n+                                \"a_shape must match, got \",\n+                                num_dims, \" and \", a_shape->NumElements()));\n+    OP_REQUIRES(ctx, num_dims > 0,\n+                errors::InvalidArgument(\"Tesors must not be empty\"));\n     OP_REQUIRES(\n         ctx, a_shape->IsSameSize(*b_shape),\n         errors::InvalidArgument(\n@@ -100,11 +112,6 @@ class SparseAddOp : public OpKernel {\n     std::vector<std::pair<bool, int64>> entries_to_copy;  // from_a?, idx\n     entries_to_copy.reserve(a_nnz + b_nnz);\n     std::vector<T> out_values;\n-    const int num_dims = a_shape->dim_size(0);\n-\n-    OP_REQUIRES(ctx, num_dims > 0,\n-                errors::InvalidArgument(\"Invalid input_a shape. Received: \",\n-                                        a_shape->DebugString()));\n \n     // The input and output sparse tensors are assumed to be ordered along\n     // increasing dimension number.\n"
+}
+Patch applied successfully
+
+tokens used
+input: 1,845
+cache read: 8,704
+cache write: 0
+output: 694
+reasoning output: 29
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/kernels/sparse_add_op.cc\n@@\n     const int64 a_nnz = a_indices->dim_size(0);\n     const int64 b_nnz = b_indices->dim_size(0);\n+    const int num_dims = a_indices->dim_size(1);\n+    OP_REQUIRES(ctx, b_indices->dim_size(1) == num_dims,\n+                errors::InvalidArgument(\n+                    \"Input indices must have the same dimension, got \",\n+                    num_dims, \" and \", b_indices->dim_size(1)));\n \n     OP_REQUIRES_OK(ctx, ctx->input(\"a_values\", &a_values_t));\n     OP_REQUIRES_OK(ctx, ctx->input(\"b_values\", &b_values_t));\n@@\n                     \"Input shapes should be a vector but received shapes \",\n                     a_shape->shape().DebugString(), \" and \",\n                     b_shape->shape().DebugString()));\n+    OP_REQUIRES(\n+        ctx, a_shape->NumElements() == num_dims,\n+        errors::InvalidArgument(\"Second dimension of a_indices and length of \"\n+                                \"a_shape must match, got \",\n+                                num_dims, \" and \", a_shape->NumElements()));\n+    OP_REQUIRES(ctx, num_dims > 0,\n+                errors::InvalidArgument(\"Tesors must not be empty\"));\n     OP_REQUIRES(\n         ctx, a_shape->IsSameSize(*b_shape),\n         errors::InvalidArgument(\n@@\n     std::vector<std::pair<bool, int64>> entries_to_copy;  // from_a?, idx\n     entries_to_copy.reserve(a_nnz + b_nnz);\n     std::vector<T> out_values;\n-    const int num_dims = a_shape->dim_size(0);\n-\n-    OP_REQUIRES(ctx, num_dims > 0,\n-                errors::InvalidArgument(\"Invalid input_a shape. Received: \",\n-                                        a_shape->DebugString()));\n \n     // The input and output sparse tensors are assumed to be ordered along\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/kernels/sparse_add_op.cc
+
+tokens used
+input: 1,557
+cache read: 9,728
+cache write: 0
+output: 506
+reasoning output: 0
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target SparseAddOp context",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate and apply minimal backport hunks",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Review final diff and report YAML",
+      "status": "in_progress",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target SparseAddOp context",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate and apply minimal backport hunks",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Review final diff and report YAML",
+    "status": "in_progress",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 1,067
+cache read: 10,752
+cache write: 0
+output: 74
+reasoning output: 0
+
+The hunk validated cleanly against the target base and has been applied. I’m reviewing the resulting diff now.
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/kernels/sparse_add_op.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0114-b6cedf78b785",
+  "timeout": 120000
+}
+warning: in the working copy of 'tensorflow/core/kernels/sparse_add_op.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/kernels/sparse_add_op.cc b/tensorflow/core/kernels/sparse_add_op.cc
+index 87a17b0882..e2cec69b14 100644
+--- a/tensorflow/core/kernels/sparse_add_op.cc
++++ b/tensorflow/core/kernels/sparse_add_op.cc
+@@ -44,6 +44,11 @@ class SparseAddOp : public OpKernel {
+                     b_indices->shape().DebugString()));
+     const int64 a_nnz = a_indices->dim_size(0);
+     const int64 b_nnz = b_indices->dim_size(0);
++    const int num_dims = a_indices->dim_size(1);
++    OP_REQUIRES(ctx, b_indices->dim_size(1) == num_dims,
++                errors::InvalidArgument(
++                    "Input indices must have the same dimension, got ",
++                    num_dims, " and ", b_indices->dim_size(1)));
+ 
+     OP_REQUIRES_OK(ctx, ctx->input("a_values", &a_values_t));
+     OP_REQUIRES_OK(ctx, ctx->input("b_values", &b_values_t));
+@@ -72,6 +77,13 @@ class SparseAddOp : public OpKernel {
+                     "Input shapes should be a vector but received shapes ",
+                     a_shape->shape().DebugString(), " and ",
+                     b_shape->shape().DebugString()));
++    OP_REQUIRES(
++        ctx, a_shape->NumElements() == num_dims,
++        errors::InvalidArgument("Second dimension of a_indices and length of "
++                                "a_shape must match, got ",
++                                num_dims, " and ", a_shape->NumElements()));
++    OP_REQUIRES(ctx, num_dims > 0,
++                errors::InvalidArgument("Tesors must not be empty"));
+     OP_REQUIRES(
+         ctx, a_shape->IsSameSize(*b_shape),
+         errors::InvalidArgument(
+@@ -100,11 +112,6 @@ class SparseAddOp : public OpKernel {
+     std::vector<std::pair<bool, int64>> entries_to_copy;  // from_a?, idx
+     entries_to_copy.reserve(a_nnz + b_nnz);
+     std::vector<T> out_values;
+-    const int num_dims = a_shape->dim_size(0);
+-
+-    OP_REQUIRES(ctx, num_dims > 0,
+-                errors::InvalidArgument("Invalid input_a shape. Received: ",
+-                                        a_shape->DebugString()));
+ 
+     // The input and output sparse tensors are assumed to be ordered along
+     // increasing dimension number.
+
+tokens used
+input: 1,249
+cache read: 10,752
+cache write: 0
+output: 105
+reasoning output: 0
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target SparseAddOp context",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate and apply minimal backport hunks",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Review final diff and report YAML",
+      "status": "completed",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target SparseAddOp context",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate and apply minimal backport hunks",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Review final diff and report YAML",
+    "status": "completed",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 925
+cache read: 11,776
+cache write: 0
+output: 75
+reasoning output: 15
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/kernels/sparse_add_op.cc b/tensorflow/core/kernels/sparse_add_op.cc
+    index 87a17b0882..e2cec69b14 100644
+    --- a/tensorflow/core/kernels/sparse_add_op.cc
+    +++ b/tensorflow/core/kernels/sparse_add_op.cc
+    @@ -44,6 +44,11 @@ class SparseAddOp : public OpKernel {
+                         b_indices->shape().DebugString()));
+         const int64 a_nnz = a_indices->dim_size(0);
+         const int64 b_nnz = b_indices->dim_size(0);
+    +    const int num_dims = a_indices->dim_size(1);
+    +    OP_REQUIRES(ctx, b_indices->dim_size(1) == num_dims,
+    +                errors::InvalidArgument(
+    +                    "Input indices must have the same dimension, got ",
+    +                    num_dims, " and ", b_indices->dim_size(1)));
+     
+         OP_REQUIRES_OK(ctx, ctx->input("a_values", &a_values_t));
+         OP_REQUIRES_OK(ctx, ctx->input("b_values", &b_values_t));
+    @@ -72,6 +77,13 @@ class SparseAddOp : public OpKernel {
+                         "Input shapes should be a vector but received shapes ",
+                         a_shape->shape().DebugString(), " and ",
+                         b_shape->shape().DebugString()));
+    +    OP_REQUIRES(
+    +        ctx, a_shape->NumElements() == num_dims,
+    +        errors::InvalidArgument("Second dimension of a_indices and length of "
+    +                                "a_shape must match, got ",
+    +                                num_dims, " and ", a_shape->NumElements()));
+    +    OP_REQUIRES(ctx, num_dims > 0,
+    +                errors::InvalidArgument("Tesors must not be empty"));
+         OP_REQUIRES(
+             ctx, a_shape->IsSameSize(*b_shape),
+             errors::InvalidArgument(
+    @@ -100,11 +112,6 @@ class SparseAddOp : public OpKernel {
+         std::vector<std::pair<bool, int64>> entries_to_copy;  // from_a?, idx
+         entries_to_copy.reserve(a_nnz + b_nnz);
+         std::vector<T> out_values;
+    -    const int num_dims = a_shape->dim_size(0);
+    -
+    -    OP_REQUIRES(ctx, num_dims > 0,
+    -                errors::InvalidArgument("Invalid input_a shape. Received: ",
+    -                                        a_shape->DebugString()));
+     
+         // The input and output sparse tensors are assumed to be ordered along
+         // increasing dimension number.
+  notes: >
+    Backported SparseAdd index dimension and shape length validation from the provided security patch; hunk validation succeeded against the target base.
+```
+
+tokens used
+input: 1,122
+cache read: 11,776
+cache write: 0
+output: 628
+reasoning output: 0

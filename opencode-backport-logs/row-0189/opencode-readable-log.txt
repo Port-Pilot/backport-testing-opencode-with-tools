@@ -1,0 +1,580 @@
+I’ll locate the target implementation of `QuantizeAndDequantizeV2Op`, compare the older surrounding code to the supplied fix, then apply only the missing axis lower-bound validation.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect source patch context and target TensorFlow 2.1.4 code",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Validate candidate hunk against target base",
+      "status": "pending",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply minimal source change and capture diff",
+      "status": "pending",
+      "priority": "high"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect source patch context and target TensorFlow 2.1.4 code",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Validate candidate hunk against target base",
+    "status": "pending",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply minimal source change and capture diff",
+    "status": "pending",
+    "priority": "high"
+  }
+]
+
+tokens used
+input: 3,761
+cache read: 4,608
+cache write: 0
+output: 128
+reasoning output: 0
+
+tool: git_show
+{
+  "ref": "c5b0d5f8ac19888e46ca14b0e27562e7fbbee9a9",
+  "context": "class QuantizeAndDequantizeV2Op : public OpKernel {\n\n  void Compute(OpKernelContext* ctx) override {\n    const Tensor& input = ctx->input(0);\n    OP_REQUIRES(\n        ctx, axis_ >= -1,\n        errors::InvalidArgument(\"Axis must be at least -1. Found \", axis_));\n    OP_REQUIRES(\n        ctx, (axis_ == -1 || axis_ < input.shape().dims()),\n        errors::InvalidArgument(\"Shape must be at least rank \", axis_ + 1,"
+}
+commit c5b0d5f8ac19888e46ca14b0e27562e7fbbee9a9
+Author: Amit Patankar <amitpatankar@google.com>
+Date:   Fri Apr 30 10:39:05 2021 -0700
+
+    Fix the CHECK failure in tf.raw_ops.QuantizeAndDequantizeV2.
+    
+    PiperOrigin-RevId: 371361603
+    Change-Id: Ia70e34d41adaadddf928e95e5e5c5c97d5bc60d0
+
+ tensorflow/core/kernels/quantize_and_dequantize_op.cc | 3 +++
+ 1 file changed, 3 insertions(+)
+This commit shows that there is a high probability that this code is new, so the corresponding code segment cannot be found in the old version.
+You can call `viewcode` and `locate_symbol` to further check the results step by step. For newly introduced code, we consider that this hunk `need not ported`.
+
+tool: locate_symbol
+{
+  "ref": "7a5dd0aa176dbf81742f84b44aeb0948fa2d8f20",
+  "symbol": "QuantizeAndDequantizeV2Op"
+}
+tensorflow/compiler/tf2xla/kernels/quantize_and_dequantize_op.cc:209
+tensorflow/core/kernels/quantize_and_dequantize_op.cc:43
+tensorflow/compiler/tf2xla/kernels/quantize_and_dequantize_op.cc:211
+tensorflow/core/kernels/quantize_and_dequantize_op.cc:45
+tensorflow/compiler/tf2xla/kernels/quantize_and_dequantize_op.cc:234
+tensorflow/core/kernels/quantize_and_dequantize_op.cc:304
+tensorflow/core/kernels/quantize_and_dequantize_op.cc:324
+
+tool: grep
+{
+  "pattern": "class QuantizeAndDequantizeV2Op",
+  "path": "tensorflow/core/kernels",
+  "include": "*.cc"
+}
+Found 1 matches
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0189-7a5dd0aa176d\tensorflow\core\kernels\quantize_and_dequantize_op.cc:
+  Line 43: class QuantizeAndDequantizeV2Op : public OpKernel {
+
+tokens used
+input: 934
+cache read: 7,680
+cache write: 0
+output: 277
+reasoning output: 0
+
+The target file contains the same CPU kernel class and axis upper-bound check, so this is a direct minimal backport in `tensorflow/core/kernels/quantize_and_dequantize_op.cc`.
+
+tool: read
+{
+  "filePath": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0189-7a5dd0aa176d\\tensorflow\\core\\kernels\\quantize_and_dequantize_op.cc",
+  "offset": 35,
+  "limit": 70
+}
+<path>C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0189-7a5dd0aa176d\tensorflow\core\kernels\quantize_and_dequantize_op.cc</path>
+<type>file</type>
+<content>
+35: typedef Eigen::GpuDevice GPUDevice;
+36: 
+37: // Simulate quantization precision loss in a float tensor by:
+38: // 1. Quantize the tensor to fixed point numbers, which should match the target
+39: //    quantization method when it is used in inference.
+40: // 2. Dequantize it back to floating point numbers for the following ops, most
+41: //    likely matmul.
+42: template <typename Device, typename T>
+43: class QuantizeAndDequantizeV2Op : public OpKernel {
+44:  public:
+45:   explicit QuantizeAndDequantizeV2Op(OpKernelConstruction* ctx)
+46:       : OpKernel(ctx) {
+47:     OP_REQUIRES_OK(ctx, ctx->GetAttr("signed_input", &signed_input_));
+48:     OP_REQUIRES_OK(ctx, ctx->GetAttr("axis", &axis_));
+49:     OP_REQUIRES_OK(ctx, ctx->GetAttr("num_bits", &num_bits_));
+50:     OP_REQUIRES(ctx, num_bits_ > 0 && num_bits_ < (signed_input_ ? 62 : 63),
+51:                 errors::InvalidArgument("num_bits is out of range: ", num_bits_,
+52:                                         " with signed_input_ ", signed_input_));
+53:     OP_REQUIRES_OK(ctx, ctx->GetAttr("range_given", &range_given_));
+54: 
+55:     string round_mode_string;
+56:     OP_REQUIRES_OK(ctx, ctx->GetAttr("round_mode", &round_mode_string));
+57:     OP_REQUIRES(
+58:         ctx,
+59:         (round_mode_string == "HALF_UP" || round_mode_string == "HALF_TO_EVEN"),
+60:         errors::InvalidArgument("Round mode string must be "
+61:                                 "'HALF_UP' or "
+62:                                 "'HALF_TO_EVEN', is '" +
+63:                                 round_mode_string + "'"));
+64:     if (round_mode_string == "HALF_UP") {
+65:       round_mode_ = ROUND_HALF_UP;
+66:     } else if (round_mode_string == "HALF_TO_EVEN") {
+67:       round_mode_ = ROUND_HALF_TO_EVEN;
+68:     }
+69:     OP_REQUIRES_OK(ctx, ctx->GetAttr("narrow_range", &narrow_range_));
+70:   }
+71: 
+72:   void Compute(OpKernelContext* ctx) override {
+73:     const Tensor& input = ctx->input(0);
+74:     const int depth = (axis_ == -1) ? 1 : input.dim_size(axis_);
+75:     Tensor input_min_tensor;
+76:     Tensor input_max_tensor;
+77:     Tensor* output = nullptr;
+78:     OP_REQUIRES_OK(ctx, ctx->allocate_output(0, input.shape(), &output));
+79:     if (range_given_) {
+80:       input_min_tensor = ctx->input(1);
+81:       input_max_tensor = ctx->input(2);
+82:       if (axis_ == -1) {
+83:         auto min_val = input_min_tensor.scalar<T>()();
+84:         auto max_val = input_max_tensor.scalar<T>()();
+85:         OP_REQUIRES(ctx, min_val <= max_val,
+86:                     errors::InvalidArgument("Invalid range: input_min ",
+87:                                             min_val, " > input_max ", max_val));
+88:       } else {
+89:         OP_REQUIRES(ctx, input_min_tensor.dim_size(0) == depth,
+90:                     errors::InvalidArgument(
+91:                         "input_min_tensor has incorrect size, was ",
+92:                         input_min_tensor.dim_size(0), " expected ", depth,
+93:                         " to match dim ", axis_, " of the input ",
+94:                         input_min_tensor.shape()));
+95:         OP_REQUIRES(ctx, input_max_tensor.dim_size(0) == depth,
+96:                     errors::InvalidArgument(
+97:                         "input_max_tensor has incorrect size, was ",
+98:                         input_max_tensor.dim_size(0), " expected ", depth,
+99:                         " to match dim ", axis_, " of the input ",
+100:                         input_max_tensor.shape()));
+101:       }
+102:     } else {
+103:       auto range_shape = (axis_ == -1) ? TensorShape({}) : TensorShape({depth});
+104:       OP_REQUIRES_OK(ctx, ctx->allocate_temp(DataTypeToEnum<T>::value,
+
+(Showing lines 35-104 of 339. Use offset=105 to continue.)
+</content>
+
+tool: viewcode
+{
+  "ref": "7a5dd0aa176dbf81742f84b44aeb0948fa2d8f20",
+  "path": "tensorflow/core/kernels/quantize_and_dequantize_op.cc",
+  "startline": 35,
+  "endline": 95
+}
+Here are lines 35 through 95.
+
+typedef Eigen::GpuDevice GPUDevice;
+
+// Simulate quantization precision loss in a float tensor by:
+// 1. Quantize the tensor to fixed point numbers, which should match the target
+//    quantization method when it is used in inference.
+// 2. Dequantize it back to floating point numbers for the following ops, most
+//    likely matmul.
+template <typename Device, typename T>
+class QuantizeAndDequantizeV2Op : public OpKernel {
+ public:
+  explicit QuantizeAndDequantizeV2Op(OpKernelConstruction* ctx)
+      : OpKernel(ctx) {
+    OP_REQUIRES_OK(ctx, ctx->GetAttr("signed_input", &signed_input_));
+    OP_REQUIRES_OK(ctx, ctx->GetAttr("axis", &axis_));
+    OP_REQUIRES_OK(ctx, ctx->GetAttr("num_bits", &num_bits_));
+    OP_REQUIRES(ctx, num_bits_ > 0 && num_bits_ < (signed_input_ ? 62 : 63),
+                errors::InvalidArgument("num_bits is out of range: ", num_bits_,
+                                        " with signed_input_ ", signed_input_));
+    OP_REQUIRES_OK(ctx, ctx->GetAttr("range_given", &range_given_));
+
+    string round_mode_string;
+    OP_REQUIRES_OK(ctx, ctx->GetAttr("round_mode", &round_mode_string));
+    OP_REQUIRES(
+        ctx,
+        (round_mode_string == "HALF_UP" || round_mode_string == "HALF_TO_EVEN"),
+        errors::InvalidArgument("Round mode string must be "
+                                "'HALF_UP' or "
+                                "'HALF_TO_EVEN', is '" +
+                                round_mode_string + "'"));
+    if (round_mode_string == "HALF_UP") {
+      round_mode_ = ROUND_HALF_UP;
+    } else if (round_mode_string == "HALF_TO_EVEN") {
+      round_mode_ = ROUND_HALF_TO_EVEN;
+    }
+    OP_REQUIRES_OK(ctx, ctx->GetAttr("narrow_range", &narrow_range_));
+  }
+
+  void Compute(OpKernelContext* ctx) override {
+    const Tensor& input = ctx->input(0);
+    const int depth = (axis_ == -1) ? 1 : input.dim_size(axis_);
+    Tensor input_min_tensor;
+    Tensor input_max_tensor;
+    Tensor* output = nullptr;
+    OP_REQUIRES_OK(ctx, ctx->allocate_output(0, input.shape(), &output));
+    if (range_given_) {
+      input_min_tensor = ctx->input(1);
+      input_max_tensor = ctx->input(2);
+      if (axis_ == -1) {
+        auto min_val = input_min_tensor.scalar<T>()();
+        auto max_val = input_max_tensor.scalar<T>()();
+        OP_REQUIRES(ctx, min_val <= max_val,
+                    errors::InvalidArgument("Invalid range: input_min ",
+                                            min_val, " > input_max ", max_val));
+      } else {
+        OP_REQUIRES(ctx, input_min_tensor.dim_size(0) == depth,
+                    errors::InvalidArgument(
+                        "input_min_tensor has incorrect size, was ",
+                        input_min_tensor.dim_size(0), " expected ", depth,
+                        " to match dim ", axis_, " of the input ",
+                        input_min_tensor.shape()));
+        OP_REQUIRES(ctx, input_max_tensor.dim_size(0) == depth,
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tokens used
+input: 1,672
+cache read: 7,680
+cache write: 0
+output: 206
+reasoning output: 0
+
+tool: grep
+{
+  "pattern": "axis_.*input\\.shape\\(\\)\\.dims|Axis must|axis_ <|dim_size\\(axis_\\)",
+  "path": "tensorflow/core/kernels/quantize_and_dequantize_op.cc"
+}
+Found 5 matches
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0189-7a5dd0aa176d\tensorflow\core\kernels\dequantize_op.cc:
+  Line 70:       num_slices = input.dim_size(axis_);
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0189-7a5dd0aa176d\tensorflow\core\kernels\one_hot_op.cc:
+  Line 63:         ctx, axis_ == -1 || (axis_ >= 0 && axis_ < output_dims),
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0189-7a5dd0aa176d\tensorflow\core\kernels\quantize_and_dequantize_op.cc:
+  Line 74:     const int depth = (axis_ == -1) ? 1 : input.dim_size(axis_);
+
+  Line 154:     const int depth = (axis_ == -1) ? 1 : input.dim_size(axis_);
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0189-7a5dd0aa176d\tensorflow\core\kernels\quantize_op.cc:
+  Line 116:       num_slices = input.dim_size(axis_);
+
+tokens used
+input: 2,662
+cache read: 8,704
+cache write: 0
+output: 63
+reasoning output: 62
+
+In this older release, the vulnerable `dim_size(axis_)` happens before any axis bounds validation, so the guard must be placed before computing `depth` rather than exactly at the newer patch line.
+
+tool: read
+{
+  "filePath": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0189-7a5dd0aa176d\\tensorflow\\core\\kernels\\quantize_and_dequantize_op.cc",
+  "offset": 140,
+  "limit": 55
+}
+<path>C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0189-7a5dd0aa176d\tensorflow\core\kernels\quantize_and_dequantize_op.cc</path>
+<type>file</type>
+<content>
+140: // tensor.
+141: template <typename Device, typename T>
+142: class QuantizeAndDequantizeV3Op : public OpKernel {
+143:  public:
+144:   explicit QuantizeAndDequantizeV3Op(OpKernelConstruction* ctx)
+145:       : OpKernel(ctx) {
+146:     OP_REQUIRES_OK(ctx, ctx->GetAttr("signed_input", &signed_input_));
+147:     OP_REQUIRES_OK(ctx, ctx->GetAttr("range_given", &range_given_));
+148:     OP_REQUIRES_OK(ctx, ctx->GetAttr("narrow_range", &narrow_range_));
+149:     OP_REQUIRES_OK(ctx, ctx->GetAttr("axis", &axis_));
+150:   }
+151: 
+152:   void Compute(OpKernelContext* ctx) override {
+153:     const Tensor& input = ctx->input(0);
+154:     const int depth = (axis_ == -1) ? 1 : input.dim_size(axis_);
+155:     Tensor* output = nullptr;
+156:     OP_REQUIRES_OK(ctx, ctx->allocate_output(0, input.shape(), &output));
+157: 
+158:     Tensor num_bits_tensor;
+159:     num_bits_tensor = ctx->input(3);
+160:     int num_bits_val = num_bits_tensor.scalar<int32>()();
+161: 
+162:     OP_REQUIRES(
+163:         ctx, num_bits_val > 0 && num_bits_val < (signed_input_ ? 62 : 63),
+164:         errors::InvalidArgument("num_bits is out of range: ", num_bits_val,
+165:                                 " with signed_input_ ", signed_input_));
+166: 
+167:     Tensor input_min_tensor;
+168:     Tensor input_max_tensor;
+169:     if (range_given_) {
+170:       input_min_tensor = ctx->input(1);
+171:       input_max_tensor = ctx->input(2);
+172:       if (axis_ == -1) {
+173:         auto min_val = input_min_tensor.scalar<T>()();
+174:         auto max_val = input_max_tensor.scalar<T>()();
+175:         OP_REQUIRES(ctx, min_val <= max_val,
+176:                     errors::InvalidArgument("Invalid range: input_min ",
+177:                                             min_val, " > input_max ", max_val));
+178:       } else {
+179:         OP_REQUIRES(ctx, input_min_tensor.dim_size(0) == depth,
+180:                     errors::InvalidArgument(
+181:                         "input_min_tensor has incorrect size, was ",
+182:                         input_min_tensor.dim_size(0), " expected ", depth,
+183:                         " to match dim ", axis_, " of the input ",
+184:                         input_min_tensor.shape()));
+185:         OP_REQUIRES(ctx, input_max_tensor.dim_size(0) == depth,
+186:                     errors::InvalidArgument(
+187:                         "input_max_tensor has incorrect size, was ",
+188:                         input_max_tensor.dim_size(0), " expected ", depth,
+189:                         " to match dim ", axis_, " of the input ",
+190:                         input_max_tensor.shape()));
+191:       }
+192:     } else {
+193:       auto range_shape = (axis_ == -1) ? TensorShape({}) : TensorShape({depth});
+194:       OP_REQUIRES_OK(ctx, ctx->allocate_temp(DataTypeToEnum<T>::value,
+
+(Showing lines 140-194 of 339. Use offset=195 to continue.)
+</content>
+
+tokens used
+input: 1,091
+cache read: 10,752
+cache write: 0
+output: 129
+reasoning output: 23
+
+tool: git_history
+{
+  "filepath": "tensorflow/core/kernels/quantize_and_dequantize_op.cc",
+  "start_line": 72,
+  "end_line": 75,
+  "start_commit": "7a5dd0aa176dbf81742f84b44aeb0948fa2d8f20",
+  "end_commit": "c5b0d5f8ac19888e46ca14b0e27562e7fbbee9a9"
+}
+Error executing git_history: Command failed: python "C:\Users\Akindu Himan\.config\opencode\scripts\git_history.py" --repo "C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0189-7a5dd0aa176d" --filepath "tensorflow/core/kernels/quantize_and_dequantize_op.cc" --start_line 72 --end_line 75 --start_commit "7a5dd0aa176dbf81742f84b44aeb0948fa2d8f20" --end_commit "c5b0d5f8ac19888e46ca14b0e27562e7fbbee9a9"
+
+tokens used
+input: 1,033
+cache read: 11,776
+cache write: 0
+output: 102
+reasoning output: 436
+
+The newer fix depends on an existing upper-bound axis guard that is absent in this target release. I’m validating a minimal target hunk that places both lower and equivalent upper validation before the first `dim_size(axis_)` in `QuantizeAndDequantizeV2Op`, matching the fixed newer execution order while avoiding unrelated V3 changes.
+
+tool: validate
+{
+  "ref": "7a5dd0aa176dbf81742f84b44aeb0948fa2d8f20",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/quantize_and_dequantize_op.cc b/tensorflow/core/kernels/quantize_and_dequantize_op.cc\n--- a/tensorflow/core/kernels/quantize_and_dequantize_op.cc\n+++ b/tensorflow/core/kernels/quantize_and_dequantize_op.cc\n@@ -70,6 +70,13 @@ class QuantizeAndDequantizeV2Op : public OpKernel {\n \n   void Compute(OpKernelContext* ctx) override {\n     const Tensor& input = ctx->input(0);\n+    OP_REQUIRES(\n+        ctx, axis_ >= -1,\n+        errors::InvalidArgument(\"Axis must be at least -1. Found \", axis_));\n+    OP_REQUIRES(\n+        ctx, (axis_ == -1 || axis_ < input.shape().dims()),\n+        errors::InvalidArgument(\"Shape must be at least rank \", axis_ + 1,\n+                                \" but is rank \", input.shape().dims()));\n     const int depth = (axis_ == -1) ? 1 : input.dim_size(axis_);\n     Tensor input_min_tensor;\n     Tensor input_max_tensor;\n"
+}
+Patch applied successfully
+
+tokens used
+input: 1,745
+cache read: 11,776
+cache write: 0
+output: 397
+reasoning output: 525
+
+The candidate hunk applies cleanly to the target base. I’m applying the same minimal source edit now.
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/kernels/quantize_and_dequantize_op.cc\n@@\n   void Compute(OpKernelContext* ctx) override {\n     const Tensor& input = ctx->input(0);\n+    OP_REQUIRES(\n+        ctx, axis_ >= -1,\n+        errors::InvalidArgument(\"Axis must be at least -1. Found \", axis_));\n+    OP_REQUIRES(\n+        ctx, (axis_ == -1 || axis_ < input.shape().dims()),\n+        errors::InvalidArgument(\"Shape must be at least rank \", axis_ + 1,\n+                                \" but is rank \", input.shape().dims()));\n     const int depth = (axis_ == -1) ? 1 : input.dim_size(axis_);\n     Tensor input_min_tensor;\n     Tensor input_max_tensor;\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/kernels/quantize_and_dequantize_op.cc
+
+tokens used
+input: 1,656
+cache read: 12,800
+cache write: 0
+output: 246
+reasoning output: 0
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect source patch context and target TensorFlow 2.1.4 code",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate candidate hunk against target base",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply minimal source change and capture diff",
+      "status": "in_progress",
+      "priority": "high"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect source patch context and target TensorFlow 2.1.4 code",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate candidate hunk against target base",
+    "status": "completed",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply minimal source change and capture diff",
+    "status": "in_progress",
+    "priority": "high"
+  }
+]
+
+tokens used
+input: 910
+cache read: 13,824
+cache write: 0
+output: 83
+reasoning output: 0
+
+The source change is applied; I’m checking the resulting diff to ensure only the intended file changed.
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/kernels/quantize_and_dequantize_op.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0189-7a5dd0aa176d"
+}
+warning: in the working copy of 'tensorflow/core/kernels/quantize_and_dequantize_op.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/kernels/quantize_and_dequantize_op.cc b/tensorflow/core/kernels/quantize_and_dequantize_op.cc
+index 8f71d09c08..784bc3302e 100644
+--- a/tensorflow/core/kernels/quantize_and_dequantize_op.cc
++++ b/tensorflow/core/kernels/quantize_and_dequantize_op.cc
+@@ -71,6 +71,13 @@ class QuantizeAndDequantizeV2Op : public OpKernel {
+ 
+   void Compute(OpKernelContext* ctx) override {
+     const Tensor& input = ctx->input(0);
++    OP_REQUIRES(
++        ctx, axis_ >= -1,
++        errors::InvalidArgument("Axis must be at least -1. Found ", axis_));
++    OP_REQUIRES(
++        ctx, (axis_ == -1 || axis_ < input.shape().dims()),
++        errors::InvalidArgument("Shape must be at least rank ", axis_ + 1,
++                                " but is rank ", input.shape().dims()));
+     const int depth = (axis_ == -1) ? 1 : input.dim_size(axis_);
+     Tensor input_min_tensor;
+     Tensor input_max_tensor;
+
+tool: bash
+{
+  "command": "git status --short",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0189-7a5dd0aa176d"
+}
+ M tensorflow/core/kernels/quantize_and_dequantize_op.cc
+
+tokens used
+input: 1,110
+cache read: 13,824
+cache write: 0
+output: 179
+reasoning output: 0
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect source patch context and target TensorFlow 2.1.4 code",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate candidate hunk against target base",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply minimal source change and capture diff",
+      "status": "completed",
+      "priority": "high"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect source patch context and target TensorFlow 2.1.4 code",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate candidate hunk against target base",
+    "status": "completed",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply minimal source change and capture diff",
+    "status": "completed",
+    "priority": "high"
+  }
+]
+
+tokens used
+input: 603
+cache read: 14,848
+cache write: 0
+output: 84
+reasoning output: 32
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/kernels/quantize_and_dequantize_op.cc b/tensorflow/core/kernels/quantize_and_dequantize_op.cc
+    index 8f71d09c08..784bc3302e 100644
+    --- a/tensorflow/core/kernels/quantize_and_dequantize_op.cc
+    +++ b/tensorflow/core/kernels/quantize_and_dequantize_op.cc
+    @@ -71,6 +71,13 @@ class QuantizeAndDequantizeV2Op : public OpKernel {
+     
+       void Compute(OpKernelContext* ctx) override {
+         const Tensor& input = ctx->input(0);
+    +    OP_REQUIRES(
+    +        ctx, axis_ >= -1,
+    +        errors::InvalidArgument("Axis must be at least -1. Found ", axis_));
+    +    OP_REQUIRES(
+    +        ctx, (axis_ == -1 || axis_ < input.shape().dims()),
+    +        errors::InvalidArgument("Shape must be at least rank ", axis_ + 1,
+    +                                " but is rank ", input.shape().dims()));
+         const int depth = (axis_ == -1) ? 1 : input.dim_size(axis_);
+         Tensor input_min_tensor;
+         Tensor input_max_tensor;
+  notes: >
+    Added QuantizeAndDequantizeV2 axis validation before dim_size(axis_) in the TensorFlow 2.1.4 target; hunk validation succeeded.
+```
+
+tokens used
+input: 835
+cache read: 14,848
+cache write: 0
+output: 339
+reasoning output: 0

@@ -1,0 +1,184 @@
+I’ll inspect the target-side SVDF implementation and validate the minimal hunk against the specified base before editing the checkout.
+
+tool: viewcode
+{
+  "ref": "07317a88b432c93465822c27786bcf31cd61a102",
+  "path": "tensorflow/lite/kernels/svdf.cc",
+  "startline": 70,
+  "endline": 125
+}
+Here are lines 70 through 125.
+
+}
+
+void Free(TfLiteContext* context, void* buffer) {
+  delete reinterpret_cast<OpData*>(buffer);
+}
+
+TfLiteStatus Prepare(TfLiteContext* context, TfLiteNode* node) {
+  const auto* params = reinterpret_cast<TfLiteSVDFParams*>(node->builtin_data);
+  OpData* op_data = reinterpret_cast<OpData*>(node->user_data);
+  int scratch_tensor_index = op_data->scratch_tensor_index;
+
+  // Check we have all the inputs and outputs we need.
+  TF_LITE_ENSURE_EQ(context, node->outputs->size, 1);
+  TF_LITE_ENSURE_EQ(context, node->inputs->size, 5);
+  op_data->activation_state_tensor_index =
+      node->inputs->data[kInputActivationStateTensor];
+
+  const TfLiteTensor* input = GetInput(context, node, kInputTensor);
+  const TfLiteTensor* weights_feature =
+      GetInput(context, node, kWeightsFeatureTensor);
+  const TfLiteTensor* weights_time =
+      GetInput(context, node, kWeightsTimeTensor);
+
+  TF_LITE_ENSURE_EQ(context, input->type, kTfLiteFloat32);
+
+  // Check all the parameters of tensor match within themselves and match the
+  // input configuration.
+  const int rank = params->rank;
+  const int batch_size = input->dims->data[0];
+  const int num_filters = weights_feature->dims->data[0];
+  TF_LITE_ENSURE_EQ(context, num_filters % rank, 0);
+  const int num_units = num_filters / rank;
+  const int memory_size = weights_time->dims->data[1];
+  TF_LITE_ENSURE_EQ(context, input->dims->data[1],
+                    weights_feature->dims->data[1]);
+  TF_LITE_ENSURE_EQ(context, weights_time->dims->data[0], num_filters);
+
+  const TfLiteTensor* bias = GetOptionalInputTensor(context, node, kBiasTensor);
+  if (bias) {
+    TF_LITE_ENSURE_EQ(context, bias->dims->data[0], num_units);
+  }
+
+  TfLiteTensor* activation_state =
+      &context->tensors[op_data->activation_state_tensor_index];
+  TfLiteTensor* output = GetOutput(context, node, kOutputTensor);
+
+  // Check the shape of input state tensors.
+  TF_LITE_ENSURE_EQ(context, NumDimensions(activation_state), 2);
+  TF_LITE_ENSURE_EQ(context, SizeOfDimension(activation_state, 0), batch_size);
+  TF_LITE_ENSURE_EQ(context, SizeOfDimension(activation_state, 1),
+                    memory_size * num_filters);
+
+  // Resize output.
+  TfLiteIntArray* output_size_array = TfLiteIntArrayCreate(2);
+  output_size_array->data[0] = batch_size;
+  output_size_array->data[1] = num_units;
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: locate_symbol
+{
+  "ref": "07317a88b432c93465822c27786bcf31cd61a102",
+  "symbol": "Prepare"
+}
+tensorflow/core/common_runtime/eager/eager_executor.h:54
+tensorflow/core/distributed_runtime/eager/remote_copy_node.cc:339
+tensorflow/core/distributed_runtime/eager/remote_execute_node.h:75
+tensorflow/core/kernels/cast_op.cc:126
+tensorflow/core/kernels/cast_op.cc:180
+tensorflow/core/kernels/cast_op.cc:263
+tensorflow/core/lib/db/sqlite.cc:163
+tensorflow/core/lib/db/sqlite.cc:170
+tensorflow/lite/delegates/flex/delegate.cc:33
+tensorflow/lite/delegates/flex/delegate_data.cc:30
+tensorflow/lite/delegates/flex/kernel.cc:452
+tensorflow/lite/delegates/gpu/cl/gpu_api_delegate.cc:90
+tensorflow/lite/delegates/gpu/delegate.cc:49
+tensorflow/lite/delegates/gpu/gl_delegate.cc:129
+tensorflow/lite/delegates/gpu/metal_delegate.mm:227
+tensorflow/lite/delegates/nnapi/nnapi_delegate.cc:2972
+tensorflow/lite/delegates/nnapi/nnapi_delegate_kernel.h:276
+tensorflow/lite/experimental/kernels/ctc_beam_search_decoder.cc:55
+tensorflow/lite/experimental/kernels/unidirectional_sequence_gru.cc:123
+tensorflow/lite/experimental/micro/kernels/add.cc:63
+
+tokens used
+input: 3,694
+cache read: 4,608
+cache write: 0
+output: 144
+reasoning output: 0
+
+The target file has the same vulnerable pattern: `num_filters % rank` and `num_filters / rank` occur before any zero-rank guard. I’m applying the one-line guard immediately before the modulo operation.
+
+tool: validate
+{
+  "ref": "07317a88b432c93465822c27786bcf31cd61a102",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/lite/kernels/svdf.cc b/tensorflow/lite/kernels/svdf.cc\n--- a/tensorflow/lite/kernels/svdf.cc\n+++ b/tensorflow/lite/kernels/svdf.cc\n@@ -99,6 +99,7 @@ TfLiteStatus Prepare(TfLiteContext* context, TfLiteNode* node) {\n   const int rank = params->rank;\n   const int batch_size = input->dims->data[0];\n   const int num_filters = weights_feature->dims->data[0];\n+  TF_LITE_ENSURE(context, rank != 0);\n   TF_LITE_ENSURE_EQ(context, num_filters % rank, 0);\n   const int num_units = num_filters / rank;\n   const int memory_size = weights_time->dims->data[1];\n"
+}
+Patch applied successfully
+
+tokens used
+input: 4,791
+cache read: 4,608
+cache write: 0
+output: 288
+reasoning output: 24
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/lite/kernels/svdf.cc\n@@\n   const int rank = params->rank;\n   const int batch_size = input->dims->data[0];\n   const int num_filters = weights_feature->dims->data[0];\n+  TF_LITE_ENSURE(context, rank != 0);\n   TF_LITE_ENSURE_EQ(context, num_filters % rank, 0);\n   const int num_units = num_filters / rank;\n   const int memory_size = weights_time->dims->data[1];\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/lite/kernels/svdf.cc
+
+tokens used
+input: 1,020
+cache read: 8,704
+cache write: 0
+output: 149
+reasoning output: 0
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/lite/kernels/svdf.cc"
+}
+warning: in the working copy of 'tensorflow/lite/kernels/svdf.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/lite/kernels/svdf.cc b/tensorflow/lite/kernels/svdf.cc
+index ae6d85d6e6..16714a3742 100644
+--- a/tensorflow/lite/kernels/svdf.cc
++++ b/tensorflow/lite/kernels/svdf.cc
+@@ -97,6 +97,7 @@ TfLiteStatus Prepare(TfLiteContext* context, TfLiteNode* node) {
+   const int rank = params->rank;
+   const int batch_size = input->dims->data[0];
+   const int num_filters = weights_feature->dims->data[0];
++  TF_LITE_ENSURE(context, rank != 0);
+   TF_LITE_ENSURE_EQ(context, num_filters % rank, 0);
+   const int num_units = num_filters / rank;
+   const int memory_size = weights_time->dims->data[1];
+
+tokens used
+input: 2,221
+cache read: 7,680
+cache write: 0
+output: 31
+reasoning output: 15
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/lite/kernels/svdf.cc b/tensorflow/lite/kernels/svdf.cc
+    index ae6d85d6e6..16714a3742 100644
+    --- a/tensorflow/lite/kernels/svdf.cc
+    +++ b/tensorflow/lite/kernels/svdf.cc
+    @@ -97,6 +97,7 @@ TfLiteStatus Prepare(TfLiteContext* context, TfLiteNode* node) {
+       const int rank = params->rank;
+       const int batch_size = input->dims->data[0];
+       const int num_filters = weights_feature->dims->data[0];
+    +  TF_LITE_ENSURE(context, rank != 0);
+       TF_LITE_ENSURE_EQ(context, num_filters % rank, 0);
+       const int num_units = num_filters / rank;
+       const int memory_size = weights_time->dims->data[1];
+  notes: >
+    Added the missing SVDF rank zero guard before modulo/division by rank.
+```
+
+tokens used
+input: 462
+cache read: 9,728
+cache write: 0
+output: 248
+reasoning output: 0

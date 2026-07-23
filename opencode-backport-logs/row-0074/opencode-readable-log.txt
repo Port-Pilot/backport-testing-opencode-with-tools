@@ -1,0 +1,441 @@
+I’ll inspect the target-side files around the patched regions, then apply the minimal equivalent changes and validate the hunks against the specified base.
+
+tool: viewcode
+{
+  "ref": "9ce6ba46ac6f29413afdd0dfb6faa803acb2b747",
+  "path": "tensorflow/core/grappler/optimizers/auto_parallel.cc",
+  "startline": 130,
+  "endline": 180
+}
+Here are lines 130 through 180.
+
+                                        {"ApplyProximalAdagrad", 5},
+                                        {"ApplyAdagradDA", 3},
+                                        {"ApplyFtrl", 3},
+                                        {"ApplyMomentum", 3},
+                                        {"ApplyAdam", 9},
+                                        {"ApplyRMSProp", 7},
+                                        {"ApplyCenteredRMSProp", 8}};
+  for (const auto& apply_gradient_node_name : apply_gradients_nodes_) {
+    auto apply_gradients_op = all_nodes_[apply_gradient_node_name]->op();
+    auto apply_gradients_node = all_nodes_[apply_gradient_node_name];
+
+    auto div_node = AddNodeDiv(
+        apply_gradient_node_name,
+        apply_gradients_node->input(gradient_pos[apply_gradients_op]),
+        div_const_node->name());
+    all_nodes_.insert(std::make_pair(div_node->name(), div_node));
+    *apply_gradients_node->mutable_input(gradient_pos[apply_gradients_op]) =
+        div_node->name();
+  }
+  LOG(INFO) << "Graph size after adding div nodes: " << all_nodes_.size();
+
+  std::vector<const NodeDef*> train_nodes;
+  TF_RETURN_IF_ERROR(ComputeTransitiveFanin(graph_, item.fetch, &train_nodes));
+  LOG(INFO) << "Number of training nodes: " << train_nodes.size();
+
+  const NodeDef* dequeue_node;
+  for (const auto& train_node : train_nodes) {
+    if (IsDequeueOp(*train_node)) {
+      dequeue_node = train_node;
+      break;
+    }
+  }
+
+  std::vector<const NodeDef*> input_nodes;
+  if (dequeue_node) {
+    LOG(INFO) << "Dequeue node: " << dequeue_node->name();
+    TF_RETURN_IF_ERROR(ComputeTransitiveFanin(graph_, {dequeue_node->name()},
+                                              {}, &input_nodes));
+  }
+  LOG(INFO) << "Number of input nodes: " << input_nodes.size();
+
+  std::set<string> dont_replicate_nodes;
+  for (const auto& variable : item.MainVariables()) {
+    dont_replicate_nodes.insert(variable->name());
+  }
+
+  for (const auto& init : item.init_ops) {
+    dont_replicate_nodes.insert(NodeName(init));
+  }
+
+  // Don't replicate all input nodes, except the dequeue node.
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: viewcode
+{
+  "ref": "9ce6ba46ac6f29413afdd0dfb6faa803acb2b747",
+  "path": "tensorflow/core/grappler/optimizers/auto_parallel_test.cc",
+  "startline": 90,
+  "endline": 150
+}
+This file only has 132 lines. Here are lines 90 through 132.
+
+  const NodeDef& node_dequeue0 = output.node(10);
+  EXPECT_EQ("AutoParallel-Replica-0/dequeue", node_dequeue0.name());
+
+  const NodeDef& node_learning_rate0 = output.node(11);
+  EXPECT_EQ("AutoParallel-Replica-0/learning_rate", node_learning_rate0.name());
+
+  const NodeDef& node_div_const1 = output.node(12);
+  EXPECT_EQ("AutoParallel-Replica-1/AutoParallel-Div-Const",
+            node_div_const1.name());
+
+  const NodeDef& node_div1 = output.node(13);
+  EXPECT_EQ("AutoParallel-Replica-1/AutoParallel-Div-apply_gradient",
+            node_div1.name());
+
+  const NodeDef& node_add1 = output.node(14);
+  EXPECT_EQ("AutoParallel-Replica-1/add", node_add1.name());
+
+  const NodeDef& node_gradient1 = output.node(15);
+  EXPECT_EQ("AutoParallel-Replica-1/apply_gradient", node_gradient1.name());
+
+  const NodeDef& node_constant_a1 = output.node(16);
+  EXPECT_EQ("AutoParallel-Replica-1/constant_a", node_constant_a1.name());
+
+  const NodeDef& node_dequeue1 = output.node(17);
+  EXPECT_EQ("AutoParallel-Replica-1/dequeue", node_dequeue1.name());
+
+  const NodeDef& node_learning_rate1 = output.node(18);
+  EXPECT_EQ("AutoParallel-Replica-1/learning_rate", node_learning_rate1.name());
+
+  const NodeDef& node_fetch = output.node(19);
+  EXPECT_EQ("AutoParallel-Control-Fetch", node_fetch.name());
+  EXPECT_EQ("^AutoParallel-Replica-0/apply_gradient", node_fetch.input(0));
+  EXPECT_EQ("^AutoParallel-Replica-1/apply_gradient", node_fetch.input(1));
+
+  const NodeDef& node_gradient = output.node(20);
+  EXPECT_EQ("apply_gradient", node_gradient.name());
+  EXPECT_EQ("^AutoParallel-Control-Fetch", node_gradient.input(0));
+}
+
+}  // namespace
+}  // namespace grappler
+}  // namespace tensorflow
+
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: git_show
+{
+  "ref": "68867bf01239d9e1048f98cbad185bf4761bedd3"
+}
+commit 68867bf01239d9e1048f98cbad185bf4761bedd3
+Author: Mihai Maruseac <mihaimaruseac@google.com>
+Date:   Wed Sep 29 09:20:25 2021 -0700
+
+    Prevent unitialized variable use in grappler.
+    
+    PiperOrigin-RevId: 399702928
+    Change-Id: Id7e75451fbff297692dfb687f60ea04b25c96b24
+
+ .../core/grappler/optimizers/auto_parallel.cc      |  2 +-
+ .../core/grappler/optimizers/auto_parallel_test.cc | 24 ++++++++++++++++++++++
+ 2 files changed, 25 insertions(+), 1 deletion(-)
+
+--- Commit Details ---
+commit 68867bf01239d9e1048f98cbad185bf4761bedd3
+Author: Mihai Maruseac <mihaimaruseac@google.com>
+Date:   Wed Sep 29 09:20:25 2021 -0700
+
+    Prevent unitialized variable use in grappler.
+    
+    PiperOrigin-RevId: 399702928
+    Change-Id: Id7e75451fbff297692dfb687f60ea04b25c96b24
+
+diff --git a/tensorflow/core/grappler/optimizers/auto_parallel.cc b/tensorflow/core/grappler/optimizers/auto_parallel.cc
+index 097a57ce36..0865892796 100644
+--- a/tensorflow/core/grappler/optimizers/auto_parallel.cc
++++ b/tensorflow/core/grappler/optimizers/auto_parallel.cc
+@@ -152,7 +152,7 @@ Status AutoParallel::Initialize(const GrapplerItem& item) {
+   TF_RETURN_IF_ERROR(ComputeTransitiveFanin(graph_, item.fetch, &train_nodes));
+   LOG(INFO) << "Number of training nodes: " << train_nodes.size();
+ 
+-  const NodeDef* dequeue_node;
++  const NodeDef* dequeue_node = nullptr;
+   for (const auto& train_node : train_nodes) {
+     if (IsDequeueOp(*train_node)) {
+       dequeue_node = train_node;
+diff --git a/tensorflow/core/grappler/optimizers/auto_parallel_test.cc b/tensorflow/core/grappler/optimizers/auto_parallel_test.cc
+index 1c3186f1ee..3af03a0961 100644
+--- a/tensorflow/core/grappler/optimizers/auto_parallel_test.cc
++++ b/tensorflow/core/grappler/optimizers/auto_parallel_test.cc
+@@ -126,6 +126,30 @@ TEST_F(AutoParallelTest, SimpleParallel) {
+   EXPECT_EQ("^AutoParallel-Control-Fetch", node_gradient.input(0));
+ }
+ 
++TEST_F(AutoParallelTest, SimpleParallelNoDequeue) {
++  tensorflow::Scope s = tensorflow::Scope::DisabledShapeInferenceScope();
++  Output constant_a = ops::Const(s.WithOpName("constant_a"), 1.0f, {1});
++  Output constant_c = ops::Const(s.WithOpName("constant_c"), 1.0f, {1});
++  Output constant_b = ops::Const(s.WithOpName("constant_b"), 1, {1});
++  Output var = ops::Variable(s.WithOpName("var"), {1}, DT_FLOAT);
++  Output assign = ops::Assign(s.WithOpName("assign"), {var}, {constant_a});
++  Output add = ops::AddN(s.WithOpName("add"), {constant_a, constant_c});
++  Output learning_rate = ops::Const(s.WithOpName("learning_rate"), 0.01f, {1});
++  Output apply_gradient = ops::ApplyGradientDescent(
++      s.WithOpName("apply_gradient"), {var}, {learning_rate}, {add});
++
++  GrapplerItem item;
++  item.init_ops.push_back("assign");
++  item.fetch.push_back("apply_gradient");
++  item.init_ops.push_back("assign");
++  TF_CHECK_OK(s.ToGraphDef(&item.graph));
++
++  AutoParallel parallel(2);
++  GraphDef output;
++  Status status = parallel.Optimize(nullptr, item, &output);
++  TF_EXPECT_OK(status);
++}
++
+ }  // namespace
+ }  // namespace grappler
+ }  // namespace tensorflow
+
+tokens used
+input: 4,169
+cache read: 4,608
+cache write: 0
+output: 212
+reasoning output: 0
+
+tool: read
+{
+  "filePath": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0074-9ce6ba46ac6f\\tensorflow\\core\\grappler\\optimizers\\auto_parallel_test.cc",
+  "offset": 1,
+  "limit": 60
+}
+<path>C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0074-9ce6ba46ac6f\tensorflow\core\grappler\optimizers\auto_parallel_test.cc</path>
+<type>file</type>
+<content>
+1: /* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
+2: 
+3: Licensed under the Apache License, Version 2.0 (the "License");
+4: you may not use this file except in compliance with the License.
+5: You may obtain a copy of the License at
+6: 
+7:     http://www.apache.org/licenses/LICENSE-2.0
+8: 
+9: Unless required by applicable law or agreed to in writing, software
+10: distributed under the License is distributed on an "AS IS" BASIS,
+11: WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+12: See the License for the specific language governing permissions and
+13: limitations under the License.
+14: ==============================================================================*/
+15: 
+16: #include "tensorflow/core/grappler/optimizers/auto_parallel.h"
+17: #include "tensorflow/cc/ops/standard_ops.h"
+18: #include "tensorflow/core/framework/node_def.pb.h"
+19: #include "tensorflow/core/grappler/grappler_item.h"
+20: #include "tensorflow/core/grappler/utils.h"
+21: #include "tensorflow/core/lib/core/status_test_util.h"
+22: #include "tensorflow/core/platform/test.h"
+23: 
+24: namespace tensorflow {
+25: namespace grappler {
+26: namespace {
+27: 
+28: class AutoParallelTest : public ::testing::Test {};
+29: 
+30: TEST_F(AutoParallelTest, SimpleParallel) {
+31:   tensorflow::Scope s = tensorflow::Scope::DisabledShapeInferenceScope();
+32:   Output constant_a = ops::Const(s.WithOpName("constant_a"), 1.0f, {1});
+33:   Output constant_b = ops::Const(s.WithOpName("constant_b"), 1, {1});
+34:   Output var = ops::Variable(s.WithOpName("var"), {1}, DT_FLOAT);
+35:   Output assign = ops::Assign(s.WithOpName("assign"), {var}, {constant_a});
+36:   Output identity = ops::Identity(s.WithOpName("identity"), {var});
+37:   Output fifo_queue = ops::FIFOQueue(s.WithOpName("fifo_queue"), {DT_FLOAT});
+38:   auto dequeue = ops::QueueDequeueMany(s.WithOpName("dequeue"), {fifo_queue},
+39:                                        {constant_b}, {DT_FLOAT});
+40:   Output add = ops::AddN(s.WithOpName("add"), {constant_a, dequeue[0]});
+41:   Output learning_rate = ops::Const(s.WithOpName("learning_rate"), 0.01f, {1});
+42:   Output apply_gradient = ops::ApplyGradientDescent(
+43:       s.WithOpName("apply_gradient"), {var}, {learning_rate}, {add});
+44: 
+45:   GrapplerItem item;
+46:   item.init_ops.push_back("assign");
+47:   item.fetch.push_back("apply_gradient");
+48:   item.init_ops.push_back("assign");
+49:   TF_CHECK_OK(s.ToGraphDef(&item.graph));
+50: 
+51:   AutoParallel parallel(2);
+52:   GraphDef output;
+53:   Status status = parallel.Optimize(nullptr, item, &output);
+54:   TF_EXPECT_OK(status);
+55:   EXPECT_EQ(21, output.node_size());
+56: 
+57:   const NodeDef& node_assign = output.node(0);
+58:   EXPECT_EQ("assign", node_assign.name());
+59:   EXPECT_EQ("AutoParallel-Replica-0/constant_a", node_assign.input(1));
+60: 
+
+(Showing lines 1-60 of 131. Use offset=61 to continue.)
+</content>
+
+tokens used
+input: 2,266
+cache read: 8,704
+cache write: 0
+output: 82
+reasoning output: 42
+
+The target files match the supplied patch context directly, so this can be backported as-is with only the pointer initialization and regression test.
+
+tool: validate
+{
+  "ref": "9ce6ba46ac6f29413afdd0dfb6faa803acb2b747",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/grappler/optimizers/auto_parallel.cc b/tensorflow/core/grappler/optimizers/auto_parallel.cc\n--- a/tensorflow/core/grappler/optimizers/auto_parallel.cc\n+++ b/tensorflow/core/grappler/optimizers/auto_parallel.cc\n@@ -152,7 +152,7 @@ Status AutoParallel::Initialize(const GrapplerItem& item) {\n   TF_RETURN_IF_ERROR(ComputeTransitiveFanin(graph_, item.fetch, &train_nodes));\n   LOG(INFO) << \"Number of training nodes: \" << train_nodes.size();\n \n-  const NodeDef* dequeue_node;\n+  const NodeDef* dequeue_node = nullptr;\n   for (const auto& train_node : train_nodes) {\n     if (IsDequeueOp(*train_node)) {\n       dequeue_node = train_node;\ndiff --git a/tensorflow/core/grappler/optimizers/auto_parallel_test.cc b/tensorflow/core/grappler/optimizers/auto_parallel_test.cc\n--- a/tensorflow/core/grappler/optimizers/auto_parallel_test.cc\n+++ b/tensorflow/core/grappler/optimizers/auto_parallel_test.cc\n@@ -126,6 +126,30 @@ TEST_F(AutoParallelTest, SimpleParallel) {\n   EXPECT_EQ(\"^AutoParallel-Control-Fetch\", node_gradient.input(0));\n }\n \n+TEST_F(AutoParallelTest, SimpleParallelNoDequeue) {\n+  tensorflow::Scope s = tensorflow::Scope::DisabledShapeInferenceScope();\n+  Output constant_a = ops::Const(s.WithOpName(\"constant_a\"), 1.0f, {1});\n+  Output constant_c = ops::Const(s.WithOpName(\"constant_c\"), 1.0f, {1});\n+  Output constant_b = ops::Const(s.WithOpName(\"constant_b\"), 1, {1});\n+  Output var = ops::Variable(s.WithOpName(\"var\"), {1}, DT_FLOAT);\n+  Output assign = ops::Assign(s.WithOpName(\"assign\"), {var}, {constant_a});\n+  Output add = ops::AddN(s.WithOpName(\"add\"), {constant_a, constant_c});\n+  Output learning_rate = ops::Const(s.WithOpName(\"learning_rate\"), 0.01f, {1});\n+  Output apply_gradient = ops::ApplyGradientDescent(\n+      s.WithOpName(\"apply_gradient\"), {var}, {learning_rate}, {add});\n+\n+  GrapplerItem item;\n+  item.init_ops.push_back(\"assign\");\n+  item.fetch.push_back(\"apply_gradient\");\n+  item.init_ops.push_back(\"assign\");\n+  TF_CHECK_OK(s.ToGraphDef(&item.graph));\n+\n+  AutoParallel parallel(2);\n+  GraphDef output;\n+  Status status = parallel.Optimize(nullptr, item, &output);\n+  TF_EXPECT_OK(status);\n+}\n+\n }  // namespace\n }  // namespace grappler\n }  // namespace tensorflow\n"
+}
+Patch applied successfully
+
+tokens used
+input: 1,199
+cache read: 10,752
+cache write: 0
+output: 777
+reasoning output: 0
+
+Validation passed for the combined hunk against the target base. I’m applying the same minimal patch to the working tree.
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/grappler/optimizers/auto_parallel.cc\n@@\n-  const NodeDef* dequeue_node;\n+  const NodeDef* dequeue_node = nullptr;\n*** Update File: tensorflow/core/grappler/optimizers/auto_parallel_test.cc\n@@\n   EXPECT_EQ(\"^AutoParallel-Control-Fetch\", node_gradient.input(0));\n }\n \n+TEST_F(AutoParallelTest, SimpleParallelNoDequeue) {\n+  tensorflow::Scope s = tensorflow::Scope::DisabledShapeInferenceScope();\n+  Output constant_a = ops::Const(s.WithOpName(\"constant_a\"), 1.0f, {1});\n+  Output constant_c = ops::Const(s.WithOpName(\"constant_c\"), 1.0f, {1});\n+  Output constant_b = ops::Const(s.WithOpName(\"constant_b\"), 1, {1});\n+  Output var = ops::Variable(s.WithOpName(\"var\"), {1}, DT_FLOAT);\n+  Output assign = ops::Assign(s.WithOpName(\"assign\"), {var}, {constant_a});\n+  Output add = ops::AddN(s.WithOpName(\"add\"), {constant_a, constant_c});\n+  Output learning_rate = ops::Const(s.WithOpName(\"learning_rate\"), 0.01f, {1});\n+  Output apply_gradient = ops::ApplyGradientDescent(\n+      s.WithOpName(\"apply_gradient\"), {var}, {learning_rate}, {add});\n+\n+  GrapplerItem item;\n+  item.init_ops.push_back(\"assign\");\n+  item.fetch.push_back(\"apply_gradient\");\n+  item.init_ops.push_back(\"assign\");\n+  TF_CHECK_OK(s.ToGraphDef(&item.graph));\n+\n+  AutoParallel parallel(2);\n+  GraphDef output;\n+  Status status = parallel.Optimize(nullptr, item, &output);\n+  TF_EXPECT_OK(status);\n+}\n+\n }  // namespace\n }  // namespace grappler\n }  // namespace tensorflow\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/grappler/optimizers/auto_parallel.cc
+M tensorflow/core/grappler/optimizers/auto_parallel_test.cc
+
+tokens used
+input: 965
+cache read: 11,776
+cache write: 0
+output: 529
+reasoning output: 0
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/grappler/optimizers/auto_parallel.cc tensorflow/core/grappler/optimizers/auto_parallel_test.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0074-9ce6ba46ac6f",
+  "timeout": 120000
+}
+warning: in the working copy of 'tensorflow/core/grappler/optimizers/auto_parallel.cc', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'tensorflow/core/grappler/optimizers/auto_parallel_test.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/grappler/optimizers/auto_parallel.cc b/tensorflow/core/grappler/optimizers/auto_parallel.cc
+index a537fa256b..e4e8009f9c 100644
+--- a/tensorflow/core/grappler/optimizers/auto_parallel.cc
++++ b/tensorflow/core/grappler/optimizers/auto_parallel.cc
+@@ -152,7 +152,7 @@ Status AutoParallel::Initialize(const GrapplerItem& item) {
+   TF_RETURN_IF_ERROR(ComputeTransitiveFanin(graph_, item.fetch, &train_nodes));
+   LOG(INFO) << "Number of training nodes: " << train_nodes.size();
+ 
+-  const NodeDef* dequeue_node;
++  const NodeDef* dequeue_node = nullptr;
+   for (const auto& train_node : train_nodes) {
+     if (IsDequeueOp(*train_node)) {
+       dequeue_node = train_node;
+diff --git a/tensorflow/core/grappler/optimizers/auto_parallel_test.cc b/tensorflow/core/grappler/optimizers/auto_parallel_test.cc
+index 1c3186f1ee..3af03a0961 100644
+--- a/tensorflow/core/grappler/optimizers/auto_parallel_test.cc
++++ b/tensorflow/core/grappler/optimizers/auto_parallel_test.cc
+@@ -126,6 +126,30 @@ TEST_F(AutoParallelTest, SimpleParallel) {
+   EXPECT_EQ("^AutoParallel-Control-Fetch", node_gradient.input(0));
+ }
+ 
++TEST_F(AutoParallelTest, SimpleParallelNoDequeue) {
++  tensorflow::Scope s = tensorflow::Scope::DisabledShapeInferenceScope();
++  Output constant_a = ops::Const(s.WithOpName("constant_a"), 1.0f, {1});
++  Output constant_c = ops::Const(s.WithOpName("constant_c"), 1.0f, {1});
++  Output constant_b = ops::Const(s.WithOpName("constant_b"), 1, {1});
++  Output var = ops::Variable(s.WithOpName("var"), {1}, DT_FLOAT);
++  Output assign = ops::Assign(s.WithOpName("assign"), {var}, {constant_a});
++  Output add = ops::AddN(s.WithOpName("add"), {constant_a, constant_c});
++  Output learning_rate = ops::Const(s.WithOpName("learning_rate"), 0.01f, {1});
++  Output apply_gradient = ops::ApplyGradientDescent(
++      s.WithOpName("apply_gradient"), {var}, {learning_rate}, {add});
++
++  GrapplerItem item;
++  item.init_ops.push_back("assign");
++  item.fetch.push_back("apply_gradient");
++  item.init_ops.push_back("assign");
++  TF_CHECK_OK(s.ToGraphDef(&item.graph));
++
++  AutoParallel parallel(2);
++  GraphDef output;
++  Status status = parallel.Optimize(nullptr, item, &output);
++  TF_EXPECT_OK(status);
++}
++
+ }  // namespace
+ }  // namespace grappler
+ }  // namespace tensorflow
+
+tokens used
+input: 1,540
+cache read: 11,776
+cache write: 0
+output: 95
+reasoning output: 14
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/grappler/optimizers/auto_parallel.cc b/tensorflow/core/grappler/optimizers/auto_parallel.cc
+    index a537fa256b..e4e8009f9c 100644
+    --- a/tensorflow/core/grappler/optimizers/auto_parallel.cc
+    +++ b/tensorflow/core/grappler/optimizers/auto_parallel.cc
+    @@ -152,7 +152,7 @@ Status AutoParallel::Initialize(const GrapplerItem& item) {
+       TF_RETURN_IF_ERROR(ComputeTransitiveFanin(graph_, item.fetch, &train_nodes));
+       LOG(INFO) << "Number of training nodes: " << train_nodes.size();
+     
+    -  const NodeDef* dequeue_node;
+    +  const NodeDef* dequeue_node = nullptr;
+       for (const auto& train_node : train_nodes) {
+         if (IsDequeueOp(*train_node)) {
+           dequeue_node = train_node;
+    diff --git a/tensorflow/core/grappler/optimizers/auto_parallel_test.cc b/tensorflow/core/grappler/optimizers/auto_parallel_test.cc
+    index 1c3186f1ee..3af03a0961 100644
+    --- a/tensorflow/core/grappler/optimizers/auto_parallel_test.cc
+    +++ b/tensorflow/core/grappler/optimizers/auto_parallel_test.cc
+    @@ -126,6 +126,30 @@ TEST_F(AutoParallelTest, SimpleParallel) {
+       EXPECT_EQ("^AutoParallel-Control-Fetch", node_gradient.input(0));
+     }
+     
+    +TEST_F(AutoParallelTest, SimpleParallelNoDequeue) {
+    +  tensorflow::Scope s = tensorflow::Scope::DisabledShapeInferenceScope();
+    +  Output constant_a = ops::Const(s.WithOpName("constant_a"), 1.0f, {1});
+    +  Output constant_c = ops::Const(s.WithOpName("constant_c"), 1.0f, {1});
+    +  Output constant_b = ops::Const(s.WithOpName("constant_b"), 1, {1});
+    +  Output var = ops::Variable(s.WithOpName("var"), {1}, DT_FLOAT);
+    +  Output assign = ops::Assign(s.WithOpName("assign"), {var}, {constant_a});
+    +  Output add = ops::AddN(s.WithOpName("add"), {constant_a, constant_c});
+    +  Output learning_rate = ops::Const(s.WithOpName("learning_rate"), 0.01f, {1});
+    +  Output apply_gradient = ops::ApplyGradientDescent(
+    +      s.WithOpName("apply_gradient"), {var}, {learning_rate}, {add});
+    +
+    +  GrapplerItem item;
+    +  item.init_ops.push_back("assign");
+    +  item.fetch.push_back("apply_gradient");
+    +  item.init_ops.push_back("assign");
+    +  TF_CHECK_OK(s.ToGraphDef(&item.graph));
+    +
+    +  AutoParallel parallel(2);
+    +  GraphDef output;
+    +  Status status = parallel.Optimize(nullptr, item, &output);
+    +  TF_EXPECT_OK(status);
+    +}
+    +
+     }  // namespace
+     }  // namespace grappler
+     }  // namespace tensorflow
+  notes: >
+    Initialized dequeue_node to nullptr to avoid uninitialized use when no dequeue op exists, and added the matching no-dequeue regression test; hunk validation passed against the target base.
+```
+
+tokens used
+input: 1,378
+cache read: 12,800
+cache write: 0
+output: 776
+reasoning output: 23

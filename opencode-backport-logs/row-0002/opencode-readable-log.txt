@@ -1,0 +1,387 @@
+I’ll inspect the target-side implementation around `PyArrayDescr_to_TF_DataType`, compare it to the provided newer hunk, then apply the minimal equivalent guard in the checked-out 2.1.4 tree.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target TensorFlow 2.1.4 code around ndarray dtype conversion",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Validate and apply minimal backport hunk",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "content": "Review resulting diff and report YAML result",
+      "status": "pending",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target TensorFlow 2.1.4 code around ndarray dtype conversion",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Validate and apply minimal backport hunk",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "content": "Review resulting diff and report YAML result",
+    "status": "pending",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 8,404
+cache read: 0
+cache write: 0
+output: 136
+reasoning output: 0
+
+tool: viewcode
+{
+  "ref": "a5d613d23c2aa234d370d04b19ccabe3824c284d",
+  "path": "tensorflow/python/lib/core/ndarray_tensor.cc",
+  "startline": 1,
+  "endline": 120
+}
+Here are lines 1 through 120.
+
+/* Copyright 2016 The TensorFlow Authors. All Rights Reserved.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+==============================================================================*/
+
+#include "tensorflow/python/lib/core/ndarray_tensor.h"
+
+#include <cstring>
+
+#include "tensorflow/core/lib/core/coding.h"
+#include "tensorflow/core/lib/core/errors.h"
+#include "tensorflow/core/lib/gtl/inlined_vector.h"
+#include "tensorflow/core/platform/types.h"
+#include "tensorflow/python/lib/core/bfloat16.h"
+#include "tensorflow/python/lib/core/ndarray_tensor_bridge.h"
+#include "tensorflow/python/lib/core/numpy.h"
+
+namespace tensorflow {
+namespace {
+
+char const* numpy_type_name(int numpy_type) {
+  switch (numpy_type) {
+#define TYPE_CASE(s) \
+  case s:            \
+    return #s
+
+    TYPE_CASE(NPY_BOOL);
+    TYPE_CASE(NPY_BYTE);
+    TYPE_CASE(NPY_UBYTE);
+    TYPE_CASE(NPY_SHORT);
+    TYPE_CASE(NPY_USHORT);
+    TYPE_CASE(NPY_INT);
+    TYPE_CASE(NPY_UINT);
+    TYPE_CASE(NPY_LONG);
+    TYPE_CASE(NPY_ULONG);
+    TYPE_CASE(NPY_LONGLONG);
+    TYPE_CASE(NPY_ULONGLONG);
+    TYPE_CASE(NPY_FLOAT);
+    TYPE_CASE(NPY_DOUBLE);
+    TYPE_CASE(NPY_LONGDOUBLE);
+    TYPE_CASE(NPY_CFLOAT);
+    TYPE_CASE(NPY_CDOUBLE);
+    TYPE_CASE(NPY_CLONGDOUBLE);
+    TYPE_CASE(NPY_OBJECT);
+    TYPE_CASE(NPY_STRING);
+    TYPE_CASE(NPY_UNICODE);
+    TYPE_CASE(NPY_VOID);
+    TYPE_CASE(NPY_DATETIME);
+    TYPE_CASE(NPY_TIMEDELTA);
+    TYPE_CASE(NPY_HALF);
+    TYPE_CASE(NPY_NTYPES);
+    TYPE_CASE(NPY_NOTYPE);
+    TYPE_CASE(NPY_CHAR);
+    TYPE_CASE(NPY_USERDEF);
+    default:
+      return "not a numpy type";
+  }
+}
+
+Status PyArrayDescr_to_TF_DataType(PyArray_Descr* descr,
+                                   TF_DataType* out_tf_datatype) {
+  PyObject* key;
+  PyObject* value;
+  Py_ssize_t pos = 0;
+  if (PyDict_Next(descr->fields, &pos, &key, &value)) {
+    // In Python 3, the keys of numpy custom struct types are unicode, unlike
+    // Python 2, where the keys are bytes.
+    const char* key_string =
+        PyBytes_Check(key) ? PyBytes_AsString(key)
+                           : PyBytes_AsString(PyUnicode_AsASCIIString(key));
+    if (!key_string) {
+      return errors::Internal("Corrupt numpy type descriptor");
+    }
+    tensorflow::string key = key_string;
+    // The typenames here should match the field names in the custom struct
+    // types constructed in test_util.py.
+    // TODO(mrry,keveman): Investigate Numpy type registration to replace this
+    // hard-coding of names.
+    if (key == "quint8") {
+      *out_tf_datatype = TF_QUINT8;
+    } else if (key == "qint8") {
+      *out_tf_datatype = TF_QINT8;
+    } else if (key == "qint16") {
+      *out_tf_datatype = TF_QINT16;
+    } else if (key == "quint16") {
+      *out_tf_datatype = TF_QUINT16;
+    } else if (key == "qint32") {
+      *out_tf_datatype = TF_QINT32;
+    } else if (key == "resource") {
+      *out_tf_datatype = TF_RESOURCE;
+    } else {
+      return errors::Internal("Unsupported numpy data type");
+    }
+    return Status::OK();
+  }
+  return errors::Internal("Unsupported numpy data type");
+}
+
+Status PyArray_TYPE_to_TF_DataType(PyArrayObject* array,
+                                   TF_DataType* out_tf_datatype) {
+  int pyarray_type = PyArray_TYPE(array);
+  PyArray_Descr* descr = PyArray_DESCR(array);
+  switch (pyarray_type) {
+    case NPY_FLOAT16:
+      *out_tf_datatype = TF_HALF;
+      break;
+    case NPY_FLOAT32:
+      *out_tf_datatype = TF_FLOAT;
+      break;
+    case NPY_FLOAT64:
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: locate_symbol
+{
+  "ref": "a5d613d23c2aa234d370d04b19ccabe3824c284d",
+  "symbol": "PyArrayDescr_to_TF_DataType"
+}
+tensorflow/python/lib/core/ndarray_tensor.cc:70
+tensorflow/python/lib/core/ndarray_tensor.cc:167
+
+tokens used
+input: 978
+cache read: 7,680
+cache write: 0
+output: 126
+reasoning output: 0
+
+The target function exists at the same path with matching structure. The only meaningful security change needed for 2.1.4 is the null check before `PyDict_Next`; the added `<optional>` include from 2.5.0 is not used in this older file.
+
+tool: validate
+{
+  "ref": "a5d613d23c2aa234d370d04b19ccabe3824c284d",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/python/lib/core/ndarray_tensor.cc b/tensorflow/python/lib/core/ndarray_tensor.cc\n--- a/tensorflow/python/lib/core/ndarray_tensor.cc\n+++ b/tensorflow/python/lib/core/ndarray_tensor.cc\n@@ -69,6 +69,13 @@ Status PyArrayDescr_to_TF_DataType(PyArray_Descr* descr,\n   PyObject* key;\n   PyObject* value;\n   Py_ssize_t pos = 0;\n+\n+  // Return an error if the fields attribute is null.\n+  // Occurs with an improper conversion attempt to resource.\n+  if (descr->fields == nullptr) {\n+    return errors::Internal(\"Unexpected numpy data type\");\n+  }\n+\n   if (PyDict_Next(descr->fields, &pos, &key, &value)) {\n     // In Python 3, the keys of numpy custom struct types are unicode, unlike\n     // Python 2, where the keys are bytes.\n"
+}
+Patch applied successfully
+
+tokens used
+input: 2,175
+cache read: 7,680
+cache write: 0
+output: 339
+reasoning output: 90
+
+The backport hunk applies cleanly against the target base. I’m applying that single guard now.
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/python/lib/core/ndarray_tensor.cc\n@@\n   PyObject* key;\n   PyObject* value;\n   Py_ssize_t pos = 0;\n+\n+  // Return an error if the fields attribute is null.\n+  // Occurs with an improper conversion attempt to resource.\n+  if (descr->fields == nullptr) {\n+    return errors::Internal(\"Unexpected numpy data type\");\n+  }\n+\n   if (PyDict_Next(descr->fields, &pos, &key, &value)) {\n     // In Python 3, the keys of numpy custom struct types are unicode, unlike\n     // Python 2, where the keys are bytes.\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/python/lib/core/ndarray_tensor.cc
+
+tokens used
+input: 569
+cache read: 9,728
+cache write: 0
+output: 213
+reasoning output: 0
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target TensorFlow 2.1.4 code around ndarray dtype conversion",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate and apply minimal backport hunk",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Review resulting diff and report YAML result",
+      "status": "in_progress",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target TensorFlow 2.1.4 code around ndarray dtype conversion",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate and apply minimal backport hunk",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Review resulting diff and report YAML result",
+    "status": "in_progress",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 810
+cache read: 9,728
+cache write: 0
+output: 84
+reasoning output: 0
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/python/lib/core/ndarray_tensor.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0002-a5d613d23c2a"
+}
+warning: in the working copy of 'tensorflow/python/lib/core/ndarray_tensor.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/python/lib/core/ndarray_tensor.cc b/tensorflow/python/lib/core/ndarray_tensor.cc
+index 8c8362972b..b13dbb3da3 100644
+--- a/tensorflow/python/lib/core/ndarray_tensor.cc
++++ b/tensorflow/python/lib/core/ndarray_tensor.cc
+@@ -72,6 +72,13 @@ Status PyArrayDescr_to_TF_DataType(PyArray_Descr* descr,
+   PyObject* key;
+   PyObject* value;
+   Py_ssize_t pos = 0;
++
++  // Return an error if the fields attribute is null.
++  // Occurs with an improper conversion attempt to resource.
++  if (descr->fields == nullptr) {
++    return errors::Internal("Unexpected numpy data type");
++  }
++
+   if (PyDict_Next(descr->fields, &pos, &key, &value)) {
+     // In Python 3, the keys of numpy custom struct types are unicode, unlike
+     // Python 2, where the keys are bytes.
+
+tool: bash
+{
+  "command": "git status --short",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0002-a5d613d23c2a"
+}
+ M tensorflow/python/lib/core/ndarray_tensor.cc
+
+tokens used
+input: 10,740
+cache read: 0
+cache write: 0
+output: 148
+reasoning output: 0
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target TensorFlow 2.1.4 code around ndarray dtype conversion",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate and apply minimal backport hunk",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Review resulting diff and report YAML result",
+      "status": "completed",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target TensorFlow 2.1.4 code around ndarray dtype conversion",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate and apply minimal backport hunk",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Review resulting diff and report YAML result",
+    "status": "completed",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 1,454
+cache read: 9,728
+cache write: 0
+output: 85
+reasoning output: 35
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/python/lib/core/ndarray_tensor.cc b/tensorflow/python/lib/core/ndarray_tensor.cc
+    index 8c8362972b..b13dbb3da3 100644
+    --- a/tensorflow/python/lib/core/ndarray_tensor.cc
+    +++ b/tensorflow/python/lib/core/ndarray_tensor.cc
+    @@ -72,6 +72,13 @@ Status PyArrayDescr_to_TF_DataType(PyArray_Descr* descr,
+       PyObject* key;
+       PyObject* value;
+       Py_ssize_t pos = 0;
+    +
+    +  // Return an error if the fields attribute is null.
+    +  // Occurs with an improper conversion attempt to resource.
+    +  if (descr->fields == nullptr) {
+    +    return errors::Internal("Unexpected numpy data type");
+    +  }
+    +
+       if (PyDict_Next(descr->fields, &pos, &key, &value)) {
+         // In Python 3, the keys of numpy custom struct types are unicode, unlike
+         // Python 2, where the keys are bytes.
+  notes: >
+    Added the null fields guard before PyDict_Next in ndarray dtype conversion; the unused 2.5.0 <optional> include was not needed for TensorFlow 2.1.4.
+```
+
+tokens used
+input: 667
+cache read: 10,752
+cache write: 0
+output: 310
+reasoning output: 0

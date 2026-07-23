@@ -1,0 +1,405 @@
+I’ll inspect the target-side implementation around `RaggedTensorToVariantOp`, compare it to the supplied new-version hunk, then apply the minimal equivalent guard in place.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Locate target RaggedTensorToVariantOp context",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Validate minimal backport hunk against target ref",
+      "status": "pending",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply source change and inspect diff",
+      "status": "pending",
+      "priority": "high"
+    }
+  ]
+}
+[
+  {
+    "content": "Locate target RaggedTensorToVariantOp context",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Validate minimal backport hunk against target ref",
+    "status": "pending",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply source change and inspect diff",
+    "status": "pending",
+    "priority": "high"
+  }
+]
+
+tokens used
+input: 3,759
+cache read: 4,608
+cache write: 0
+output: 121
+reasoning output: 0
+
+tool: viewcode
+{
+  "ref": "6c1eb9637e0218d2d04c72c8838e17e72ebd00d5",
+  "path": "tensorflow/core/kernels/ragged_tensor_to_variant_op.cc",
+  "startline": 120,
+  "endline": 190
+}
+Here are lines 120 through 190.
+
+        ragged_component_splits_vec[num_splits - 1](last_split_size - 1);
+  }
+
+  // Unbatch values.
+  int value_index = 0;
+  for (int i = 0; i < num_components; i++) {
+    int num_values = ragged_component_values_size[i];
+    values_shape.set_dim(0, num_values);
+    (*ragged_components)[i].values =
+        Tensor(DataTypeToEnum<VALUE_TYPE>::value, values_shape);
+    auto ragged_component_values_flat =
+        (*ragged_components)[i].values.flat<VALUE_TYPE>();
+    for (int j = 0; j < num_values * num_inner_elems; j++, value_index++) {
+      ragged_component_values_flat(j) = batched_flat(value_index);
+    }
+  }
+
+  return Status::OK();
+}
+}  // namespace
+
+template <typename VALUE_TYPE, typename SPLIT_TYPE>
+class RaggedTensorToVariantOp : public OpKernel {
+ public:
+  explicit RaggedTensorToVariantOp(OpKernelConstruction* context)
+      : OpKernel(context) {
+    OP_REQUIRES_OK(context, context->GetAttr("batched_input", &batched_input_));
+  }
+
+  void Compute(OpKernelContext* context) override {
+    // Read ragged_splits inputs.
+    OpInputList ragged_nested_splits_in;
+    OP_REQUIRES_OK(context, context->input_list("rt_nested_splits",
+                                                &ragged_nested_splits_in));
+    const int ragged_nested_splits_len = ragged_nested_splits_in.size();
+    RaggedTensor batched_ragged_input;
+    // Read ragged_values input.
+    batched_ragged_input.values = context->input(ragged_nested_splits_len);
+    batched_ragged_input.nested_splits.reserve(ragged_nested_splits_len);
+    for (int i = 0; i < ragged_nested_splits_len; i++) {
+      batched_ragged_input.nested_splits.push_back(ragged_nested_splits_in[i]);
+    }
+
+    if (!batched_input_) {
+      // Encode the input as is.
+      Tensor encoded_list;
+      OP_REQUIRES_OK(context,
+                     RaggedToVariant(batched_ragged_input, &encoded_list));
+      // Encode as a Scalar Variant Tensor.
+      Tensor* encoded_scalar;
+      OP_REQUIRES_OK(context, context->allocate_output(0, TensorShape({}),
+                                                       &encoded_scalar));
+      encoded_scalar->scalar<Variant>()() = std::move(encoded_list);
+      return;
+    }
+
+    // Unbatch the Ragged Tensor and encode the components.
+    std::vector<RaggedTensor> ragged_components;
+    auto batched_splits_top_vec =
+        batched_ragged_input.nested_splits[0].vec<SPLIT_TYPE>();
+    int num_components = batched_splits_top_vec.size() - 1;
+    OP_REQUIRES(context, num_components >= 0,
+                errors::Internal("Invalid split argument."));
+    OP_REQUIRES_OK(context, UnbatchRaggedZerothDim<VALUE_TYPE, SPLIT_TYPE>(
+                                batched_ragged_input, &ragged_components));
+    std::vector<Tensor> encoded_components(ragged_components.size());
+    for (int i = 0; i < ragged_components.size(); i++) {
+      OP_REQUIRES_OK(context, RaggedToVariant(ragged_components[i],
+                                              &encoded_components[i]));
+    }
+
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: git_show
+{
+  "ref": "be7a4de6adfbd303ce08be4332554dff70362612",
+  "context": "// Checked here instead of at input in case batched_input_ is false\n    OP_REQUIRES(context, ragged_nested_splits_len > 0,\n                errors::InvalidArgument(\n                    \"rt_nested_splits must be a list of one or more, but \"\n                    \"received rt_nested_splits of length 0.\"));"
+}
+commit be7a4de6adfbd303ce08be4332554dff70362612
+Author: Laura Pak <lpak@google.com>
+Date:   Thu Jul 29 14:05:34 2021 -0700
+
+    Ensure non-empty rt_nested_splits in tf.raw_ops.RaggedTensorToVariant
+    
+    PiperOrigin-RevId: 387664237
+    Change-Id: Ia1700c34b5610873d63561abc86e23b46ead93b3
+
+ tensorflow/core/kernels/ragged_tensor_to_variant_op.cc | 6 ++++++
+ 1 file changed, 6 insertions(+)
+This commit shows that there is a high probability that this code is new, so the corresponding code segment cannot be found in the old version.
+You can call `viewcode` and `locate_symbol` to further check the results step by step. For newly introduced code, we consider that this hunk `need not ported`.
+
+tool: locate_symbol
+{
+  "ref": "6c1eb9637e0218d2d04c72c8838e17e72ebd00d5",
+  "symbol": "RaggedTensorToVariantOp"
+}
+tensorflow/core/kernels/ragged_tensor_to_variant_op.cc:142
+tensorflow/core/kernels/ragged_tensor_to_variant_op.cc:144
+tensorflow/core/kernels/ragged_tensor_to_variant_op.cc:212
+
+tokens used
+input: 920
+cache read: 7,680
+cache write: 0
+output: 246
+reasoning output: 0
+
+The target has the same vulnerable batched path: after handling `!batched_input_`, it immediately indexes `nested_splits[0]`. I’m adding the same non-empty `rt_nested_splits` check before that index.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Locate target RaggedTensorToVariantOp context",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate minimal backport hunk against target ref",
+      "status": "in_progress",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply source change and inspect diff",
+      "status": "pending",
+      "priority": "high"
+    }
+  ]
+}
+[
+  {
+    "content": "Locate target RaggedTensorToVariantOp context",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate minimal backport hunk against target ref",
+    "status": "in_progress",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply source change and inspect diff",
+    "status": "pending",
+    "priority": "high"
+  }
+]
+
+tokens used
+input: 2,215
+cache read: 7,680
+cache write: 0
+output: 135
+reasoning output: 60
+
+tool: validate
+{
+  "ref": "6c1eb9637e0218d2d04c72c8838e17e72ebd00d5",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/ragged_tensor_to_variant_op.cc b/tensorflow/core/kernels/ragged_tensor_to_variant_op.cc\n--- a/tensorflow/core/kernels/ragged_tensor_to_variant_op.cc\n+++ b/tensorflow/core/kernels/ragged_tensor_to_variant_op.cc\n@@ -169,6 +169,12 @@ class RaggedTensorToVariantOp : public OpKernel {\n       return;\n     }\n \n+    // Checked here instead of at input in case batched_input_ is false\n+    OP_REQUIRES(context, ragged_nested_splits_len > 0,\n+                errors::InvalidArgument(\n+                    \"rt_nested_splits must be a list of one or more, but \"\n+                    \"received rt_nested_splits of length 0.\"));\n+\n     // Unbatch the Ragged Tensor and encode the components.\n     std::vector<RaggedTensor> ragged_components;\n     auto batched_splits_top_vec =\n"
+}
+Patch applied successfully
+
+tokens used
+input: 474
+cache read: 9,728
+cache write: 0
+output: 273
+reasoning output: 0
+
+The hunk applies cleanly to the target ref. I’m applying that exact minimal source change now.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Locate target RaggedTensorToVariantOp context",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate minimal backport hunk against target ref",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply source change and inspect diff",
+      "status": "in_progress",
+      "priority": "high"
+    }
+  ]
+}
+[
+  {
+    "content": "Locate target RaggedTensorToVariantOp context",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate minimal backport hunk against target ref",
+    "status": "completed",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply source change and inspect diff",
+    "status": "in_progress",
+    "priority": "high"
+  }
+]
+
+tokens used
+input: 760
+cache read: 9,728
+cache write: 0
+output: 106
+reasoning output: 0
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/kernels/ragged_tensor_to_variant_op.cc\n@@\n     if (!batched_input_) {\n       // Encode the input as is.\n       Tensor encoded_list;\n       OP_REQUIRES_OK(context,\n@@\n       encoded_scalar->scalar<Variant>()() = std::move(encoded_list);\n       return;\n     }\n \n+    // Checked here instead of at input in case batched_input_ is false\n+    OP_REQUIRES(context, ragged_nested_splits_len > 0,\n+                errors::InvalidArgument(\n+                    \"rt_nested_splits must be a list of one or more, but \"\n+                    \"received rt_nested_splits of length 0.\"));\n+\n     // Unbatch the Ragged Tensor and encode the components.\n     std::vector<RaggedTensor> ragged_components;\n     auto batched_splits_top_vec =\n         batched_ragged_input.nested_splits[0].vec<SPLIT_TYPE>();\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/kernels/ragged_tensor_to_variant_op.cc
+
+tokens used
+input: 978
+cache read: 9,728
+cache write: 0
+output: 251
+reasoning output: 0
+
+The source edit is in place. I’m checking the resulting diff to ensure only the intended guard was added.
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/kernels/ragged_tensor_to_variant_op.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0213-6c1eb9637e02",
+  "timeout": 120000
+}
+warning: in the working copy of 'tensorflow/core/kernels/ragged_tensor_to_variant_op.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/kernels/ragged_tensor_to_variant_op.cc b/tensorflow/core/kernels/ragged_tensor_to_variant_op.cc
+index 49c4a2411b..a3ecc80ce4 100644
+--- a/tensorflow/core/kernels/ragged_tensor_to_variant_op.cc
++++ b/tensorflow/core/kernels/ragged_tensor_to_variant_op.cc
+@@ -173,6 +173,12 @@ class RaggedTensorToVariantOp : public OpKernel {
+       return;
+     }
+ 
++    // Checked here instead of at input in case batched_input_ is false
++    OP_REQUIRES(context, ragged_nested_splits_len > 0,
++                errors::InvalidArgument(
++                    "rt_nested_splits must be a list of one or more, but "
++                    "received rt_nested_splits of length 0."));
++
+     // Unbatch the Ragged Tensor and encode the components.
+     std::vector<RaggedTensor> ragged_components;
+     auto batched_splits_top_vec =
+
+tool: bash
+{
+  "command": "git status --short",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0213-6c1eb9637e02",
+  "timeout": 120000
+}
+ M tensorflow/core/kernels/ragged_tensor_to_variant_op.cc
+
+tokens used
+input: 1,260
+cache read: 9,728
+cache write: 0
+output: 190
+reasoning output: 0
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Locate target RaggedTensorToVariantOp context",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate minimal backport hunk against target ref",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply source change and inspect diff",
+      "status": "completed",
+      "priority": "high"
+    }
+  ]
+}
+[
+  {
+    "content": "Locate target RaggedTensorToVariantOp context",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate minimal backport hunk against target ref",
+    "status": "completed",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply source change and inspect diff",
+    "status": "completed",
+    "priority": "high"
+  }
+]
+
+tokens used
+input: 721
+cache read: 10,752
+cache write: 0
+output: 79
+reasoning output: 23
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/kernels/ragged_tensor_to_variant_op.cc b/tensorflow/core/kernels/ragged_tensor_to_variant_op.cc
+    index 49c4a2411b..a3ecc80ce4 100644
+    --- a/tensorflow/core/kernels/ragged_tensor_to_variant_op.cc
+    +++ b/tensorflow/core/kernels/ragged_tensor_to_variant_op.cc
+    @@ -173,6 +173,12 @@ class RaggedTensorToVariantOp : public OpKernel {
+           return;
+         }
+     
+    +    // Checked here instead of at input in case batched_input_ is false
+    +    OP_REQUIRES(context, ragged_nested_splits_len > 0,
+    +                errors::InvalidArgument(
+    +                    "rt_nested_splits must be a list of one or more, but "
+    +                    "received rt_nested_splits of length 0."));
+    +
+         // Unbatch the Ragged Tensor and encode the components.
+         std::vector<RaggedTensor> ragged_components;
+         auto batched_splits_top_vec =
+  notes: >
+    Added the missing non-empty rt_nested_splits validation before the batched path indexes nested_splits[0]; hunk validation succeeded against the target ref.
+```
+
+tokens used
+input: 934
+cache read: 10,752
+cache write: 0
+output: 295
+reasoning output: 0

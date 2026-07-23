@@ -1,0 +1,298 @@
+I’ll locate the target implementation, confirm the surrounding code matches the supplied fix, validate the minimal hunk against the target base, then apply only that source change.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target code location for RaggedTensorToTensorBaseOp::GetFirstDimensionSize",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Validate minimal backport hunk against target base",
+      "status": "pending",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply source change and capture final diff",
+      "status": "pending",
+      "priority": "high"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target code location for RaggedTensorToTensorBaseOp::GetFirstDimensionSize",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Validate minimal backport hunk against target base",
+    "status": "pending",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply source change and capture final diff",
+    "status": "pending",
+    "priority": "high"
+  }
+]
+
+tokens used
+input: 3,699
+cache read: 4,608
+cache write: 0
+output: 127
+reasoning output: 0
+
+tool: viewcode
+{
+  "ref": "3929ffacfbef7c431e8397920d040aaf47acff19",
+  "path": "tensorflow/core/kernels/ragged_tensor_to_tensor_op.cc",
+  "startline": 330,
+  "endline": 370
+}
+Here are lines 330 through 370.
+
+            output_size, result);
+      case RowPartitionType::ROW_SPLITS:
+        if (row_partition_tensor.size() - 1 > parent_output_index.size()) {
+          return errors::InvalidArgument(
+              "Row partition size is greater than output size: ",
+              row_partition_tensor.size() - 1, " > ",
+              parent_output_index.size());
+        }
+        return CalculateOutputIndexRowSplit(
+            row_partition_tensor, parent_output_index, output_index_multiplier,
+            output_size, result);
+      default:
+        return errors::InvalidArgument(
+            "Unsupported partition type:",
+            RowPartitionTypeToString(partition_type));
+    }
+  }
+
+  Status GetFirstDimensionSize(OpKernelContext* context, INDEX_TYPE* result) {
+    const Tensor first_partition_tensor =
+        context->input(kFirstPartitionInputIndex);
+    const RowPartitionType first_partition_type = row_partition_types_[0];
+    switch (first_partition_type) {
+      case RowPartitionType::FIRST_DIM_SIZE:
+        *result = first_partition_tensor.scalar<INDEX_TYPE>()();
+        return Status::OK();
+      case RowPartitionType::VALUE_ROWIDS:
+        return errors::InvalidArgument(
+            "Cannot handle VALUE_ROWIDS in first dimension.");
+      case RowPartitionType::ROW_SPLITS:
+        *result = first_partition_tensor.shape().dim_size(0) - 1;
+        return Status::OK();
+      default:
+        return errors::InvalidArgument(
+            "Cannot handle type ",
+            RowPartitionTypeToString(first_partition_type));
+    }
+  }
+
+  void Compute(OpKernelContext* context) override {
+    INDEX_TYPE first_dimension;
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: locate_symbol
+{
+  "ref": "3929ffacfbef7c431e8397920d040aaf47acff19",
+  "symbol": "GetFirstDimensionSize"
+}
+tensorflow/core/kernels/ragged_tensor_to_tensor_op.cc:348
+tensorflow/core/kernels/ragged_tensor_to_tensor_op.cc:376
+
+tokens used
+input: 875
+cache read: 7,680
+cache write: 0
+output: 121
+reasoning output: 0
+
+The target function is present at the same location and has the unsafe `row_partition_types_[0]` access. I’m validating the exact minimal guard insertion before editing.
+
+tool: validate
+{
+  "ref": "3929ffacfbef7c431e8397920d040aaf47acff19",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/ragged_tensor_to_tensor_op.cc b/tensorflow/core/kernels/ragged_tensor_to_tensor_op.cc\n--- a/tensorflow/core/kernels/ragged_tensor_to_tensor_op.cc\n+++ b/tensorflow/core/kernels/ragged_tensor_to_tensor_op.cc\n@@ -348,6 +348,9 @@ class RaggedTensorToTensorBaseOp : public OpKernel {\n   Status GetFirstDimensionSize(OpKernelContext* context, INDEX_TYPE* result) {\n     const Tensor first_partition_tensor =\n         context->input(kFirstPartitionInputIndex);\n+    if (row_partition_types_.empty()) {\n+      return errors::InvalidArgument(\"No row_partition_types given.\");\n+    }\n     const RowPartitionType first_partition_type = row_partition_types_[0];\n     switch (first_partition_type) {\n       case RowPartitionType::FIRST_DIM_SIZE:\n"
+}
+Patch applied successfully
+
+tokens used
+input: 1,408
+cache read: 7,680
+cache write: 0
+output: 287
+reasoning output: 0
+
+The hunk applies cleanly to the target base. I’m applying the same guard in the checkout now.
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/kernels/ragged_tensor_to_tensor_op.cc\n@@\n   Status GetFirstDimensionSize(OpKernelContext* context, INDEX_TYPE* result) {\n     const Tensor first_partition_tensor =\n         context->input(kFirstPartitionInputIndex);\n+    if (row_partition_types_.empty()) {\n+      return errors::InvalidArgument(\"No row_partition_types given.\");\n+    }\n     const RowPartitionType first_partition_type = row_partition_types_[0];\n     switch (first_partition_type) {\n       case RowPartitionType::FIRST_DIM_SIZE:\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/kernels/ragged_tensor_to_tensor_op.cc
+
+tokens used
+input: 684
+cache read: 8,704
+cache write: 0
+output: 183
+reasoning output: 0
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target code location for RaggedTensorToTensorBaseOp::GetFirstDimensionSize",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate minimal backport hunk against target base",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply source change and capture final diff",
+      "status": "in_progress",
+      "priority": "high"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target code location for RaggedTensorToTensorBaseOp::GetFirstDimensionSize",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate minimal backport hunk against target base",
+    "status": "completed",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply source change and capture final diff",
+    "status": "in_progress",
+    "priority": "high"
+  }
+]
+
+tokens used
+input: 898
+cache read: 8,704
+cache write: 0
+output: 87
+reasoning output: 0
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/kernels/ragged_tensor_to_tensor_op.cc"
+}
+warning: in the working copy of 'tensorflow/core/kernels/ragged_tensor_to_tensor_op.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/kernels/ragged_tensor_to_tensor_op.cc b/tensorflow/core/kernels/ragged_tensor_to_tensor_op.cc
+index 8905647fa6..bffa35875e 100644
+--- a/tensorflow/core/kernels/ragged_tensor_to_tensor_op.cc
++++ b/tensorflow/core/kernels/ragged_tensor_to_tensor_op.cc
+@@ -348,6 +348,9 @@ class RaggedTensorToTensorBaseOp : public OpKernel {
+   Status GetFirstDimensionSize(OpKernelContext* context, INDEX_TYPE* result) {
+     const Tensor first_partition_tensor =
+         context->input(kFirstPartitionInputIndex);
++    if (row_partition_types_.empty()) {
++      return errors::InvalidArgument("No row_partition_types given.");
++    }
+     const RowPartitionType first_partition_type = row_partition_types_[0];
+     switch (first_partition_type) {
+       case RowPartitionType::FIRST_DIM_SIZE:
+
+tool: bash
+{
+  "command": "git status --short"
+}
+ M tensorflow/core/kernels/ragged_tensor_to_tensor_op.cc
+
+tokens used
+input: 1,106
+cache read: 8,704
+cache write: 0
+output: 65
+reasoning output: 0
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target code location for RaggedTensorToTensorBaseOp::GetFirstDimensionSize",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate minimal backport hunk against target base",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply source change and capture final diff",
+      "status": "completed",
+      "priority": "high"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target code location for RaggedTensorToTensorBaseOp::GetFirstDimensionSize",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate minimal backport hunk against target base",
+    "status": "completed",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply source change and capture final diff",
+    "status": "completed",
+    "priority": "high"
+  }
+]
+
+tokens used
+input: 420
+cache read: 9,728
+cache write: 0
+output: 86
+reasoning output: 0
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/kernels/ragged_tensor_to_tensor_op.cc b/tensorflow/core/kernels/ragged_tensor_to_tensor_op.cc
+    index 8905647fa6..bffa35875e 100644
+    --- a/tensorflow/core/kernels/ragged_tensor_to_tensor_op.cc
+    +++ b/tensorflow/core/kernels/ragged_tensor_to_tensor_op.cc
+    @@ -348,6 +348,9 @@ class RaggedTensorToTensorBaseOp : public OpKernel {
+       Status GetFirstDimensionSize(OpKernelContext* context, INDEX_TYPE* result) {
+         const Tensor first_partition_tensor =
+             context->input(kFirstPartitionInputIndex);
+    +    if (row_partition_types_.empty()) {
+    +      return errors::InvalidArgument("No row_partition_types given.");
+    +    }
+         const RowPartitionType first_partition_type = row_partition_types_[0];
+         switch (first_partition_type) {
+           case RowPartitionType::FIRST_DIM_SIZE:
+  notes: >
+    Added the missing empty row_partition_types_ guard before indexing it in GetFirstDimensionSize.
+```
+
+tokens used
+input: 626
+cache read: 9,728
+cache write: 0
+output: 257
+reasoning output: 0

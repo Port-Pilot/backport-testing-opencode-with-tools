@@ -1,0 +1,462 @@
+I’ll map the single security hunk to the 2.6.4 target implementation, validate the minimal hunk against the target base, then apply only that source change.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target code location for GetDeviceForInput",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Validate minimal backport hunk against target base",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "content": "Apply source change in current checkout",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "content": "Capture final diff for response",
+      "status": "pending",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target code location for GetDeviceForInput",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Validate minimal backport hunk against target base",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "content": "Apply source change in current checkout",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "content": "Capture final diff for response",
+    "status": "pending",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 3,708
+cache read: 4,608
+cache write: 0
+output: 137
+reasoning output: 0
+
+tool: viewcode
+{
+  "ref": "75867f82431f8801f26d651ca567a3ff1b0d39c3",
+  "path": "tensorflow/core/common_runtime/eager/execute.cc",
+  "startline": 260,
+  "endline": 330
+}
+Here are lines 260 through 330.
+
+      op->EagerContext().FuncLibDef()->Find(op->Name());
+  if (function_def != nullptr) {
+    op_def = &(function_def->signature());
+  } else {
+    TF_RETURN_IF_ERROR(OpDefForOp(op->Name().c_str(), &op_def));
+  }
+
+  TF_RETURN_IF_ERROR(OutputTypesForNode(node_def, *op_def, output_dtypes));
+
+  return Status::OK();
+}
+
+inline tensorflow::Fprint128 FingerprintCat128(const tensorflow::Fprint128& a,
+                                               const tensorflow::Fprint128& b) {
+  return {tensorflow::FingerprintCat64(a.low64, b.low64),
+          tensorflow::FingerprintCat64(a.high64, b.high64)};
+}
+
+inline tensorflow::Fprint128 FingerprintCat128(const tensorflow::Fprint128& a,
+                                               const int64 b) {
+  auto x = tensorflow::FingerprintCat64(a.low64, b);
+  return {x, tensorflow::FingerprintCat64(a.high64, x)};
+}
+
+Status GetDeviceForInput(const EagerContext& ctx, TensorHandle* tensor_handle,
+                         Device** result) {
+  Device* cpu_device = ctx.HostCPU();
+  string device_name;
+  if (tensor_handle->Type() != TensorHandle::LOCAL) {
+    Device* device = tensor_handle->device();
+    device_name = device != nullptr ? device->name() : cpu_device->name();
+    *result = (device == nullptr ? cpu_device : device);
+  } else if (tensor_handle->dtype == DT_RESOURCE) {
+    // Use the resource's actual device because it is the device that will
+    // influence partitioning the multi-device function.
+    const Tensor* tensor;
+    // TODO(fishx): Avoid blocking here.
+    TF_RETURN_IF_ERROR(tensor_handle->Tensor(&tensor));
+    const ResourceHandle& handle = tensor->flat<ResourceHandle>()(0);
+    device_name = handle.device();
+
+    Device* input_device;
+    TF_RETURN_IF_ERROR(
+        ctx.FindDeviceFromName(device_name.c_str(), &input_device));
+    *result = input_device;
+  } else {
+    Device* device = tensor_handle->device();
+    const bool is_tpu = device != nullptr && device->device_type() == "TPU";
+    // int32 return values can be placed on TPUs.
+    const bool use_host_memory =
+        is_tpu ? MTypeFromDTypeIntsOnDevice(tensor_handle->dtype)
+               : MTypeFromDType(tensor_handle->dtype);
+    if (use_host_memory) {
+      *result = cpu_device;
+    } else {
+      device_name = device != nullptr ? device->name() : cpu_device->name();
+      *result = (device == nullptr ? cpu_device : device);
+    }
+  }
+  return Status::OK();
+}
+
+// Appends a TensorShape object to Fprint128 hash.
+// For best performance, we would like to avoid dynamic memory allocation in
+// this function.
+// If "shape" has unknown rank, we attach "?" to hashed content; otherwise we
+// attach every dim size to hashed content.
+void AppendTensorShapeToFingerprint(const PartialTensorShape& shape,
+                                    Fprint128* fingerprint) {
+  if (shape.unknown_rank()) {
+    char c = '?';
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: locate_symbol
+{
+  "ref": "75867f82431f8801f26d651ca567a3ff1b0d39c3",
+  "symbol": "GetDeviceForInput"
+}
+tensorflow/core/common_runtime/eager/execute.cc:284
+tensorflow/core/common_runtime/eager/execute.cc:842
+
+tokens used
+input: 914
+cache read: 7,680
+cache write: 0
+output: 124
+reasoning output: 0
+
+The target function is present in the same file with the vulnerable resource-handle dereference unchanged, so the newer fix maps directly as a three-line guard before `flat<ResourceHandle>()(0)`.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target code location for GetDeviceForInput",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate minimal backport hunk against target base",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Apply source change in current checkout",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "content": "Capture final diff for response",
+      "status": "pending",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target code location for GetDeviceForInput",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate minimal backport hunk against target base",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Apply source change in current checkout",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "content": "Capture final diff for response",
+    "status": "pending",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 1,791
+cache read: 7,680
+cache write: 0
+output: 143
+reasoning output: 51
+
+tool: validate
+{
+  "ref": "75867f82431f8801f26d651ca567a3ff1b0d39c3",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/common_runtime/eager/execute.cc b/tensorflow/core/common_runtime/eager/execute.cc\n--- a/tensorflow/core/common_runtime/eager/execute.cc\n+++ b/tensorflow/core/common_runtime/eager/execute.cc\n@@ -296,6 +296,9 @@ Status GetDeviceForInput(const EagerContext& ctx, TensorHandle* tensor_handle,\n     const Tensor* tensor;\n     // TODO(fishx): Avoid blocking here.\n     TF_RETURN_IF_ERROR(tensor_handle->Tensor(&tensor));\n+    if (tensor->NumElements() == 0) {\n+      return errors::InvalidArgument(\"Empty resource handle\");\n+    }\n     const ResourceHandle& handle = tensor->flat<ResourceHandle>()(0);\n     device_name = handle.device();\n \n"
+}
+Patch applied successfully
+
+tokens used
+input: 1,102
+cache read: 8,704
+cache write: 0
+output: 229
+reasoning output: 0
+
+The hunk applies cleanly to the target base. I’m applying the same minimal guard in the checked-out source now.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target code location for GetDeviceForInput",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate minimal backport hunk against target base",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Apply source change in current checkout",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Capture final diff for response",
+      "status": "pending",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target code location for GetDeviceForInput",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate minimal backport hunk against target base",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Apply source change in current checkout",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Capture final diff for response",
+    "status": "pending",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 320
+cache read: 9,728
+cache write: 0
+output: 126
+reasoning output: 0
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/common_runtime/eager/execute.cc\n@@\n     const Tensor* tensor;\n     // TODO(fishx): Avoid blocking here.\n     TF_RETURN_IF_ERROR(tensor_handle->Tensor(&tensor));\n+    if (tensor->NumElements() == 0) {\n+      return errors::InvalidArgument(\"Empty resource handle\");\n+    }\n     const ResourceHandle& handle = tensor->flat<ResourceHandle>()(0);\n     device_name = handle.device();\n \n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/common_runtime/eager/execute.cc
+
+tokens used
+input: 587
+cache read: 9,728
+cache write: 0
+output: 138
+reasoning output: 0
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target code location for GetDeviceForInput",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate minimal backport hunk against target base",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Apply source change in current checkout",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Capture final diff for response",
+      "status": "in_progress",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target code location for GetDeviceForInput",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate minimal backport hunk against target base",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Apply source change in current checkout",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Capture final diff for response",
+    "status": "in_progress",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 753
+cache read: 9,728
+cache write: 0
+output: 94
+reasoning output: 0
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/common_runtime/eager/execute.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0266-75867f82431f",
+  "timeout": 120000
+}
+warning: in the working copy of 'tensorflow/core/common_runtime/eager/execute.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/common_runtime/eager/execute.cc b/tensorflow/core/common_runtime/eager/execute.cc
+index 9b664694b2..d0fb69e348 100644
+--- a/tensorflow/core/common_runtime/eager/execute.cc
++++ b/tensorflow/core/common_runtime/eager/execute.cc
+@@ -295,6 +295,9 @@ Status GetDeviceForInput(const EagerContext& ctx, TensorHandle* tensor_handle,
+     const Tensor* tensor;
+     // TODO(fishx): Avoid blocking here.
+     TF_RETURN_IF_ERROR(tensor_handle->Tensor(&tensor));
++    if (tensor->NumElements() == 0) {
++      return errors::InvalidArgument("Empty resource handle");
++    }
+     const ResourceHandle& handle = tensor->flat<ResourceHandle>()(0);
+     device_name = handle.device();
+
+tokens used
+input: 988
+cache read: 9,728
+cache write: 0
+output: 75
+reasoning output: 0
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target code location for GetDeviceForInput",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate minimal backport hunk against target base",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Apply source change in current checkout",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Capture final diff for response",
+      "status": "completed",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target code location for GetDeviceForInput",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate minimal backport hunk against target base",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Apply source change in current checkout",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Capture final diff for response",
+    "status": "completed",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 1,292
+cache read: 9,728
+cache write: 0
+output: 93
+reasoning output: 0
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/common_runtime/eager/execute.cc b/tensorflow/core/common_runtime/eager/execute.cc
+    index 9b664694b2..d0fb69e348 100644
+    --- a/tensorflow/core/common_runtime/eager/execute.cc
+    +++ b/tensorflow/core/common_runtime/eager/execute.cc
+    @@ -295,6 +295,9 @@ Status GetDeviceForInput(const EagerContext& ctx, TensorHandle* tensor_handle,
+         const Tensor* tensor;
+         // TODO(fishx): Avoid blocking here.
+         TF_RETURN_IF_ERROR(tensor_handle->Tensor(&tensor));
+    +    if (tensor->NumElements() == 0) {
+    +      return errors::InvalidArgument("Empty resource handle");
+    +    }
+         const ResourceHandle& handle = tensor->flat<ResourceHandle>()(0);
+         device_name = handle.device();
+  notes: >
+    Added the empty resource-handle tensor guard before indexing the resource handle in eager execute device resolution.
+```
+
+tokens used
+input: 501
+cache read: 10,752
+cache write: 0
+output: 239
+reasoning output: 0

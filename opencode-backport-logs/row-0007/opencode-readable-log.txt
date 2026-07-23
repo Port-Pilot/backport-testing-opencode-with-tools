@@ -1,0 +1,1648 @@
+I’ll inspect the target 2.1.4 Conv3D backprop code and map each source hunk to the corresponding classes before editing.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Locate equivalent Conv3D backprop classes in target TensorFlow 2.1.4",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Validate and apply channel-dimension checks to target code",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "content": "Inspect resulting diff and report YAML result",
+      "status": "pending",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Locate equivalent Conv3D backprop classes in target TensorFlow 2.1.4",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Validate and apply channel-dimension checks to target code",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "content": "Inspect resulting diff and report YAML result",
+    "status": "pending",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 4,545
+cache read: 4,608
+cache write: 0
+output: 126
+reasoning output: 0
+
+tool: grep
+{
+  "pattern": "class Conv3D.*Backprop.*Op",
+  "path": "tensorflow/core/kernels",
+  "include": "conv_grad_ops_3d.cc"
+}
+Found 6 matches
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0007-518b73f51f83\tensorflow\core\kernels\conv_grad_ops_3d.cc:
+  Line 172: class Conv3DBackpropInputOp : public OpKernel {
+
+  Line 294: class Conv3DCustomBackpropInputOp : public OpKernel {
+
+  Line 677: class Conv3DBackpropFilterOp : public OpKernel {
+
+  Line 808: class Conv3DCustomBackpropFilterOp : public OpKernel {
+
+  Line 1202: class Conv3DBackpropInputOp<GPUDevice, T> : public OpKernel {
+
+  Line 1640: class Conv3DBackpropFilterOp<GPUDevice, T> : public OpKernel {
+
+tool: locate_symbol
+{
+  "ref": "518b73f51f838e730859fbd8782600b1bb47ada0",
+  "symbol": "Conv3DBackpropFilterOp"
+}
+tensorflow/compiler/tf2xla/kernels/conv_ops.cc:188
+tensorflow/core/kernels/conv_grad_ops_3d.cc:677
+tensorflow/core/kernels/conv_grad_ops_3d.cc:1640
+tensorflow/compiler/tf2xla/kernels/conv_ops.cc:190
+tensorflow/core/kernels/conv_grad_ops_3d.cc:679
+tensorflow/core/kernels/conv_grad_ops_3d.cc:1642
+tensorflow/compiler/tf2xla/kernels/conv_ops.cc:196
+tensorflow/core/kernels/conv_grad_ops_3d.cc:772
+tensorflow/core/kernels/conv_grad_ops_3d.cc:802
+tensorflow/core/kernels/conv_grad_ops_3d.cc:909
+tensorflow/core/kernels/conv_grad_ops_3d.cc:1001
+tensorflow/core/kernels/conv_grad_ops_3d.cc:1138
+tensorflow/core/kernels/conv_grad_ops_3d.cc:1143
+tensorflow/core/kernels/conv_grad_ops_3d.cc:1154
+tensorflow/core/kernels/conv_grad_ops_3d.cc:1158
+tensorflow/core/kernels/conv_grad_ops_3d.cc:1708
+tensorflow/core/kernels/conv_grad_ops_3d.cc:2045
+tensorflow/core/kernels/conv_grad_ops_3d.cc:2050
+
+tool: locate_symbol
+{
+  "ref": "518b73f51f838e730859fbd8782600b1bb47ada0",
+  "symbol": "Conv3DBackpropInputOp"
+}
+tensorflow/compiler/tf2xla/kernels/conv_ops.cc:129
+tensorflow/core/kernels/conv_grad_ops_3d.cc:172
+tensorflow/core/kernels/conv_grad_ops_3d.cc:1202
+tensorflow/compiler/tf2xla/kernels/conv_ops.cc:131
+tensorflow/core/kernels/conv_grad_ops_3d.cc:174
+tensorflow/core/kernels/conv_grad_ops_3d.cc:1204
+tensorflow/compiler/tf2xla/kernels/conv_ops.cc:136
+tensorflow/core/kernels/conv_grad_ops_3d.cc:263
+tensorflow/core/kernels/conv_grad_ops_3d.cc:288
+tensorflow/core/kernels/conv_grad_ops_3d.cc:391
+tensorflow/core/kernels/conv_grad_ops_3d.cc:484
+tensorflow/core/kernels/conv_grad_ops_3d.cc:662
+tensorflow/core/kernels/conv_grad_ops_3d.cc:667
+tensorflow/core/kernels/conv_grad_ops_3d.cc:1267
+tensorflow/core/kernels/conv_grad_ops_3d.cc:2037
+tensorflow/core/kernels/conv_grad_ops_3d.cc:2042
+
+tokens used
+input: 698
+cache read: 8,704
+cache write: 0
+output: 149
+reasoning output: 0
+
+The target file has matching CPU/custom Conv3D backprop classes at the same logical locations. I’ll inspect the surrounding `input_shape`, `filter_shape`, and `out_backprop_shape` setup to place the checks before dimension computation.
+
+tool: viewcode
+{
+  "ref": "518b73f51f838e730859fbd8782600b1bb47ada0",
+  "path": "tensorflow/core/kernels/conv_grad_ops_3d.cc",
+  "startline": 210,
+  "endline": 260
+}
+Here are lines 210 through 260.
+
+    OP_REQUIRES_OK(context, context->GetAttr("strides", &stride_));
+    OP_REQUIRES(context, stride_.size() == 5,
+                errors::InvalidArgument("Sliding window strides field must "
+                                        "specify 5 dimensions"));
+    OP_REQUIRES(
+        context,
+        (GetTensorDim(stride_, data_format_, 'C') == 1 &&
+         GetTensorDim(stride_, data_format_, 'N') == 1),
+        errors::InvalidArgument("Current implementation does not yet support "
+                                "strides in the batch and depth dimensions."));
+    OP_REQUIRES_OK(context, context->GetAttr("padding", &padding_));
+  }
+
+  void Compute(OpKernelContext* context) override {
+    const Tensor& filter = context->input(1);
+    const TensorShape& filter_shape = filter.shape();
+
+    const Tensor& out_backprop = context->input(2);
+    const TensorShape& out_backprop_shape = out_backprop.shape();
+
+    TensorShape input_shape;
+    if (takes_shape_) {
+      const Tensor& input_sizes = context->input(0);
+      // MakeShape is able to handle both DT_INT32 and DT_INT64 for input_sizes.
+      OP_REQUIRES_OK(context, MakeShape(input_sizes, &input_shape));
+    } else {
+      input_shape = context->input(0).shape();
+    }
+
+    OP_REQUIRES(context, input_shape.dims() == 5,
+                errors::InvalidArgument("input tensor must have 5 dimensions"));
+    OP_REQUIRES(
+        context, filter_shape.dims() == 5,
+        errors::InvalidArgument("filter_sizes tensor must have 5 dimensions"));
+    OP_REQUIRES(
+        context, out_backprop_shape.dims() == 5,
+        errors::InvalidArgument("out_backprop tensor must have 5 dimensions"));
+    OP_REQUIRES(
+        context, input_shape.dim_size(4) == filter_shape.dim_size(3),
+        errors::InvalidArgument("input and filter_sizes must have the same "
+                                "number of channels. Got ",
+                                input_shape.dim_size(4), " for input and ",
+                                filter_shape.dim_size(3), " for filter_sizes"));
+    OP_REQUIRES(
+        context, out_backprop_shape.dim_size(4) == filter_shape.dim_size(4),
+        errors::InvalidArgument("out_backprop and filter_sizes must have the "
+                                "same number of channels. Got ",
+                                out_backprop_shape.dim_size(4),
+                                " for out_backprop and ",
+                                filter_shape.dim_size(4), " for filter_sizes"));
+
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: viewcode
+{
+  "ref": "518b73f51f838e730859fbd8782600b1bb47ada0",
+  "path": "tensorflow/core/kernels/conv_grad_ops_3d.cc",
+  "startline": 330,
+  "endline": 380
+}
+Here are lines 330 through 380.
+
+    OP_REQUIRES(context,
+                (GetTensorDim(dilation_, data_format_, '0') == 1 &&
+                 GetTensorDim(dilation_, data_format_, '1') == 1 &&
+                 GetTensorDim(dilation_, data_format_, '2') == 1),
+                errors::InvalidArgument(
+                    "Current CPU implementation does not yet support "
+                    "dilation rates larger than 1."));
+
+    OP_REQUIRES_OK(context, context->GetAttr("strides", &stride_));
+    OP_REQUIRES(context, stride_.size() == 5,
+                errors::InvalidArgument("Sliding window strides field must "
+                                        "specify 5 dimensions"));
+    OP_REQUIRES(
+        context,
+        (GetTensorDim(stride_, data_format_, 'C') == 1 &&
+         GetTensorDim(stride_, data_format_, 'N') == 1),
+        errors::InvalidArgument("Current implementation does not yet support "
+                                "strides in the batch and depth dimensions."));
+    OP_REQUIRES_OK(context, context->GetAttr("padding", &padding_));
+  }
+
+  void Compute(OpKernelContext* context) override {
+    const Tensor& filter = context->input(1);
+    const TensorShape& filter_shape = filter.shape();
+
+    const Tensor& out_backprop = context->input(2);
+    const TensorShape& out_backprop_shape = out_backprop.shape();
+
+    TensorShape input_shape;
+    if (takes_shape_) {
+      const Tensor& input_sizes = context->input(0);
+      // MakeShape is able to handle both DT_INT32 and DT_INT64 for input_sizes.
+      OP_REQUIRES_OK(context, MakeShape(input_sizes, &input_shape));
+    } else {
+      input_shape = context->input(0).shape();
+    }
+
+    OP_REQUIRES(context, input_shape.dims() == 5,
+                errors::InvalidArgument("input tensor must have 5 dimensions"));
+    OP_REQUIRES(
+        context, filter_shape.dims() == 5,
+        errors::InvalidArgument("filter_sizes tensor must have 5 dimensions"));
+    OP_REQUIRES(
+        context, out_backprop_shape.dims() == 5,
+        errors::InvalidArgument("out_backprop tensor must have 5 dimensions"));
+    OP_REQUIRES(
+        context, input_shape.dim_size(4) == filter_shape.dim_size(3),
+        errors::InvalidArgument("input and filter_sizes must have the same "
+                                "number of channels. Got ",
+                                input_shape.dim_size(4), " for input and ",
+                                filter_shape.dim_size(3), " for filter_sizes"));
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: viewcode
+{
+  "ref": "518b73f51f838e730859fbd8782600b1bb47ada0",
+  "path": "tensorflow/core/kernels/conv_grad_ops_3d.cc",
+  "startline": 715,
+  "endline": 765
+}
+Here are lines 715 through 765.
+
+    OP_REQUIRES_OK(context, context->GetAttr("strides", &stride_));
+    OP_REQUIRES(context, stride_.size() == 5,
+                errors::InvalidArgument("Sliding window strides field must "
+                                        "specify 5 dimensions"));
+    OP_REQUIRES(
+        context,
+        (GetTensorDim(stride_, data_format_, 'C') == 1 &&
+         GetTensorDim(stride_, data_format_, 'N') == 1),
+        errors::InvalidArgument("Current implementation does not yet support "
+                                "strides in the batch and depth dimensions."));
+    OP_REQUIRES_OK(context, context->GetAttr("padding", &padding_));
+  }
+
+  void Compute(OpKernelContext* context) override {
+    const Tensor& input = context->input(0);
+    const TensorShape& input_shape = input.shape();
+
+    const Tensor& out_backprop = context->input(2);
+    const TensorShape& out_backprop_shape = out_backprop.shape();
+
+    TensorShape filter_shape;
+    if (takes_shape_) {
+      const Tensor& filter_sizes = context->input(1);
+      OP_REQUIRES_OK(context, TensorShapeUtils::MakeShape(
+                                  filter_sizes.vec<int32>(), &filter_shape));
+    } else {
+      filter_shape = context->input(1).shape();
+    }
+
+<<<<<<< HEAD
+=======
+    OP_REQUIRES(context, input_shape.dims() == 5,
+                errors::InvalidArgument("input tensor must have 5 dimensions"));
+    OP_REQUIRES(
+        context, filter_shape.dims() == 5,
+        errors::InvalidArgument("filter_sizes tensor must have 5 dimensions"));
+    OP_REQUIRES(
+        context, out_backprop_shape.dims() == 5,
+        errors::InvalidArgument("out_backprop tensor must have 5 dimensions"));
+    OP_REQUIRES(
+        context, input_shape.dim_size(4) == filter_shape.dim_size(3),
+        errors::InvalidArgument("input and filter_sizes must have the same "
+                                "number of channels. Got ",
+                                input_shape.dim_size(4), " for input and ",
+                                filter_shape.dim_size(3), " for filter_sizes"));
+    OP_REQUIRES(
+        context, out_backprop_shape.dim_size(4) == filter_shape.dim_size(4),
+        errors::InvalidArgument("out_backprop and filter_sizes must have the "
+                                "same number of channels. Got ",
+                                out_backprop_shape.dim_size(4),
+                                " for out_backprop and ",
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: viewcode
+{
+  "ref": "518b73f51f838e730859fbd8782600b1bb47ada0",
+  "path": "tensorflow/core/kernels/conv_grad_ops_3d.cc",
+  "startline": 845,
+  "endline": 895
+}
+Here are lines 845 through 895.
+
+                (GetTensorDim(dilation_, data_format_, '0') == 1 &&
+                 GetTensorDim(dilation_, data_format_, '1') == 1 &&
+                 GetTensorDim(dilation_, data_format_, '2') == 1),
+                errors::InvalidArgument(
+                    "Current CPU implementation does not yet support "
+                    "dilation rates larger than 1."));
+
+    OP_REQUIRES_OK(context, context->GetAttr("strides", &stride_));
+    OP_REQUIRES(context, stride_.size() == 5,
+                errors::InvalidArgument("Sliding window strides field must "
+                                        "specify 5 dimensions"));
+    OP_REQUIRES(
+        context,
+        (GetTensorDim(stride_, data_format_, 'C') == 1 &&
+         GetTensorDim(stride_, data_format_, 'N') == 1),
+        errors::InvalidArgument("Current implementation does not yet support "
+                                "strides in the batch and depth dimensions."));
+    OP_REQUIRES_OK(context, context->GetAttr("padding", &padding_));
+  }
+
+  void Compute(OpKernelContext* context) override {
+    const Tensor& input = context->input(0);
+    const TensorShape& input_shape = input.shape();
+
+    const Tensor& out_backprop = context->input(2);
+    const TensorShape& out_backprop_shape = out_backprop.shape();
+
+    TensorShape filter_shape;
+    if (takes_shape_) {
+      const Tensor& filter_sizes = context->input(1);
+      OP_REQUIRES_OK(context, TensorShapeUtils::MakeShape(
+                                  filter_sizes.vec<int32>(), &filter_shape));
+    } else {
+      filter_shape = context->input(1).shape();
+    }
+
+<<<<<<< HEAD
+=======
+    OP_REQUIRES(context, input_shape.dims() == 5,
+                errors::InvalidArgument("input tensor must have 5 dimensions"));
+    OP_REQUIRES(
+        context, filter_shape.dims() == 5,
+        errors::InvalidArgument("filter_sizes tensor must have 5 dimensions"));
+    OP_REQUIRES(
+        context, out_backprop_shape.dims() == 5,
+        errors::InvalidArgument("out_backprop tensor must have 5 dimensions"));
+    OP_REQUIRES(
+        context, input_shape.dim_size(4) == filter_shape.dim_size(3),
+        errors::InvalidArgument("input and filter_sizes must have the same "
+                                "number of channels. Got ",
+                                input_shape.dim_size(4), " for input and ",
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tokens used
+input: 1,596
+cache read: 8,704
+cache write: 0
+output: 311
+reasoning output: 0
+
+The target-side view already shows some validation in the input backprop classes, but the filter backprop regions appear suspicious in the ref view. I’ll read the current checkout directly to avoid relying on truncated/conflicted display and only add missing checks.
+
+tool: read
+{
+  "filePath": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0007-518b73f51f83\\tensorflow\\core\\kernels\\conv_grad_ops_3d.cc",
+  "offset": 730,
+  "limit": 180
+}
+<path>C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0007-518b73f51f83\tensorflow\core\kernels\conv_grad_ops_3d.cc</path>
+<type>file</type>
+<content>
+730:     const TensorShape& input_shape = input.shape();
+731: 
+732:     const Tensor& out_backprop = context->input(2);
+733:     const TensorShape& out_backprop_shape = out_backprop.shape();
+734: 
+735:     TensorShape filter_shape;
+736:     if (takes_shape_) {
+737:       const Tensor& filter_sizes = context->input(1);
+738:       OP_REQUIRES_OK(context, TensorShapeUtils::MakeShape(
+739:                                   filter_sizes.vec<int32>(), &filter_shape));
+740:     } else {
+741:       filter_shape = context->input(1).shape();
+742:     }
+743: 
+744: <<<<<<< HEAD
+745: =======
+746:     OP_REQUIRES(context, input_shape.dims() == 5,
+747:                 errors::InvalidArgument("input tensor must have 5 dimensions"));
+748:     OP_REQUIRES(
+749:         context, filter_shape.dims() == 5,
+750:         errors::InvalidArgument("filter_sizes tensor must have 5 dimensions"));
+751:     OP_REQUIRES(
+752:         context, out_backprop_shape.dims() == 5,
+753:         errors::InvalidArgument("out_backprop tensor must have 5 dimensions"));
+754:     OP_REQUIRES(
+755:         context, input_shape.dim_size(4) == filter_shape.dim_size(3),
+756:         errors::InvalidArgument("input and filter_sizes must have the same "
+757:                                 "number of channels. Got ",
+758:                                 input_shape.dim_size(4), " for input and ",
+759:                                 filter_shape.dim_size(3), " for filter_sizes"));
+760:     OP_REQUIRES(
+761:         context, out_backprop_shape.dim_size(4) == filter_shape.dim_size(4),
+762:         errors::InvalidArgument("out_backprop and filter_sizes must have the "
+763:                                 "same number of channels. Got ",
+764:                                 out_backprop_shape.dim_size(4),
+765:                                 " for out_backprop and ",
+766:                                 filter_shape.dim_size(4), " for filter_sizes"));
+767: 
+768: >>>>>>> 311403edbc9 (Eliminate a division by 0 in 3D convolutions.)
+769:     ConvBackpropDimensions dims;
+770:     OP_REQUIRES_OK(context,
+771:                    ConvBackpropComputeDimensions(
+772:                        "Conv3DBackpropFilterOp", /*num_spatial_dims=*/3,
+773:                        input_shape, filter_shape, out_backprop_shape, stride_,
+774:                        padding_, data_format_, &dims));
+775: 
+776:     Tensor* filter_backprop;
+777:     OP_REQUIRES_OK(context,
+778:                    context->allocate_output(0, filter_shape, &filter_backprop));
+779: 
+780:     if (input_shape.num_elements() == 0) {
+781:       filter_backprop->template flat<T>().setZero();
+782:       return;
+783:     }
+784: 
+785:     functor::CuboidConvolutionBackwardFilter<Device, T>()(
+786:         context->eigen_device<Device>(),
+787:         filter_backprop->tensor<T, 5>(),                 // filter_backward
+788:         input.tensor<T, 5>(),                            // input
+789:         out_backprop.tensor<T, 5>(),                     // output_backward
+790:         static_cast<int>(dims.spatial_dims[0].stride),   // stride_planes
+791:         static_cast<int>(dims.spatial_dims[1].stride),   // stride_rows
+792:         static_cast<int>(dims.spatial_dims[2].stride));  // stride_cols
+793:   }
+794: 
+795:  private:
+796:   std::vector<int32> dilation_;
+797:   std::vector<int32> stride_;
+798:   Padding padding_;
+799:   TensorFormat data_format_;
+800:   bool takes_shape_;
+801: 
+802:   TF_DISALLOW_COPY_AND_ASSIGN(Conv3DBackpropFilterOp);
+803: };
+804: 
+805: // Custom backprop for filter that explicitly does the work sharding and calls
+806: // Eigen only to multiply matrices.
+807: template <typename Device, class T>
+808: class Conv3DCustomBackpropFilterOp : public OpKernel {
+809:   // Limit the maximum size of allocated temporary buffer to
+810:   // kMaxTempAllocationOverhead times the size of the input tensors (input,
+811:   // filter, out_backprop). If the size of the temporary buffer exceeds this
+812:   // limit, fallback on Eigen implementation.
+813:   static constexpr int kMaxTempAllocationOverhead = 25;
+814: 
+815:  public:
+816:   explicit Conv3DCustomBackpropFilterOp(OpKernelConstruction* context)
+817:       : OpKernel(context),
+818:         data_format_(FORMAT_NHWC),
+819:         takes_shape_(type_string().find("V2") != std::string::npos) {
+820:     // data_format is only available in V2.
+821:     if (takes_shape_) {
+822:       string data_format;
+823:       OP_REQUIRES_OK(context, context->GetAttr("data_format", &data_format));
+824:       OP_REQUIRES(context, FormatFromString(data_format, &data_format_),
+825:                   errors::InvalidArgument("Invalid data format"));
+826:       OP_REQUIRES(
+827:           context, data_format_ == FORMAT_NHWC,
+828:           errors::InvalidArgument(
+829:               "Conv3DBackpropFilterOpV2 only supports NDHWC on the CPU."));
+830:     }
+831: 
+832:     OP_REQUIRES_OK(context, context->GetAttr("dilations", &dilation_));
+833:     OP_REQUIRES(context, dilation_.size() == 5,
+834:                 errors::InvalidArgument("Dilation rates field must "
+835:                                         "specify 5 dimensions"));
+836:     OP_REQUIRES(context,
+837:                 (GetTensorDim(dilation_, data_format_, 'C') == 1 &&
+838:                  GetTensorDim(dilation_, data_format_, 'N') == 1),
+839:                 errors::InvalidArgument(
+840:                     "Current implementation does not yet support "
+841:                     "dilation rates in the batch and depth dimensions."));
+842: 
+843:     // TODO(yangzihao): Add CPU version of dilated conv 3D.
+844:     OP_REQUIRES(context,
+845:                 (GetTensorDim(dilation_, data_format_, '0') == 1 &&
+846:                  GetTensorDim(dilation_, data_format_, '1') == 1 &&
+847:                  GetTensorDim(dilation_, data_format_, '2') == 1),
+848:                 errors::InvalidArgument(
+849:                     "Current CPU implementation does not yet support "
+850:                     "dilation rates larger than 1."));
+851: 
+852:     OP_REQUIRES_OK(context, context->GetAttr("strides", &stride_));
+853:     OP_REQUIRES(context, stride_.size() == 5,
+854:                 errors::InvalidArgument("Sliding window strides field must "
+855:                                         "specify 5 dimensions"));
+856:     OP_REQUIRES(
+857:         context,
+858:         (GetTensorDim(stride_, data_format_, 'C') == 1 &&
+859:          GetTensorDim(stride_, data_format_, 'N') == 1),
+860:         errors::InvalidArgument("Current implementation does not yet support "
+861:                                 "strides in the batch and depth dimensions."));
+862:     OP_REQUIRES_OK(context, context->GetAttr("padding", &padding_));
+863:   }
+864: 
+865:   void Compute(OpKernelContext* context) override {
+866:     const Tensor& input = context->input(0);
+867:     const TensorShape& input_shape = input.shape();
+868: 
+869:     const Tensor& out_backprop = context->input(2);
+870:     const TensorShape& out_backprop_shape = out_backprop.shape();
+871: 
+872:     TensorShape filter_shape;
+873:     if (takes_shape_) {
+874:       const Tensor& filter_sizes = context->input(1);
+875:       OP_REQUIRES_OK(context, TensorShapeUtils::MakeShape(
+876:                                   filter_sizes.vec<int32>(), &filter_shape));
+877:     } else {
+878:       filter_shape = context->input(1).shape();
+879:     }
+880: 
+881: <<<<<<< HEAD
+882: =======
+883:     OP_REQUIRES(context, input_shape.dims() == 5,
+884:                 errors::InvalidArgument("input tensor must have 5 dimensions"));
+885:     OP_REQUIRES(
+886:         context, filter_shape.dims() == 5,
+887:         errors::InvalidArgument("filter_sizes tensor must have 5 dimensions"));
+888:     OP_REQUIRES(
+889:         context, out_backprop_shape.dims() == 5,
+890:         errors::InvalidArgument("out_backprop tensor must have 5 dimensions"));
+891:     OP_REQUIRES(
+892:         context, input_shape.dim_size(4) == filter_shape.dim_size(3),
+893:         errors::InvalidArgument("input and filter_sizes must have the same "
+894:                                 "number of channels. Got ",
+895:                                 input_shape.dim_size(4), " for input and ",
+896:                                 filter_shape.dim_size(3), " for filter_sizes"));
+897:     OP_REQUIRES(
+898:         context, out_backprop_shape.dim_size(4) == filter_shape.dim_size(4),
+899:         errors::InvalidArgument("out_backprop and filter_sizes must have the "
+900:                                 "same number of channels. Got ",
+901:                                 out_backprop_shape.dim_size(4),
+902:                                 " for out_backprop and ",
+903:                                 filter_shape.dim_size(4), " for filter_sizes"));
+904: 
+905: >>>>>>> 311403edbc9 (Eliminate a division by 0 in 3D convolutions.)
+906:     ConvBackpropDimensions dims;
+907:     OP_REQUIRES_OK(context,
+908:                    ConvBackpropComputeDimensions(
+909:                        "Conv3DBackpropFilterOp", /*num_spatial_dims=*/3,
+
+(Showing lines 730-909 of 2058. Use offset=910 to continue.)
+</content>
+
+tool: read
+{
+  "filePath": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0007-518b73f51f83\\tensorflow\\core\\kernels\\conv_grad_ops_3d.cc",
+  "offset": 220,
+  "limit": 170
+}
+<path>C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0007-518b73f51f83\tensorflow\core\kernels\conv_grad_ops_3d.cc</path>
+<type>file</type>
+<content>
+220:     OP_REQUIRES_OK(context, context->GetAttr("padding", &padding_));
+221:   }
+222: 
+223:   void Compute(OpKernelContext* context) override {
+224:     const Tensor& filter = context->input(1);
+225:     const TensorShape& filter_shape = filter.shape();
+226: 
+227:     const Tensor& out_backprop = context->input(2);
+228:     const TensorShape& out_backprop_shape = out_backprop.shape();
+229: 
+230:     TensorShape input_shape;
+231:     if (takes_shape_) {
+232:       const Tensor& input_sizes = context->input(0);
+233:       // MakeShape is able to handle both DT_INT32 and DT_INT64 for input_sizes.
+234:       OP_REQUIRES_OK(context, MakeShape(input_sizes, &input_shape));
+235:     } else {
+236:       input_shape = context->input(0).shape();
+237:     }
+238: 
+239:     OP_REQUIRES(context, input_shape.dims() == 5,
+240:                 errors::InvalidArgument("input tensor must have 5 dimensions"));
+241:     OP_REQUIRES(
+242:         context, filter_shape.dims() == 5,
+243:         errors::InvalidArgument("filter_sizes tensor must have 5 dimensions"));
+244:     OP_REQUIRES(
+245:         context, out_backprop_shape.dims() == 5,
+246:         errors::InvalidArgument("out_backprop tensor must have 5 dimensions"));
+247:     OP_REQUIRES(
+248:         context, input_shape.dim_size(4) == filter_shape.dim_size(3),
+249:         errors::InvalidArgument("input and filter_sizes must have the same "
+250:                                 "number of channels. Got ",
+251:                                 input_shape.dim_size(4), " for input and ",
+252:                                 filter_shape.dim_size(3), " for filter_sizes"));
+253:     OP_REQUIRES(
+254:         context, out_backprop_shape.dim_size(4) == filter_shape.dim_size(4),
+255:         errors::InvalidArgument("out_backprop and filter_sizes must have the "
+256:                                 "same number of channels. Got ",
+257:                                 out_backprop_shape.dim_size(4),
+258:                                 " for out_backprop and ",
+259:                                 filter_shape.dim_size(4), " for filter_sizes"));
+260: 
+261:     ConvBackpropDimensions dims;
+262:     OP_REQUIRES_OK(context, ConvBackpropComputeDimensions(
+263:                                 "Conv3DBackpropInputOp", /*num_spatial_dims=*/3,
+264:                                 input_shape, filter_shape, out_backprop_shape,
+265:                                 stride_, padding_, data_format_, &dims));
+266: 
+267:     Tensor* in_backprop;
+268:     OP_REQUIRES_OK(context,
+269:                    context->allocate_output(0, input_shape, &in_backprop));
+270: 
+271:     functor::CuboidConvolutionBackwardInput<Device, T>()(
+272:         context->eigen_device<Device>(),
+273:         in_backprop->tensor<T, 5>(),                     // input_backward
+274:         filter.tensor<T, 5>(),                           // filter
+275:         out_backprop.tensor<T, 5>(),                     // output_backward
+276:         static_cast<int>(dims.spatial_dims[0].stride),   // stride_planes
+277:         static_cast<int>(dims.spatial_dims[1].stride),   // stride_rows
+278:         static_cast<int>(dims.spatial_dims[2].stride));  // stride_cols
+279:   }
+280: 
+281:  private:
+282:   std::vector<int32> dilation_;
+283:   std::vector<int32> stride_;
+284:   Padding padding_;
+285:   TensorFormat data_format_;
+286:   bool takes_shape_;
+287: 
+288:   TF_DISALLOW_COPY_AND_ASSIGN(Conv3DBackpropInputOp);
+289: };
+290: 
+291: // Custom backprop for input that explicitly does the work sharding and calls
+292: // Eigen only to multiply matrices.
+293: template <typename Device, class T>
+294: class Conv3DCustomBackpropInputOp : public OpKernel {
+295:   // Limit the maximum size of allocated temporary buffer to
+296:   // kMaxTempAllocationOverhead times the size of the input tensors (input,
+297:   // filter, out_backprop). If the size of the temporary buffer exceeds this
+298:   // limit, fallback on Eigen implementation.
+299:   static constexpr int kMaxTempAllocationOverhead = 25;
+300: 
+301:  public:
+302:   explicit Conv3DCustomBackpropInputOp(OpKernelConstruction* context)
+303:       : OpKernel(context),
+304:         data_format_(FORMAT_NHWC),
+305:         takes_shape_(type_string().find("V2") != std::string::npos) {
+306:     // data_format is only available in V2.
+307:     if (takes_shape_) {
+308:       string data_format;
+309:       OP_REQUIRES_OK(context, context->GetAttr("data_format", &data_format));
+310:       OP_REQUIRES(context, FormatFromString(data_format, &data_format_),
+311:                   errors::InvalidArgument("Invalid data format"));
+312:       OP_REQUIRES(
+313:           context, data_format_ == FORMAT_NHWC,
+314:           errors::InvalidArgument(
+315:               "Conv3DBackpropInputOpV2 only supports NDHWC on the CPU."));
+316:     }
+317: 
+318:     OP_REQUIRES_OK(context, context->GetAttr("dilations", &dilation_));
+319:     OP_REQUIRES(context, dilation_.size() == 5,
+320:                 errors::InvalidArgument("Dilation rates field must "
+321:                                         "specify 5 dimensions"));
+322:     OP_REQUIRES(context,
+323:                 (GetTensorDim(dilation_, data_format_, 'C') == 1 &&
+324:                  GetTensorDim(dilation_, data_format_, 'N') == 1),
+325:                 errors::InvalidArgument(
+326:                     "Current implementation does not yet support "
+327:                     "dilation rates in the batch and depth dimensions."));
+328: 
+329:     // TODO(yangzihao): Add CPU version of dilated conv 3D.
+330:     OP_REQUIRES(context,
+331:                 (GetTensorDim(dilation_, data_format_, '0') == 1 &&
+332:                  GetTensorDim(dilation_, data_format_, '1') == 1 &&
+333:                  GetTensorDim(dilation_, data_format_, '2') == 1),
+334:                 errors::InvalidArgument(
+335:                     "Current CPU implementation does not yet support "
+336:                     "dilation rates larger than 1."));
+337: 
+338:     OP_REQUIRES_OK(context, context->GetAttr("strides", &stride_));
+339:     OP_REQUIRES(context, stride_.size() == 5,
+340:                 errors::InvalidArgument("Sliding window strides field must "
+341:                                         "specify 5 dimensions"));
+342:     OP_REQUIRES(
+343:         context,
+344:         (GetTensorDim(stride_, data_format_, 'C') == 1 &&
+345:          GetTensorDim(stride_, data_format_, 'N') == 1),
+346:         errors::InvalidArgument("Current implementation does not yet support "
+347:                                 "strides in the batch and depth dimensions."));
+348:     OP_REQUIRES_OK(context, context->GetAttr("padding", &padding_));
+349:   }
+350: 
+351:   void Compute(OpKernelContext* context) override {
+352:     const Tensor& filter = context->input(1);
+353:     const TensorShape& filter_shape = filter.shape();
+354: 
+355:     const Tensor& out_backprop = context->input(2);
+356:     const TensorShape& out_backprop_shape = out_backprop.shape();
+357: 
+358:     TensorShape input_shape;
+359:     if (takes_shape_) {
+360:       const Tensor& input_sizes = context->input(0);
+361:       // MakeShape is able to handle both DT_INT32 and DT_INT64 for input_sizes.
+362:       OP_REQUIRES_OK(context, MakeShape(input_sizes, &input_shape));
+363:     } else {
+364:       input_shape = context->input(0).shape();
+365:     }
+366: 
+367:     OP_REQUIRES(context, input_shape.dims() == 5,
+368:                 errors::InvalidArgument("input tensor must have 5 dimensions"));
+369:     OP_REQUIRES(
+370:         context, filter_shape.dims() == 5,
+371:         errors::InvalidArgument("filter_sizes tensor must have 5 dimensions"));
+372:     OP_REQUIRES(
+373:         context, out_backprop_shape.dims() == 5,
+374:         errors::InvalidArgument("out_backprop tensor must have 5 dimensions"));
+375:     OP_REQUIRES(
+376:         context, input_shape.dim_size(4) == filter_shape.dim_size(3),
+377:         errors::InvalidArgument("input and filter_sizes must have the same "
+378:                                 "number of channels. Got ",
+379:                                 input_shape.dim_size(4), " for input and ",
+380:                                 filter_shape.dim_size(3), " for filter_sizes"));
+381:     OP_REQUIRES(
+382:         context, out_backprop_shape.dim_size(4) == filter_shape.dim_size(4),
+383:         errors::InvalidArgument("out_backprop and filter_sizes must have the "
+384:                                 "same number of channels. Got ",
+385:                                 out_backprop_shape.dim_size(4),
+386:                                 " for out_backprop and ",
+387:                                 filter_shape.dim_size(4), " for filter_sizes"));
+388: 
+389:     ConvBackpropDimensions dims;
+
+(Showing lines 220-389 of 2058. Use offset=390 to continue.)
+</content>
+
+tokens used
+input: 3,192
+cache read: 9,728
+cache write: 0
+output: 226
+reasoning output: 27
+
+The checkout already contains the intended input checks, and the filter sections contain unresolved conflict markers around the same validation block. I’ll clean those markers by keeping the validation block, which is the minimal correct source change for the two filter classes.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Locate equivalent Conv3D backprop classes in target TensorFlow 2.1.4",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate and apply channel-dimension checks to target code",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Inspect resulting diff and report YAML result",
+      "status": "pending",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Locate equivalent Conv3D backprop classes in target TensorFlow 2.1.4",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate and apply channel-dimension checks to target code",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Inspect resulting diff and report YAML result",
+    "status": "pending",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 4,874
+cache read: 12,800
+cache write: 0
+output: 145
+reasoning output: 52
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/kernels/conv_grad_ops_3d.cc\n@@\n-<<<<<<< HEAD\n-=======\n     OP_REQUIRES(context, input_shape.dims() == 5,\n                 errors::InvalidArgument(\"input tensor must have 5 dimensions\"));\n@@\n                                 filter_shape.dim_size(4), \" for filter_sizes\"));\n \n->>>>>>> 311403edbc9 (Eliminate a division by 0 in 3D convolutions.)\n     ConvBackpropDimensions dims;\n@@\n-<<<<<<< HEAD\n-=======\n     OP_REQUIRES(context, input_shape.dims() == 5,\n                 errors::InvalidArgument(\"input tensor must have 5 dimensions\"));\n@@\n                                 filter_shape.dim_size(4), \" for filter_sizes\"));\n \n->>>>>>> 311403edbc9 (Eliminate a division by 0 in 3D convolutions.)\n     ConvBackpropDimensions dims;\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/kernels/conv_grad_ops_3d.cc
+
+tokens used
+input: 1,098
+cache read: 16,896
+cache write: 0
+output: 242
+reasoning output: 0
+
+The conflict markers are removed and the filter validation blocks are retained. I’ll verify the working diff and check no conflict markers remain.
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/kernels/conv_grad_ops_3d.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0007-518b73f51f83",
+  "timeout": 120000
+}
+warning: in the working copy of 'tensorflow/core/kernels/conv_grad_ops_3d.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/kernels/conv_grad_ops_3d.cc b/tensorflow/core/kernels/conv_grad_ops_3d.cc
+index 08e8327609..cc6e3ffd90 100644
+--- a/tensorflow/core/kernels/conv_grad_ops_3d.cc
++++ b/tensorflow/core/kernels/conv_grad_ops_3d.cc
+@@ -741,8 +741,6 @@ class Conv3DBackpropFilterOp : public OpKernel {
+       filter_shape = context->input(1).shape();
+     }
+ 
+-<<<<<<< HEAD
+-=======
+     OP_REQUIRES(context, input_shape.dims() == 5,
+                 errors::InvalidArgument("input tensor must have 5 dimensions"));
+     OP_REQUIRES(
+@@ -765,7 +763,6 @@ class Conv3DBackpropFilterOp : public OpKernel {
+                                 " for out_backprop and ",
+                                 filter_shape.dim_size(4), " for filter_sizes"));
+ 
+->>>>>>> 311403edbc9 (Eliminate a division by 0 in 3D convolutions.)
+     ConvBackpropDimensions dims;
+     OP_REQUIRES_OK(context,
+                    ConvBackpropComputeDimensions(
+@@ -878,8 +875,6 @@ class Conv3DCustomBackpropFilterOp : public OpKernel {
+       filter_shape = context->input(1).shape();
+     }
+ 
+-<<<<<<< HEAD
+-=======
+     OP_REQUIRES(context, input_shape.dims() == 5,
+                 errors::InvalidArgument("input tensor must have 5 dimensions"));
+     OP_REQUIRES(
+@@ -902,7 +897,6 @@ class Conv3DCustomBackpropFilterOp : public OpKernel {
+                                 " for out_backprop and ",
+                                 filter_shape.dim_size(4), " for filter_sizes"));
+ 
+->>>>>>> 311403edbc9 (Eliminate a division by 0 in 3D convolutions.)
+     ConvBackpropDimensions dims;
+     OP_REQUIRES_OK(context,
+                    ConvBackpropComputeDimensions(
+
+tool: grep
+{
+  "pattern": "<<<<<<<|=======|>>>>>>>",
+  "path": "tensorflow/core/kernels/conv_grad_ops_3d.cc"
+}
+Found 100 matches (more matches available)
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0007-518b73f51f83\tensorflow\core\kernels\adjust_contrast_op.cc:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0007-518b73f51f83\tensorflow\core\kernels\adjust_contrast_op.h:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0007-518b73f51f83\tensorflow\core\kernels\adjust_contrast_op_benchmark_test.cc:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0007-518b73f51f83\tensorflow\core\kernels\adjust_contrast_op_gpu.cu.cc:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0007-518b73f51f83\tensorflow\core\kernels\adjust_contrast_op_test.cc:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0007-518b73f51f83\tensorflow\core\kernels\adjust_hsv_gpu.cu.h:
+  Line 13: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0007-518b73f51f83\tensorflow\core\kernels\adjust_hue_op.cc:
+  Line 13: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0007-518b73f51f83\tensorflow\core\kernels\adjust_hue_op.h:
+  Line 13: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0007-518b73f51f83\tensorflow\core\kernels\adjust_hue_op_gpu.cu.cc:
+  Line 13: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0007-518b73f51f83\tensorflow\core\kernels\adjust_saturation_op.cc:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0007-518b73f51f83\tensorflow\core\kernels\adjust_saturation_op.h:
+  Line 13: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0007-518b73f51f83\tensorflow\core\kernels\adjust_saturation_op_gpu.cu.cc:
+  Line 13: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0007-518b73f51f83\tensorflow\core\kernels\aggregate_ops.cc:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0007-518b73f51f83\tensorflow\core\kernels\aggregate_ops.h:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0007-518b73f51f83\tensorflow\core\kernels\aggregate_ops_cpu.h:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0007-518b73f51f83\tensorflow\core\kernels\aggregate_ops_gpu.cu.cc:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0007-518b73f51f83\tensorflow\core\kernels\argmax_op.cc:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0007-518b73f51f83\tensorflow\core\kernels\argmax_op.h:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0007-518b73f51f83\tensorflow\core\kernels\argmax_op_gpu.cu.cc:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0007-518b73f51f83\tensorflow\core\kernels\assign_op.h:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0007-518b73f51f83\tensorflow\core\kernels\as_string_op.cc:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0007-518b73f51f83\tensorflow\core\kernels\as_string_op_test.cc:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0007-518b73f51f83\tensorflow\core\kernels\attention_ops.cc:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0007-518b73f51f83\tensorflow\core\kernels\avgpooling_op.cc:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0007-518b73f51f83\tensorflow\core\kernels\avgpooling_op.h:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0007-518b73f51f83\tensorflow\core\kernels\avgpooling_op_gpu.cu.cc:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0007-518b73f51f83\tensorflow\core\kernels\barrier_ops.cc:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0007-518b73f51f83\tensorflow\core\kernels\base64_ops.cc:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0007-518b73f51f83\tensorflow\core\kernels\basic_ops_benchmark_test.cc:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0007-518b73f51f83\tensorflow\core\kernels\batchtospace_op.cc:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0007-518b73f51f83\tensorflow\core\kernels\batching_util\adaptive_shared_batch_scheduler.h:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0007-518b73f51f83\tensorflow\core\kernels\batch_kernels.cc:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0007-518b73f51f83\tensorflow\core\kernels\batch_matmul_op_complex.cc:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0007-518b73f51f83\tensorflow\core\kernels\batching_util\adaptive_shared_batch_scheduler_test.cc:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0007-518b73f51f83\tensorflow\core\kernels\batch_matmul_op_impl.h:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0007-518b73f51f83\tensorflow\core\kernels\batch_matmul_op_real.cc:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0007-518b73f51f83\tensorflow\core\kernels\batching_util\basic_batch_scheduler.h:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0007-518b73f51f83\tensorflow\core\kernels\batch_matmul_op_test.cc:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0007-518b73f51f83\tensorflow\core\kernels\batching_util\basic_batch_scheduler_benchmark_test.cc:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0007-518b73f51f83\tensorflow\core\kernels\batching_util\basic_batch_scheduler_test.cc:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0007-518b73f51f83\tensorflow\core\kernels\batch_norm_op.cc:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0007-518b73f51f83\tensorflow\core\kernels\batching_util\batch_scheduler.h:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0007-518b73f51f83\tensorflow\core\kernels\batching_util\batch_scheduler_test.cc:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0007-518b73f51f83\tensorflow\core\kernels\batch_norm_op.h:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0007-518b73f51f83\tensorflow\core\kernels\batch_norm_op_test.cc:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0007-518b73f51f83\tensorflow\core\kernels\batch_norm_op_gpu.cu.cc:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0007-518b73f51f83\tensorflow\core\kernels\batch_util.h:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0007-518b73f51f83\tensorflow\core\kernels\batching_util\fake_clock_env.cc:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0007-518b73f51f83\tensorflow\core\kernels\batching_util\fake_clock_env.h:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0007-518b73f51f83\tensorflow\core\kernels\batching_util\periodic_function.cc:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0007-518b73f51f83\tensorflow\core\kernels\bcast_ops.cc:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0007-518b73f51f83\tensorflow\core\kernels\batching_util\periodic_function.h:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0007-518b73f51f83\tensorflow\core\kernels\betainc_op.cc:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0007-518b73f51f83\tensorflow\core\kernels\batching_util\periodic_function_test.cc:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0007-518b73f51f83\tensorflow\core\kernels\betainc_op.h:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0007-518b73f51f83\tensorflow\core\kernels\betainc_op_gpu.cu.cc:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0007-518b73f51f83\tensorflow\core\kernels\bias_op.cc:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0007-518b73f51f83\tensorflow\core\kernels\batching_util\serial_device_batch_scheduler.h:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0007-518b73f51f83\tensorflow\core\kernels\bias_op.h:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0007-518b73f51f83\tensorflow\core\kernels\batching_util\serial_device_batch_scheduler_test.cc:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0007-518b73f51f83\tensorflow\core\kernels\bias_op_gpu.cu.cc:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0007-518b73f51f83\tensorflow\core\kernels\batching_util\shared_batch_scheduler.h:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0007-518b73f51f83\tensorflow\core\kernels\batching_util\shared_batch_scheduler_test.cc:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0007-518b73f51f83\tensorflow\core\kernels\bias_op_gpu.h:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0007-518b73f51f83\tensorflow\core\kernels\bias_op_test.cc:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0007-518b73f51f83\tensorflow\core\kernels\bincount_op.cc:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0007-518b73f51f83\tensorflow\core\kernels\bincount_op.h:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0007-518b73f51f83\tensorflow\core\kernels\bincount_op_gpu.cu.cc:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0007-518b73f51f83\tensorflow\core\kernels\bincount_op_test.cc:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0007-518b73f51f83\tensorflow\core\kernels\broadcast_to_op.cc:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0007-518b73f51f83\tensorflow\core\kernels\broadcast_to_op.h:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0007-518b73f51f83\tensorflow\core\kernels\broadcast_to_op_gpu.cu.cc:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0007-518b73f51f83\tensorflow\core\kernels\broadcast_to_op_test.cc:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0007-518b73f51f83\tensorflow\core\kernels\bucketize_op.cc:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0007-518b73f51f83\tensorflow\core\kernels\bucketize_op.h:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0007-518b73f51f83\tensorflow\core\kernels\bucketize_op_gpu.cu.cc:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0007-518b73f51f83\tensorflow\core\kernels\boosted_trees\prediction_ops.cc:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0007-518b73f51f83\tensorflow\core\kernels\boosted_trees\quantile_ops.cc:
+  Line 14: // =============================================================================
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0007-518b73f51f83\tensorflow\core\kernels\boosted_trees\quantiles\quantile_stream_resource.h:
+  Line 14: // =============================================================================
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0007-518b73f51f83\tensorflow\core\kernels\candidate_sampler_ops.cc:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0007-518b73f51f83\tensorflow\core\kernels\boosted_trees\quantiles\weighted_quantiles_buffer.h:
+  Line 14: // =============================================================================
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0007-518b73f51f83\tensorflow\core\kernels\boosted_trees\quantiles\weighted_quantiles_buffer_test.cc:
+  Line 14: // =============================================================================
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0007-518b73f51f83\tensorflow\core\kernels\cast_op.cc:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0007-518b73f51f83\tensorflow\core\kernels\boosted_trees\quantiles\weighted_quantiles_stream.h:
+  Line 14: // =============================================================================
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0007-518b73f51f83\tensorflow\core\kernels\boosted_trees\resources.cc:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0007-518b73f51f83\tensorflow\core\kernels\boosted_trees\resources.h:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0007-518b73f51f83\tensorflow\core\kernels\cast_op.h:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0007-518b73f51f83\tensorflow\core\kernels\boosted_trees\resource_ops.cc:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0007-518b73f51f83\tensorflow\core\kernels\boosted_trees\quantiles\weighted_quantiles_stream_test.cc:
+  Line 14: // =============================================================================
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0007-518b73f51f83\tensorflow\core\kernels\cast_op_gpu.cu.cc:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0007-518b73f51f83\tensorflow\core\kernels\boosted_trees\quantiles\weighted_quantiles_summary.h:
+  Line 14: // =============================================================================
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0007-518b73f51f83\tensorflow\core\kernels\boosted_trees\stats_ops.cc:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0007-518b73f51f83\tensorflow\core\kernels\cast_op_impl.h:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0007-518b73f51f83\tensorflow\core\kernels\cast_op_impl_bfloat.cc:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0007-518b73f51f83\tensorflow\core\kernels\boosted_trees\quantiles\weighted_quantiles_summary_test.cc:
+  Line 14: // =============================================================================
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0007-518b73f51f83\tensorflow\core\kernels\boosted_trees\training_ops.cc:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0007-518b73f51f83\tensorflow\core\kernels\cast_op_impl_bool.cc:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0007-518b73f51f83\tensorflow\core\kernels\boosted_trees\tree_helper.h:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0007-518b73f51f83\tensorflow\core\kernels\cast_op_impl_complex128.cc:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0007-518b73f51f83\tensorflow\core\kernels\boosted_trees\tree_helper_test.cc:
+  Line 14: // =============================================================================
+
+
+(Results truncated. Consider using a more specific path or pattern.)
+
+tokens used
+input: 347
+cache read: 17,920
+cache write: 0
+output: 163
+reasoning output: 25
+
+`git diff` now only shows removal of the stale conflict markers; the channel validation blocks are present. I’ll do a more targeted marker check on the edited file and capture the final diff.
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/kernels/conv_grad_ops_3d.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0007-518b73f51f83",
+  "timeout": 120000
+}
+warning: in the working copy of 'tensorflow/core/kernels/conv_grad_ops_3d.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/kernels/conv_grad_ops_3d.cc b/tensorflow/core/kernels/conv_grad_ops_3d.cc
+index 08e8327609..cc6e3ffd90 100644
+--- a/tensorflow/core/kernels/conv_grad_ops_3d.cc
++++ b/tensorflow/core/kernels/conv_grad_ops_3d.cc
+@@ -741,8 +741,6 @@ class Conv3DBackpropFilterOp : public OpKernel {
+       filter_shape = context->input(1).shape();
+     }
+ 
+-<<<<<<< HEAD
+-=======
+     OP_REQUIRES(context, input_shape.dims() == 5,
+                 errors::InvalidArgument("input tensor must have 5 dimensions"));
+     OP_REQUIRES(
+@@ -765,7 +763,6 @@ class Conv3DBackpropFilterOp : public OpKernel {
+                                 " for out_backprop and ",
+                                 filter_shape.dim_size(4), " for filter_sizes"));
+ 
+->>>>>>> 311403edbc9 (Eliminate a division by 0 in 3D convolutions.)
+     ConvBackpropDimensions dims;
+     OP_REQUIRES_OK(context,
+                    ConvBackpropComputeDimensions(
+@@ -878,8 +875,6 @@ class Conv3DCustomBackpropFilterOp : public OpKernel {
+       filter_shape = context->input(1).shape();
+     }
+ 
+-<<<<<<< HEAD
+-=======
+     OP_REQUIRES(context, input_shape.dims() == 5,
+                 errors::InvalidArgument("input tensor must have 5 dimensions"));
+     OP_REQUIRES(
+@@ -902,7 +897,6 @@ class Conv3DCustomBackpropFilterOp : public OpKernel {
+                                 " for out_backprop and ",
+                                 filter_shape.dim_size(4), " for filter_sizes"));
+ 
+->>>>>>> 311403edbc9 (Eliminate a division by 0 in 3D convolutions.)
+     ConvBackpropDimensions dims;
+     OP_REQUIRES_OK(context,
+                    ConvBackpropComputeDimensions(
+
+tool: grep
+{
+  "pattern": "<<<<<<<|>>>>>>>",
+  "path": "tensorflow/core/kernels/conv_grad_ops_3d.cc"
+}
+Found 6 matches
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0007-518b73f51f83\tensorflow\core\kernels\eigen_backward_cuboid_convolutions.h:
+  Line 86:                                           const Kernel>>>>>>>::type
+
+  Line 357:                                     const Input>>>>>>>>,
+
+  Line 388:                             const OutputBackward>>>>>>>>::type
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0007-518b73f51f83\tensorflow\core\kernels\eigen_backward_spatial_convolutions.h:
+  Line 98:                         const ReverseRowMajor, const Kernel>>>>>>>>::type
+
+  Line 366:                                     const OutputBackward>>>>>>>>>,
+
+  Line 398:                                 const Input>>>>>>>>>::type
+
+tokens used
+input: 7,480
+cache read: 17,920
+cache write: 0
+output: 174
+reasoning output: 43
+
+The broad grep reports C++ template closers in other files, not conflict markers in the edited file. I’ll verify the exact file with `rg` and check status.
+
+tool: bash
+{
+  "command": "git status --short",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0007-518b73f51f83",
+  "timeout": 120000
+}
+ M tensorflow/core/kernels/conv_grad_ops_3d.cc
+
+tool: bash
+{
+  "command": "rg -n \"^(<<<<<<<|=======|>>>>>>>)\" \"tensorflow/core/kernels/conv_grad_ops_3d.cc\"",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0007-518b73f51f83",
+  "timeout": 120000
+}
+rg : The term 'rg' is not recognized as the name of a cmdlet, function, script file, or operable program. Check the 
+spelling of the name, or if a path was included, verify that the path is correct and try again.
+At line:1 char:1
++ rg -n "^(<<<<<<<|=======|>>>>>>>)" "tensorflow/core/kernels/conv_grad ...
++ ~~
+    + CategoryInfo          : ObjectNotFound: (rg:String) [], CommandNotFoundException
+    + FullyQualifiedErrorId : CommandNotFoundException
+
+tokens used
+input: 1,211
+cache read: 25,088
+cache write: 0
+output: 215
+reasoning output: 239
+
+tool: read
+{
+  "filePath": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0007-518b73f51f83\\tensorflow\\core\\kernels\\conv_grad_ops_3d.cc",
+  "offset": 735,
+  "limit": 40
+}
+<path>C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0007-518b73f51f83\tensorflow\core\kernels\conv_grad_ops_3d.cc</path>
+<type>file</type>
+<content>
+735:     TensorShape filter_shape;
+736:     if (takes_shape_) {
+737:       const Tensor& filter_sizes = context->input(1);
+738:       OP_REQUIRES_OK(context, TensorShapeUtils::MakeShape(
+739:                                   filter_sizes.vec<int32>(), &filter_shape));
+740:     } else {
+741:       filter_shape = context->input(1).shape();
+742:     }
+743: 
+744:     OP_REQUIRES(context, input_shape.dims() == 5,
+745:                 errors::InvalidArgument("input tensor must have 5 dimensions"));
+746:     OP_REQUIRES(
+747:         context, filter_shape.dims() == 5,
+748:         errors::InvalidArgument("filter_sizes tensor must have 5 dimensions"));
+749:     OP_REQUIRES(
+750:         context, out_backprop_shape.dims() == 5,
+751:         errors::InvalidArgument("out_backprop tensor must have 5 dimensions"));
+752:     OP_REQUIRES(
+753:         context, input_shape.dim_size(4) == filter_shape.dim_size(3),
+754:         errors::InvalidArgument("input and filter_sizes must have the same "
+755:                                 "number of channels. Got ",
+756:                                 input_shape.dim_size(4), " for input and ",
+757:                                 filter_shape.dim_size(3), " for filter_sizes"));
+758:     OP_REQUIRES(
+759:         context, out_backprop_shape.dim_size(4) == filter_shape.dim_size(4),
+760:         errors::InvalidArgument("out_backprop and filter_sizes must have the "
+761:                                 "same number of channels. Got ",
+762:                                 out_backprop_shape.dim_size(4),
+763:                                 " for out_backprop and ",
+764:                                 filter_shape.dim_size(4), " for filter_sizes"));
+765: 
+766:     ConvBackpropDimensions dims;
+767:     OP_REQUIRES_OK(context,
+768:                    ConvBackpropComputeDimensions(
+769:                        "Conv3DBackpropFilterOp", /*num_spatial_dims=*/3,
+770:                        input_shape, filter_shape, out_backprop_shape, stride_,
+771:                        padding_, data_format_, &dims));
+772: 
+773:     Tensor* filter_backprop;
+774:     OP_REQUIRES_OK(context,
+
+(Showing lines 735-774 of 2052. Use offset=775 to continue.)
+</content>
+
+tool: read
+{
+  "filePath": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0007-518b73f51f83\\tensorflow\\core\\kernels\\conv_grad_ops_3d.cc",
+  "offset": 872,
+  "limit": 40
+}
+<path>C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0007-518b73f51f83\tensorflow\core\kernels\conv_grad_ops_3d.cc</path>
+<type>file</type>
+<content>
+872:       OP_REQUIRES_OK(context, TensorShapeUtils::MakeShape(
+873:                                   filter_sizes.vec<int32>(), &filter_shape));
+874:     } else {
+875:       filter_shape = context->input(1).shape();
+876:     }
+877: 
+878:     OP_REQUIRES(context, input_shape.dims() == 5,
+879:                 errors::InvalidArgument("input tensor must have 5 dimensions"));
+880:     OP_REQUIRES(
+881:         context, filter_shape.dims() == 5,
+882:         errors::InvalidArgument("filter_sizes tensor must have 5 dimensions"));
+883:     OP_REQUIRES(
+884:         context, out_backprop_shape.dims() == 5,
+885:         errors::InvalidArgument("out_backprop tensor must have 5 dimensions"));
+886:     OP_REQUIRES(
+887:         context, input_shape.dim_size(4) == filter_shape.dim_size(3),
+888:         errors::InvalidArgument("input and filter_sizes must have the same "
+889:                                 "number of channels. Got ",
+890:                                 input_shape.dim_size(4), " for input and ",
+891:                                 filter_shape.dim_size(3), " for filter_sizes"));
+892:     OP_REQUIRES(
+893:         context, out_backprop_shape.dim_size(4) == filter_shape.dim_size(4),
+894:         errors::InvalidArgument("out_backprop and filter_sizes must have the "
+895:                                 "same number of channels. Got ",
+896:                                 out_backprop_shape.dim_size(4),
+897:                                 " for out_backprop and ",
+898:                                 filter_shape.dim_size(4), " for filter_sizes"));
+899: 
+900:     ConvBackpropDimensions dims;
+901:     OP_REQUIRES_OK(context,
+902:                    ConvBackpropComputeDimensions(
+903:                        "Conv3DBackpropFilterOp", /*num_spatial_dims=*/3,
+904:                        input_shape, filter_shape, out_backprop_shape, stride_,
+905:                        padding_, data_format_, &dims));
+906: 
+907:     Tensor* filter_backprop;
+908:     OP_REQUIRES_OK(context,
+909:                    context->allocate_output(0, filter_shape, &filter_backprop));
+910: 
+911:     if (input_shape.num_elements() == 0) {
+
+(Showing lines 872-911 of 2052. Use offset=912 to continue.)
+</content>
+
+tokens used
+input: 796
+cache read: 26,112
+cache write: 0
+output: 170
+reasoning output: 29
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Locate equivalent Conv3D backprop classes in target TensorFlow 2.1.4",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate and apply channel-dimension checks to target code",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Inspect resulting diff and report YAML result",
+      "status": "in_progress",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Locate equivalent Conv3D backprop classes in target TensorFlow 2.1.4",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate and apply channel-dimension checks to target code",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Inspect resulting diff and report YAML result",
+    "status": "in_progress",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 2,169
+cache read: 26,112
+cache write: 0
+output: 91
+reasoning output: 19
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Locate equivalent Conv3D backprop classes in target TensorFlow 2.1.4",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate and apply channel-dimension checks to target code",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Inspect resulting diff and report YAML result",
+      "status": "completed",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Locate equivalent Conv3D backprop classes in target TensorFlow 2.1.4",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate and apply channel-dimension checks to target code",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Inspect resulting diff and report YAML result",
+    "status": "completed",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 354
+cache read: 28,160
+cache write: 0
+output: 90
+reasoning output: 108
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/kernels/conv_grad_ops_3d.cc b/tensorflow/core/kernels/conv_grad_ops_3d.cc
+    index 08e8327609..cc6e3ffd90 100644
+    --- a/tensorflow/core/kernels/conv_grad_ops_3d.cc
+    +++ b/tensorflow/core/kernels/conv_grad_ops_3d.cc
+    @@ -741,8 +741,6 @@ class Conv3DBackpropFilterOp : public OpKernel {
+           filter_shape = context->input(1).shape();
+         }
+     
+    -<<<<<<< HEAD
+    -=======
+         OP_REQUIRES(context, input_shape.dims() == 5,
+                     errors::InvalidArgument("input tensor must have 5 dimensions"));
+         OP_REQUIRES(
+    @@ -765,7 +763,6 @@ class Conv3DBackpropFilterOp : public OpKernel {
+                                     " for out_backprop and ",
+                                     filter_shape.dim_size(4), " for filter_sizes"));
+     
+    ->>>>>>> 311403edbc9 (Eliminate a division by 0 in 3D convolutions.)
+         ConvBackpropDimensions dims;
+         OP_REQUIRES_OK(context,
+                        ConvBackpropComputeDimensions(
+    @@ -878,8 +875,6 @@ class Conv3DCustomBackpropFilterOp : public OpKernel {
+           filter_shape = context->input(1).shape();
+         }
+     
+    -<<<<<<< HEAD
+    -=======
+         OP_REQUIRES(context, input_shape.dims() == 5,
+                     errors::InvalidArgument("input tensor must have 5 dimensions"));
+         OP_REQUIRES(
+    @@ -902,7 +897,6 @@ class Conv3DCustomBackpropFilterOp : public OpKernel {
+                                     " for out_backprop and ",
+                                     filter_shape.dim_size(4), " for filter_sizes"));
+     
+    ->>>>>>> 311403edbc9 (Eliminate a division by 0 in 3D convolutions.)
+         ConvBackpropDimensions dims;
+         OP_REQUIRES_OK(context,
+                        ConvBackpropComputeDimensions(
+  notes: >
+    The Conv3D channel validation blocks were already present in the checkout; removed stale conflict markers around the filter backprop validation blocks so the intended fix is active.
+```
+
+tokens used
+input: 674
+cache read: 28,160
+cache write: 0
+output: 503
+reasoning output: 0

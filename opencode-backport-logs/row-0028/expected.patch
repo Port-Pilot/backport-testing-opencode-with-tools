@@ -1,0 +1,14 @@
+diff --git a/tensorflow/compiler/mlir/lite/transforms/optimize.cc b/tensorflow/compiler/mlir/lite/transforms/optimize.cc
+index 30ae4b81f4f324..0be9d2d109ff82 100644
+--- a/tensorflow/compiler/mlir/lite/transforms/optimize.cc
++++ b/tensorflow/compiler/mlir/lite/transforms/optimize.cc
+@@ -56,6 +56,9 @@ constexpr char kRelu6[] = "RELU6";
+ constexpr char kRelu1[] = "RELU_N1_TO_1";
+ 
+ bool L2NormalizeReduceAxis(Value sq_op, DenseElementsAttr axis) {
++  if (axis.getNumElements() == 0) {
++    return false;
++  }
+   if (sq_op.getType().cast<ShapedType>().getRank() - 1 ==
+           *axis.getValues<int>().begin() ||
+       *axis.getValues<int>().begin() == -1) {

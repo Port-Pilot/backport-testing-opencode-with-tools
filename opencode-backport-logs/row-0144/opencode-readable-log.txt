@@ -1,0 +1,177 @@
+I’ll locate the matching `SpatialMaxPoolWithArgMaxHelper` implementation in the checked-out target and validate the minimal hunk before editing.
+
+tool: locate_symbol
+{
+  "ref": "47612cd69a2fdd76156360ca9102816e156f7e5c",
+  "symbol": "SpatialMaxPoolWithArgMaxHelper"
+}
+tensorflow/core/kernels/maxpooling_op.cc:60
+tensorflow/core/kernels/maxpooling_op.cc:68
+tensorflow/core/kernels/maxpooling_op.cc:310
+tensorflow/core/kernels/maxpooling_op.cc:894
+
+tokens used
+input: 3,703
+cache read: 4,608
+cache write: 0
+output: 86
+reasoning output: 0
+
+tool: viewcode
+{
+  "ref": "47612cd69a2fdd76156360ca9102816e156f7e5c",
+  "path": "tensorflow/core/kernels/maxpooling_op.cc",
+  "startline": 170,
+  "endline": 215
+}
+Here are lines 170 through 215.
+
+    if (input_backprop != nullptr) {
+      auto input_backprop_flat = input_backprop->flat<T>();
+      auto out_arg_max_flat = output_arg_max->flat<int64>();
+      auto out_backprop_flat = out_backprop.flat<T>();
+
+      // Initialize output to 0.
+      const int64 in_size = in_rows * in_cols * depth;
+      const int64 in_start = start * in_size;
+      const int64 in_end = limit * in_size;
+      EigenMatrixMap in_shard(input_backprop_flat.data() + in_start, 1,
+                              in_end - in_start);
+      in_shard.setConstant(T(0));
+
+      // Backpropagate.
+      const int out_size = out_height * out_width * depth;
+      const int out_start = start * out_size;
+      const int out_end = limit * out_size;
+      for (int index = out_start; index < out_end; ++index) {
+        int input_backprop_index = out_arg_max_flat(index);
+        // Although this check is in the inner loop, it is worth its value
+        // so we don't end up with memory corruptions. Our benchmark shows that
+        // the performance impact is quite small
+        // CHECK(input_backprop_index >= in_start && input_backprop_index <
+        // in_end)
+        FastBoundsCheck(input_backprop_index - in_start, in_end - in_start);
+        input_backprop_flat(input_backprop_index) += out_backprop_flat(index);
+      }
+    }
+  };
+
+  const int64 shard_cost = params.tensor_in_rows * params.tensor_in_cols *
+                           params.depth * params.window_rows *
+                           params.window_cols;
+  Shard(worker_threads.num_threads, worker_threads.workers,
+        params.tensor_in_batch, shard_cost, shard);
+}
+
+// The operation to compute MaxPool gradients.
+// It takes three inputs:
+//   - The original input tensor
+//   - The original output tensor
+//   - Backprop tensor for output
+// It produces one output: backprop tensor for input.
+template <class Device, class T>
+class MaxPoolingGradOp : public OpKernel {
+ public:
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tokens used
+input: 776
+cache read: 7,680
+cache write: 0
+output: 61
+reasoning output: 0
+
+The target code has the same vulnerable access pattern in `tensorflow/core/kernels/maxpooling_op.cc`; I’m applying the source guard around `out_backprop_flat(index)` unchanged.
+
+tool: validate
+{
+  "ref": "47612cd69a2fdd76156360ca9102816e156f7e5c",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/maxpooling_op.cc b/tensorflow/core/kernels/maxpooling_op.cc\n--- a/tensorflow/core/kernels/maxpooling_op.cc\n+++ b/tensorflow/core/kernels/maxpooling_op.cc\n@@ -191,7 +191,9 @@ static void SpatialMaxPoolWithArgMaxHelper(\n         // CHECK(input_backprop_index >= in_start && input_backprop_index <\n         // in_end)\n         FastBoundsCheck(input_backprop_index - in_start, in_end - in_start);\n-        input_backprop_flat(input_backprop_index) += out_backprop_flat(index);\n+        if (index < out_backprop.NumElements()) {\n+          input_backprop_flat(input_backprop_index) += out_backprop_flat(index);\n+        }\n       }\n     }\n   };\n"
+}
+Patch applied successfully
+
+tokens used
+input: 1,321
+cache read: 7,680
+cache write: 0
+output: 278
+reasoning output: 28
+
+The hunk validates cleanly against the target base. I’m editing only that file.
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/kernels/maxpooling_op.cc\n@@\n         // CHECK(input_backprop_index >= in_start && input_backprop_index <\n         // in_end)\n         FastBoundsCheck(input_backprop_index - in_start, in_end - in_start);\n-        input_backprop_flat(input_backprop_index) += out_backprop_flat(index);\n+        if (index < out_backprop.NumElements()) {\n+          input_backprop_flat(input_backprop_index) += out_backprop_flat(index);\n+        }\n       }\n     }\n   };\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/kernels/maxpooling_op.cc
+
+tokens used
+input: 616
+cache read: 8,704
+cache write: 0
+output: 176
+reasoning output: 0
+
+The source change is applied. I’m checking the resulting diff to confirm it contains only the intended backport.
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/kernels/maxpooling_op.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0144-47612cd69a2f",
+  "timeout": 120000
+}
+warning: in the working copy of 'tensorflow/core/kernels/maxpooling_op.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/kernels/maxpooling_op.cc b/tensorflow/core/kernels/maxpooling_op.cc
+index 5652addd00..5b1f084d88 100644
+--- a/tensorflow/core/kernels/maxpooling_op.cc
++++ b/tensorflow/core/kernels/maxpooling_op.cc
+@@ -192,7 +192,9 @@ static void SpatialMaxPoolWithArgMaxHelper(
+         // CHECK(input_backprop_index >= in_start && input_backprop_index <
+         // in_end)
+         FastBoundsCheck(input_backprop_index - in_start, in_end - in_start);
+-        input_backprop_flat(input_backprop_index) += out_backprop_flat(index);
++        if (index < out_backprop.NumElements()) {
++          input_backprop_flat(input_backprop_index) += out_backprop_flat(index);
++        }
+       }
+     }
+   };
+
+tokens used
+input: 820
+cache read: 8,704
+cache write: 0
+output: 107
+reasoning output: 14
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/kernels/maxpooling_op.cc b/tensorflow/core/kernels/maxpooling_op.cc
+    index 5652addd00..5b1f084d88 100644
+    --- a/tensorflow/core/kernels/maxpooling_op.cc
+    +++ b/tensorflow/core/kernels/maxpooling_op.cc
+    @@ -192,7 +192,9 @@ static void SpatialMaxPoolWithArgMaxHelper(
+             // CHECK(input_backprop_index >= in_start && input_backprop_index <
+             // in_end)
+             FastBoundsCheck(input_backprop_index - in_start, in_end - in_start);
+    -        input_backprop_flat(input_backprop_index) += out_backprop_flat(index);
+    +        if (index < out_backprop.NumElements()) {
+    +          input_backprop_flat(input_backprop_index) += out_backprop_flat(index);
+    +        }
+           }
+         }
+       };
+  notes: >
+    Added the bounds guard around out_backprop access in MaxPoolGrad backpropagation.
+```
+
+tokens used
+input: 1,176
+cache read: 8,704
+cache write: 0
+output: 245
+reasoning output: 0

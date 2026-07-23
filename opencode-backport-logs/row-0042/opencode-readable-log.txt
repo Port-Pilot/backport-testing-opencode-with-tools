@@ -1,0 +1,1007 @@
+I’ll inspect the target file and the source commit context, then apply only the equivalent minimal change in the checked-out 2.5.2 tree.
+
+tool: viewcode
+{
+  "ref": "b2b3444b71ea99685edafa7731fb7ba57939f437",
+  "path": "tensorflow/core/kernels/image/decode_image_op.cc",
+  "startline": 1,
+  "endline": 380
+}
+Here are lines 1 through 380.
+
+/* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+==============================================================================*/
+
+// See docs in ../ops/image_ops.cc
+
+#include <cstdint>
+#include <memory>
+
+#define EIGEN_USE_THREADS
+
+#include "absl/strings/escaping.h"
+#include "tensorflow/core/framework/bounds_check.h"
+#include "tensorflow/core/framework/op_kernel.h"
+#include "tensorflow/core/framework/register_types.h"
+#include "tensorflow/core/framework/tensor.h"
+#include "tensorflow/core/framework/tensor_shape.h"
+#include "tensorflow/core/framework/types.h"
+#include "tensorflow/core/lib/core/status.h"
+#include "tensorflow/core/lib/gif/gif_io.h"
+#include "tensorflow/core/lib/jpeg/jpeg_mem.h"
+#include "tensorflow/core/lib/png/png_io.h"
+#include "tensorflow/core/lib/strings/str_util.h"
+#include "tensorflow/core/platform/byte_order.h"
+#include "tensorflow/core/platform/logging.h"
+#include "tensorflow/core/util/tensor_bundle/byte_swap.h"
+
+namespace tensorflow {
+namespace {
+
+// Magic bytes (hex) for each image format.
+// https://en.wikipedia.org/wiki/List_of_file_signatures
+// WARNING: Changing `static const` to `constexpr` requires first checking that
+// it works with supported MSVC version.
+// https://docs.microsoft.com/en-us/cpp/cpp/constexpr-cpp?redirectedfrom=MSDN&view=vs-2019
+static const char kPngMagicBytes[] = "\x89\x50\x4E\x47\x0D\x0A\x1A\x0A";
+static const char kGifMagicBytes[] = "\x47\x49\x46\x38";
+static const char kBmpMagicBytes[] = "\x42\x4d";
+// The 4th byte of JPEG is '\xe0' or '\xe1', so check just the first three.
+static const char kJpegMagicBytes[] = "\xff\xd8\xff";
+
+enum FileFormat {
+  kUnknownFormat = 0,
+  kPngFormat = 1,
+  kJpgFormat = 2,
+  kGifFormat = 3,
+  kBmpFormat = 4,
+};
+
+// Classify the contents of a file based on starting bytes (the magic number).
+FileFormat ClassifyFileFormat(StringPiece data) {
+  if (absl::StartsWith(data, kJpegMagicBytes)) return kJpgFormat;
+  if (absl::StartsWith(data, kPngMagicBytes)) return kPngFormat;
+  if (absl::StartsWith(data, kGifMagicBytes)) return kGifFormat;
+  if (absl::StartsWith(data, kBmpMagicBytes)) return kBmpFormat;
+  return kUnknownFormat;
+}
+
+// Decode an image. Supported image formats are JPEG, PNG, GIF and BMP. This is
+// a newer version of `DecodeImageOp` for enabling image data parsing to take
+// place in kernels only, reducing security vulnerabilities and redundancy.
+class DecodeImageV2Op : public OpKernel {
+ public:
+  explicit DecodeImageV2Op(OpKernelConstruction* context) : OpKernel(context) {
+    // Keep track of op string information because:
+    // [1] Currently by the API, PNG, JPEG and GIF can decode each other and
+    //     depending on the op type, we need to return either 3-D or 4-D shapes.
+    // [2] Different ops have different attributes. e.g. `DecodeImage` op has
+    //     `expand_animations` attribute that other ops don't.
+    //     `DecodeAndDropJpeg` also has additional attributes.
+    op_type_ = type_string();
+
+    // Validate op type.
+    OP_REQUIRES(context,
+                op_type_ == "DecodeJpeg" || op_type_ == "DecodeAndCropJpeg" ||
+                    op_type_ == "DecodePng" || op_type_ == "DecodeGif" ||
+                    op_type_ == "DecodeBmp" || op_type_ == "DecodeImage",
+                errors::InvalidArgument("Bad op type ", op_type_));
+
+    // Get attributes from `DecodeJpeg` and `DecodeAndCropJpeg` op
+    // invocations. For `DecodeImage` op, set JPEG decoding setting to TF
+    // default.
+    if (op_type_ == "DecodeJpeg" || op_type_ == "DecodeAndCropJpeg") {
+      OP_REQUIRES_OK(context, context->GetAttr("ratio", &flags_.ratio));
+      OP_REQUIRES(context,
+                  flags_.ratio == 1 || flags_.ratio == 2 || flags_.ratio == 4 ||
+                      flags_.ratio == 8,
+                  errors::InvalidArgument("ratio must be 1, 2, 4, or 8, got ",
+                                          flags_.ratio));
+      OP_REQUIRES_OK(context, context->GetAttr("fancy_upscaling",
+                                               &flags_.fancy_upscaling));
+      OP_REQUIRES_OK(context,
+                     context->GetAttr("try_recover_truncated",
+                                      &flags_.try_recover_truncated_jpeg));
+      OP_REQUIRES_OK(context,
+                     context->GetAttr("acceptable_fraction",
+                                      &flags_.min_acceptable_fraction));
+      string dct_method;
+      OP_REQUIRES_OK(context, context->GetAttr("dct_method", &dct_method));
+      OP_REQUIRES(
+          context,
+          (dct_method.empty() || dct_method == "INTEGER_FAST" ||
+           dct_method == "INTEGER_ACCURATE"),
+          errors::InvalidArgument("dct_method must be one of "
+                                  "{'', 'INTEGER_FAST', 'INTEGER_ACCURATE'}"));
+      // The TensorFlow-chosen default for JPEG decoding is IFAST, sacrificing
+      // image quality for speed.
+      if (dct_method.empty() || dct_method == "INTEGER_FAST") {
+        flags_.dct_method = JDCT_IFAST;
+      } else if (dct_method == "INTEGER_ACCURATE") {
+        flags_.dct_method = JDCT_ISLOW;
+      }
+    } else {
+      flags_ = jpeg::UncompressFlags();
+      flags_.dct_method = JDCT_IFAST;
+    }
+
+    // Get `dtype` attribute from `DecodePng` or `DecodeImage` op invocations.
+    if (op_type_ == "DecodePng" || op_type_ == "DecodeImage") {
+      OP_REQUIRES_OK(context, context->GetAttr("dtype", &data_type_));
+      if (op_type_ == "DecodePng") {
+        OP_REQUIRES(
+            context,
+            data_type_ == DataType::DT_UINT8 ||
+                data_type_ == DataType::DT_UINT16,
+            errors::InvalidArgument(
+                "`dtype` for `DecodePng` must be unit8, unit16 but got: ",
+                data_type_));
+      } else {
+        OP_REQUIRES(context,
+                    data_type_ == DataType::DT_UINT8 ||
+                        data_type_ == DataType::DT_UINT16 ||
+                        data_type_ == DataType::DT_FLOAT,
+                    errors::InvalidArgument("`dtype` for `DecodeImage` must be "
+                                            "unit8, unit16, float but got: ",
+                                            data_type_));
+        OP_REQUIRES_OK(context, context->GetAttr("expand_animations",
+                                                 &expand_animations_));
+      }
+    }
+
+    // Get `channels` attribute for all ops except `DecodeGif` op.
+    // `DecodeGif` doesn't have `channels` attribute but it supports 3
+    // channels by default.
+    if (op_type_ != "DecodeGif") {
+      OP_REQUIRES_OK(context, context->GetAttr("channels", &channels_));
+      OP_REQUIRES(
+          context,
+          channels_ == 0 || channels_ == 1 || channels_ == 3 || channels_ == 4,
+          errors::InvalidArgument("`channels` must be 0, 1, 3 or 4 but got ",
+                                  channels_));
+    } else {
+      channels_ = 3;
+    }
+  }
+
+  // Helper for decoding BMP.
+  inline int32 ByteSwapInt32ForBigEndian(int32 x) {
+    if (!port::kLittleEndian) {
+      return BYTE_SWAP_32(x);
+    } else {
+      return x;
+    }
+  }
+
+  // Helper for decoding BMP.
+  inline int16 ByteSwapInt16ForBigEndian(int16 x) {
+    if (!port::kLittleEndian) {
+      return BYTE_SWAP_16(x);
+    } else {
+      return x;
+    }
+  }
+
+  void Compute(OpKernelContext* context) override {
+    const Tensor& contents = context->input(0);
+    OP_REQUIRES(
+        context, TensorShapeUtils::IsScalar(contents.shape()),
+        errors::InvalidArgument("`contents` must be scalar but got shape",
+                                contents.shape().DebugString()));
+    const StringPiece input = contents.scalar<tstring>()();
+    OP_REQUIRES(context, !input.empty(),
+                errors::InvalidArgument("Input is empty."));
+    OP_REQUIRES(context, input.size() <= std::numeric_limits<int>::max(),
+                errors::InvalidArgument(
+                    "Input contents are too large for int: ", input.size()));
+
+    // Parse magic bytes to determine file format.
+    switch (ClassifyFileFormat(input)) {
+      case kJpgFormat:
+        DecodeJpegV2(context, input);
+        break;
+      case kPngFormat:
+        DecodePngV2(context, input);
+        break;
+      case kGifFormat:
+        DecodeGifV2(context, input);
+        break;
+      case kBmpFormat:
+        DecodeBmpV2(context, input);
+        break;
+      case kUnknownFormat:
+        OP_REQUIRES(context, false,
+                    errors::InvalidArgument("Unknown image file format. One of "
+                                            "JPEG, PNG, GIF, BMP required."));
+        break;
+    }
+  }
+
+  void DecodeJpegV2(OpKernelContext* context, StringPiece input) {
+    OP_REQUIRES(context, channels_ == 0 || channels_ == 1 || channels_ == 3,
+                errors::InvalidArgument("JPEG does not support 4 channels"));
+
+    // Use local copy of flags to avoid race condition as the class member is
+    // shared among different invocations.
+    jpeg::UncompressFlags flags = flags_;
+    flags.components = channels_;
+
+    if (op_type_ == "DecodeAndCropJpeg") {
+      flags.crop = true;
+      // Update flags to include crop window.
+      const Tensor& crop_window = context->input(1);
+      OP_REQUIRES(context, crop_window.dims() == 1,
+                  errors::InvalidArgument("crop_window must be 1-D, got shape ",
+                                          crop_window.shape().DebugString()));
+      OP_REQUIRES(context, crop_window.dim_size(0) == 4,
+                  errors::InvalidArgument("crop_size must have four elements ",
+                                          crop_window.shape().DebugString()));
+      auto crop_window_vec = crop_window.vec<int32>();
+      flags.crop_y = crop_window_vec(0);
+      flags.crop_x = crop_window_vec(1);
+      flags.crop_height = crop_window_vec(2);
+      flags.crop_width = crop_window_vec(3);
+    } else if (op_type_ == "DecodeBmp") {
+      // TODO(b/171060723): Only DecodeBmp as op_type_ is not acceptable here
+      // because currently `decode_(jpeg|png|gif)` ops can decode any one of
+      // jpeg, png or gif but not bmp. Similarly, `decode_bmp` cannot decode
+      // anything but bmp formats. This behavior needs to be revisited. For more
+      // details, please refer to the bug.
+      OP_REQUIRES(context, false,
+                  errors::InvalidArgument(
+                      "Trying to decode JPEG format using DecodeBmp op. Use "
+                      "`decode_jpeg` or `decode_image` instead."));
+    }
+
+    // Output tensor and the image buffer size.
+    Tensor* output = nullptr;
+    int buffer_size = 0;
+
+    // Decode JPEG. Directly allocate to the output buffer if data type is
+    // uint8 (to save extra copying). Otherwise, allocate a new uint8 buffer
+    // with buffer size. `jpeg::Uncompress` supports unit8 only.
+    uint8* buffer = jpeg::Uncompress(
+        input.data(), input.size(), flags, nullptr /* nwarn */,
+        [&](int width, int height, int channels) -> uint8* {
+          buffer_size = height * width * channels;
+          Status status;
+          // By the existing API, we support decoding JPEG with `DecodeGif`
+          // op. We need to make sure to return 4-D shapes when using
+          // `DecodeGif`.
+          if (op_type_ == "DecodeGif") {
+            status = context->allocate_output(
+                0, TensorShape({1, height, width, channels}), &output);
+          } else {
+            status = context->allocate_output(
+                0, TensorShape({height, width, channels}), &output);
+          }
+          if (!status.ok()) {
+            VLOG(1) << status;
+            context->SetStatus(status);
+            return nullptr;
+          }
+
+          if (data_type_ == DataType::DT_UINT8) {
+            return output->flat<uint8>().data();
+          } else {
+            return new uint8[buffer_size];
+          }
+        });
+
+    OP_REQUIRES(
+        context, buffer,
+        errors::InvalidArgument(
+            "jpeg::Uncompress failed. Invalid JPEG data or crop window."));
+
+    // For when desired data type if unit8, the output buffer is already
+    // allocated during the `jpeg::Uncompress` call above; return.
+    if (data_type_ == DataType::DT_UINT8) {
+      return;
+    }
+    // Make sure we don't forget to deallocate `buffer`.
+    std::unique_ptr<uint8[]> buffer_unique_ptr(buffer);
+
+    // Convert uint8 image data to desired data type.
+    // Use eigen threadpooling to speed up the copy operation.
+    const auto& device = context->eigen_device<Eigen::ThreadPoolDevice>();
+    TTypes<uint8>::UnalignedConstFlat buffer_view(buffer, buffer_size);
+    if (data_type_ == DataType::DT_UINT16) {
+      uint16 scale = floor((std::numeric_limits<uint16>::max() + 1) /
+                           (std::numeric_limits<uint8>::max() + 1));
+      // Fill output tensor with desired dtype.
+      output->flat<uint16>().device(device) =
+          buffer_view.cast<uint16>() * scale;
+    } else if (data_type_ == DataType::DT_FLOAT) {
+      float scale = 1. / std::numeric_limits<uint8>::max();
+      // Fill output tensor with desired dtype.
+      output->flat<float>().device(device) = buffer_view.cast<float>() * scale;
+    }
+  }
+
+  void DecodePngV2(OpKernelContext* context, StringPiece input) {
+    int channel_bits = (data_type_ == DataType::DT_UINT8) ? 8 : 16;
+    png::DecodeContext decode;
+    OP_REQUIRES(
+        context, png::CommonInitDecode(input, channels_, channel_bits, &decode),
+        errors::InvalidArgument("Invalid PNG. Failed to initialize decoder."));
+
+    // Verify that width and height are not too large:
+    // - verify width and height don't overflow int.
+    // - width can later be multiplied by channels_ and sizeof(uint16), so
+    //   verify single dimension is not too large.
+    // - verify when width and height are multiplied together, there are a few
+    //   bits to spare as well.
+    const int width = static_cast<int>(decode.width);
+    const int height = static_cast<int>(decode.height);
+    const int64 total_size =
+        static_cast<int64>(width) * static_cast<int64>(height);
+    if (width != static_cast<int64>(decode.width) || width <= 0 ||
+        width >= (1LL << 27) || height != static_cast<int64>(decode.height) ||
+        height <= 0 || height >= (1LL << 27) || total_size >= (1LL << 29)) {
+      png::CommonFreeDecode(&decode);
+      OP_REQUIRES(context, false,
+                  errors::InvalidArgument("PNG size too large for int: ",
+                                          decode.width, " by ", decode.height));
+    }
+
+    Tensor* output = nullptr;
+    Status status;
+    // By the existing API, we support decoding PNG with `DecodeGif` op.
+    // We need to make sure to return 4-D shapes when using `DecodeGif`.
+    if (op_type_ == "DecodeGif") {
+      status = context->allocate_output(
+          0, TensorShape({1, height, width, decode.channels}), &output);
+    } else {
+      status = context->allocate_output(
+          0, TensorShape({height, width, decode.channels}), &output);
+    }
+
+    if (op_type_ == "DecodeBmp") {
+      // TODO(b/171060723): Only DecodeBmp as op_type_ is not acceptable here
+      // because currently `decode_(jpeg|png|gif)` ops can decode any one of
+      // jpeg, png or gif but not bmp. Similarly, `decode_bmp` cannot decode
+      // anything but bmp formats. This behavior needs to be revisited. For more
+      // details, please refer to the bug.
+      OP_REQUIRES(context, false,
+                  errors::InvalidArgument(
+                      "Trying to decode PNG format using DecodeBmp op. Use "
+                      "`decode_png` or `decode_image` instead."));
+    } else if (op_type_ == "DecodeAndCropJpeg") {
+      OP_REQUIRES(context, false,
+                  errors::InvalidArgument(
+                      "DecodeAndCropJpeg operation can run on JPEG only, but "
+                      "detected PNG."));
+    }
+
+    if (!status.ok()) png::CommonFreeDecode(&decode);
+    OP_REQUIRES_OK(context, status);
+
+    if (data_type_ == DataType::DT_UINT8) {
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: git_show
+{
+  "ref": "ab51e5b813573dc9f51efa335aebcf2994125ee9",
+  "context": "#include <cstdint>\n#include <memory>\n\n#define EIGEN_USE_THREADS\n\n#include \"absl/strings/escaping.h\""
+}
+commit ab51e5b813573dc9f51efa335aebcf2994125ee9
+Author: Mihai Maruseac <mihaimaruseac@google.com>
+Date:   Thu Nov 11 19:24:32 2021 -0800
+
+    Prevent memory leak in decoding PNG images.
+    
+    PiperOrigin-RevId: 409300653
+    Change-Id: I6182124c545989cef80cefd439b659095920763b
+
+ tensorflow/core/kernels/image/decode_image_op.cc | 12 ++++++++++++
+ 1 file changed, 12 insertions(+)
+This commit shows that there is a high probability that this code is new, so the corresponding code segment cannot be found in the old version.
+You can call `viewcode` and `locate_symbol` to further check the results step by step. For newly introduced code, we consider that this hunk `need not ported`.
+
+tokens used
+input: 3,856
+cache read: 4,608
+cache write: 0
+output: 183
+reasoning output: 0
+
+The target 2.5.2 file has the vulnerable pattern: `CommonInitDecode` succeeds, then several `OP_REQUIRES` paths can return without freeing `decode`. I’m going to add the same RAII cleanup include and cleanup object after initialization.
+
+tool: viewcode
+{
+  "ref": "b2b3444b71ea99685edafa7731fb7ba57939f437",
+  "path": "tensorflow/core/kernels/image/decode_image_op.cc",
+  "startline": 380,
+  "endline": 520
+}
+Here are lines 380 through 520.
+
+    if (data_type_ == DataType::DT_UINT8) {
+      OP_REQUIRES(
+          context,
+          png::CommonFinishDecode(
+              reinterpret_cast<png_bytep>(output->flat<uint8>().data()),
+              decode.channels * width * sizeof(uint8), &decode),
+          errors::InvalidArgument("Invalid PNG data, size ", input.size()));
+    } else if (data_type_ == DataType::DT_UINT16) {
+      OP_REQUIRES(
+          context,
+          png::CommonFinishDecode(
+              reinterpret_cast<png_bytep>(output->flat<uint16>().data()),
+              decode.channels * width * sizeof(uint16), &decode),
+          errors::InvalidArgument("Invalid PNG data, size ", input.size()));
+    } else if (data_type_ == DataType::DT_FLOAT) {
+      // `png::CommonFinishDecode` does not support `float`. First allocate
+      // uint16 buffer for the image and decode in uint16 (lossless). Wrap the
+      // buffer in `unique_ptr` so that we don't forget to delete the buffer.
+      std::unique_ptr<uint16[]> buffer(
+          new uint16[height * width * decode.channels]);
+      OP_REQUIRES(
+          context,
+          png::CommonFinishDecode(reinterpret_cast<png_bytep>(buffer.get()),
+                                  decode.channels * width * sizeof(uint16),
+                                  &decode),
+          errors::InvalidArgument("Invalid PNG data, size ", input.size()));
+
+      // Convert uint16 image data to desired data type.
+      // Use eigen threadpooling to speed up the copy operation.
+      const auto& device = context->eigen_device<Eigen::ThreadPoolDevice>();
+      TTypes<uint16, 3>::UnalignedConstTensor buf(buffer.get(), height, width,
+                                                  decode.channels);
+      float scale = 1. / std::numeric_limits<uint16>::max();
+      // Fill output tensor with desired dtype.
+      output->tensor<float, 3>().device(device) = buf.cast<float>() * scale;
+    }
+  }
+
+  void DecodeGifV2(OpKernelContext* context, StringPiece input) {
+    // GIF has 3 channels.
+    OP_REQUIRES(context, channels_ == 0 || channels_ == 3,
+                errors::InvalidArgument("channels must be 0 or 3 for GIF, got ",
+                                        channels_));
+
+    if (op_type_ == "DecodeBmp") {
+      // TODO(b/171060723): Only DecodeBmp as op_type_ is not acceptable here
+      // because currently `decode_(jpeg|png|gif)` ops can decode any one of
+      // jpeg, png or gif but not bmp. Similarly, `decode_bmp` cannot decode
+      // anything but bmp formats. This behavior needs to be revisited. For more
+      // details, please refer to the bug.
+      OP_REQUIRES(context, false,
+                  errors::InvalidArgument(
+                      "Trying to decode GIF format using DecodeBmp op. Use "
+                      "`decode_gif` or `decode_image` instead."));
+    } else if (op_type_ == "DecodeAndCropJpeg") {
+      OP_REQUIRES(context, false,
+                  errors::InvalidArgument(
+                      "DecodeAndCropJpeg operation can run on JPEG only, but "
+                      "detected GIF."));
+    }
+
+    // Decode GIF, allocating tensor if dtype is uint8, otherwise defer tensor
+    // allocation til after dtype conversion is done. `gif`::Decode` supports
+    // uint8 only.
+    Tensor* output = nullptr;
+    int buffer_size = 0;
+    string error_string;
+    uint8* buffer = gif::Decode(
+        input.data(), input.size(),
+        [&](int num_frames, int width, int height, int channels) -> uint8* {
+          buffer_size = num_frames * height * width * channels;
+
+          Status status;
+          // By the existing API, we support decoding GIF with `decode_jpeg` or
+          // with `decode_png` if the GIF is a single-frame GIF (non-animated).
+          // We need to make sure to return 3-D shapes when using in this case.
+          if (op_type_ == "DecodePng" || op_type_ == "DecodeJpeg") {
+            if (num_frames == 1) {
+              status = context->allocate_output(
+                  0, TensorShape({height, width, channels}), &output);
+            } else {
+              status = errors::InvalidArgument(
+                  "Got ", num_frames, " frames, but animated gifs ",
+                  "can only be decoded by tf.io.decode_gif or ",
+                  "tf.io.decode_image");
+            }
+          } else if (op_type_ == "DecodeGif" ||
+                     (op_type_ == "DecodeImage" && expand_animations_)) {
+            status = context->allocate_output(
+                0, TensorShape({num_frames, height, width, channels}), &output);
+          } else if (op_type_ == "DecodeImage" && !expand_animations_) {
+            status = context->allocate_output(
+                0, TensorShape({height, width, channels}), &output);
+          } else {
+            status = errors::InvalidArgument("Bad op type ", op_type_);
+          }
+          if (!status.ok()) {
+            VLOG(1) << status;
+            context->SetStatus(status);
+            return nullptr;
+          }
+
+          if (data_type_ == DataType::DT_UINT8) {
+            return output->flat<uint8>().data();
+          } else {
+            return new uint8[buffer_size];
+          }
+        },
+        &error_string, expand_animations_);
+
+    OP_REQUIRES(context, buffer,
+                errors::InvalidArgument("Invalid GIF data (size ", input.size(),
+                                        "), ", error_string));
+
+    // For when desired data type is unit8, the output buffer is already
+    // allocated during the `gif::Decode` call above; return.
+    if (data_type_ == DataType::DT_UINT8) {
+      return;
+    }
+    // Make sure we don't forget to deallocate `buffer`.
+    std::unique_ptr<uint8[]> buffer_unique_ptr(buffer);
+
+    // Convert the raw uint8 buffer to desired dtype.
+    // Use eigen threadpooling to speed up the copy operation.
+    TTypes<uint8>::UnalignedConstFlat buffer_view(buffer, buffer_size);
+    const auto& device = context->eigen_device<Eigen::ThreadPoolDevice>();
+    if (data_type_ == DataType::DT_UINT16) {
+      uint16 scale = floor((std::numeric_limits<uint16>::max() + 1) /
+                           (std::numeric_limits<uint8>::max() + 1));
+      // Fill output tensor with desired dtype.
+      output->flat<uint16>().device(device) =
+          buffer_view.cast<uint16>() * scale;
+    } else if (data_type_ == DataType::DT_FLOAT) {
+      float scale = 1. / std::numeric_limits<uint8>::max();
+      // Fill output tensor with desired dtype.
+      output->flat<float>().device(device) = buffer_view.cast<float>() * scale;
+    }
+  }
+
+  void DecodeBmpV2(OpKernelContext* context, StringPiece input) {
+    OP_REQUIRES(
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tokens used
+input: 5,145
+cache read: 7,680
+cache write: 0
+output: 122
+reasoning output: 0
+
+tool: glob
+{
+  "pattern": "tensorflow/core/lib/gtl/cleanup.h"
+}
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0042-b2b3444b71ea\tensorflow\core\lib\gtl\cleanup.h
+
+tool: grep
+{
+  "pattern": "MakeCleanup",
+  "path": "tensorflow/core",
+  "include": "*.cc"
+}
+Found 100 matches (more matches available)
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0042-b2b3444b71ea\tensorflow\core\data\service\worker_impl.cc:
+  Line 143:   auto cleanup = gtl::MakeCleanup([&] {
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0042-b2b3444b71ea\tensorflow\core\data\service\task_runner.cc:
+  Line 173:   auto cleanup = gtl::MakeCleanup([&]() TF_EXCLUSIVE_LOCKS_REQUIRED(mu_) {
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0042-b2b3444b71ea\tensorflow\core\data\service\task_remover.cc:
+  Line 42:   auto cleanup = gtl::MakeCleanup([&]() TF_EXCLUSIVE_LOCKS_REQUIRED(mu_) {
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0042-b2b3444b71ea\tensorflow\core\distributed_runtime\cluster_function_library_runtime.cc:
+  Line 299:             gtl::MakeCleanup([call_options, req, resp, local_status, done] {
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0042-b2b3444b71ea\tensorflow\core\common_runtime\constant_folding.cc:
+  Line 658:   auto delete_tensors = gtl::MakeCleanup([&graph_runner, &outputs] {
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0042-b2b3444b71ea\tensorflow\core\distributed_runtime\master.cc:
+  Line 362:     auto call_done = gtl::MakeCleanup([&status, &done] { done(status); });
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0042-b2b3444b71ea\tensorflow\core\distributed_runtime\master_session.cc:
+  Line 1310:   auto cleanup = gtl::MakeCleanup([&workers, worker_cache] {
+
+  Line 1428:   auto cleanup = gtl::MakeCleanup([&workers, worker_cache] {
+
+  Line 1715:   auto cleanup = gtl::MakeCleanup([this] { MarkRunCompletion(); });
+
+  Line 1950:   auto cleanup = gtl::MakeCleanup([this] { MarkRunCompletion(); });
+
+  Line 2040:   auto cleanup = gtl::MakeCleanup([this] { MarkRunCompletion(); });
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0042-b2b3444b71ea\tensorflow\core\grappler\costs\graph_properties.cc:
+  Line 1580:     auto outputs_cleanup = gtl::MakeCleanup([&outputs] {
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0042-b2b3444b71ea\tensorflow\core\tpu\tpu_on_demand_compiler.cc:
+  Line 223:     auto cleanup = xla::MakeCleanup([&hlo_module]() {
+
+  Line 251:     auto cleanup = xla::MakeCleanup([&hlo_module]() {
+
+  Line 286:         xla::MakeCleanup([&se_module_group, module_group_size]() {
+
+  Line 334:           xla::MakeCleanup([&c_module]() { ApiConverter::Free(&c_module); });
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0042-b2b3444b71ea\tensorflow\core\distributed_runtime\remote_device.cc:
+  Line 96:     auto cleanup = gtl::MakeCleanup(
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0042-b2b3444b71ea\tensorflow\core\grappler\optimizers\constant_folding.cc:
+  Line 1327:   auto inputs_cleanup = gtl::MakeCleanup([&inputs, &output_tensors] {
+
+  Line 1679:   auto outputs_cleanup = gtl::MakeCleanup([&outputs] {
+
+  Line 2851:   auto outputs_cleanup = gtl::MakeCleanup([&reduction_indices_vector] {
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0042-b2b3444b71ea\tensorflow\core\tpu\graph_rewrite\host_training_loop_optimization_util.cc:
+  Line 412:     auto cleanup_handle = gtl::MakeCleanup([&]() {
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0042-b2b3444b71ea\tensorflow\core\tpu\graph_rewrite\encapsulate_tpu_computations_pass.cc:
+  Line 2286:   auto cleanup_handle = gtl::MakeCleanup(
+
+  Line 2450:       auto cleanup_handle = gtl::MakeCleanup(
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0042-b2b3444b71ea\tensorflow\core\tpu\kernels\tpu_compilation_cache_rpc_support.cc:
+  Line 49:     auto cleanup = xla::MakeCleanup([&serialized_response_proto]() {
+
+  Line 95:   auto cleanup_executable = xla::MakeCleanup([&executable]() {
+
+  Line 120:   auto cleanup_compiler_metadata = xla::MakeCleanup([&compiler_metadata]() {
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0042-b2b3444b71ea\tensorflow\core\tpu\kernels\tpu_configuration_ops.cc:
+  Line 204:   auto cleanup = xla::MakeCleanup([&status, &tpu_topology_output]() {
+
+  Line 293:   auto cleanup = xla::MakeCleanup([&status, &device_id_output]() {
+
+  Line 327:     auto cleanup_server_address = xla::MakeCleanup([&server_address_output]() {
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0042-b2b3444b71ea\tensorflow\core\tpu\kernels\tpu_compile_op_common.cc:
+  Line 575:   auto cancellation_cleanup = xla::MakeCleanup([ctx, token, done] {
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0042-b2b3444b71ea\tensorflow\core\tpu\kernels\tpu_op_util.cc:
+  Line 139:   auto buffer_cleanup = gtl::MakeCleanup([result]() {
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0042-b2b3444b71ea\tensorflow\core\tpu\kernels\tpu_program_group.cc:
+  Line 269:   auto cleanup = gtl::MakeCleanup([serialized_compilation_request] {
+
+  Line 303:   auto cleanup = gtl::MakeCleanup([serialized_compilation_request] {
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0042-b2b3444b71ea\tensorflow\core\tpu\kernels\tpu_pod_state.cc:
+  Line 75:   auto cleanup = xla::MakeCleanup([&status, &server_address_output]() {
+
+  Line 151:       xla::MakeCleanup([&status]() { TF_DeleteStatus(status); });
+
+  Line 158:   auto host_config_cleanup = xla::MakeCleanup([&host_config_output]() {
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0042-b2b3444b71ea\tensorflow\core\common_runtime\eager\eager_executor.cc:
+  Line 322:       gtl::MakeCleanup([this] { thread_exited_notification_.Notify(); });
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0042-b2b3444b71ea\tensorflow\core\framework\model_test.cc:
+  Line 47:   auto cleanup_meta = gtl::MakeCleanup([async_interleave_many, meta_source]() {
+
+  Line 53:   auto cleanup1 = gtl::MakeCleanup([async_interleave_many, source1]() {
+
+  Line 59:   auto cleanup2 = gtl::MakeCleanup([async_interleave_many, source2]() {
+
+  Line 608:   auto cleanup_meta = gtl::MakeCleanup([async_interleave_many, meta_source]() {
+
+  Line 619:   auto cleanup1 = gtl::MakeCleanup([async_interleave_many, source1]() {
+
+  Line 625:   auto cleanup2 = gtl::MakeCleanup([async_interleave_many, source2]() {
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0042-b2b3444b71ea\tensorflow\core\lib\gtl\cleanup_test.cc:
+  Line 37:     auto s_cleaner = gtl::MakeCleanup([&s] { s.assign("cleaned"); });
+
+  Line 45:   // Make sure MakeCleanup is compatible with that kind of initialization.
+
+  Line 49:     auto s_cleaner = gtl::MakeCleanup([] { s.append(" clean"); });
+
+  Line 58:     auto s_cleaner = gtl::MakeCleanup([&s] { s.assign("cleaned"); });
+
+  Line 84:     auto c = gtl::MakeCleanup(Appender(&s, " cleaned"));
+
+  Line 94:     auto clean1 = gtl::MakeCleanup(Appender(&s, " 1"));
+
+  Line 95:     auto clean2 = gtl::MakeCleanup(Appender(&s, " 2"));
+
+  Line 107:     auto clean1 = gtl::MakeCleanup(Appender(&s, " 1"));
+
+  Line 108:     AnyCleanup clean2 = gtl::MakeCleanup(Appender(&s, " 2"));
+
+  Line 119:     auto clean1 = gtl::MakeCleanup(Appender(&s, " 1"));
+
+  Line 120:     auto clean2 = gtl::MakeCleanup(Appender(&s, " 2"));
+
+  Line 132:     auto clean1 = gtl::MakeCleanup(Appender(&s, " 1"));
+
+  Line 133:     auto clean2 = gtl::MakeCleanup(Appender(&s, " 2"));
+
+  Line 146:     auto clean1 = gtl::MakeCleanup(Appender(&s, " 1"));
+
+  Line 187:     auto c = gtl::MakeCleanup(&CleanerFunction);
+
+  Line 194:     auto c = gtl::MakeCleanup(CleanerFunction);
+
+  Line 206:     auto c = gtl::MakeCleanup(app1);
+
+  Line 208:     c = gtl::MakeCleanup(app2);
+
+  Line 217:   // Test that MakeCleanup(lvalue) produces Cleanup<F>, not Cleanup<F&>.
+
+  Line 221:     auto c = gtl::MakeCleanup(f_);
+
+  Line 229:     auto c = gtl::MakeCleanup(f_);
+
+  Line 235:     auto c2 = gtl::MakeCleanup(f2);  // copy
+
+  Line 245:     auto c = gtl::MakeCleanup(std::move(f_));
+
+  Line 256:     auto c = gtl::MakeCleanup(std::cref(f_));
+
+  Line 272:     auto fin = gtl::MakeCleanup([] { Incr(); });
+
+  Line 279:     AnyCleanup fin = gtl::MakeCleanup([] { Incr(); });
+
+  Line 294:     auto fin = gtl::MakeCleanup([ip] { Incr(ip); });
+
+  Line 302:     AnyCleanup fin = gtl::MakeCleanup([ip] { Incr(ip); });
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0042-b2b3444b71ea\tensorflow\core\lib\gif\gif_io.cc:
+  Line 65:   const auto cleanup = gtl::MakeCleanup([gif_file]() {
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0042-b2b3444b71ea\tensorflow\core\common_runtime\kernel_benchmark_testlib.cc:
+  Line 53:   auto cleanup = gtl::MakeCleanup([g, init]() {
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0042-b2b3444b71ea\tensorflow\core\kernels\batching_util\adaptive_shared_batch_scheduler_test.cc:
+  Line 294:   auto processed_checker = gtl::MakeCleanup([&mu, &processed_batches] {
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0042-b2b3444b71ea\tensorflow\core\kernels\batching_util\batch_resource_base.cc:
+  Line 579:   // individual tasks and signal that they are done. We use MakeCleanup() to
+
+  Line 600:       gtl::MakeCleanup([&cleanup_fn, &status] { cleanup_fn(status); });
+
+  Line 633:         auto run_finally = gtl::MakeCleanup([&]() {
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0042-b2b3444b71ea\tensorflow\core\platform\cloud\ram_file_block_cache.cc:
+  Line 103:       gtl::MakeCleanup([this, &downloaded_block, &key, &block] {
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0042-b2b3444b71ea\tensorflow\core\kernels\data\captured_function.cc:
+  Line 176:   auto cleanup = gtl::MakeCleanup([ctx, fn_handle]() {
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0042-b2b3444b71ea\tensorflow\core\kernels\data\experimental\choose_fastest_dataset_op.cc:
+  Line 331:         auto cleanup = gtl::MakeCleanup([this, ctx]() { RecordStop(ctx); });
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0042-b2b3444b71ea\tensorflow\core\kernels\data\experimental\data_service_dataset_op.cc:
+  Line 433:           gtl::MakeCleanup([] { VLOG(1) << "Task thread manager exiting"; });
+
+  Line 647:       auto cleanup = gtl::MakeCleanup([done = std::move(done)]() {
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0042-b2b3444b71ea\tensorflow\core\kernels\data\iterator_ops.cc:
+  Line 130:   auto cleanup = gtl::MakeCleanup(std::move(deregister_fn));
+
+  Line 218:   auto cleanup = gtl::MakeCleanup(std::move(deregister_fn));
+
+  Line 254:     auto cleanup = gtl::MakeCleanup(std::move(deregister_fn));
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0042-b2b3444b71ea\tensorflow\core\kernels\data\experimental\map_and_batch_dataset_op.cc:
+  Line 260:       auto cleanup = gtl::MakeCleanup([result] { result->output.clear(); });
+
+  Line 536:           gtl::MakeCleanup([this, &ctx]() { RecordStop(ctx.get()); });
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0042-b2b3444b71ea\tensorflow\core\kernels\data\multi_device_iterator_ops.cc:
+  Line 574:     auto cleanup = gtl::MakeCleanup(std::move(deregister_fn));
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0042-b2b3444b71ea\tensorflow\core\kernels\data\experimental\parallel_interleave_dataset_op.cc:
+  Line 717:       auto cleanup = gtl::MakeCleanup([this, thread_index, ctx] {
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0042-b2b3444b71ea\tensorflow\core\kernels\data\experimental\parse_example_dataset_op.cc:
+  Line 614:                   gtl::MakeCleanup([this, ctx] { RecordStop(ctx.get()); });
+
+  Line 744:         auto cleanup = gtl::MakeCleanup([this, ctx] { RecordStop(ctx.get()); });
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0042-b2b3444b71ea\tensorflow\core\kernels\data\parallel_batch_dataset_op.cc:
+  Line 233:           gtl::MakeCleanup([result]() TF_EXCLUSIVE_LOCKS_REQUIRED(
+
+  Line 419:           gtl::MakeCleanup([this, &ctx]() { RecordStop(ctx.get()); });
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0042-b2b3444b71ea\tensorflow\core\kernels\data\parallel_interleave_dataset_op.cc:
+  Line 744:       auto cleanup = gtl::MakeCleanup([this]() {
+
+  Line 1392:               auto cleanup = gtl::MakeCleanup([this, ctx, &counter]() {
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0042-b2b3444b71ea\tensorflow\core\kernels\data\parallel_map_dataset_op.cc:
+  Line 507:       auto cleanup = gtl::MakeCleanup([this, ctx] { RecordStop(ctx.get()); });
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0042-b2b3444b71ea\tensorflow\core\kernels\data\prefetch_dataset_op.cc:
+  Line 454:       auto cleanup = gtl::MakeCleanup([this, ctx] { RecordStop(ctx.get()); });
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0042-b2b3444b71ea\tensorflow\core\kernels\data\experimental\snapshot_dataset_op.cc:
+  Line 1635:           auto cleanup = gtl::MakeCleanup([this]() {
+
+  Line 2193:           auto cleanup = gtl::MakeCleanup([this]() {
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0042-b2b3444b71ea\tensorflow\core\kernels\lookup_util.cc:
+  Line 476:   auto cleanup = gtl::MakeCleanup([done = std::move(done)]() { done(); });
+
+
+(Results truncated. Consider using a more specific path or pattern.)
+
+tokens used
+input: 2,730
+cache read: 11,776
+cache write: 0
+output: 68
+reasoning output: 32
+
+I found `gtl::MakeCleanup` and `tensorflow/core/lib/gtl/cleanup.h` already available in the target tree, so no support code is needed. I’ll validate the two small hunks against the target base before applying.
+
+tool: validate
+{
+  "ref": "b2b3444b71ea99685edafa7731fb7ba57939f437",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/image/decode_image_op.cc b/tensorflow/core/kernels/image/decode_image_op.cc\n--- a/tensorflow/core/kernels/image/decode_image_op.cc\n+++ b/tensorflow/core/kernels/image/decode_image_op.cc\n@@ -18,6 +18,8 @@ limitations under the License.\n #include <cstdint>\n #include <memory>\n \n+#include \"tensorflow/core/lib/gtl/cleanup.h\"\n+\n #define EIGEN_USE_THREADS\n \n #include \"absl/strings/escaping.h\"\n@@ -326,6 +328,16 @@ class DecodeImageV2Op : public OpKernel {\n         context, png::CommonInitDecode(input, channels_, channel_bits, &decode),\n         errors::InvalidArgument(\"Invalid PNG. Failed to initialize decoder.\"));\n \n+    // If we reach this point, then there is data in `decode` which must be\n+    // freed by the time we end execution in this function. We cannot call\n+    // `png::CommonFreeDecode()` before an `OP_REQUIRES` because if\n+    // `OP_REQUIRES` constraint is satisfied then the data would be freed\n+    // prematurely. Instead, let's use a `Cleanup` object.\n+    auto cleanup = gtl::MakeCleanup([&decode]() {\n+      std::cerr << \"Cleanup called...\\n\";\n+      png::CommonFreeDecode(&decode);\n+    });\n+\n     // Verify that width and height are not too large:\n     // - verify width and height don't overflow int.\n     // - width can later be multiplied by channels_ and sizeof(uint16), so\n"
+}
+Patch applied successfully
+
+tokens used
+input: 5,488
+cache read: 13,824
+cache write: 0
+output: 481
+reasoning output: 119
+
+The target-context patch applies cleanly. I’m applying it directly to `tensorflow/core/kernels/image/decode_image_op.cc`.
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/kernels/image/decode_image_op.cc\n@@\n #include <cstdint>\n #include <memory>\n \n+#include \"tensorflow/core/lib/gtl/cleanup.h\"\n+\n #define EIGEN_USE_THREADS\n \n #include \"absl/strings/escaping.h\"\n@@\n     OP_REQUIRES(\n         context, png::CommonInitDecode(input, channels_, channel_bits, &decode),\n         errors::InvalidArgument(\"Invalid PNG. Failed to initialize decoder.\"));\n \n+    // If we reach this point, then there is data in `decode` which must be\n+    // freed by the time we end execution in this function. We cannot call\n+    // `png::CommonFreeDecode()` before an `OP_REQUIRES` because if\n+    // `OP_REQUIRES` constraint is satisfied then the data would be freed\n+    // prematurely. Instead, let's use a `Cleanup` object.\n+    auto cleanup = gtl::MakeCleanup([&decode]() {\n+      std::cerr << \"Cleanup called...\\n\";\n+      png::CommonFreeDecode(&decode);\n+    });\n+\n     // Verify that width and height are not too large:\n     // - verify width and height don't overflow int.\n     // - width can later be multiplied by channels_ and sizeof(uint16), so\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/kernels/image/decode_image_op.cc
+
+tokens used
+input: 981
+cache read: 18,944
+cache write: 0
+output: 365
+reasoning output: 0
+
+The source change is applied. I’ll inspect the resulting diff to confirm only the intended file changed.
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/kernels/image/decode_image_op.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0042-b2b3444b71ea"
+}
+warning: in the working copy of 'tensorflow/core/kernels/image/decode_image_op.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/kernels/image/decode_image_op.cc b/tensorflow/core/kernels/image/decode_image_op.cc
+index 61b126fb81..893d6b2a3c 100644
+--- a/tensorflow/core/kernels/image/decode_image_op.cc
++++ b/tensorflow/core/kernels/image/decode_image_op.cc
+@@ -18,6 +18,8 @@ limitations under the License.
+ #include <cstdint>
+ #include <memory>
+ 
++#include "tensorflow/core/lib/gtl/cleanup.h"
++
+ #define EIGEN_USE_THREADS
+ 
+ #include "absl/strings/escaping.h"
+@@ -326,6 +328,16 @@ class DecodeImageV2Op : public OpKernel {
+         context, png::CommonInitDecode(input, channels_, channel_bits, &decode),
+         errors::InvalidArgument("Invalid PNG. Failed to initialize decoder."));
+ 
++    // If we reach this point, then there is data in `decode` which must be
++    // freed by the time we end execution in this function. We cannot call
++    // `png::CommonFreeDecode()` before an `OP_REQUIRES` because if
++    // `OP_REQUIRES` constraint is satisfied then the data would be freed
++    // prematurely. Instead, let's use a `Cleanup` object.
++    auto cleanup = gtl::MakeCleanup([&decode]() {
++      std::cerr << "Cleanup called...\n";
++      png::CommonFreeDecode(&decode);
++    });
++
+     // Verify that width and height are not too large:
+     // - verify width and height don't overflow int.
+     // - width can later be multiplied by channels_ and sizeof(uint16), so
+
+tokens used
+input: 1,375
+cache read: 18,944
+cache write: 0
+output: 101
+reasoning output: 28
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/kernels/image/decode_image_op.cc b/tensorflow/core/kernels/image/decode_image_op.cc
+    index 61b126fb81..893d6b2a3c 100644
+    --- a/tensorflow/core/kernels/image/decode_image_op.cc
+    +++ b/tensorflow/core/kernels/image/decode_image_op.cc
+    @@ -18,6 +18,8 @@ limitations under the License.
+     #include <cstdint>
+     #include <memory>
+     
+    +#include "tensorflow/core/lib/gtl/cleanup.h"
+    +
+     #define EIGEN_USE_THREADS
+     
+     #include "absl/strings/escaping.h"
+    @@ -326,6 +328,16 @@ class DecodeImageV2Op : public OpKernel {
+             context, png::CommonInitDecode(input, channels_, channel_bits, &decode),
+             errors::InvalidArgument("Invalid PNG. Failed to initialize decoder."));
+     
+    +    // If we reach this point, then there is data in `decode` which must be
+    +    // freed by the time we end execution in this function. We cannot call
+    +    // `png::CommonFreeDecode()` before an `OP_REQUIRES` because if
+    +    // `OP_REQUIRES` constraint is satisfied then the data would be freed
+    +    // prematurely. Instead, let's use a `Cleanup` object.
+    +    auto cleanup = gtl::MakeCleanup([&decode]() {
+    +      std::cerr << "Cleanup called...\n";
+    +      png::CommonFreeDecode(&decode);
+    +    });
+    +
+         // Verify that width and height are not too large:
+         // - verify width and height don't overflow int.
+         // - width can later be multiplied by channels_ and sizeof(uint16), so
+  notes: >
+    Added RAII cleanup for PNG decode state after successful CommonInitDecode; hunk validation against the target base passed.
+```
+
+tokens used
+input: 894
+cache read: 19,968
+cache write: 0
+output: 446
+reasoning output: 39

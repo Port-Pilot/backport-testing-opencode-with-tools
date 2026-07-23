@@ -1,0 +1,533 @@
+I’ll inspect the target-side implementations for the three patched code paths, then apply only the guards that map cleanly to TensorFlow 2.1.4.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Locate target code for each newer patch hunk",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Validate uncertain hunks against target base",
+      "status": "pending",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply minimal backport changes",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "content": "Review resulting diff",
+      "status": "pending",
+      "priority": "high"
+    }
+  ]
+}
+[
+  {
+    "content": "Locate target code for each newer patch hunk",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Validate uncertain hunks against target base",
+    "status": "pending",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply minimal backport changes",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "content": "Review resulting diff",
+    "status": "pending",
+    "priority": "high"
+  }
+]
+
+tokens used
+input: 4,059
+cache read: 4,608
+cache write: 0
+output: 129
+reasoning output: 0
+
+tool: locate_symbol
+{
+  "ref": "a5d613d23c2aa234d370d04b19ccabe3824c284d",
+  "symbol": "ReorderCastLikeAndValuePreserving"
+}
+tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc:1956
+tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc:1958
+tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc:1963
+tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc:1961
+tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc:3569
+
+tool: locate_symbol
+{
+  "ref": "a5d613d23c2aa234d370d04b19ccabe3824c284d",
+  "symbol": "ReplaceMulWithSquare"
+}
+tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc:2364
+tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc:2366
+tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc:2369
+tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc:2368
+tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc:3565
+tensorflow/core/grappler/optimizers/arithmetic_optimizer_test.cc:215
+tensorflow/core/grappler/optimizers/arithmetic_optimizer_test.cc:238
+
+tool: locate_symbol
+{
+  "ref": "a5d613d23c2aa234d370d04b19ccabe3824c284d",
+  "symbol": "SafeToRemoveIdentity"
+}
+tensorflow/core/grappler/optimizers/dependency_optimizer.cc:58
+tensorflow/core/grappler/optimizers/dependency_optimizer.cc:121
+tensorflow/core/grappler/optimizers/dependency_optimizer.cc:352
+tensorflow/core/grappler/optimizers/dependency_optimizer.h:56
+
+tokens used
+input: 1,252
+cache read: 7,680
+cache write: 0
+output: 156
+reasoning output: 0
+
+tool: viewcode
+{
+  "ref": "a5d613d23c2aa234d370d04b19ccabe3824c284d",
+  "path": "tensorflow/core/grappler/optimizers/dependency_optimizer.cc",
+  "startline": 45,
+  "endline": 80
+}
+Here are lines 45 through 80.
+
+    if (input[0] != '^') break;
+    if (input == control_input_to_remove) {
+      node->mutable_input()->SwapElements(pos, node->input_size() - 1);
+      node->mutable_input()->RemoveLast();
+      node_map->RemoveOutput(NodeName(input), node->name());
+      return true;
+    }
+  }
+  return false;
+}
+
+}  // namespace
+
+bool DependencyOptimizer::SafeToRemoveIdentity(const NodeDef& node) const {
+  if (!IsIdentity(node) && !IsIdentityN(node)) {
+    return true;
+  }
+
+  if (nodes_to_preserve_.find(node.name()) != nodes_to_preserve_.end()) {
+    return false;
+  }
+  if (!fetch_nodes_known_) {
+    // The output values of this node may be needed.
+    return false;
+  }
+  const NodeDef* input = node_map_->GetNode(NodeName(node.input(0)));
+  CHECK(input != nullptr) << "node = " << node.name()
+                          << " input = " << node.input(0);
+  // Don't remove Identity nodes corresponding to Variable reads or following
+  // Recv.
+  if (IsVariable(*input) || IsRecv(*input)) {
+    return false;
+  }
+  for (const auto& consumer : node_map_->GetOutputs(node.name())) {
+    if (node.input_size() > 1 && (IsRetval(*consumer) || IsMerge(*consumer))) {
+      return false;
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: viewcode
+{
+  "ref": "a5d613d23c2aa234d370d04b19ccabe3824c284d",
+  "path": "tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc",
+  "startline": 1940,
+  "endline": 1995
+}
+Here are lines 1940 through 1995.
+
+//
+// Original motivation: A common pattern after the layout optimizer is
+// casting an uint8 NHWC image to float before transposing it to NCHW. It
+// is beneficial to reorder the cast and the transpose to make the transpose
+// process smaller amount of data. More generally, this optimization converts
+//   Op(Cast(tensor, dst_type))
+// to
+//   Cast(Op(tensor), dst_type)
+// when sizeof(tensor.type) < sizeof(dst_type), and Op is any value-preserving
+// Op, i.e. an op that only reorders the elements in its first input. Similarly,
+// this optimization converts
+//   Cast(Op(tensor), dst_type)
+// to
+//   Op(Cast(tensor, dst_type))
+// when sizeof(tensor.type) > sizeof(dst_type)
+//
+class ReorderCastLikeAndValuePreserving : public ArithmeticOptimizerStage {
+ public:
+  explicit ReorderCastLikeAndValuePreserving(
+      const GraphOptimizerContext& ctx,
+      const ArithmeticOptimizerContext& ctx_ext)
+      : ArithmeticOptimizerStage("ReorderCastLikeAndValuePreserving", ctx,
+                                 ctx_ext) {}
+  ~ReorderCastLikeAndValuePreserving() override = default;
+
+  bool IsSupported(const NodeDef* node) const override {
+    return (IsValuePreserving(*node) || IsCastLike(*node)) &&
+           !IsCheckNumerics(*node) && NodeIsOnCpuOrGpu(node) &&
+           !IsControlFlow(*node) && !IsInPreserveSet(*node);
+  }
+
+  Status TrySimplify(NodeDef* consumer, string* simplified_node_name) override {
+    NodeDef* producer;
+    TF_RETURN_IF_ERROR(GetInputNode(consumer->input(0), &producer));
+    const bool producer_is_cast = IsCastLike(*producer);
+    const bool can_optimize =
+        !IsCheckNumerics(*producer) &&
+        ((producer_is_cast && IsValuePreserving(*consumer)) ||
+         (IsValuePreserving(*producer) && IsCastLike(*consumer)));
+    if (!can_optimize || IsControlFlow(*producer) ||
+        producer->device() != consumer->device()) {
+      return Status::OK();
+    }
+
+    const NodeDef* cast_like_node = producer_is_cast ? producer : consumer;
+    const OpDef* cast_like_op_def = nullptr;
+    TF_RETURN_IF_ERROR(OpRegistry::Global()->LookUpOpDef(cast_like_node->op(),
+                                                         &cast_like_op_def));
+    DataType cast_src_type;
+    TF_RETURN_IF_ERROR(InputTypeForNode(*cast_like_node, *cast_like_op_def, 0,
+                                        &cast_src_type));
+    DataType cast_dst_type;
+    TF_RETURN_IF_ERROR(OutputTypeForNode(*cast_like_node, *cast_like_op_def, 0,
+                                         &cast_dst_type));
+    if (!IsFixedSizeType(cast_src_type) || !IsFixedSizeType(cast_dst_type)) {
+      return Status::OK();
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: viewcode
+{
+  "ref": "a5d613d23c2aa234d370d04b19ccabe3824c284d",
+  "path": "tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc",
+  "startline": 2350,
+  "endline": 2385
+}
+Here are lines 2350 through 2385.
+
+      new_op->set_op(transpose_op->op() == "Transpose" ? "ConjugateTranspose"
+                                                       : "Transpose");
+      new_op->set_input(0, input->input(0));
+      ctx().node_map->UpdateInput(new_op->name(), node->name(),
+                                  input->input(0));
+      ForwardControlDependencies(new_op, {node, input});
+      *simplified_node_name = new_op->name();
+    }
+
+    return Status::OK();
+  }
+};
+
+// Replace Mul node with identical inputs with a Square.
+class ReplaceMulWithSquare : public ArithmeticOptimizerStage {
+ public:
+  explicit ReplaceMulWithSquare(const GraphOptimizerContext& ctx,
+                                const ArithmeticOptimizerContext& ctx_ext)
+      : ArithmeticOptimizerStage("ReplaceMulWithSquare", ctx, ctx_ext) {}
+  ~ReplaceMulWithSquare() override = default;
+
+  bool IsSupported(const NodeDef* node) const override {
+    return IsAnyMul(*node) && node->input(0) == node->input(1);
+  }
+
+  Status TrySimplify(NodeDef* node, string* simplified_node_name) override {
+    const NodeScopeAndName mul = ParseNodeScopeAndName(node->name());
+    const string optimized_node_name = OptimizedNodeName(mul);
+    if (ctx().node_map->NodeExists(optimized_node_name)) return Status::OK();
+
+    const DataType type = GetDataTypeFromAttr(*node, "T");
+    bool is_complex = (type == DT_COMPLEX64) || (type == DT_COMPLEX128);
+
+    if (!is_complex || NodeIsOnCpu(*node)) {
+      NodeDef* new_square_node = AddCopyNode(optimized_node_name, node);
+      new_square_node->set_op("Square");
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tokens used
+input: 665
+cache read: 8,704
+cache write: 0
+output: 207
+reasoning output: 0
+
+The target release has direct equivalents for all three locations, with the same missing input-size preconditions before indexed `input()` access. I’m applying the minimal guards now.
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc\n@@\n   Status TrySimplify(NodeDef* consumer, string* simplified_node_name) override {\n     NodeDef* producer;\n+\n+    if (consumer->input_size() < 1) {\n+      return errors::FailedPrecondition(\"Node \", simplified_node_name,\n+                                        \" lacks inputs\");\n+    }\n+\n     TF_RETURN_IF_ERROR(GetInputNode(consumer->input(0), &producer));\n     const bool producer_is_cast = IsCastLike(*producer);\n     const bool can_optimize =\n@@\n   ~ReplaceMulWithSquare() override = default;\n \n   bool IsSupported(const NodeDef* node) const override {\n+    if (!node || node->input_size() < 2) {\n+      // Invalid node\n+      return false;\n+    }\n+\n     return IsAnyMul(*node) && node->input(0) == node->input(1);\n   }\n*** Update File: tensorflow/core/grappler/optimizers/dependency_optimizer.cc\n@@\n   if (!fetch_nodes_known_) {\n     // The output values of this node may be needed.\n     return false;\n   }\n+\n+  if (node.input_size() < 1) {\n+    // Node lacks input, is invalid\n+    return false;\n+  }\n+\n   const NodeDef* input = node_map_->GetNode(NodeName(node.input(0)));\n   CHECK(input != nullptr) << \"node = \" << node.name()\n                           << \" input = \" << node.input(0);\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc
+M tensorflow/core/grappler/optimizers/dependency_optimizer.cc
+
+tokens used
+input: 2,287
+cache read: 8,704
+cache write: 0
+output: 436
+reasoning output: 28
+
+The changes are in place. I’ll verify the resulting diff and check that the patch shape is limited to the intended guards.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Locate target code for each newer patch hunk",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate uncertain hunks against target base",
+      "status": "cancelled",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply minimal backport changes",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Review resulting diff",
+      "status": "in_progress",
+      "priority": "high"
+    }
+  ]
+}
+[
+  {
+    "content": "Locate target code for each newer patch hunk",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate uncertain hunks against target base",
+    "status": "cancelled",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply minimal backport changes",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Review resulting diff",
+    "status": "in_progress",
+    "priority": "high"
+  }
+]
+
+tokens used
+input: 748
+cache read: 10,752
+cache write: 0
+output: 122
+reasoning output: 0
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc tensorflow/core/grappler/optimizers/dependency_optimizer.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0026-a5d613d23c2a"
+}
+warning: in the working copy of 'tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'tensorflow/core/grappler/optimizers/dependency_optimizer.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc b/tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc
+index d2ff480c29..fec5411911 100644
+--- a/tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc
++++ b/tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc
+@@ -1970,6 +1970,12 @@ class ReorderCastLikeAndValuePreserving : public ArithmeticOptimizerStage {
+ 
+   Status TrySimplify(NodeDef* consumer, string* simplified_node_name) override {
+     NodeDef* producer;
++
++    if (consumer->input_size() < 1) {
++      return errors::FailedPrecondition("Node ", simplified_node_name,
++                                        " lacks inputs");
++    }
++
+     TF_RETURN_IF_ERROR(GetInputNode(consumer->input(0), &producer));
+     const bool producer_is_cast = IsCastLike(*producer);
+     const bool can_optimize =
+@@ -2369,6 +2375,11 @@ class ReplaceMulWithSquare : public ArithmeticOptimizerStage {
+   ~ReplaceMulWithSquare() override = default;
+ 
+   bool IsSupported(const NodeDef* node) const override {
++    if (!node || node->input_size() < 2) {
++      // Invalid node
++      return false;
++    }
++
+     return IsAnyMul(*node) && node->input(0) == node->input(1);
+   }
+ 
+diff --git a/tensorflow/core/grappler/optimizers/dependency_optimizer.cc b/tensorflow/core/grappler/optimizers/dependency_optimizer.cc
+index 0734c32948..1ad38d6a16 100644
+--- a/tensorflow/core/grappler/optimizers/dependency_optimizer.cc
++++ b/tensorflow/core/grappler/optimizers/dependency_optimizer.cc
+@@ -67,6 +67,12 @@ bool DependencyOptimizer::SafeToRemoveIdentity(const NodeDef& node) const {
+     // The output values of this node may be needed.
+     return false;
+   }
++
++  if (node.input_size() < 1) {
++    // Node lacks input, is invalid
++    return false;
++  }
++
+   const NodeDef* input = node_map_->GetNode(NodeName(node.input(0)));
+   CHECK(input != nullptr) << "node = " << node.name()
+                           << " input = " << node.input(0);
+
+tokens used
+input: 1,007
+cache read: 10,752
+cache write: 0
+output: 87
+reasoning output: 0
+
+The diff matches the three intended guards and no unrelated files were changed. I’ll do a lightweight hunk validation of this patch against the specified target base.
+
+tool: validate
+{
+  "ref": "a5d613d23c2aa234d370d04b19ccabe3824c284d",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc b/tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc\nindex d2ff480c29..fec5411911 100644\n--- a/tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc\n+++ b/tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc\n@@ -1970,6 +1970,12 @@ class ReorderCastLikeAndValuePreserving : public ArithmeticOptimizerStage {\n \n   Status TrySimplify(NodeDef* consumer, string* simplified_node_name) override {\n     NodeDef* producer;\n+\n+    if (consumer->input_size() < 1) {\n+      return errors::FailedPrecondition(\"Node \", simplified_node_name,\n+                                        \" lacks inputs\");\n+    }\n+\n     TF_RETURN_IF_ERROR(GetInputNode(consumer->input(0), &producer));\n     const bool producer_is_cast = IsCastLike(*producer);\n     const bool can_optimize =\n@@ -2369,6 +2375,11 @@ class ReplaceMulWithSquare : public ArithmeticOptimizerStage {\n   ~ReplaceMulWithSquare() override = default;\n \n   bool IsSupported(const NodeDef* node) const override {\n+    if (!node || node->input_size() < 2) {\n+      // Invalid node\n+      return false;\n+    }\n+\n     return IsAnyMul(*node) && node->input(0) == node->input(1);\n   }\n \ndiff --git a/tensorflow/core/grappler/optimizers/dependency_optimizer.cc b/tensorflow/core/grappler/optimizers/dependency_optimizer.cc\nindex 0734c32948..1ad38d6a16 100644\n--- a/tensorflow/core/grappler/optimizers/dependency_optimizer.cc\n+++ b/tensorflow/core/grappler/optimizers/dependency_optimizer.cc\n@@ -67,6 +67,12 @@ bool DependencyOptimizer::SafeToRemoveIdentity(const NodeDef& node) const {\n     // The output values of this node may be needed.\n     return false;\n   }\n+\n+  if (node.input_size() < 1) {\n+    // Node lacks input, is invalid\n+    return false;\n+  }\n+\n   const NodeDef* input = node_map_->GetNode(NodeName(node.input(0)));\n   CHECK(input != nullptr) << \"node = \" << node.name()\n                           << \" input = \" << node.input(0);\n"
+}
+Patch applied successfully
+
+tokens used
+input: 1,703
+cache read: 10,752
+cache write: 0
+output: 657
+reasoning output: 44
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Locate target code for each newer patch hunk",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate uncertain hunks against target base",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply minimal backport changes",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Review resulting diff",
+      "status": "completed",
+      "priority": "high"
+    }
+  ]
+}
+[
+  {
+    "content": "Locate target code for each newer patch hunk",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate uncertain hunks against target base",
+    "status": "completed",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply minimal backport changes",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Review resulting diff",
+    "status": "completed",
+    "priority": "high"
+  }
+]
+
+tokens used
+input: 1,393
+cache read: 11,776
+cache write: 0
+output: 88
+reasoning output: 0
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc b/tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc
+    index d2ff480c29..fec5411911 100644
+    --- a/tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc
+    +++ b/tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc
+    @@ -1970,6 +1970,12 @@ class ReorderCastLikeAndValuePreserving : public ArithmeticOptimizerStage {
+     
+       Status TrySimplify(NodeDef* consumer, string* simplified_node_name) override {
+         NodeDef* producer;
+    +
+    +    if (consumer->input_size() < 1) {
+    +      return errors::FailedPrecondition("Node ", simplified_node_name,
+    +                                        " lacks inputs");
+    +    }
+    +
+         TF_RETURN_IF_ERROR(GetInputNode(consumer->input(0), &producer));
+         const bool producer_is_cast = IsCastLike(*producer);
+         const bool can_optimize =
+    @@ -2369,6 +2375,11 @@ class ReplaceMulWithSquare : public ArithmeticOptimizerStage {
+       ~ReplaceMulWithSquare() override = default;
+     
+       bool IsSupported(const NodeDef* node) const override {
+    +    if (!node || node->input_size() < 2) {
+    +      // Invalid node
+    +      return false;
+    +    }
+    +
+         return IsAnyMul(*node) && node->input(0) == node->input(1);
+       }
+     
+    diff --git a/tensorflow/core/grappler/optimizers/dependency_optimizer.cc b/tensorflow/core/grappler/optimizers/dependency_optimizer.cc
+    index 0734c32948..1ad38d6a16 100644
+    --- a/tensorflow/core/grappler/optimizers/dependency_optimizer.cc
+    +++ b/tensorflow/core/grappler/optimizers/dependency_optimizer.cc
+    @@ -67,6 +67,12 @@ bool DependencyOptimizer::SafeToRemoveIdentity(const NodeDef& node) const {
+         // The output values of this node may be needed.
+         return false;
+       }
+    +
+    +  if (node.input_size() < 1) {
+    +    // Node lacks input, is invalid
+    +    return false;
+    +  }
+    +
+       const NodeDef* input = node_map_->GetNode(NodeName(node.input(0)));
+       CHECK(input != nullptr) << "node = " << node.name()
+                               << " input = " << node.input(0);
+  notes: >
+    Backported the null-pointer/input bounds guards for TrySimplify, ReplaceMulWithSquare, and SafeToRemoveIdentity; hunk validation against the target base succeeded.
+```
+
+tokens used
+input: 592
+cache read: 12,800
+cache write: 0
+output: 617
+reasoning output: 0

@@ -1,0 +1,223 @@
+I’ll inspect the target-side `ReverseSequence` shape inference context, validate the minimal hunk against the target base, then apply only the necessary source edit.
+
+tool: viewcode
+{
+  "ref": "957590ea15cc03ee2e00fc61934647d54836676f",
+  "path": "tensorflow/core/ops/array_ops.cc",
+  "startline": 1625,
+  "endline": 1685
+}
+Here are lines 1625 through 1685.
+
+      int64 seq_dim;
+      TF_RETURN_IF_ERROR(c->GetAttr("seq_dim", &seq_dim));
+      int64 batch_dim;
+      TF_RETURN_IF_ERROR(c->GetAttr("batch_dim", &batch_dim));
+
+      if (!c->RankKnown(input)) {
+        return shape_inference::UnknownShape(c);
+      }
+
+      // Validate batch_dim and seq_dim against input.
+      const int32 input_rank = c->Rank(input);
+      if (batch_dim >= input_rank) {
+        return errors::InvalidArgument(
+            "batch_dim must be < input rank: ", batch_dim, " vs. ", input_rank);
+      }
+      if (seq_dim >= input_rank) {
+        return errors::InvalidArgument(
+            "seq_dim must be < input rank: ", seq_dim, " vs. ", input_rank);
+      }
+
+      DimensionHandle batch_dim_dim = c->Dim(input, batch_dim);
+      TF_RETURN_IF_ERROR(
+          c->Merge(batch_dim_dim, c->Dim(seq_lens_shape, 0), &batch_dim_dim));
+
+      // Replace batch_dim of input with batch_size
+      ShapeHandle output_shape;
+      TF_RETURN_IF_ERROR(
+          c->ReplaceDim(input, batch_dim, batch_dim_dim, &output_shape));
+      c->set_output(0, output_shape);
+      return Status::OK();
+    });
+
+// --------------------------------------------------------------------------
+REGISTER_OP("Rank")
+    .Input("input: T")
+    .Output("output: int32")
+    .Attr("T: type")
+    .SetShapeFn(shape_inference::ScalarShape);
+
+// --------------------------------------------------------------------------
+REGISTER_OP("Size")
+    .Input("input: T")
+    .Output("output: out_type")
+    .Attr("T: type")
+    .Attr("out_type: {int32, int64} = DT_INT32")
+    .SetShapeFn(shape_inference::ScalarShape);
+
+// --------------------------------------------------------------------------
+REGISTER_OP("Slice")
+    .Input("input: T")
+    .Input("begin: Index")
+    .Input("size: Index")
+    .Output("output: T")
+    .Attr("T: type")
+    .Attr("Index: {int32,int64}")
+    .SetShapeFn(shape_inference::SliceShape);
+
+#ifdef INTEL_MKL
+REGISTER_OP("_MklSlice")
+    .Input("input: T")
+    .Input("begin: Index")
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: locate_symbol
+{
+  "ref": "957590ea15cc03ee2e00fc61934647d54836676f",
+  "symbol": "ReverseSequence"
+}
+tensorflow/core/kernels/reverse_sequence_op.cc:197
+tensorflow/core/kernels/reverse_sequence_op.h:62
+tensorflow/lite/toco/tflite/operator.cc:1809
+tensorflow/cc/gradients/array_grad.cc:260
+tensorflow/compiler/mlir/lite/tests/legalize-tf.mlir:1365
+tensorflow/go/op/wrappers.go:48731
+tensorflow/lite/kernels/internal/reference/reference_ops.h:1721
+tensorflow/cc/gradients/array_grad_test.cc:213
+tensorflow/cc/gradients/array_grad.cc:261
+tensorflow/cc/gradients/array_grad.cc:265
+tensorflow/compiler/jit/mark_for_compilation_pass.cc:1816
+tensorflow/compiler/jit/tests/opens2s_gnmt_mixed_precision.golden_summary:81
+tensorflow/compiler/jit/tests/opens2s_gnmt_mixed_precision.golden_summary:134
+tensorflow/compiler/jit/tests/opens2s_gnmt_mixed_precision.golden_summary:147
+tensorflow/compiler/jit/tests/opens2s_gnmt_mixed_precision.golden_summary:271
+tensorflow/compiler/mlir/lite/tests/legalize-tf.mlir:1366
+tensorflow/compiler/mlir/tensorflow/ir/tf_generated_ops.td:12445
+tensorflow/compiler/mlir/tosa/g3doc/legalization.md:2740
+tensorflow/compiler/mlir/xla/tests/legalize-tf-with-tf2xla.mlir:222
+tensorflow/compiler/tests/randomized_tests.cc:2731
+
+tokens used
+input: 3,797
+cache read: 4,608
+cache write: 0
+output: 152
+reasoning output: 0
+
+The target `array_ops.cc` shape function matches the newer patch context, so this is a direct minimal backport: add the strict `batch_dim < 0` rejection before `c->Dim(input, batch_dim)`.
+
+tool: validate
+{
+  "ref": "957590ea15cc03ee2e00fc61934647d54836676f",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/ops/array_ops.cc b/tensorflow/core/ops/array_ops.cc\n--- a/tensorflow/core/ops/array_ops.cc\n+++ b/tensorflow/core/ops/array_ops.cc\n@@ -1638,10 +1638,20 @@ REGISTER_OP(\"ReverseSequence\")\n         return errors::InvalidArgument(\n             \"batch_dim must be < input rank: \", batch_dim, \" vs. \", input_rank);\n       }\n+\n       if (seq_dim >= input_rank) {\n         return errors::InvalidArgument(\n             \"seq_dim must be < input rank: \", seq_dim, \" vs. \", input_rank);\n       }\n \n+      // To prevent out of bound access when calling c->Dim(input, batch_dim),\n+      // batch_dim range [-1 * input rank, input rank) is allowed. However,\n+      // the op implementation has a stricter bound for batch_dim requiring >= 0\n+      // value. Thus, perform strict check here.\n+      if (batch_dim < 0) {\n+        return errors::InvalidArgument(\"batch_dim must be >=0, got \",\n+                                       batch_dim);\n+      }\n+\n       DimensionHandle batch_dim_dim = c->Dim(input, batch_dim);\n       TF_RETURN_IF_ERROR(\n           c->Merge(batch_dim_dim, c->Dim(seq_lens_shape, 0), &batch_dim_dim));\n"
+}
+Patch applied successfully
+
+tokens used
+input: 1,737
+cache read: 7,680
+cache write: 0
+output: 422
+reasoning output: 48
+
+The hunk validates cleanly against the specified target base. I’m applying the same localized guard now.
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/ops/array_ops.cc\n@@\n       if (batch_dim >= input_rank) {\n         return errors::InvalidArgument(\n             \"batch_dim must be < input rank: \", batch_dim, \" vs. \", input_rank);\n       }\n+\n       if (seq_dim >= input_rank) {\n         return errors::InvalidArgument(\n             \"seq_dim must be < input rank: \", seq_dim, \" vs. \", input_rank);\n       }\n \n+      // To prevent out of bound access when calling c->Dim(input, batch_dim),\n+      // batch_dim range [-1 * input rank, input rank) is allowed. However,\n+      // the op implementation has a stricter bound for batch_dim requiring >= 0\n+      // value. Thus, perform strict check here.\n+      if (batch_dim < 0) {\n+        return errors::InvalidArgument(\"batch_dim must be >=0, got \",\n+                                       batch_dim);\n+      }\n+\n       DimensionHandle batch_dim_dim = c->Dim(input, batch_dim);\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/ops/array_ops.cc
+
+tokens used
+input: 1,196
+cache read: 8,704
+cache write: 0
+output: 299
+reasoning output: 0
+
+The source edit is applied. I’ll inspect the resulting diff to confirm only the intended change is present.
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/ops/array_ops.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0066-957590ea15cc",
+  "timeout": 120000
+}
+warning: in the working copy of 'tensorflow/core/ops/array_ops.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/ops/array_ops.cc b/tensorflow/core/ops/array_ops.cc
+index 90bc2cecd0..0155a17048 100644
+--- a/tensorflow/core/ops/array_ops.cc
++++ b/tensorflow/core/ops/array_ops.cc
+@@ -1637,11 +1637,21 @@ REGISTER_OP("ReverseSequence")
+         return errors::InvalidArgument(
+             "batch_dim must be < input rank: ", batch_dim, " vs. ", input_rank);
+       }
++
+       if (seq_dim >= input_rank) {
+         return errors::InvalidArgument(
+             "seq_dim must be < input rank: ", seq_dim, " vs. ", input_rank);
+       }
+ 
++      // To prevent out of bound access when calling c->Dim(input, batch_dim),
++      // batch_dim range [-1 * input rank, input rank) is allowed. However,
++      // the op implementation has a stricter bound for batch_dim requiring >= 0
++      // value. Thus, perform strict check here.
++      if (batch_dim < 0) {
++        return errors::InvalidArgument("batch_dim must be >=0, got ",
++                                       batch_dim);
++      }
++
+       DimensionHandle batch_dim_dim = c->Dim(input, batch_dim);
+       TF_RETURN_IF_ERROR(
+           c->Merge(batch_dim_dim, c->Dim(seq_lens_shape, 0), &batch_dim_dim));
+
+tokens used
+input: 498
+cache read: 9,728
+cache write: 0
+output: 103
+reasoning output: 14
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/ops/array_ops.cc b/tensorflow/core/ops/array_ops.cc
+    index 90bc2cecd0..0155a17048 100644
+    --- a/tensorflow/core/ops/array_ops.cc
+    +++ b/tensorflow/core/ops/array_ops.cc
+    @@ -1637,11 +1637,21 @@ REGISTER_OP("ReverseSequence")
+             return errors::InvalidArgument(
+                 "batch_dim must be < input rank: ", batch_dim, " vs. ", input_rank);
+           }
+    +
+           if (seq_dim >= input_rank) {
+             return errors::InvalidArgument(
+                 "seq_dim must be < input rank: ", seq_dim, " vs. ", input_rank);
+           }
+     
+    +      // To prevent out of bound access when calling c->Dim(input, batch_dim),
+    +      // batch_dim range [-1 * input rank, input rank) is allowed. However,
+    +      // the op implementation has a stricter bound for batch_dim requiring >= 0
+    +      // value. Thus, perform strict check here.
+    +      if (batch_dim < 0) {
+    +        return errors::InvalidArgument("batch_dim must be >=0, got ",
+    +                                       batch_dim);
+    +      }
+    +
+           DimensionHandle batch_dim_dim = c->Dim(input, batch_dim);
+           TF_RETURN_IF_ERROR(
+               c->Merge(batch_dim_dim, c->Dim(seq_lens_shape, 0), &batch_dim_dim));
+  notes: >
+    Added the strict negative batch_dim shape-inference check for ReverseSequence before c->Dim access; hunk validation succeeded.
+```
+
+tokens used
+input: 969
+cache read: 9,728
+cache write: 0
+output: 380
+reasoning output: 16

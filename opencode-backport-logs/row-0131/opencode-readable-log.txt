@@ -1,0 +1,319 @@
+I’ll inspect the target-side `Subgraph::Invoke` implementation and validate the minimal hunk against the specified base before applying it.
+
+tool: viewcode
+{
+  "ref": "c2a10c4515f5cde5f661b48e9f86f0aaa4d91058",
+  "path": "tensorflow/lite/core/subgraph.cc",
+  "startline": 1035,
+  "endline": 1085
+}
+Here are lines 1035 through 1085.
+
+}
+
+TfLiteStatus Subgraph::ResizeTensorImpl(TfLiteTensor* tensor,
+                                        TfLiteIntArray* new_size) {
+  // Note that in theory we could resize kTfLiteArenaRwPersistent tensors too.
+  if (tensor->allocation_type == kTfLiteArenaRw ||
+      tensor->allocation_type == kTfLiteDynamic ||
+      tensor->allocation_type == kTfLiteArenaRwPersistent) {
+    tensor_resized_since_op_invoke_ |=
+        TfLiteIntArrayEqual(tensor->dims, new_size) == 0;
+    if (tensor->type != kTfLiteString) {
+      size_t bytesRequired;
+      TfLiteStatus status = BytesRequired(tensor->type, new_size->data,
+                                          new_size->size, &bytesRequired);
+      if (status != kTfLiteOk) {
+        TfLiteIntArrayFree(new_size);
+        return kTfLiteError;
+      }
+
+      // Realloc space for kTfLiteDynamic tensors.
+      TfLiteTensorRealloc(bytesRequired, tensor);
+      tensor->bytes = bytesRequired;
+    }
+    if (tensor->dims) TfLiteIntArrayFree(tensor->dims);
+    tensor->dims = new_size;
+
+    if (tensor->allocation_type != kTfLiteDynamic) {
+      tensor->data.raw = nullptr;
+    }
+  } else {
+    // kTfLiteMmapRo tensors are stored in the flatbuffer and are therefore
+    // of fixed size.
+    TfLiteIntArrayFree(new_size);
+    ReportError("Attempting to resize a fixed-size tensor.");
+    return kTfLiteError;
+  }
+  return kTfLiteOk;
+}
+
+void Subgraph::UseNNAPI(bool enable) {
+  // Note that there is no way to disable the delegate once it modified the
+  // graph.
+  if (applied_nnapi_delegate_ && !enable) {
+    ReportError("Attempting to disable NNAPI delegate after it's applied.");
+  } else {
+    should_apply_nnapi_delegate_ = enable;
+  }
+}
+
+void Subgraph::SwitchToDelegateContext() {
+  context_.GetNodeAndRegistration = GetNodeAndRegistration;
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: locate_symbol
+{
+  "ref": "c2a10c4515f5cde5f661b48e9f86f0aaa4d91058",
+  "symbol": "Subgraph::Invoke"
+}
+tensorflow/lite/core/subgraph.cc:746
+
+tokens used
+input: 3,908
+cache read: 4,608
+cache write: 0
+output: 164
+reasoning output: 0
+
+tool: grep
+{
+  "pattern": "null buffer is ok|kTfLiteBuiltinReshape|EnsureTensorDataIsReadable",
+  "path": "tensorflow/lite/core/subgraph.cc"
+}
+Found 4 matches
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0131-c2a10c4515f5\tensorflow\lite\core\subgraph.cc:
+  Line 794:         TF_LITE_ENSURE_STATUS(EnsureTensorDataIsReadable(tensor_index));
+
+  Line 797:         if (registration.builtin_code == kTfLiteBuiltinReshape && i == 1) {
+
+  Line 800:           // used for the shape, not for the data. Thus, null buffer is ok.
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0131-c2a10c4515f5\tensorflow\lite\core\subgraph.h:
+  Line 258:   TfLiteStatus EnsureTensorDataIsReadable(int tensor_index) {
+
+tool: viewcode
+{
+  "ref": "c2a10c4515f5cde5f661b48e9f86f0aaa4d91058",
+  "path": "tensorflow/lite/core/subgraph.cc",
+  "startline": 720,
+  "endline": 810
+}
+Here are lines 720 through 810.
+
+  return kTfLiteOk;
+}
+
+TfLiteStatus Subgraph::PrepareOpsAndTensors() {
+  if (!memory_planner_) {
+    memory_planner_.reset(new ArenaPlanner(
+        &context_, std::unique_ptr<GraphInfo>(new InterpreterInfo(this)),
+        /*preserve_inputs=*/true, /*preserve_intermediates*/ false));
+    memory_planner_->PlanAllocations();
+  }
+
+  int last_exec_plan_index_prepared = 0;
+
+  TF_LITE_ENSURE_STATUS(PrepareOpsStartingAt(
+      next_execution_plan_index_to_prepare_, &last_exec_plan_index_prepared));
+  next_execution_plan_index_to_prepare_ = last_exec_plan_index_prepared + 1;
+
+  TF_LITE_ENSURE_STATUS(memory_planner_->ExecuteAllocations(
+      next_execution_plan_index_to_plan_allocation_,
+      last_exec_plan_index_prepared));
+  next_execution_plan_index_to_plan_allocation_ =
+      last_exec_plan_index_prepared + 1;
+
+  return kTfLiteOk;
+}
+
+TfLiteStatus Subgraph::Invoke() {
+  if (!consistent_) {
+    ReportError("Invoke called on model that is not consistent.");
+    return kTfLiteError;
+  }
+
+  TfLiteStatus status = kTfLiteOk;
+  if (state_ == kStateUninvokable) {
+    ReportError("Invoke called on model that is not ready.");
+    return kTfLiteError;
+  }
+
+  // This is only needed for UseNNAPI(true);
+  if (should_apply_nnapi_delegate_ && !applied_nnapi_delegate_) {
+    TF_LITE_ENSURE_OK(&context_, ModifyGraphWithDelegate(NnApiDelegate()));
+    // only need to modify the graph once upon the first invocation.
+    applied_nnapi_delegate_ = true;
+  }
+
+  // Invocations are always done in node order.
+  // Note that calling Invoke repeatedly will cause the original memory plan to
+  // be reused, unless either ResizeInputTensor() or AllocateTensors() has been
+  // called.
+  for (int execution_plan_index = 0;
+       execution_plan_index < execution_plan_.size(); execution_plan_index++) {
+    if (execution_plan_index == next_execution_plan_index_to_prepare_) {
+      TF_LITE_ENSURE_STATUS(PrepareOpsAndTensors());
+      TF_LITE_ENSURE(&context_, next_execution_plan_index_to_prepare_ >=
+                                    execution_plan_index);
+    }
+    int node_index = execution_plan_[execution_plan_index];
+    TfLiteNode& node = nodes_and_registration_[node_index].first;
+    const TfLiteRegistration& registration =
+        nodes_and_registration_[node_index].second;
+    TFLITE_SCOPED_OPERATOR_PROFILE(profiler_.get(), node_index);
+
+    // TODO(ycling): This is an extra loop through inputs to check if the data
+    // need to be copied from Delegate buffer to raw memory, which is often not
+    // needed. We may want to cache this in prepare to know if this needs to be
+    // done for a node or not.
+    for (int i = 0; i < node.inputs->size; ++i) {
+      int tensor_index = node.inputs->data[i];
+      if (tensor_index == kOptionalTensor) {
+        continue;
+      }
+      TfLiteTensor* tensor = &tensors_[tensor_index];
+      if (tensor->delegate && tensor->delegate != node.delegate &&
+          tensor->data_is_stale) {
+        TF_LITE_ENSURE_STATUS(EnsureTensorDataIsReadable(tensor_index));
+      }
+      if (tensor->data.raw == nullptr && tensor->bytes > 0) {
+        if (registration.builtin_code == kTfLiteBuiltinReshape && i == 1) {
+          // In general, having a tensor here with no buffer will be an error.
+          // However, for the reshape operator, the second input tensor is only
+          // used for the shape, not for the data. Thus, null buffer is ok.
+          continue;
+        } else {
+          // In all other cases, we need to return an error as otherwise we will
+          // trigger a null pointer dereference (likely).
+          ReportError("Input tensor %d lacks data", tensor_index);
+          return kTfLiteError;
+        }
+      }
+    }
+
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tokens used
+input: 1,506
+cache read: 7,680
+cache write: 0
+output: 122
+reasoning output: 17
+
+The target release has the same `Subgraph::Invoke` null-buffer exception logic at a shifted line number, so the backport is a direct one-line condition change plus the updated explanatory comment.
+
+tool: validate
+{
+  "ref": "c2a10c4515f5cde5f661b48e9f86f0aaa4d91058",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/lite/core/subgraph.cc b/tensorflow/lite/core/subgraph.cc\n--- a/tensorflow/lite/core/subgraph.cc\n+++ b/tensorflow/lite/core/subgraph.cc\n@@ -794,10 +794,17 @@ TfLiteStatus Subgraph::Invoke() {\n         TF_LITE_ENSURE_STATUS(EnsureTensorDataIsReadable(tensor_index));\n       }\n       if (tensor->data.raw == nullptr && tensor->bytes > 0) {\n-        if (registration.builtin_code == kTfLiteBuiltinReshape && i == 1) {\n+        if (registration.builtin_code == kTfLiteBuiltinReshape && i == 1 &&\n+            tensor->dims->size != 1) {\n           // In general, having a tensor here with no buffer will be an error.\n-          // However, for the reshape operator, the second input tensor is only\n-          // used for the shape, not for the data. Thus, null buffer is ok.\n+          // However, for the reshape operator, the second input tensor is\n+          // sometimes only used for the shape, not for the data. Thus, null\n+          // buffer is ok in this situation.\n+          // The situation where null buffer is not ok for reshape operator is\n+          // only when there are 2 inputs given to the node and the one\n+          // corresponding to the shape (i == 1) is a vector that contains all\n+          // dimensions. See `GetOutputShape()` function in\n+          // `tensorflow/lite/kernels/reshape.cc`\n           continue;\n         } else {\n           // In all other cases, we need to return an error as otherwise we will\n"
+}
+Patch applied successfully
+
+tokens used
+input: 1,765
+cache read: 8,704
+cache write: 0
+output: 479
+reasoning output: 36
+
+Validation succeeded for the direct hunk. I’m applying only that source change now.
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/lite/core/subgraph.cc\n@@\n-        if (registration.builtin_code == kTfLiteBuiltinReshape && i == 1) {\n+        if (registration.builtin_code == kTfLiteBuiltinReshape && i == 1 &&\n+            tensor->dims->size != 1) {\n           // In general, having a tensor here with no buffer will be an error.\n-          // However, for the reshape operator, the second input tensor is only\n-          // used for the shape, not for the data. Thus, null buffer is ok.\n+          // However, for the reshape operator, the second input tensor is\n+          // sometimes only used for the shape, not for the data. Thus, null\n+          // buffer is ok in this situation.\n+          // The situation where null buffer is not ok for reshape operator is\n+          // only when there are 2 inputs given to the node and the one\n+          // corresponding to the shape (i == 1) is a vector that contains all\n+          // dimensions. See `GetOutputShape()` function in\n+          // `tensorflow/lite/kernels/reshape.cc`\n           continue;\n         } else {\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/lite/core/subgraph.cc
+
+tokens used
+input: 1,269
+cache read: 9,728
+cache write: 0
+output: 316
+reasoning output: 0
+
+The source edit is applied. I’m checking the resulting diff to confirm no unrelated files changed.
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/lite/core/subgraph.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0131-c2a10c4515f5"
+}
+warning: in the working copy of 'tensorflow/lite/core/subgraph.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/lite/core/subgraph.cc b/tensorflow/lite/core/subgraph.cc
+index 483aa98a96..4f4394243a 100644
+--- a/tensorflow/lite/core/subgraph.cc
++++ b/tensorflow/lite/core/subgraph.cc
+@@ -794,10 +794,17 @@ TfLiteStatus Subgraph::Invoke() {
+         TF_LITE_ENSURE_STATUS(EnsureTensorDataIsReadable(tensor_index));
+       }
+       if (tensor->data.raw == nullptr && tensor->bytes > 0) {
+-        if (registration.builtin_code == kTfLiteBuiltinReshape && i == 1) {
++        if (registration.builtin_code == kTfLiteBuiltinReshape && i == 1 &&
++            tensor->dims->size != 1) {
+           // In general, having a tensor here with no buffer will be an error.
+-          // However, for the reshape operator, the second input tensor is only
+-          // used for the shape, not for the data. Thus, null buffer is ok.
++          // However, for the reshape operator, the second input tensor is
++          // sometimes only used for the shape, not for the data. Thus, null
++          // buffer is ok in this situation.
++          // The situation where null buffer is not ok for reshape operator is
++          // only when there are 2 inputs given to the node and the one
++          // corresponding to the shape (i == 1) is a vector that contains all
++          // dimensions. See `GetOutputShape()` function in
++          // `tensorflow/lite/kernels/reshape.cc`
+           continue;
+         } else {
+           // In all other cases, we need to return an error as otherwise we will
+
+tokens used
+input: 587
+cache read: 10,752
+cache write: 0
+output: 98
+reasoning output: 18
+
+Applied the TensorFlow Lite `Reshape` null-buffer guard backport in `tensorflow/lite/core/subgraph.cc`. The hunk was validated against `c2a10c4515f5cde5f661b48e9f86f0aaa4d91058` with `validate` hunk mode.
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/lite/core/subgraph.cc b/tensorflow/lite/core/subgraph.cc
+    index 483aa98a96..4f4394243a 100644
+    --- a/tensorflow/lite/core/subgraph.cc
+    +++ b/tensorflow/lite/core/subgraph.cc
+    @@ -794,10 +794,17 @@ TfLiteStatus Subgraph::Invoke() {
+             TF_LITE_ENSURE_STATUS(EnsureTensorDataIsReadable(tensor_index));
+           }
+           if (tensor->data.raw == nullptr && tensor->bytes > 0) {
+    -        if (registration.builtin_code == kTfLiteBuiltinReshape && i == 1) {
+    +        if (registration.builtin_code == kTfLiteBuiltinReshape && i == 1 &&
+    +            tensor->dims->size != 1) {
+               // In general, having a tensor here with no buffer will be an error.
+    -          // However, for the reshape operator, the second input tensor is only
+    -          // used for the shape, not for the data. Thus, null buffer is ok.
+    +          // However, for the reshape operator, the second input tensor is
+    +          // sometimes only used for the shape, not for the data. Thus, null
+    +          // buffer is ok in this situation.
+    +          // The situation where null buffer is not ok for reshape operator is
+    +          // only when there are 2 inputs given to the node and the one
+    +          // corresponding to the shape (i == 1) is a vector that contains all
+    +          // dimensions. See `GetOutputShape()` function in
+    +          // `tensorflow/lite/kernels/reshape.cc`
+               continue;
+             } else {
+               // In all other cases, we need to return an error as otherwise we will
+  notes: >
+    Backported the reshape null-buffer exception narrowing so vector shape tensors still require data.
+```
+
+tokens used
+input: 1,127
+cache read: 10,752
+cache write: 0
+output: 513
+reasoning output: 17

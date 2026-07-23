@@ -1,0 +1,2549 @@
+I’ll inspect the target-side files and relevant symbols first, then apply the minimal equivalent hunks directly against the checked-out 2.5.2 tree.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target TensorFlow 2.5.2 code for all patched locations",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Validate uncertain backport hunks against target base",
+      "status": "pending",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply source changes to current checkout",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "content": "Review resulting diff and report YAML",
+      "status": "pending",
+      "priority": "high"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target TensorFlow 2.5.2 code for all patched locations",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Validate uncertain backport hunks against target base",
+    "status": "pending",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply source changes to current checkout",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "content": "Review resulting diff and report YAML",
+    "status": "pending",
+    "priority": "high"
+  }
+]
+
+tokens used
+input: 5,218
+cache read: 4,608
+cache write: 0
+output: 140
+reasoning output: 0
+
+tool: viewcode
+{
+  "ref": "b3d96ce05ed61d32580f67189092ff03c7c3ea9a",
+  "path": "tensorflow/core/framework/tensor.cc",
+  "startline": 500,
+  "endline": 590
+}
+Here are lines 500 through 590.
+
+// used by a client program which may not know how to encode a tensor
+// in the compact binary representation.
+template <typename T>
+TensorBuffer* FromProtoField(Allocator* a, const TensorProto& in, int64 n) {
+  CHECK_GT(n, 0);
+  Buffer<T>* buf = new Buffer<T>(a, n);
+  T* data = buf->template base<T>();
+  if (data == nullptr) {
+    buf->Unref();
+    return nullptr;
+  }
+
+  const int64 in_n = ProtoHelper<T>::NumElements(in);
+  if (in_n <= 0) {
+    std::fill_n(data, n, T());
+  } else {
+    auto begin = ProtoHelper<T>::Begin(in);
+    if (n <= in_n) {
+      std::copy_n(begin, n, data);
+    } else {
+      std::copy_n(begin, in_n, data);
+      if (std::is_trivially_copyable<T>::value) {
+        const T last = *(data + in_n - 1);
+        std::fill_n(data + in_n, n - in_n, last);
+      } else {
+        const T& last = *(data + in_n - 1);
+        std::fill_n(data + in_n, n - in_n, last);
+      }
+    }
+  }
+
+  return buf;
+}
+
+template <>
+TensorBuffer* FromProtoField<Variant>(Allocator* a, const TensorProto& in,
+                                      int64 n) {
+  CHECK_GT(n, 0);
+  Buffer<Variant>* buf = new Buffer<Variant>(a, n);
+  Variant* data = buf->template base<Variant>();
+  if (data == nullptr) {
+    buf->Unref();
+    return nullptr;
+  }
+  const int64 in_n = ProtoHelper<Variant>::NumElements(in);
+  if (in_n <= 0) {
+    std::fill_n(data, n, Variant());
+  } else {
+    // If tensor shape says we have n < in_n elements in the output tensor
+    // then make sure to only decode the first n out of the in_n elements in the
+    // in tensors. In all other cases, we decode all in_n elements of in and set
+    // the remaining elements up to n to be the default Variant() value.
+    const int64 real_n = n < in_n ? n : in_n;
+    for (int64 i = 0; i < real_n; ++i) {
+      data[i] = in.variant_val(i);
+      if (!DecodeUnaryVariant(&data[i])) {
+        LOG(ERROR) << "Could not decode variant with type_name: \""
+                   << data[i].TypeName()
+                   << "\".  Perhaps you forgot to register a "
+                      "decoder via REGISTER_UNARY_VARIANT_DECODE_FUNCTION?";
+        buf->Unref();
+        return nullptr;
+      }
+    }
+    for (int64 i = in_n; i < n; ++i) {
+      data[i] = Variant();
+    }
+  }
+  return buf;
+}
+
+// fp16 and bfloat16 are opaque to the protobuf, so we deserialize these
+// identical to uint16 but with data stored in half_val instead of int_val (ie.,
+// we don't use ProtoHelper<uint16>).
+template <>
+TensorBuffer* FromProtoField<Eigen::half>(Allocator* a, const TensorProto& in,
+                                          int64 n) {
+  CHECK_GT(n, 0);
+  Buffer<Eigen::half>* buf = new Buffer<Eigen::half>(a, n);
+  uint16* data = buf->template base<uint16>();
+  if (data == nullptr) {
+    buf->Unref();
+    return nullptr;
+  }
+  const int64 in_n = in.half_val().size();
+  auto begin = in.half_val().begin();
+  if (n <= in_n) {
+    std::copy_n(begin, n, data);
+  } else if (in_n > 0) {
+    std::copy_n(begin, in_n, data);
+    const uint16 last = *(data + in_n - 1);
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: viewcode
+{
+  "ref": "b3d96ce05ed61d32580f67189092ff03c7c3ea9a",
+  "path": "tensorflow/core/framework/BUILD",
+  "startline": 710,
+  "endline": 755
+}
+Here are lines 710 through 755.
+
+        "//tensorflow/core/util:managed_stack_trace",
+    ],
+    alwayslink = 1,
+)
+
+cc_library(
+    name = "type_index",
+    hdrs = ["type_index.h"],
+    visibility = ["//visibility:private"],
+    deps = [
+        "//tensorflow/core/platform:hash",
+        "//tensorflow/core/platform:stringpiece",
+        "//tensorflow/core/platform:types",
+    ],
+)
+
+cc_library(
+    name = "tensor_types",
+    hdrs = ["tensor_types.h"],
+    visibility = ["//visibility:private"],
+    deps = ["//third_party/eigen3"],
+)
+
+cc_library(
+    name = "type_traits",
+    hdrs = ["type_traits.h"],
+    visibility = ["//visibility:private"],
+    deps = [
+        ":numeric_types",
+        "//tensorflow/core/platform:types",
+    ],
+)
+
+tf_cuda_library(
+    name = "tensor",
+    srcs = [
+        "log_memory.cc",
+        "tensor.cc",
+        "typed_allocator.cc",
+        "types.cc",
+        "variant.cc",
+        "variant_op_registry.cc",
+        "variant_tensor_data.cc",
+    ],
+    hdrs = [
+        "log_memory.h",
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: viewcode
+{
+  "ref": "b3d96ce05ed61d32580f67189092ff03c7c3ea9a",
+  "path": "tensorflow/core/framework/resource_handle.cc",
+  "startline": 1,
+  "endline": 190
+}
+This file only has 107 lines. Here are lines 1 through 107.
+
+/* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+==============================================================================*/
+
+#include "tensorflow/core/framework/resource_handle.h"
+#include "tensorflow/core/framework/resource_handle.pb.h"
+#include "tensorflow/core/lib/strings/strcat.h"
+
+namespace tensorflow {
+
+ResourceHandle::ResourceHandle() {}
+
+ResourceHandle::ResourceHandle(const ResourceHandleProto& proto) {
+  FromProto(proto);
+}
+
+ResourceHandle::~ResourceHandle() {}
+
+void ResourceHandle::AsProto(ResourceHandleProto* proto) const {
+  proto->set_device(device());
+  proto->set_container(container());
+  proto->set_name(name());
+  proto->set_hash_code(hash_code());
+  proto->set_maybe_type_name(maybe_type_name());
+  for (const auto& dtype_and_shape_pair : dtypes_and_shapes_) {
+    auto dtype_and_shape = proto->add_dtypes_and_shapes();
+    dtype_and_shape->set_dtype(dtype_and_shape_pair.dtype);
+    dtype_and_shape_pair.shape.AsProto(dtype_and_shape->mutable_shape());
+  }
+}
+
+void ResourceHandle::FromProto(const ResourceHandleProto& proto) {
+  set_device(proto.device());
+  set_container(proto.container());
+  set_name(proto.name());
+  set_hash_code(proto.hash_code());
+  set_maybe_type_name(proto.maybe_type_name());
+  std::vector<DtypeAndPartialTensorShape> dtypes_and_shapes;
+  for (const auto& dtype_and_shape : proto.dtypes_and_shapes()) {
+    DataType dtype = dtype_and_shape.dtype();
+    PartialTensorShape shape(dtype_and_shape.shape());
+    dtypes_and_shapes.push_back(DtypeAndPartialTensorShape{dtype, shape});
+  }
+  dtypes_and_shapes_ = std::move(dtypes_and_shapes);
+}
+
+string ResourceHandle::SerializeAsString() const {
+  ResourceHandleProto proto;
+  AsProto(&proto);
+  return proto.SerializeAsString();
+}
+
+bool ResourceHandle::ParseFromString(const string& s) {
+  ResourceHandleProto proto;
+  const bool status = proto.ParseFromString(s);
+  if (status) FromProto(proto);
+  return status;
+}
+
+string ResourceHandle::DebugString() const {
+  return strings::StrCat("device: ", device(), " container: ", container(),
+                         " name: ", name(), " hash_code: ", hash_code(),
+                         " maybe_type_name: ", maybe_type_name());
+}
+
+string ProtoDebugString(const ResourceHandle& handle) {
+  return handle.DebugString();
+}
+
+void EncodeResourceHandleList(const ResourceHandle* p, int64 n,
+                              std::unique_ptr<port::StringListEncoder> e) {
+  ResourceHandleProto proto;
+  for (int i = 0; i < n; ++i) {
+    p[i].AsProto(&proto);
+    e->Append(proto);
+  }
+  e->Finalize();
+}
+
+bool DecodeResourceHandleList(std::unique_ptr<port::StringListDecoder> d,
+                              ResourceHandle* ps, int64 n) {
+  std::vector<uint32> sizes(n);
+  if (!d->ReadSizes(&sizes)) return false;
+
+  ResourceHandleProto proto;
+  for (int i = 0; i < n; ++i) {
+    if (!proto.ParseFromArray(d->Data(sizes[i]), sizes[i])) {
+      return false;
+    }
+    ps[i].FromProto(proto);
+  }
+  return true;
+}
+
+}  // namespace tensorflow
+
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: viewcode
+{
+  "ref": "b3d96ce05ed61d32580f67189092ff03c7c3ea9a",
+  "path": "tensorflow/core/framework/resource_handle.h",
+  "startline": 1,
+  "endline": 130
+}
+This file only has 123 lines. Here are lines 1 through 123.
+
+/* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+==============================================================================*/
+
+#ifndef TENSORFLOW_FRAMEWORK_RESOURCE_HANDLE_H_
+#define TENSORFLOW_FRAMEWORK_RESOURCE_HANDLE_H_
+
+#include "tensorflow/core/framework/tensor_shape.h"
+#include "tensorflow/core/framework/types.pb.h"
+#include "tensorflow/core/platform/tensor_coding.h"
+#include "tensorflow/core/platform/types.h"
+#include "tensorflow/core/util/managed_stack_trace.h"
+
+namespace tensorflow {
+
+class ResourceHandleProto;
+
+// Class representing a handle to a tensorflow resource. Handles are
+// not valid across executions, but can be serialized back and forth from within
+// a single run.
+//
+// This is the native C++ class equivalent of ResourceHandleProto.  They are
+// separate so that kernels do not need to depend on protos.
+class ResourceHandle {
+ public:
+  ResourceHandle();
+  ResourceHandle(const ResourceHandleProto& proto);
+  ~ResourceHandle();
+
+  // Unique name for the device containing the resource.
+  const std::string& device() const { return device_; }
+
+  void set_device(const std::string& device) { device_ = device; }
+
+  // Container in which this resource is placed.
+  const std::string& container() const { return container_; }
+  void set_container(const std::string& container) { container_ = container; }
+
+  // Unique name of this resource.
+  const std::string& name() const { return name_; }
+  void set_name(const std::string& name) { name_ = name; }
+
+  // Hash code for the type of the resource. Is only valid in the same device
+  // and in the same execution.
+  uint64 hash_code() const { return hash_code_; }
+  void set_hash_code(uint64 hash_code) { hash_code_ = hash_code; }
+
+  // For debug-only, the name of the type pointed to by this handle, if
+  // available.
+  const std::string& maybe_type_name() const { return maybe_type_name_; }
+  void set_maybe_type_name(const std::string& value) {
+    maybe_type_name_ = value;
+  }
+
+  // Data types and shapes for the underlying resource.
+  std::vector<DtypeAndPartialTensorShape> dtypes_and_shapes() const {
+    return dtypes_and_shapes_;
+  }
+  void set_dtypes_and_shapes(
+      const std::vector<DtypeAndPartialTensorShape>& dtypes_and_shapes) {
+    dtypes_and_shapes_ = dtypes_and_shapes;
+  }
+
+  void set_definition_stack_trace(
+      const absl::optional<ManagedStackTrace>& definition_stack_trace) {
+    definition_stack_trace_ = definition_stack_trace;
+  }
+
+  const absl::optional<ManagedStackTrace>& definition_stack_trace() const {
+    return definition_stack_trace_;
+  }
+
+  // Conversion to and from ResourceHandleProto
+  void AsProto(ResourceHandleProto* proto) const;
+  void FromProto(const ResourceHandleProto& proto);
+
+  // Serialization via ResourceHandleProto
+  std::string SerializeAsString() const;
+  bool ParseFromString(const std::string& s);
+
+  std::string DebugString() const;
+
+  // GUID for anonymous resources. Resources with this shared_name will have
+  // their shared_name replaced with a GUID at creation time
+  static constexpr const char* ANONYMOUS_NAME =
+      "cd2c89b7-88b7-44c8-ad83-06c2a9158347";
+
+ public:
+  std::string device_;
+  std::string container_;
+  std::string name_;
+  uint64 hash_code_ = 0;
+  std::string maybe_type_name_;
+  std::vector<DtypeAndPartialTensorShape> dtypes_and_shapes_;
+  absl::optional<ManagedStackTrace> definition_stack_trace_;
+};
+
+// For backwards compatibility for when this was a proto
+std::string ProtoDebugString(const ResourceHandle& handle);
+
+// Encodes a list of ResourceHandle protos in the given StringListEncoder.
+void EncodeResourceHandleList(const ResourceHandle* p, int64 n,
+                              std::unique_ptr<port::StringListEncoder> e);
+
+// Decodes a list of ResourceHandle protos from the given StringListDecoder.
+bool DecodeResourceHandleList(std::unique_ptr<port::StringListDecoder> d,
+                              ResourceHandle* ps, int64 n);
+
+}  // namespace tensorflow
+
+#endif  // TENSORFLOW_FRAMEWORK_RESOURCE_HANDLE_H_
+
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tokens used
+input: 386
+cache read: 9,728
+cache write: 0
+output: 243
+reasoning output: 0
+
+tool: grep
+{
+  "pattern": "TF_CHECK_OK|BuildPartialTensorShape|Status::OK",
+  "path": "tensorflow/core/framework",
+  "include": "*.cc"
+}
+Found 100 matches (more matches available)
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0053-b3d96ce05ed6\tensorflow\core\framework\attr_value_util.cc:
+  Line 445:   return Status::OK();
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0053-b3d96ce05ed6\tensorflow\core\framework\cancellation.cc:
+  Line 225:   return Status::OK();
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0053-b3d96ce05ed6\tensorflow\core\framework\collective.cc:
+  Line 222:   return Status::OK();
+
+  Line 237:       return Status::OK();
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0053-b3d96ce05ed6\tensorflow\core\framework\common_shape_fns.cc:
+  Line 79:   return Status::OK();
+
+  Line 107:   return Status::OK();
+
+  Line 130:   return Status::OK();
+
+  Line 150:   return Status::OK();
+
+  Line 271:       return Status::OK();
+
+  Line 306:   return Status::OK();
+
+  Line 343:   return Status::OK();
+
+  Line 377:   return Status::OK();
+
+  Line 402:     return Status::OK();
+
+  Line 438:   return Status::OK();
+
+  Line 455:   return Status::OK();
+
+  Line 471:   return Status::OK();
+
+  Line 491:   return Status::OK();
+
+  Line 516:   return Status::OK();
+
+  Line 541:   return Status::OK();
+
+  Line 572:   return tensorflow::Status::OK();
+
+  Line 726:   return Status::OK();
+
+  Line 854:   return Status::OK();
+
+  Line 926:   return Status::OK();
+
+  Line 1048:   return Status::OK();
+
+  Line 1128:   return Status::OK();
+
+  Line 1136:   return Status::OK();
+
+  Line 1178:   return Status::OK();
+
+  Line 1184:   return Status::OK();
+
+  Line 1209:   return Status::OK();
+
+  Line 1250:   return Status::OK();
+
+  Line 1273:   return Status::OK();
+
+  Line 1286:     return Status::OK();
+
+  Line 1326:   return Status::OK();
+
+  Line 1343:     return Status::OK();
+
+  Line 1427:   return Status::OK();
+
+  Line 1499:   return Status::OK();
+
+  Line 1595:   return Status::OK();
+
+  Line 1646:       return Status::OK();
+
+  Line 1656:       return Status::OK();
+
+  Line 1709:   return Status::OK();
+
+  Line 1791:   return Status::OK();
+
+  Line 1803:   return Status::OK();
+
+  Line 1810:   return Status::OK();
+
+  Line 1833:   return Status::OK();
+
+  Line 1859:       return Status::OK();
+
+  Line 1890:   return Status::OK();
+
+  Line 1912:       return Status::OK();
+
+  Line 1927:     return Status::OK();
+
+  Line 1978:   return Status::OK();
+
+  Line 2007:     return Status::OK();
+
+  Line 2039:           return Status::OK();
+
+  Line 2045:           return Status::OK();
+
+  Line 2059:           return Status::OK();
+
+  Line 2078:           return Status::OK();
+
+  Line 2087:   return Status::OK();
+
+  Line 2094:   return Status::OK();
+
+  Line 2125:   return Status::OK();
+
+  Line 2155:   return Status::OK();
+
+  Line 2199:     return Status::OK();
+
+  Line 2221:       return Status::OK();
+
+  Line 2226:       return Status::OK();
+
+  Line 2232:   return Status::OK();
+
+  Line 2273:   return Status::OK();
+
+  Line 2293:   return Status::OK();
+
+  Line 2312:     return Status::OK();
+
+  Line 2329:   return Status::OK();
+
+  Line 2391:   return Status::OK();
+
+  Line 2400:   return Status::OK();
+
+  Line 2415:   return Status::OK();
+
+  Line 2461:     return Status::OK();
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0053-b3d96ce05ed6\tensorflow\core\framework\common_shape_fns_test.cc:
+  Line 54:   TF_CHECK_OK(OpDefBuilder("Assert")
+
+  Line 61:   TF_CHECK_OK(NodeDefBuilder("test", "Assert")
+
+  Line 74:   TF_CHECK_OK(OpDefBuilder("L2Loss")
+
+  Line 81:   TF_CHECK_OK(
+
+  Line 102:   TF_CHECK_OK(OpDefBuilder("MatMul")
+
+  Line 112:   TF_CHECK_OK(NodeDefBuilder("test", "MatMul")
+
+  Line 181:     TF_CHECK_OK(NodeDefBuilder("test", "MatMul")
+
+  Line 199:     TF_CHECK_OK(NodeDefBuilder("test", "MatMul")
+
+  Line 409:   TF_CHECK_OK(OpDefBuilder("BiasAdd")
+
+  Line 417:   TF_CHECK_OK(NodeDefBuilder("test", "BiasAdd")
+
+  Line 451:     TF_CHECK_OK(NodeDefBuilder("test", "BiasAdd")
+
+  Line 465:     TF_CHECK_OK(NodeDefBuilder("test", "BiasAdd")
+
+  Line 477:     TF_CHECK_OK(NodeDefBuilder("test", "BiasAdd")
+
+  Line 498:     TF_CHECK_OK(NodeDefBuilder("test", "BiasAdd")
+
+  Line 514:   TF_CHECK_OK(NodeDefBuilder("test", "_FusedBatchNormEx")
+
+  Line 539:   TF_CHECK_OK(OpDefBuilder("BiasAddGrad")
+
+  Line 546:   TF_CHECK_OK(NodeDefBuilder("test", "BiasAddGrad")
+
+  Line 569:     TF_CHECK_OK(NodeDefBuilder("test", "BiasAddGrad")
+
+  Line 582:     TF_CHECK_OK(NodeDefBuilder("test", "BiasAddGrad")
+
+  Line 595:     TF_CHECK_OK(NodeDefBuilder("test", "BiasAddGrad")
+
+  Line 614:     TF_CHECK_OK(NodeDefBuilder("test", "BiasAddGrad")
+
+  Line 630:     TF_CHECK_OK(NodeDefBuilder("test", "Conv2D")
+
+  Line 819:     TF_CHECK_OK(NodeDefBuilder("test", "Conv2D")
+
+  Line 933:     TF_CHECK_OK(NodeDefBuilder("test", "Conv3D")
+
+  Line 1035:     TF_CHECK_OK(NodeDefBuilder("test", "Conv3D")
+
+  Line 1076:   TF_CHECK_OK(NodeDefBuilder("test", "DepthwiseConv2dNative")
+
+  Line 1105:   TF_CHECK_OK(NodeDefBuilder("test", "DepthwiseConv2dNative")
+
+  Line 1122:     TF_CHECK_OK(NodeDefBuilder("test", "AvgPool")
+
+  Line 1168:     TF_CHECK_OK(NodeDefBuilder("test", "MaxPool")
+
+  Line 1204:     TF_CHECK_OK(NodeDefBuilder("test", "MaxPoolV2")
+
+
+(Results truncated. Consider using a more specific path or pattern.)
+
+tool: grep
+{
+  "pattern": "class Status|using Status",
+  "path": "tensorflow/core/platform",
+  "include": "*.h"
+}
+Found 3 matches
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0053-b3d96ce05ed6\tensorflow\core\platform\platform_strings.h:
+  Line 353: class Status;
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0053-b3d96ce05ed6\tensorflow\core\platform\status.h:
+  Line 41: class Status {
+
+  Line 151: class StatusGroup {
+
+tool: grep
+{
+  "pattern": "name = \"resource_handle\"",
+  "path": "tensorflow/core/framework/BUILD"
+}
+Found 1 matches
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0053-b3d96ce05ed6\tensorflow\core\framework\BUILD:
+  Line 699:     name = "resource_handle",
+
+tool: grep
+{
+  "pattern": "resource_handle.cc|resource_handle.h",
+  "path": "tensorflow/core/framework/BUILD"
+}
+Found 11 matches
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0053-b3d96ce05ed6\tensorflow\core\framework\BUILD:
+  Line 223:         "resource_handle.h",
+
+  Line 312:         "resource_handle.cc",
+
+  Line 313:         "resource_handle.h",
+
+  Line 700:     srcs = ["resource_handle.cc"],
+
+  Line 701:     hdrs = ["resource_handle.h"],
+
+  Line 1049:         "resource_handle.h",
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0053-b3d96ce05ed6\tensorflow\core\framework\register_types.h:
+  Line 21: #include "tensorflow/core/framework/resource_handle.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0053-b3d96ce05ed6\tensorflow\core\framework\resource_handle.cc:
+  Line 16: #include "tensorflow/core/framework/resource_handle.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0053-b3d96ce05ed6\tensorflow\core\framework\resource_mgr.h:
+  Line 28: #include "tensorflow/core/framework/resource_handle.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0053-b3d96ce05ed6\tensorflow\core\framework\typed_allocator.h:
+  Line 22: #include "tensorflow/core/framework/resource_handle.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0053-b3d96ce05ed6\tensorflow\core\framework\types.h:
+  Line 31: #include "tensorflow/core/framework/resource_handle.h"
+
+tokens used
+input: 3,728
+cache read: 9,728
+cache write: 0
+output: 142
+reasoning output: 13
+
+The target has the same vulnerable decoding pattern, but its `resource_handle.cc` is leaner than the source patch context. I’m checking the exact dependency/include availability before editing.
+
+tool: grep
+{
+  "pattern": "BuildPartialTensorShape",
+  "path": "tensorflow/core/framework",
+  "include": "*.h"
+}
+Found 4 matches
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0053-b3d96ce05ed6\tensorflow\core\framework\tensor_shape.h:
+  Line 532:   static Status BuildPartialTensorShape(gtl::ArraySlice<int64_t> dim_sizes,
+
+  Line 536:   static Status BuildPartialTensorShape(
+
+  Line 538:     return BuildPartialTensorShape(gtl::ArraySlice<int64_t>(dim_sizes), out);
+
+  Line 540:   static Status BuildPartialTensorShape(const TensorShapeProto& proto,
+
+tool: grep
+{
+  "pattern": "#define TF_CHECK_OK|TF_CHECK_OK",
+  "path": "tensorflow/core/platform",
+  "include": "*.h"
+}
+Found 3 matches
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0053-b3d96ce05ed6\tensorflow\core\platform\status.h:
+  Line 231: #define TF_CHECK_OK(val) TF_DO_CHECK_OK(val, FATAL)
+
+  Line 234: // DEBUG only version of TF_CHECK_OK.  Compiler still parses 'val' even in opt
+
+  Line 237: #define TF_DCHECK_OK(val) TF_CHECK_OK(val)
+
+tool: read
+{
+  "filePath": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0053-b3d96ce05ed6\\tensorflow\\core\\framework\\BUILD",
+  "offset": 690,
+  "limit": 35
+}
+<path>C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0053-b3d96ce05ed6\tensorflow\core\framework\BUILD</path>
+<type>file</type>
+<content>
+690:         "//tensorflow/core/platform:logging",
+691:         "//tensorflow/core/platform:macros",
+692:         "//tensorflow/core/util:overflow",
+693:         "//third_party/eigen3",
+694:     ],
+695:     alwayslink = 1,
+696: )
+697: 
+698: cc_library(
+699:     name = "resource_handle",
+700:     srcs = ["resource_handle.cc"],
+701:     hdrs = ["resource_handle.h"],
+702:     visibility = ["//tensorflow/core:__pkg__"],
+703:     deps = [
+704:         ":resource_handle_proto_cc",
+705:         ":tensor_shape",
+706:         ":types_proto_cc",
+707:         "//tensorflow/core/lib/strings:strcat",
+708:         "//tensorflow/core/platform:tensor_coding",
+709:         "//tensorflow/core/platform:types",
+710:         "//tensorflow/core/util:managed_stack_trace",
+711:     ],
+712:     alwayslink = 1,
+713: )
+714: 
+715: cc_library(
+716:     name = "type_index",
+717:     hdrs = ["type_index.h"],
+718:     visibility = ["//visibility:private"],
+719:     deps = [
+720:         "//tensorflow/core/platform:hash",
+721:         "//tensorflow/core/platform:stringpiece",
+722:         "//tensorflow/core/platform:types",
+723:     ],
+724: )
+
+(Showing lines 690-724 of 1686. Use offset=725 to continue.)
+</content>
+
+tool: read
+{
+  "filePath": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0053-b3d96ce05ed6\\tensorflow\\core\\framework\\tensor.cc",
+  "offset": 1,
+  "limit": 80
+}
+<path>C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0053-b3d96ce05ed6\tensorflow\core\framework\tensor.cc</path>
+<type>file</type>
+<content>
+1: /* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
+2: 
+3: Licensed under the Apache License, Version 2.0 (the "License");
+4: you may not use this file except in compliance with the License.
+5: You may obtain a copy of the License at
+6: 
+7:     http://www.apache.org/licenses/LICENSE-2.0
+8: 
+9: Unless required by applicable law or agreed to in writing, software
+10: distributed under the License is distributed on an "AS IS" BASIS,
+11: WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+12: See the License for the specific language governing permissions and
+13: limitations under the License.
+14: ==============================================================================*/
+15: 
+16: // Implementation notes:
+17: //
+18: // Tensor.cc uses a few templated classes and structs to facilitate
+19: // implementation of the Tensor class.
+20: //
+21: // * Buffer<T>: provides the implementation for a typed array T[n].
+22: //   The array is allocated by the given allocator. It runs T's
+23: //   default constructors and destructors when T is not a simple type
+24: //   (e.g., string.), and skips them otherwise.
+25: //
+26: // * Helper<T>: provides various routines given type T.  The routines
+27: //   includes running the constructor and destructor of T[], encoding
+28: //   an decoding T[] into/from a Cord, etc.
+29: 
+30: #include "tensorflow/core/framework/tensor.h"
+31: 
+32: #include "absl/strings/escaping.h"
+33: #include "tensorflow/core/framework/allocation_description.pb.h"
+34: #include "tensorflow/core/framework/log_memory.h"
+35: #include "tensorflow/core/framework/resource_handle.pb.h"
+36: #include "tensorflow/core/framework/tensor.pb.h"
+37: #include "tensorflow/core/framework/tensor_description.pb.h"
+38: #include "tensorflow/core/framework/type_traits.h"
+39: #include "tensorflow/core/framework/typed_allocator.h"
+40: #include "tensorflow/core/framework/types.h"
+41: #include "tensorflow/core/framework/variant.h"
+42: #include "tensorflow/core/framework/variant_encode_decode.h"
+43: #include "tensorflow/core/framework/variant_op_registry.h"
+44: #include "tensorflow/core/framework/variant_tensor_data.h"
+45: #include "tensorflow/core/lib/core/coding.h"
+46: #include "tensorflow/core/lib/core/errors.h"
+47: #include "tensorflow/core/lib/core/status.h"
+48: #include "tensorflow/core/lib/gtl/inlined_vector.h"
+49: #include "tensorflow/core/lib/strings/str_util.h"
+50: #include "tensorflow/core/lib/strings/strcat.h"
+51: #include "tensorflow/core/platform/errors.h"
+52: #include "tensorflow/core/platform/logging.h"
+53: #include "tensorflow/core/platform/macros.h"
+54: #include "tensorflow/core/platform/protobuf.h"
+55: #include "tensorflow/core/platform/tensor_coding.h"
+56: #include "tensorflow/core/platform/types.h"
+57: 
+58: namespace tensorflow {
+59: 
+60: // Allow Tensors to be stored inside Variants with automatic
+61: // encoding/decoding when those Variants are themselves being decoded
+62: // in a Tensor's FromProto.
+63: //
+64: // NOTE(mrry): The corresponding "copy function" registrations can be found in
+65: // ../common_runtime/copy_tensor.cc (due to dependencies on other common_runtime
+66: // code).
+67: REGISTER_UNARY_VARIANT_DECODE_FUNCTION(Tensor, "tensorflow::Tensor");
+68: 
+69: bool TensorBuffer::GetAllocatedBytes(size_t* out_bytes) const {
+70:   AllocationDescription allocation_description;
+71:   FillAllocationDescription(&allocation_description);
+72:   if (allocation_description.allocated_bytes() > 0) {
+73:     *out_bytes = allocation_description.allocated_bytes();
+74:     return true;
+75:   } else {
+76:     return false;
+77:   }
+78: }
+79: 
+80: namespace {
+
+(Showing lines 1-80 of 1306. Use offset=81 to continue.)
+</content>
+
+tool: grep
+{
+  "pattern": "cc_library\\(\\s*name = \"errors\"|name = \"macros\"",
+  "path": "tensorflow/core/platform/BUILD"
+}
+Found 1 matches
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0053-b3d96ce05ed6\tensorflow\core\platform\BUILD:
+  Line 372:     name = "macros",
+
+tokens used
+input: 3,287
+cache read: 12,800
+cache write: 0
+output: 301
+reasoning output: 17
+
+tool: read
+{
+  "filePath": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0053-b3d96ce05ed6\\tensorflow\\core\\platform\\BUILD",
+  "offset": 320,
+  "limit": 80
+}
+<path>C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0053-b3d96ce05ed6\tensorflow\core\platform\BUILD</path>
+<type>file</type>
+<content>
+320:     name = "hash",
+321:     srcs = ["hash.cc"],
+322:     hdrs = ["hash.h"],
+323:     deps = [
+324:         ":macros",
+325:         ":raw_coding",
+326:         ":stringpiece",
+327:         ":types",
+328:     ],
+329: )
+330: 
+331: cc_library(
+332:     name = "human_readable_json",
+333:     textual_hdrs = ["human_readable_json.h"],
+334:     deps = tf_platform_deps("human_readable_json"),
+335: )
+336: 
+337: cc_library(
+338:     name = "jpeg",
+339:     hdrs = ["jpeg.h"],
+340:     deps = [
+341:         "@libjpeg_turbo//:jpeg",
+342:     ],
+343: )
+344: 
+345: cc_library(
+346:     name = "load_library",
+347:     textual_hdrs = ["load_library.h"],
+348:     deps = tf_windows_aware_platform_deps("load_library"),
+349: )
+350: 
+351: cc_library(
+352:     name = "logger",
+353:     srcs = ["logger.cc"],
+354:     hdrs = ["logger.h"],
+355:     deps = [
+356:         ":env",
+357:         ":logging",
+358:         ":protobuf",
+359:         "@com_google_absl//absl/base",
+360:         "@com_google_absl//absl/synchronization",
+361:     ],
+362:     alwayslink = 1,
+363: )
+364: 
+365: cc_library(
+366:     name = "logging",
+367:     textual_hdrs = ["logging.h"],
+368:     deps = tf_logging_deps(),
+369: )
+370: 
+371: cc_library(
+372:     name = "macros",
+373:     hdrs = ["macros.h"],
+374: )
+375: 
+376: filegroup(
+377:     name = "xla_cpu_runtime_srcs",
+378:     srcs = tf_platform_deps("xla_cpu_runtime_srcs") + [
+379:         "cord.h",
+380:         "ctstring.h",
+381:         "ctstring_internal.h",
+382:         "dynamic_annotations.h",
+383:         "env_time.h",
+384:         "macros.h",
+385:         "platform.h",
+386:         "tstring.h",
+387:         "types.h",
+388:     ] + if_windows([
+389:         "//tensorflow/core/platform/windows:xla_cpu_runtime_srcs",
+390:     ]),
+391: )
+392: 
+393: cc_library(
+394:     name = "mutex",
+395:     compatible_with = get_compatible_with_portable(),
+396:     textual_hdrs = ["mutex.h"],
+397:     deps = tf_platform_deps("mutex"),
+398: )
+399: 
+
+(Showing lines 320-399 of 1770. Use offset=400 to continue.)
+</content>
+
+tool: read
+{
+  "filePath": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0053-b3d96ce05ed6\\tensorflow\\core\\framework\\resource_handle.cc",
+  "offset": 1,
+  "limit": 120
+}
+<path>C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0053-b3d96ce05ed6\tensorflow\core\framework\resource_handle.cc</path>
+<type>file</type>
+<content>
+1: /* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
+2: 
+3: Licensed under the Apache License, Version 2.0 (the "License");
+4: you may not use this file except in compliance with the License.
+5: You may obtain a copy of the License at
+6: 
+7:     http://www.apache.org/licenses/LICENSE-2.0
+8: 
+9: Unless required by applicable law or agreed to in writing, software
+10: distributed under the License is distributed on an "AS IS" BASIS,
+11: WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+12: See the License for the specific language governing permissions and
+13: limitations under the License.
+14: ==============================================================================*/
+15: 
+16: #include "tensorflow/core/framework/resource_handle.h"
+17: #include "tensorflow/core/framework/resource_handle.pb.h"
+18: #include "tensorflow/core/lib/strings/strcat.h"
+19: 
+20: namespace tensorflow {
+21: 
+22: ResourceHandle::ResourceHandle() {}
+23: 
+24: ResourceHandle::ResourceHandle(const ResourceHandleProto& proto) {
+25:   FromProto(proto);
+26: }
+27: 
+28: ResourceHandle::~ResourceHandle() {}
+29: 
+30: void ResourceHandle::AsProto(ResourceHandleProto* proto) const {
+31:   proto->set_device(device());
+32:   proto->set_container(container());
+33:   proto->set_name(name());
+34:   proto->set_hash_code(hash_code());
+35:   proto->set_maybe_type_name(maybe_type_name());
+36:   for (const auto& dtype_and_shape_pair : dtypes_and_shapes_) {
+37:     auto dtype_and_shape = proto->add_dtypes_and_shapes();
+38:     dtype_and_shape->set_dtype(dtype_and_shape_pair.dtype);
+39:     dtype_and_shape_pair.shape.AsProto(dtype_and_shape->mutable_shape());
+40:   }
+41: }
+42: 
+43: void ResourceHandle::FromProto(const ResourceHandleProto& proto) {
+44:   set_device(proto.device());
+45:   set_container(proto.container());
+46:   set_name(proto.name());
+47:   set_hash_code(proto.hash_code());
+48:   set_maybe_type_name(proto.maybe_type_name());
+49:   std::vector<DtypeAndPartialTensorShape> dtypes_and_shapes;
+50:   for (const auto& dtype_and_shape : proto.dtypes_and_shapes()) {
+51:     DataType dtype = dtype_and_shape.dtype();
+52:     PartialTensorShape shape(dtype_and_shape.shape());
+53:     dtypes_and_shapes.push_back(DtypeAndPartialTensorShape{dtype, shape});
+54:   }
+55:   dtypes_and_shapes_ = std::move(dtypes_and_shapes);
+56: }
+57: 
+58: string ResourceHandle::SerializeAsString() const {
+59:   ResourceHandleProto proto;
+60:   AsProto(&proto);
+61:   return proto.SerializeAsString();
+62: }
+63: 
+64: bool ResourceHandle::ParseFromString(const string& s) {
+65:   ResourceHandleProto proto;
+66:   const bool status = proto.ParseFromString(s);
+67:   if (status) FromProto(proto);
+68:   return status;
+69: }
+70: 
+71: string ResourceHandle::DebugString() const {
+72:   return strings::StrCat("device: ", device(), " container: ", container(),
+73:                          " name: ", name(), " hash_code: ", hash_code(),
+74:                          " maybe_type_name: ", maybe_type_name());
+75: }
+76: 
+77: string ProtoDebugString(const ResourceHandle& handle) {
+78:   return handle.DebugString();
+79: }
+80: 
+81: void EncodeResourceHandleList(const ResourceHandle* p, int64 n,
+82:                               std::unique_ptr<port::StringListEncoder> e) {
+83:   ResourceHandleProto proto;
+84:   for (int i = 0; i < n; ++i) {
+85:     p[i].AsProto(&proto);
+86:     e->Append(proto);
+87:   }
+88:   e->Finalize();
+89: }
+90: 
+91: bool DecodeResourceHandleList(std::unique_ptr<port::StringListDecoder> d,
+92:                               ResourceHandle* ps, int64 n) {
+93:   std::vector<uint32> sizes(n);
+94:   if (!d->ReadSizes(&sizes)) return false;
+95: 
+96:   ResourceHandleProto proto;
+97:   for (int i = 0; i < n; ++i) {
+98:     if (!proto.ParseFromArray(d->Data(sizes[i]), sizes[i])) {
+99:       return false;
+100:     }
+101:     ps[i].FromProto(proto);
+102:   }
+103:   return true;
+104: }
+105: 
+106: }  // namespace tensorflow
+
+(End of file - total 106 lines)
+</content>
+
+tool: read
+{
+  "filePath": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0053-b3d96ce05ed6\\tensorflow\\core\\framework\\resource_handle.h",
+  "offset": 1,
+  "limit": 130
+}
+<path>C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0053-b3d96ce05ed6\tensorflow\core\framework\resource_handle.h</path>
+<type>file</type>
+<content>
+1: /* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
+2: 
+3: Licensed under the Apache License, Version 2.0 (the "License");
+4: you may not use this file except in compliance with the License.
+5: You may obtain a copy of the License at
+6: 
+7:     http://www.apache.org/licenses/LICENSE-2.0
+8: 
+9: Unless required by applicable law or agreed to in writing, software
+10: distributed under the License is distributed on an "AS IS" BASIS,
+11: WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+12: See the License for the specific language governing permissions and
+13: limitations under the License.
+14: ==============================================================================*/
+15: 
+16: #ifndef TENSORFLOW_FRAMEWORK_RESOURCE_HANDLE_H_
+17: #define TENSORFLOW_FRAMEWORK_RESOURCE_HANDLE_H_
+18: 
+19: #include "tensorflow/core/framework/tensor_shape.h"
+20: #include "tensorflow/core/framework/types.pb.h"
+21: #include "tensorflow/core/platform/tensor_coding.h"
+22: #include "tensorflow/core/platform/types.h"
+23: #include "tensorflow/core/util/managed_stack_trace.h"
+24: 
+25: namespace tensorflow {
+26: 
+27: class ResourceHandleProto;
+28: 
+29: // Class representing a handle to a tensorflow resource. Handles are
+30: // not valid across executions, but can be serialized back and forth from within
+31: // a single run.
+32: //
+33: // This is the native C++ class equivalent of ResourceHandleProto.  They are
+34: // separate so that kernels do not need to depend on protos.
+35: class ResourceHandle {
+36:  public:
+37:   ResourceHandle();
+38:   ResourceHandle(const ResourceHandleProto& proto);
+39:   ~ResourceHandle();
+40: 
+41:   // Unique name for the device containing the resource.
+42:   const std::string& device() const { return device_; }
+43: 
+44:   void set_device(const std::string& device) { device_ = device; }
+45: 
+46:   // Container in which this resource is placed.
+47:   const std::string& container() const { return container_; }
+48:   void set_container(const std::string& container) { container_ = container; }
+49: 
+50:   // Unique name of this resource.
+51:   const std::string& name() const { return name_; }
+52:   void set_name(const std::string& name) { name_ = name; }
+53: 
+54:   // Hash code for the type of the resource. Is only valid in the same device
+55:   // and in the same execution.
+56:   uint64 hash_code() const { return hash_code_; }
+57:   void set_hash_code(uint64 hash_code) { hash_code_ = hash_code; }
+58: 
+59:   // For debug-only, the name of the type pointed to by this handle, if
+60:   // available.
+61:   const std::string& maybe_type_name() const { return maybe_type_name_; }
+62:   void set_maybe_type_name(const std::string& value) {
+63:     maybe_type_name_ = value;
+64:   }
+65: 
+66:   // Data types and shapes for the underlying resource.
+67:   std::vector<DtypeAndPartialTensorShape> dtypes_and_shapes() const {
+68:     return dtypes_and_shapes_;
+69:   }
+70:   void set_dtypes_and_shapes(
+71:       const std::vector<DtypeAndPartialTensorShape>& dtypes_and_shapes) {
+72:     dtypes_and_shapes_ = dtypes_and_shapes;
+73:   }
+74: 
+75:   void set_definition_stack_trace(
+76:       const absl::optional<ManagedStackTrace>& definition_stack_trace) {
+77:     definition_stack_trace_ = definition_stack_trace;
+78:   }
+79: 
+80:   const absl::optional<ManagedStackTrace>& definition_stack_trace() const {
+81:     return definition_stack_trace_;
+82:   }
+83: 
+84:   // Conversion to and from ResourceHandleProto
+85:   void AsProto(ResourceHandleProto* proto) const;
+86:   void FromProto(const ResourceHandleProto& proto);
+87: 
+88:   // Serialization via ResourceHandleProto
+89:   std::string SerializeAsString() const;
+90:   bool ParseFromString(const std::string& s);
+91: 
+92:   std::string DebugString() const;
+93: 
+94:   // GUID for anonymous resources. Resources with this shared_name will have
+95:   // their shared_name replaced with a GUID at creation time
+96:   static constexpr const char* ANONYMOUS_NAME =
+97:       "cd2c89b7-88b7-44c8-ad83-06c2a9158347";
+98: 
+99:  public:
+100:   std::string device_;
+101:   std::string container_;
+102:   std::string name_;
+103:   uint64 hash_code_ = 0;
+104:   std::string maybe_type_name_;
+105:   std::vector<DtypeAndPartialTensorShape> dtypes_and_shapes_;
+106:   absl::optional<ManagedStackTrace> definition_stack_trace_;
+107: };
+108: 
+109: // For backwards compatibility for when this was a proto
+110: std::string ProtoDebugString(const ResourceHandle& handle);
+111: 
+112: // Encodes a list of ResourceHandle protos in the given StringListEncoder.
+113: void EncodeResourceHandleList(const ResourceHandle* p, int64 n,
+114:                               std::unique_ptr<port::StringListEncoder> e);
+115: 
+116: // Decodes a list of ResourceHandle protos from the given StringListDecoder.
+117: bool DecodeResourceHandleList(std::unique_ptr<port::StringListDecoder> d,
+118:                               ResourceHandle* ps, int64 n);
+119: 
+120: }  // namespace tensorflow
+121: 
+122: #endif  // TENSORFLOW_FRAMEWORK_RESOURCE_HANDLE_H_
+
+(End of file - total 122 lines)
+</content>
+
+tool: read
+{
+  "filePath": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0053-b3d96ce05ed6\\tensorflow\\core\\framework\\tensor_shape.h",
+  "offset": 520,
+  "limit": 30
+}
+<path>C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0053-b3d96ce05ed6\tensorflow\core\framework\tensor_shape.h</path>
+<type>file</type>
+<content>
+520: };
+521: 
+522: /// Manages the partially known dimensions of a Tensor and their sizes.
+523: class PartialTensorShape : public TensorShapeBase<PartialTensorShape> {
+524:  public:
+525:   PartialTensorShape() {}
+526:   using TensorShapeBase<PartialTensorShape>::TensorShapeBase;
+527: 
+528:   // These factory methods should be used instead of the constructors that take
+529:   // an array of sizes if calling code cannot validate that the sizes specify a
+530:   // valid `PartialTensorShape`.
+531:   // The value in `*out` is valid iff the returned value is `Status::OK`.
+532:   static Status BuildPartialTensorShape(gtl::ArraySlice<int64_t> dim_sizes,
+533:                                         PartialTensorShape* out) {
+534:     return BuildTensorShapeBase(dim_sizes, out);
+535:   }
+536:   static Status BuildPartialTensorShape(
+537:       std::initializer_list<int64_t> dim_sizes, PartialTensorShape* out) {
+538:     return BuildPartialTensorShape(gtl::ArraySlice<int64_t>(dim_sizes), out);
+539:   }
+540:   static Status BuildPartialTensorShape(const TensorShapeProto& proto,
+541:                                         PartialTensorShape* out) {
+542:     return BuildTensorShapeBase(proto, out);
+543:   }
+544: 
+545:   /// Add a dimension to the end ("inner-most"), returns a new
+546:   /// PartialTensorShape.
+547:   /// REQUIRES: `size >= -1`, where -1 means unknown
+548:   PartialTensorShape Concatenate(int64 size) const;
+549: 
+
+(Showing lines 520-549 of 759. Use offset=550 to continue.)
+</content>
+
+tokens used
+input: 2,226
+cache read: 15,872
+cache write: 0
+output: 296
+reasoning output: 48
+
+tool: grep
+{
+  "pattern": "name = \"errors\"",
+  "path": "tensorflow",
+  "include": "BUILD"
+}
+Found 3 matches
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0053-b3d96ce05ed6\tensorflow\core\platform\BUILD:
+  Line 284:     name = "errors",
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0053-b3d96ce05ed6\tensorflow\core\lib\core\BUILD:
+  Line 67:     name = "errors",
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0053-b3d96ce05ed6\tensorflow\python\BUILD:
+  Line 873:     name = "errors",
+
+tokens used
+input: 4,155
+cache read: 17,920
+cache write: 0
+output: 32
+reasoning output: 10
+
+tool: read
+{
+  "filePath": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0053-b3d96ce05ed6\\tensorflow\\core\\platform\\errors.h",
+  "offset": 1,
+  "limit": 60
+}
+<path>C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0053-b3d96ce05ed6\tensorflow\core\platform\errors.h</path>
+<type>file</type>
+<content>
+1: /* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
+2: 
+3: Licensed under the Apache License, Version 2.0 (the "License");
+4: you may not use this file except in compliance with the License.
+5: You may obtain a copy of the License at
+6: 
+7:     http://www.apache.org/licenses/LICENSE-2.0
+8: 
+9: Unless required by applicable law or agreed to in writing, software
+10: distributed under the License is distributed on an "AS IS" BASIS,
+11: WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+12: See the License for the specific language governing permissions and
+13: limitations under the License.
+14: ==============================================================================*/
+15: 
+16: #ifndef TENSORFLOW_CORE_PLATFORM_ERRORS_H_
+17: #define TENSORFLOW_CORE_PLATFORM_ERRORS_H_
+18: 
+19: #include <sstream>
+20: 
+21: #include "absl/strings/str_join.h"
+22: #include "tensorflow/core/platform/status.h"
+23: #include "tensorflow/core/platform/logging.h"
+24: #include "tensorflow/core/platform/macros.h"
+25: #include "tensorflow/core/platform/str_util.h"
+26: #include "tensorflow/core/platform/strcat.h"
+27: 
+28: namespace tensorflow {
+29: namespace errors {
+30: 
+31: typedef ::tensorflow::error::Code Code;
+32: 
+33: namespace internal {
+34: 
+35: // The DECLARE_ERROR macro below only supports types that can be converted
+36: // into StrCat's AlphaNum. For the other types we rely on a slower path
+37: // through std::stringstream. To add support of a new type, it is enough to
+38: // make sure there is an operator<<() for it:
+39: //
+40: //   std::ostream& operator<<(std::ostream& os, const MyType& foo) {
+41: //     os << foo.ToString();
+42: //     return os;
+43: //   }
+44: // Eventually absl::strings will have native support for this and we will be
+45: // able to completely remove PrepareForStrCat().
+46: template <typename T>
+47: typename std::enable_if<!std::is_convertible<T, strings::AlphaNum>::value,
+48:                         std::string>::type
+49: PrepareForStrCat(const T& t) {
+50:   std::stringstream ss;
+51:   ss << t;
+52:   return ss.str();
+53: }
+54: inline const strings::AlphaNum& PrepareForStrCat(const strings::AlphaNum& a) {
+55:   return a;
+56: }
+57: 
+58: }  // namespace internal
+59: 
+60: // Append some context to an error message.  Each time we append
+
+(Showing lines 1-60 of 166. Use offset=61 to continue.)
+</content>
+
+tool: read
+{
+  "filePath": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0053-b3d96ce05ed6\\tensorflow\\core\\platform\\BUILD",
+  "offset": 280,
+  "limit": 20
+}
+<path>C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0053-b3d96ce05ed6\tensorflow\core\platform\BUILD</path>
+<type>file</type>
+<content>
+280:     ],
+281: )
+282: 
+283: cc_library(
+284:     name = "errors",
+285:     hdrs = ["errors.h"],
+286:     deps = [
+287:         ":logging",
+288:         ":macros",
+289:         ":status",
+290:         ":str_util",
+291:         ":strcat",
+292:         "@com_google_absl//absl/strings",
+293:     ],
+294: )
+295: 
+296: cc_library(
+297:     name = "file_statistics",
+298:     hdrs = ["file_statistics.h"],
+299:     deps = [":types"],
+
+(Showing lines 280-299 of 1770. Use offset=300 to continue.)
+</content>
+
+tool: read
+{
+  "filePath": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0053-b3d96ce05ed6\\tensorflow\\core\\lib\\core\\errors.h",
+  "offset": 1,
+  "limit": 60
+}
+<path>C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0053-b3d96ce05ed6\tensorflow\core\lib\core\errors.h</path>
+<type>file</type>
+<content>
+1: /* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
+2: 
+3: Licensed under the Apache License, Version 2.0 (the "License");
+4: you may not use this file except in compliance with the License.
+5: You may obtain a copy of the License at
+6: 
+7:     http://www.apache.org/licenses/LICENSE-2.0
+8: 
+9: Unless required by applicable law or agreed to in writing, software
+10: distributed under the License is distributed on an "AS IS" BASIS,
+11: WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+12: See the License for the specific language governing permissions and
+13: limitations under the License.
+14: ==============================================================================*/
+15: 
+16: #ifndef TENSORFLOW_CORE_LIB_CORE_ERRORS_H_
+17: #define TENSORFLOW_CORE_LIB_CORE_ERRORS_H_
+18: 
+19: #include "tensorflow/core/platform/errors.h"
+20: 
+21: #endif  // TENSORFLOW_CORE_LIB_CORE_ERRORS_H_
+
+(End of file - total 21 lines)
+</content>
+
+tokens used
+input: 298
+cache read: 22,016
+cache write: 0
+output: 227
+reasoning output: 167
+
+tool: grep
+{
+  "pattern": "\\.FromProto\\(|FromProto\\(",
+  "path": "tensorflow",
+  "include": "*.{cc,h}"
+}
+Found 100 matches (more matches available)
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0053-b3d96ce05ed6\tensorflow\cc\ops\const_op_test.cc:
+  Line 111:   auto c = ops::ConstFromProto(root, proto);
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0053-b3d96ce05ed6\tensorflow\cc\ops\const_op.h:
+  Line 33: Output ConstFromProto(const Scope& scope, const TensorProto& proto);
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0053-b3d96ce05ed6\tensorflow\cc\ops\const_op.cc:
+  Line 52: Output ConstFromProto(const Scope& scope, const TensorProto& proto) {
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0053-b3d96ce05ed6\tensorflow\compiler\xrt\tests\raw_api_test.cc:
+  Line 216:   return xla::Literal::CreateFromProto(response).ValueOrDie();
+
+  Line 221:   auto l_a = xla::Literal::CreateFromProto(a).ValueOrDie();
+
+  Line 222:   auto l_b = xla::Literal::CreateFromProto(b).ValueOrDie();
+
+  Line 234:   auto l_b = xla::Literal::CreateFromProto(b).ValueOrDie();
+
+  Line 445:         xla::Literal::CreateFromProto(read_back_literal).ValueOrDie(), DT_FLOAT,
+
+  Line 794:   auto base_literal = xla::Literal::CreateFromProto(alloc.value()).ValueOrDie();
+
+  Line 2183:     auto literal = xla::Literal::CreateFromProto(response).ValueOrDie();
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0053-b3d96ce05ed6\tensorflow\cc\saved_model\reader.cc:
+  Line 76:         DCHECK(parsed.FromProto(*node_value.mutable_tensor()));
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0053-b3d96ce05ed6\tensorflow\compiler\xrt\kernels\xrt_state_ops.h:
+  Line 64:     TF_ASSIGN_OR_RETURN(*literal, xla::Literal::CreateFromProto(proto));
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0053-b3d96ce05ed6\tensorflow\compiler\xrt\kernels\tpu_execute_op.cc:
+  Line 129:   return xla::HloInputOutputAliasConfig::CreateFromProto(
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0053-b3d96ce05ed6\tensorflow\cc\framework\cc_op_gen.cc:
+  Line 166:   CHECK(t.FromProto(tensor_proto));
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0053-b3d96ce05ed6\tensorflow\core\tpu\virtual_device.h:
+  Line 31:   Status MakeTensorFromProto(const TensorProto& tensor_proto,
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0053-b3d96ce05ed6\tensorflow\core\tpu\virtual_device.cc:
+  Line 79: Status VirtualDevice::MakeTensorFromProto(const TensorProto& tensor_proto,
+
+  Line 84:   if (!parsed.FromProto(allocator, tensor_proto)) {
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0053-b3d96ce05ed6\tensorflow\core\tpu\tpu_on_demand_compiler.cc:
+  Line 243:     return HloModule::CreateFromProto(result_proto, module->config());
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0053-b3d96ce05ed6\tensorflow\core\tpu\tpu_execute.cc:
+  Line 466:       xla::HloInputOutputAliasConfig::CreateFromProto(
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0053-b3d96ce05ed6\tensorflow\tools\graph_transforms\transform_utils_test.cc:
+  Line 188:     CHECK(tensor.FromProto(tensor_proto));
+
+  Line 204:     CHECK(tensor.FromProto(tensor_proto));
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0053-b3d96ce05ed6\tensorflow\tools\graph_transforms\transform_utils.cc:
+  Line 156:   CHECK(tensor.FromProto(tensor_proto));
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0053-b3d96ce05ed6\tensorflow\tools\graph_transforms\summarize_graph_main.cc:
+  Line 133:           tensor.FromProto(node.attr().at("value").tensor())) {
+
+  Line 217:           tensor.FromProto(node.attr().at("value").tensor())) {
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0053-b3d96ce05ed6\tensorflow\tools\graph_transforms\round_weights.cc:
+  Line 54:         if (!old_tensor.FromProto(old_const_node.attr().at("value").tensor())) {
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0053-b3d96ce05ed6\tensorflow\tools\graph_transforms\quantize_weights.cc:
+  Line 57:         if (!old_tensor.FromProto(old_const_node.attr().at("value").tensor())) {
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0053-b3d96ce05ed6\tensorflow\stream_executor\tpu\c_api_conversions.cc:
+  Line 392:   return xla::HloModule::CreateFromProto(
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0053-b3d96ce05ed6\tensorflow\c\experimental\saved_model\core\saved_model_utils.cc:
+  Line 221:   bool parse_result = tensor.FromProto(proto);
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0053-b3d96ce05ed6\tensorflow\core\tpu\kernels\xla\infeed_op.cc:
+  Line 55:                         xla::HloSharding::FromProto(*sharding));
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0053-b3d96ce05ed6\tensorflow\core\tpu\kernels\tpu_compile_op_support.cc:
+  Line 231:                 xla::HloSharding::FromProto(proto_arg.sharding());
+
+  Line 289:       auto sharding_or = xla::HloSharding::FromProto(retval.sharding());
+
+  Line 329:       xla::HloModule::CreateFromProto(compilation_result.computation->proto(),
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0053-b3d96ce05ed6\tensorflow\core\tpu\kernels\tpu_compile_op_common.cc:
+  Line 109:                         xla::HloSharding::FromProto(proto_arg.sharding()));
+
+  Line 219:           CHECK(tensor.FromProto(
+
+  Line 244:                         xla::HloSharding::FromProto(proto_arg.sharding()));
+
+  Line 271:                         xla::HloSharding::FromProto(proto_arg.sharding()));
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0053-b3d96ce05ed6\tensorflow\lite\experimental\acceleration\configuration\proto_to_flatbuffer.h:
+  Line 25: const ComputeSettings* ConvertFromProto(
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0053-b3d96ce05ed6\tensorflow\lite\experimental\acceleration\configuration\proto_to_flatbuffer.cc:
+  Line 285: const ComputeSettings* ConvertFromProto(
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0053-b3d96ce05ed6\tensorflow\compiler\xla\tools\show_literal.cc:
+  Line 44:       xla::Literal::CreateFromProto(literal_proto).ConsumeValueOrDie();
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0053-b3d96ce05ed6\tensorflow\compiler\xla\tools\replay_computation.cc:
+  Line 263:       TF_ASSIGN_OR_RETURN(Literal literal, Literal::CreateFromProto(proto));
+
+  Line 506:             Literal::CreateFromProto(snapshot.result()).ConsumeValueOrDie();
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0053-b3d96ce05ed6\tensorflow\compiler\xla\tools\interactive_graphviz.cc:
+  Line 695:         HloModule::CreateModuleConfigFromProto(snapshot.hlo().hlo_module(),
+
+  Line 698:     module = HloModule::CreateFromProto(snapshot.hlo().hlo_module(), config)
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0053-b3d96ce05ed6\tensorflow\compiler\xla\tools\hlo_module_loader.cc:
+  Line 104:                         HloModule::CreateModuleConfigFromProto(
+
+  Line 111:         module, HloModule::CreateFromProto(proto.hlo().hlo_module(), config));
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0053-b3d96ce05ed6\tensorflow\compiler\xla\tools\dumped_computation_to_text.cc:
+  Line 75:       auto config = HloModule::CreateModuleConfigFromProto(computation.proto(),
+
+  Line 79:           HloModule::CreateFromProto(computation.proto(), config)
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0053-b3d96ce05ed6\tensorflow\compiler\xla\literal_test.cc:
+  Line 1550:     TF_ASSERT_OK_AND_ASSIGN(Literal literal, Literal::CreateFromProto(p));
+
+  Line 1596:   TF_ASSERT_OK_AND_ASSIGN(Literal literal, Literal::CreateFromProto(p));
+
+  Line 1618:   TF_ASSERT_OK_AND_ASSIGN(Literal literal, Literal::CreateFromProto(p));
+
+  Line 1901:     return Literal::CreateFromProto(literal.ToProto()).ValueOrDie();
+
+  Line 1923:   Status status = Literal::CreateFromProto(proto).status();
+
+  Line 1934:       Literal::CreateFromProto(proto, /*prohibit_empty_literal=*/false)
+
+  Line 1948:       Literal::CreateFromProto(proto, /*prohibit_empty_literal=*/false)
+
+  Line 1959:   Status status = Literal::CreateFromProto(proto).status();
+
+  Line 1971:   Status status = Literal::CreateFromProto(proto).status();
+
+  Line 1984:   Status status = Literal::CreateFromProto(proto).status();
+
+  Line 1997:   Status status = Literal::CreateFromProto(proto).status();
+
+  Line 2012:   Status status = Literal::CreateFromProto(proto).status();
+
+  Line 2030:   Status status = Literal::CreateFromProto(proto).status();
+
+  Line 2055:   Status status = Literal::CreateFromProto(proto).status();
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0053-b3d96ce05ed6\tensorflow\compiler\xla\literal.h:
+  Line 491:     Status CopyFromProto(const LiteralProto& proto);
+
+  Line 719:   static StatusOr<Literal> CreateFromProto(const LiteralProto& proto,
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0053-b3d96ce05ed6\tensorflow\compiler\xla\literal.cc:
+  Line 350: /* static */ StatusOr<Literal> MutableLiteralBase::CreateFromProto(
+
+  Line 396:           TF_RETURN_IF_ERROR(piece->CopyFromProto(*proto_element));
+
+  Line 2131: Status LiteralBase::Piece::CopyFromProto(const LiteralProto& proto) {
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0053-b3d96ce05ed6\tensorflow\compiler\xla\layout_test.cc:
+  Line 102:     EXPECT_EQ(layout, Layout::CreateFromProto(layout.ToProto()));
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0053-b3d96ce05ed6\tensorflow\compiler\xla\layout.h:
+  Line 40:   static Tile CreateFromProto(const TileProto& tile_proto) {
+
+  Line 102:   static Layout CreateFromProto(const LayoutProto& proto);
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0053-b3d96ce05ed6\tensorflow\compiler\xla\layout.cc:
+  Line 48: /* static */ Layout Layout::CreateFromProto(const LayoutProto& proto) {
+
+  Line 56:     *layout.add_tiles() = Tile::CreateFromProto(tile_proto);
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0053-b3d96ce05ed6\tensorflow\compiler\xla\shape.cc:
+  Line 54:     *mutable_layout() = Layout::CreateFromProto(shape_proto.layout());
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0053-b3d96ce05ed6\tensorflow\compiler\xla\client\xla_builder_test.cc:
+  Line 49:                         HloModule::CreateModuleConfigFromProto(
+
+  Line 51:     return HloModule::CreateFromProto(proto, config);
+
+  Line 61:                         HloModule::CreateModuleConfigFromProto(
+
+  Line 63:     return HloModule::CreateFromProto(proto, config);
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0053-b3d96ce05ed6\tensorflow\compiler\xla\client\xla_builder.cc:
+  Line 3368:                         Literal::CreateFromProto(val_proto->literal(), true));
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0053-b3d96ce05ed6\tensorflow\compiler\xla\client\value_inference.cc:
+  Line 127:         HloInstruction::CreateFromProto(inst, operand_map, computation_map));
+
+  Line 207:       TF_ASSIGN_OR_RETURN(auto computation, HloComputation::CreateFromProto(
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0053-b3d96ce05ed6\tensorflow\core\summary\summary_db_writer.cc:
+  Line 1054:     if (!t.FromProto(s->tensor())) return errors::InvalidArgument("bad proto");
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0053-b3d96ce05ed6\tensorflow\compiler\xla\client\client.cc:
+  Line 65:   return Literal::CreateFromProto(*response.mutable_literal());
+
+  Line 147:   return Literal::CreateFromProto(response.literal());
+
+  Line 209:   return Literal::CreateFromProto(response.literal());
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0053-b3d96ce05ed6\tensorflow\lite\toco\import_tensorflow.cc:
+  Line 244: // TODO(b/80208043): simply use tensorflow::Tensor::FromProto() instead.
+
+  Line 355:     // TODO(b/80208043): use tensorflow::Tensor::FromProto() which is the
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0053-b3d96ce05ed6\tensorflow\compiler\xla\python\xla_compiler.cc:
+  Line 86:                       HloModule::CreateModuleConfigFromProto(
+
+  Line 90:       HloModule::CreateFromProto(computation.proto(), module_config));
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0053-b3d96ce05ed6\tensorflow\core\profiler\internal\tfprof_stats_test.cc:
+  Line 72:   string TestToFromProto(const string& cmd, const Options& opts) {
+
+  Line 116:   EXPECT_EQ(root.DebugString(), TestToFromProto("scope", opts));
+
+  Line 152:   EXPECT_EQ(root.DebugString(), TestToFromProto("scope", opts));
+
+  Line 185:   EXPECT_EQ(root.DebugString(), TestToFromProto("graph", opts));
+
+  Line 233:   EXPECT_EQ(root.DebugString(), TestToFromProto("scope", opts));
+
+  Line 268:   EXPECT_EQ(root.DebugString(), TestToFromProto("scope", opts));
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0053-b3d96ce05ed6\tensorflow\core\profiler\internal\tfprof_show_test.cc:
+  Line 78:   string TestToFromProto(const string& cmd, const Options& opts,
+
+  Line 124:   EXPECT_EQ(dump_str, TestToFromProto("scope", opts));
+
+  Line 171:   EXPECT_EQ(dump_str, TestToFromProto("scope", opts));
+
+  Line 215:   EXPECT_EQ(dump_str, TestToFromProto("op", opts, true));
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0053-b3d96ce05ed6\tensorflow\core\profiler\internal\tfprof_node.h:
+  Line 228:   void FromProto(const ExecProfile& exec) {
+
+  Line 313:     FromProto(node, profile, id_to_string);
+
+  Line 435:   void FromProto(const ProfileNode& node, const ProfileProto& profile,
+
+
+(Results truncated. Consider using a more specific path or pattern.)
+
+tokens used
+input: 1,910
+cache read: 22,016
+cache write: 0
+output: 39
+reasoning output: 88
+
+tool: grep
+{
+  "pattern": "ResourceHandle.*FromProto|FromProto\\(.*ResourceHandle|\\.FromProto\\(proto\\)",
+  "path": "tensorflow/core",
+  "include": "*.{cc,h}"
+}
+Found 10 matches
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0053-b3d96ce05ed6\tensorflow\core\framework\tensor_test.cc:
+  Line 157:     EXPECT_TRUE(t2.FromProto(proto));
+
+  Line 165:     EXPECT_TRUE(t2.FromProto(proto));
+
+  Line 170:     EXPECT_TRUE(t3.FromProto(proto));
+
+  Line 320:   EXPECT_TRUE(t2.FromProto(proto));
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0053-b3d96ce05ed6\tensorflow\core\framework\resource_handle.h:
+  Line 86:   void FromProto(const ResourceHandleProto& proto);
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0053-b3d96ce05ed6\tensorflow\core\framework\resource_handle.cc:
+  Line 43: void ResourceHandle::FromProto(const ResourceHandleProto& proto) {
+
+  Line 101:     ps[i].FromProto(proto);
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0053-b3d96ce05ed6\tensorflow\core\grappler\optimizers\constant_folding.cc:
+  Line 69:   if (!tensor.FromProto(proto)) {
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0053-b3d96ce05ed6\tensorflow\core\kernels\deserialize_sparse_string_op.cc:
+  Line 222:     if (!tensor.FromProto(proto)) {
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0053-b3d96ce05ed6\tensorflow\core\kernels\data\experimental\snapshot_util.cc:
+  Line 642:     if (!tensor.FromProto(proto)) {
+
+tokens used
+input: 5,605
+cache read: 23,040
+cache write: 0
+output: 54
+reasoning output: 9
+
+The key API (`PartialTensorShape::BuildPartialTensorShape`) and Bazel targets are present in 2.5.2, so the source fix can be ported with target-style `int64` types and the leaner target dependency list.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target TensorFlow 2.5.2 code for all patched locations",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate uncertain backport hunks against target base",
+      "status": "in_progress",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply source changes to current checkout",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "content": "Review resulting diff and report YAML",
+      "status": "pending",
+      "priority": "high"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target TensorFlow 2.5.2 code for all patched locations",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate uncertain backport hunks against target base",
+    "status": "in_progress",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply source changes to current checkout",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "content": "Review resulting diff and report YAML",
+    "status": "pending",
+    "priority": "high"
+  }
+]
+
+tokens used
+input: 1,037
+cache read: 28,160
+cache write: 0
+output: 161
+reasoning output: 71
+
+tool: validate
+{
+  "ref": "b3d96ce05ed61d32580f67189092ff03c7c3ea9a",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/framework/resource_handle.cc b/tensorflow/core/framework/resource_handle.cc\n--- a/tensorflow/core/framework/resource_handle.cc\n+++ b/tensorflow/core/framework/resource_handle.cc\n@@ -16,13 +16,25 @@ limitations under the License.\n #include \"tensorflow/core/framework/resource_handle.h\"\n #include \"tensorflow/core/framework/resource_handle.pb.h\"\n+#include \"tensorflow/core/framework/tensor_shape.h\"\n+#include \"tensorflow/core/lib/core/errors.h\"\n #include \"tensorflow/core/lib/strings/strcat.h\"\n+#include \"tensorflow/core/platform/errors.h\"\n+#include \"tensorflow/core/platform/macros.h\"\n \n namespace tensorflow {\n \n ResourceHandle::ResourceHandle() {}\n \n ResourceHandle::ResourceHandle(const ResourceHandleProto& proto) {\n-  FromProto(proto);\n+  TF_CHECK_OK(FromProto(proto));\n+}\n+\n+Status ResourceHandle::BuildResourceHandle(const ResourceHandleProto& proto,\n+                                           ResourceHandle* out) {\n+  if (out == nullptr)\n+    return errors::Internal(\n+        \"BuildResourceHandle() was called with nullptr for the output\");\n+  return out->FromProto(proto);\n }\n \n ResourceHandle::~ResourceHandle() {}\n@@ -40,7 +52,7 @@ void ResourceHandle::AsProto(ResourceHandleProto* proto) const {\n   }\n }\n \n-void ResourceHandle::FromProto(const ResourceHandleProto& proto) {\n+Status ResourceHandle::FromProto(const ResourceHandleProto& proto) {\n   set_device(proto.device());\n   set_container(proto.container());\n   set_name(proto.name());\n@@ -49,10 +61,16 @@ void ResourceHandle::FromProto(const ResourceHandleProto& proto) {\n   std::vector<DtypeAndPartialTensorShape> dtypes_and_shapes;\n   for (const auto& dtype_and_shape : proto.dtypes_and_shapes()) {\n     DataType dtype = dtype_and_shape.dtype();\n-    PartialTensorShape shape(dtype_and_shape.shape());\n+    PartialTensorShape shape;\n+    Status s = PartialTensorShape::BuildPartialTensorShape(\n+        dtype_and_shape.shape(), &shape);\n+    if (!s.ok()) {\n+      return s;\n+    }\n     dtypes_and_shapes.push_back(DtypeAndPartialTensorShape{dtype, shape});\n   }\n   dtypes_and_shapes_ = std::move(dtypes_and_shapes);\n+  return Status::OK();\n }\n \n string ResourceHandle::SerializeAsString() const {\n@@ -63,9 +81,7 @@ string ResourceHandle::SerializeAsString() const {\n \n bool ResourceHandle::ParseFromString(const string& s) {\n   ResourceHandleProto proto;\n-  const bool status = proto.ParseFromString(s);\n-  if (status) FromProto(proto);\n-  return status;\n+  return proto.ParseFromString(s) && FromProto(proto).ok();\n }\n \n string ResourceHandle::DebugString() const {\n@@ -98,7 +114,9 @@ bool DecodeResourceHandleList(std::unique_ptr<port::StringListDecoder> d,\n     if (!proto.ParseFromArray(d->Data(sizes[i]), sizes[i])) {\n       return false;\n     }\n-    ps[i].FromProto(proto);\n+    if (!ps[i].FromProto(proto).ok()) {\n+      return false;\n+    }\n   }\n   return true;\n }\n"
+}
+Patch applied successfully
+
+tokens used
+input: 1,417
+cache read: 28,160
+cache write: 0
+output: 823
+reasoning output: 0
+
+The resource handle hunk validates cleanly against the target base. I’m applying that plus the matching header, tensor decoder specialization, and Bazel deps now.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target TensorFlow 2.5.2 code for all patched locations",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate uncertain backport hunks against target base",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply source changes to current checkout",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Review resulting diff and report YAML",
+      "status": "pending",
+      "priority": "high"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target TensorFlow 2.5.2 code for all patched locations",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate uncertain backport hunks against target base",
+    "status": "completed",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply source changes to current checkout",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Review resulting diff and report YAML",
+    "status": "pending",
+    "priority": "high"
+  }
+]
+
+tokens used
+input: 1,229
+cache read: 29,184
+cache write: 0
+output: 140
+reasoning output: 0
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/framework/BUILD\n@@\n         \":tensor_shape\",\n         \":types_proto_cc\",\n+        \"//tensorflow/core/lib/core:errors\",\n         \"//tensorflow/core/lib/strings:strcat\",\n+        \"//tensorflow/core/platform:errors\",\n+        \"//tensorflow/core/platform:macros\",\n         \"//tensorflow/core/platform:tensor_coding\",\n         \"//tensorflow/core/platform:types\",\n         \"//tensorflow/core/util:managed_stack_trace\",\n*** Update File: tensorflow/core/framework/resource_handle.h\n@@\n   ResourceHandle(const ResourceHandleProto& proto);\n   ~ResourceHandle();\n \n+  // Use this factory method if the `proto` comes from user controlled input, to\n+  // prevent a denial of service.\n+  static Status BuildResourceHandle(const ResourceHandleProto& proto,\n+                                    ResourceHandle* out);\n+\n   // Unique name for the device containing the resource.\n   const std::string& device() const { return device_; }\n@@\n   // Conversion to and from ResourceHandleProto\n   void AsProto(ResourceHandleProto* proto) const;\n-  void FromProto(const ResourceHandleProto& proto);\n+  Status FromProto(const ResourceHandleProto& proto);\n*** Update File: tensorflow/core/framework/resource_handle.cc\n@@\n #include \"tensorflow/core/framework/resource_handle.h\"\n #include \"tensorflow/core/framework/resource_handle.pb.h\"\n+#include \"tensorflow/core/framework/tensor_shape.h\"\n+#include \"tensorflow/core/lib/core/errors.h\"\n #include \"tensorflow/core/lib/strings/strcat.h\"\n+#include \"tensorflow/core/platform/errors.h\"\n+#include \"tensorflow/core/platform/macros.h\"\n@@\n ResourceHandle::ResourceHandle() {}\n \n ResourceHandle::ResourceHandle(const ResourceHandleProto& proto) {\n-  FromProto(proto);\n+  TF_CHECK_OK(FromProto(proto));\n+}\n+\n+Status ResourceHandle::BuildResourceHandle(const ResourceHandleProto& proto,\n+                                           ResourceHandle* out) {\n+  if (out == nullptr)\n+    return errors::Internal(\n+        \"BuildResourceHandle() was called with nullptr for the output\");\n+  return out->FromProto(proto);\n }\n@@\n-void ResourceHandle::FromProto(const ResourceHandleProto& proto) {\n+Status ResourceHandle::FromProto(const ResourceHandleProto& proto) {\n   set_device(proto.device());\n   set_container(proto.container());\n   set_name(proto.name());\n@@\n   std::vector<DtypeAndPartialTensorShape> dtypes_and_shapes;\n   for (const auto& dtype_and_shape : proto.dtypes_and_shapes()) {\n     DataType dtype = dtype_and_shape.dtype();\n-    PartialTensorShape shape(dtype_and_shape.shape());\n+    PartialTensorShape shape;\n+    Status s = PartialTensorShape::BuildPartialTensorShape(\n+        dtype_and_shape.shape(), &shape);\n+    if (!s.ok()) {\n+      return s;\n+    }\n     dtypes_and_shapes.push_back(DtypeAndPartialTensorShape{dtype, shape});\n   }\n   dtypes_and_shapes_ = std::move(dtypes_and_shapes);\n+  return Status::OK();\n }\n@@\n bool ResourceHandle::ParseFromString(const string& s) {\n   ResourceHandleProto proto;\n-  const bool status = proto.ParseFromString(s);\n-  if (status) FromProto(proto);\n-  return status;\n+  return proto.ParseFromString(s) && FromProto(proto).ok();\n }\n@@\n-    ps[i].FromProto(proto);\n+    if (!ps[i].FromProto(proto).ok()) {\n+      return false;\n+    }\n   }\n*** Update File: tensorflow/core/framework/tensor.cc\n@@\n   return buf;\n }\n \n+// Separate implementation for `ResourceHandle` to handle the case when the\n+// proto for the resource is invalid. See `resource_handle.h` constructor and\n+// static factory builder.\n+template <>\n+TensorBuffer* FromProtoField<ResourceHandle>(Allocator* a,\n+                                             const TensorProto& in, int64 n) {\n+  CHECK_GT(n, 0);\n+  Buffer<ResourceHandle>* buf = new Buffer<ResourceHandle>(a, n);\n+  ResourceHandle* data = buf->template base<ResourceHandle>();\n+  if (data == nullptr) {\n+    buf->Unref();\n+    return nullptr;\n+  }\n+  const int64 in_n = ProtoHelper<ResourceHandle>::NumElements(in);\n+  if (in_n <= 0) {\n+    std::fill_n(data, n, ResourceHandle());\n+  } else {\n+    // If tensor shape says we have n < in_n elements in the output tensor\n+    // then make sure to only decode the first n out of the in_n elements in the\n+    // in tensors. In all other cases, we decode all in_n elements of in and set\n+    // the remaining elements up to n to be the default ResourceHandle() value.\n+    const int64 real_n = n < in_n ? n : in_n;\n+    for (int64 i = 0; i < real_n; ++i) {\n+      Status s = ResourceHandle::BuildResourceHandle(in.resource_handle_val(i),\n+                                                     &data[i]);\n+      if (!s.ok()) {\n+        LOG(ERROR) << \"Could not decode resource handle from proto \\\"\"\n+                   << in.resource_handle_val(i).ShortDebugString()\n+                   << \"\\\", returned status: \" << s.ToString();\n+        buf->Unref();\n+        return nullptr;\n+      }\n+    }\n+    for (int64 i = in_n; i < n; ++i) {\n+      data[i] = ResourceHandle();\n+    }\n+  }\n+  return buf;\n+}\n+\n template <>\n TensorBuffer* FromProtoField<Variant>(Allocator* a, const TensorProto& in,\n                                       int64 n) {\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/framework/BUILD
+M tensorflow/core/framework/resource_handle.h
+M tensorflow/core/framework/resource_handle.cc
+M tensorflow/core/framework/tensor.cc
+
+tokens used
+input: 493
+cache read: 30,208
+cache write: 0
+output: 1,392
+reasoning output: 0
+
+The source changes are applied. I’m reviewing the final diff and doing a lightweight consistency check without running a full build.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target TensorFlow 2.5.2 code for all patched locations",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate uncertain backport hunks against target base",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply source changes to current checkout",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Review resulting diff and report YAML",
+      "status": "in_progress",
+      "priority": "high"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target TensorFlow 2.5.2 code for all patched locations",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate uncertain backport hunks against target base",
+    "status": "completed",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply source changes to current checkout",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Review resulting diff and report YAML",
+    "status": "in_progress",
+    "priority": "high"
+  }
+]
+
+tokens used
+input: 1,933
+cache read: 30,208
+cache write: 0
+output: 134
+reasoning output: 23
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/framework/BUILD tensorflow/core/framework/resource_handle.cc tensorflow/core/framework/resource_handle.h tensorflow/core/framework/tensor.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0053-b3d96ce05ed6",
+  "timeout": 120000
+}
+warning: in the working copy of 'tensorflow/core/framework/BUILD', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'tensorflow/core/framework/resource_handle.cc', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'tensorflow/core/framework/resource_handle.h', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'tensorflow/core/framework/tensor.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/framework/BUILD b/tensorflow/core/framework/BUILD
+index 653e7da49f..68eb1bb2f3 100644
+--- a/tensorflow/core/framework/BUILD
++++ b/tensorflow/core/framework/BUILD
+@@ -704,7 +704,10 @@ cc_library(
+         ":resource_handle_proto_cc",
+         ":tensor_shape",
+         ":types_proto_cc",
++        "//tensorflow/core/lib/core:errors",
+         "//tensorflow/core/lib/strings:strcat",
++        "//tensorflow/core/platform:errors",
++        "//tensorflow/core/platform:macros",
+         "//tensorflow/core/platform:tensor_coding",
+         "//tensorflow/core/platform:types",
+         "//tensorflow/core/util:managed_stack_trace",
+diff --git a/tensorflow/core/framework/resource_handle.cc b/tensorflow/core/framework/resource_handle.cc
+index e7f4c2afc9..1ed51ff8f4 100644
+--- a/tensorflow/core/framework/resource_handle.cc
++++ b/tensorflow/core/framework/resource_handle.cc
+@@ -15,14 +15,26 @@ limitations under the License.
+ 
+ #include "tensorflow/core/framework/resource_handle.h"
+ #include "tensorflow/core/framework/resource_handle.pb.h"
++#include "tensorflow/core/framework/tensor_shape.h"
++#include "tensorflow/core/lib/core/errors.h"
+ #include "tensorflow/core/lib/strings/strcat.h"
++#include "tensorflow/core/platform/errors.h"
++#include "tensorflow/core/platform/macros.h"
+ 
+ namespace tensorflow {
+ 
+ ResourceHandle::ResourceHandle() {}
+ 
+ ResourceHandle::ResourceHandle(const ResourceHandleProto& proto) {
+-  FromProto(proto);
++  TF_CHECK_OK(FromProto(proto));
++}
++
++Status ResourceHandle::BuildResourceHandle(const ResourceHandleProto& proto,
++                                           ResourceHandle* out) {
++  if (out == nullptr)
++    return errors::Internal(
++        "BuildResourceHandle() was called with nullptr for the output");
++  return out->FromProto(proto);
+ }
+ 
+ ResourceHandle::~ResourceHandle() {}
+@@ -40,7 +52,7 @@ void ResourceHandle::AsProto(ResourceHandleProto* proto) const {
+   }
+ }
+ 
+-void ResourceHandle::FromProto(const ResourceHandleProto& proto) {
++Status ResourceHandle::FromProto(const ResourceHandleProto& proto) {
+   set_device(proto.device());
+   set_container(proto.container());
+   set_name(proto.name());
+@@ -49,10 +61,16 @@ void ResourceHandle::FromProto(const ResourceHandleProto& proto) {
+   std::vector<DtypeAndPartialTensorShape> dtypes_and_shapes;
+   for (const auto& dtype_and_shape : proto.dtypes_and_shapes()) {
+     DataType dtype = dtype_and_shape.dtype();
+-    PartialTensorShape shape(dtype_and_shape.shape());
++    PartialTensorShape shape;
++    Status s = PartialTensorShape::BuildPartialTensorShape(
++        dtype_and_shape.shape(), &shape);
++    if (!s.ok()) {
++      return s;
++    }
+     dtypes_and_shapes.push_back(DtypeAndPartialTensorShape{dtype, shape});
+   }
+   dtypes_and_shapes_ = std::move(dtypes_and_shapes);
++  return Status::OK();
+ }
+ 
+ string ResourceHandle::SerializeAsString() const {
+@@ -63,9 +81,7 @@ string ResourceHandle::SerializeAsString() const {
+ 
+ bool ResourceHandle::ParseFromString(const string& s) {
+   ResourceHandleProto proto;
+-  const bool status = proto.ParseFromString(s);
+-  if (status) FromProto(proto);
+-  return status;
++  return proto.ParseFromString(s) && FromProto(proto).ok();
+ }
+ 
+ string ResourceHandle::DebugString() const {
+@@ -98,7 +114,9 @@ bool DecodeResourceHandleList(std::unique_ptr<port::StringListDecoder> d,
+     if (!proto.ParseFromArray(d->Data(sizes[i]), sizes[i])) {
+       return false;
+     }
+-    ps[i].FromProto(proto);
++    if (!ps[i].FromProto(proto).ok()) {
++      return false;
++    }
+   }
+   return true;
+ }
+diff --git a/tensorflow/core/framework/resource_handle.h b/tensorflow/core/framework/resource_handle.h
+index 3921d80faf..cba3b25d4b 100644
+--- a/tensorflow/core/framework/resource_handle.h
++++ b/tensorflow/core/framework/resource_handle.h
+@@ -38,6 +38,11 @@ class ResourceHandle {
+   ResourceHandle(const ResourceHandleProto& proto);
+   ~ResourceHandle();
+ 
++  // Use this factory method if the `proto` comes from user controlled input, to
++  // prevent a denial of service.
++  static Status BuildResourceHandle(const ResourceHandleProto& proto,
++                                    ResourceHandle* out);
++
+   // Unique name for the device containing the resource.
+   const std::string& device() const { return device_; }
+ 
+@@ -83,7 +88,7 @@ class ResourceHandle {
+ 
+   // Conversion to and from ResourceHandleProto
+   void AsProto(ResourceHandleProto* proto) const;
+-  void FromProto(const ResourceHandleProto& proto);
++  Status FromProto(const ResourceHandleProto& proto);
+ 
+   // Serialization via ResourceHandleProto
+   std::string SerializeAsString() const;
+diff --git a/tensorflow/core/framework/tensor.cc b/tensorflow/core/framework/tensor.cc
+index 167ba5e658..90ce63c1ea 100644
+--- a/tensorflow/core/framework/tensor.cc
++++ b/tensorflow/core/framework/tensor.cc
+@@ -531,6 +531,46 @@ TensorBuffer* FromProtoField(Allocator* a, const TensorProto& in, int64 n) {
+   return buf;
+ }
+ 
++// Separate implementation for `ResourceHandle` to handle the case when the
++// proto for the resource is invalid. See `resource_handle.h` constructor and
++// static factory builder.
++template <>
++TensorBuffer* FromProtoField<ResourceHandle>(Allocator* a,
++                                             const TensorProto& in, int64 n) {
++  CHECK_GT(n, 0);
++  Buffer<ResourceHandle>* buf = new Buffer<ResourceHandle>(a, n);
++  ResourceHandle* data = buf->template base<ResourceHandle>();
++  if (data == nullptr) {
++    buf->Unref();
++    return nullptr;
++  }
++  const int64 in_n = ProtoHelper<ResourceHandle>::NumElements(in);
++  if (in_n <= 0) {
++    std::fill_n(data, n, ResourceHandle());
++  } else {
++    // If tensor shape says we have n < in_n elements in the output tensor
++    // then make sure to only decode the first n out of the in_n elements in the
++    // in tensors. In all other cases, we decode all in_n elements of in and set
++    // the remaining elements up to n to be the default ResourceHandle() value.
++    const int64 real_n = n < in_n ? n : in_n;
++    for (int64 i = 0; i < real_n; ++i) {
++      Status s = ResourceHandle::BuildResourceHandle(in.resource_handle_val(i),
++                                                     &data[i]);
++      if (!s.ok()) {
++        LOG(ERROR) << "Could not decode resource handle from proto \""
++                   << in.resource_handle_val(i).ShortDebugString()
++                   << "\", returned status: " << s.ToString();
++        buf->Unref();
++        return nullptr;
++      }
++    }
++    for (int64 i = in_n; i < n; ++i) {
++      data[i] = ResourceHandle();
++    }
++  }
++  return buf;
++}
++
+ template <>
+ TensorBuffer* FromProtoField<Variant>(Allocator* a, const TensorProto& in,
+                                       int64 n) {
+
+tool: bash
+{
+  "command": "git status --short",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0053-b3d96ce05ed6",
+  "timeout": 120000
+}
+ M tensorflow/core/framework/BUILD
+ M tensorflow/core/framework/resource_handle.cc
+ M tensorflow/core/framework/resource_handle.h
+ M tensorflow/core/framework/tensor.cc
+
+tokens used
+input: 1,214
+cache read: 31,232
+cache write: 0
+output: 170
+reasoning output: 0
+
+tool: bash
+{
+  "command": "git diff --check -- tensorflow/core/framework/BUILD tensorflow/core/framework/resource_handle.cc tensorflow/core/framework/resource_handle.h tensorflow/core/framework/tensor.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0053-b3d96ce05ed6",
+  "timeout": 120000
+}
+warning: in the working copy of 'tensorflow/core/framework/BUILD', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'tensorflow/core/framework/resource_handle.cc', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'tensorflow/core/framework/resource_handle.h', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'tensorflow/core/framework/tensor.cc', LF will be replaced by CRLF the next time Git touches it
+
+tool: validate
+{
+  "ref": "b3d96ce05ed61d32580f67189092ff03c7c3ea9a",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/framework/tensor.cc b/tensorflow/core/framework/tensor.cc\n--- a/tensorflow/core/framework/tensor.cc\n+++ b/tensorflow/core/framework/tensor.cc\n@@ -531,6 +531,46 @@ TensorBuffer* FromProtoField(Allocator* a, const TensorProto& in, int64 n) {\n   return buf;\n }\n \n+// Separate implementation for `ResourceHandle` to handle the case when the\n+// proto for the resource is invalid. See `resource_handle.h` constructor and\n+// static factory builder.\n+template <>\n+TensorBuffer* FromProtoField<ResourceHandle>(Allocator* a,\n+                                             const TensorProto& in, int64 n) {\n+  CHECK_GT(n, 0);\n+  Buffer<ResourceHandle>* buf = new Buffer<ResourceHandle>(a, n);\n+  ResourceHandle* data = buf->template base<ResourceHandle>();\n+  if (data == nullptr) {\n+    buf->Unref();\n+    return nullptr;\n+  }\n+  const int64 in_n = ProtoHelper<ResourceHandle>::NumElements(in);\n+  if (in_n <= 0) {\n+    std::fill_n(data, n, ResourceHandle());\n+  } else {\n+    // If tensor shape says we have n < in_n elements in the output tensor\n+    // then make sure to only decode the first n out of the in_n elements in the\n+    // in tensors. In all other cases, we decode all in_n elements of in and set\n+    // the remaining elements up to n to be the default ResourceHandle() value.\n+    const int64 real_n = n < in_n ? n : in_n;\n+    for (int64 i = 0; i < real_n; ++i) {\n+      Status s = ResourceHandle::BuildResourceHandle(in.resource_handle_val(i),\n+                                                     &data[i]);\n+      if (!s.ok()) {\n+        LOG(ERROR) << \"Could not decode resource handle from proto \\\"\"\n+                   << in.resource_handle_val(i).ShortDebugString()\n+                   << \"\\\", returned status: \" << s.ToString();\n+        buf->Unref();\n+        return nullptr;\n+      }\n+    }\n+    for (int64 i = in_n; i < n; ++i) {\n+      data[i] = ResourceHandle();\n+    }\n+  }\n+  return buf;\n+}\n+\n template <>\n TensorBuffer* FromProtoField<Variant>(Allocator* a, const TensorProto& in,\n                                       int64 n) {\n"
+}
+Patch applied successfully
+
+tokens used
+input: 2,204
+cache read: 32,256
+cache write: 0
+output: 749
+reasoning output: 79
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target TensorFlow 2.5.2 code for all patched locations",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate uncertain backport hunks against target base",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply source changes to current checkout",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Review resulting diff and report YAML",
+      "status": "completed",
+      "priority": "high"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target TensorFlow 2.5.2 code for all patched locations",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate uncertain backport hunks against target base",
+    "status": "completed",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply source changes to current checkout",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Review resulting diff and report YAML",
+    "status": "completed",
+    "priority": "high"
+  }
+]
+
+tokens used
+input: 1,121
+cache read: 34,304
+cache write: 0
+output: 102
+reasoning output: 50
+
+Applied the TensorFlow resource handle decoding DoS fix to the 2.5.2 target tree. Validated the resource handle and tensor hunks with `validate` hunk mode and ran `git diff --check`.
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/framework/BUILD b/tensorflow/core/framework/BUILD
+    index 653e7da49f..68eb1bb2f3 100644
+    --- a/tensorflow/core/framework/BUILD
+    +++ b/tensorflow/core/framework/BUILD
+    @@ -704,7 +704,10 @@ cc_library(
+             ":resource_handle_proto_cc",
+             ":tensor_shape",
+             ":types_proto_cc",
+    +        "//tensorflow/core/lib/core:errors",
+             "//tensorflow/core/lib/strings:strcat",
+    +        "//tensorflow/core/platform:errors",
+    +        "//tensorflow/core/platform:macros",
+             "//tensorflow/core/platform:tensor_coding",
+             "//tensorflow/core/platform:types",
+             "//tensorflow/core/util:managed_stack_trace",
+    diff --git a/tensorflow/core/framework/resource_handle.cc b/tensorflow/core/framework/resource_handle.cc
+    index e7f4c2afc9..1ed51ff8f4 100644
+    --- a/tensorflow/core/framework/resource_handle.cc
+    +++ b/tensorflow/core/framework/resource_handle.cc
+    @@ -15,14 +15,26 @@ limitations under the License.
+     
+     #include "tensorflow/core/framework/resource_handle.h"
+     #include "tensorflow/core/framework/resource_handle.pb.h"
+    +#include "tensorflow/core/framework/tensor_shape.h"
+    +#include "tensorflow/core/lib/core/errors.h"
+     #include "tensorflow/core/lib/strings/strcat.h"
+    +#include "tensorflow/core/platform/errors.h"
+    +#include "tensorflow/core/platform/macros.h"
+     
+     namespace tensorflow {
+     
+     ResourceHandle::ResourceHandle() {}
+     
+     ResourceHandle::ResourceHandle(const ResourceHandleProto& proto) {
+    -  FromProto(proto);
+    +  TF_CHECK_OK(FromProto(proto));
+    +}
+    +
+    +Status ResourceHandle::BuildResourceHandle(const ResourceHandleProto& proto,
+    +                                           ResourceHandle* out) {
+    +  if (out == nullptr)
+    +    return errors::Internal(
+    +        "BuildResourceHandle() was called with nullptr for the output");
+    +  return out->FromProto(proto);
+     }
+     
+     ResourceHandle::~ResourceHandle() {}
+    @@ -40,7 +52,7 @@ void ResourceHandle::AsProto(ResourceHandleProto* proto) const {
+       }
+     }
+     
+    -void ResourceHandle::FromProto(const ResourceHandleProto& proto) {
+    +Status ResourceHandle::FromProto(const ResourceHandleProto& proto) {
+       set_device(proto.device());
+       set_container(proto.container());
+       set_name(proto.name());
+    @@ -49,10 +61,16 @@ void ResourceHandle::FromProto(const ResourceHandleProto& proto) {
+       std::vector<DtypeAndPartialTensorShape> dtypes_and_shapes;
+       for (const auto& dtype_and_shape : proto.dtypes_and_shapes()) {
+         DataType dtype = dtype_and_shape.dtype();
+    -    PartialTensorShape shape(dtype_and_shape.shape());
+    +    PartialTensorShape shape;
+    +    Status s = PartialTensorShape::BuildPartialTensorShape(
+    +        dtype_and_shape.shape(), &shape);
+    +    if (!s.ok()) {
+    +      return s;
+    +    }
+         dtypes_and_shapes.push_back(DtypeAndPartialTensorShape{dtype, shape});
+       }
+       dtypes_and_shapes_ = std::move(dtypes_and_shapes);
+    +  return Status::OK();
+     }
+     
+     string ResourceHandle::SerializeAsString() const {
+    @@ -63,9 +81,7 @@ string ResourceHandle::SerializeAsString() const {
+     
+     bool ResourceHandle::ParseFromString(const string& s) {
+       ResourceHandleProto proto;
+    -  const bool status = proto.ParseFromString(s);
+    -  if (status) FromProto(proto);
+    -  return status;
+    +  return proto.ParseFromString(s) && FromProto(proto).ok();
+     }
+     
+     string ResourceHandle::DebugString() const {
+    @@ -98,7 +114,9 @@ bool DecodeResourceHandleList(std::unique_ptr<port::StringListDecoder> d,
+         if (!proto.ParseFromArray(d->Data(sizes[i]), sizes[i])) {
+           return false;
+         }
+    -    ps[i].FromProto(proto);
+    +    if (!ps[i].FromProto(proto).ok()) {
+    +      return false;
+    +    }
+       }
+       return true;
+     }
+    diff --git a/tensorflow/core/framework/resource_handle.h b/tensorflow/core/framework/resource_handle.h
+    index 3921d80faf..cba3b25d4b 100644
+    --- a/tensorflow/core/framework/resource_handle.h
+    +++ b/tensorflow/core/framework/resource_handle.h
+    @@ -38,6 +38,11 @@ class ResourceHandle {
+       ResourceHandle(const ResourceHandleProto& proto);
+       ~ResourceHandle();
+     
+    +  // Use this factory method if the `proto` comes from user controlled input, to
+    +  // prevent a denial of service.
+    +  static Status BuildResourceHandle(const ResourceHandleProto& proto,
+    +                                    ResourceHandle* out);
+    +
+       // Unique name for the device containing the resource.
+       const std::string& device() const { return device_; }
+     
+    @@ -83,7 +88,7 @@ class ResourceHandle {
+     
+       // Conversion to and from ResourceHandleProto
+       void AsProto(ResourceHandleProto* proto) const;
+    -  void FromProto(const ResourceHandleProto& proto);
+    +  Status FromProto(const ResourceHandleProto& proto);
+     
+       // Serialization via ResourceHandleProto
+       std::string SerializeAsString() const;
+    diff --git a/tensorflow/core/framework/tensor.cc b/tensorflow/core/framework/tensor.cc
+    index 167ba5e658..90ce63c1ea 100644
+    --- a/tensorflow/core/framework/tensor.cc
+    +++ b/tensorflow/core/framework/tensor.cc
+    @@ -531,6 +531,46 @@ TensorBuffer* FromProtoField(Allocator* a, const TensorProto& in, int64 n) {
+       return buf;
+     }
+     
+    +// Separate implementation for `ResourceHandle` to handle the case when the
+    +// proto for the resource is invalid. See `resource_handle.h` constructor and
+    +// static factory builder.
+    +template <>
+    +TensorBuffer* FromProtoField<ResourceHandle>(Allocator* a,
+    +                                             const TensorProto& in, int64 n) {
+    +  CHECK_GT(n, 0);
+    +  Buffer<ResourceHandle>* buf = new Buffer<ResourceHandle>(a, n);
+    +  ResourceHandle* data = buf->template base<ResourceHandle>();
+    +  if (data == nullptr) {
+    +    buf->Unref();
+    +    return nullptr;
+    +  }
+    +  const int64 in_n = ProtoHelper<ResourceHandle>::NumElements(in);
+    +  if (in_n <= 0) {
+    +    std::fill_n(data, n, ResourceHandle());
+    +  } else {
+    +    // If tensor shape says we have n < in_n elements in the output tensor
+    +    // then make sure to only decode the first n out of the in_n elements in the
+    +    // in tensors. In all other cases, we decode all in_n elements of in and set
+    +    // the remaining elements up to n to be the default ResourceHandle() value.
+    +    const int64 real_n = n < in_n ? n : in_n;
+    +    for (int64 i = 0; i < real_n; ++i) {
+    +      Status s = ResourceHandle::BuildResourceHandle(in.resource_handle_val(i),
+    +                                                     &data[i]);
+    +      if (!s.ok()) {
+    +        LOG(ERROR) << "Could not decode resource handle from proto \""
+    +                   << in.resource_handle_val(i).ShortDebugString()
+    +                   << "\", returned status: " << s.ToString();
+    +        buf->Unref();
+    +        return nullptr;
+    +      }
+    +    }
+    +    for (int64 i = in_n; i < n; ++i) {
+    +      data[i] = ResourceHandle();
+    +    }
+    +  }
+    +  return buf;
+    +}
+    +
+     template <>
+     TensorBuffer* FromProtoField<Variant>(Allocator* a, const TensorProto& in,
+                                           int64 n) {
+  notes: >
+    Backported guarded ResourceHandle proto decoding and tensor resource-handle deserialization failure handling for CVE-2022-23564.
+```
+
+tokens used
+input: 396
+cache read: 35,328
+cache write: 0
+output: 1,908
+reasoning output: 0

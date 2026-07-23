@@ -1,0 +1,271 @@
+I’ll locate the target implementation for `QuantizeAndDequantizeV4GradientOp`, compare the surrounding 2.6.4 code to the provided patch, then apply the minimal equivalent changes and validate the hunk against the target base.
+
+tool: viewcode
+{
+  "ref": "75867f82431f8801f26d651ca567a3ff1b0d39c3",
+  "path": "tensorflow/core/kernels/quantize_and_dequantize_op.cc",
+  "startline": 140,
+  "endline": 230
+}
+Here are lines 140 through 230.
+
+};
+
+// Implementation of QuantizeAndDequantizeV4GradientOp.
+// When back-propagating the error through a quantized layer, the following
+// paper gives evidence that clipped-ReLU is better than non-clipped:
+// "Deep Learning with Low Precision by Half-wave Gaussian Quantization"
+// http://zpascal.net/cvpr2017/Cai_Deep_Learning_With_CVPR_2017_paper.pdf
+template <typename Device, typename T>
+class QuantizeAndDequantizeV4GradientOp : public OpKernel {
+ public:
+  explicit QuantizeAndDequantizeV4GradientOp(OpKernelConstruction* ctx)
+      : OpKernel::OpKernel(ctx) {
+    OP_REQUIRES_OK(ctx, ctx->GetAttr("axis", &axis_));
+  }
+
+  void Compute(OpKernelContext* ctx) override {
+    const Tensor& gradient = ctx->input(0);
+    const Tensor& input = ctx->input(1);
+    Tensor* input_backprop = nullptr;
+    OP_REQUIRES_OK(ctx,
+                   ctx->allocate_output(0, input.shape(), &input_backprop));
+    OP_REQUIRES(
+        ctx, axis_ >= -1,
+        errors::InvalidArgument("Axis must be at least -1. Found ", axis_));
+    OP_REQUIRES(ctx, (axis_ == -1 || axis_ < input.shape().dims()),
+                errors::InvalidArgument(
+                    "Axis should be -1 or 0 or a positive value less than ",
+                    input.shape().dims(), "but given axis value was ", axis_));
+
+    OP_REQUIRES(
+        ctx, input.IsSameSize(gradient),
+        errors::InvalidArgument("gradient and input must be the same size"));
+    const int depth = (axis_ == -1) ? 1 : input.dim_size(axis_);
+    const Tensor& input_min_tensor = ctx->input(2);
+    OP_REQUIRES(ctx,
+                input_min_tensor.dims() == 0 || input_min_tensor.dims() == 1,
+                errors::InvalidArgument(
+                    "Input min tensor must have dimension 1. Recieved ",
+                    input_min_tensor.dims(), "."));
+    const Tensor& input_max_tensor = ctx->input(3);
+    OP_REQUIRES(ctx,
+                input_max_tensor.dims() == 0 || input_max_tensor.dims() == 1,
+                errors::InvalidArgument(
+                    "Input max tensor must have dimension 1. Recieved ",
+                    input_max_tensor.dims(), "."));
+    if (axis_ != -1) {
+      OP_REQUIRES(
+          ctx, input_min_tensor.dim_size(0) == depth,
+          errors::InvalidArgument("min has incorrect size, expected ", depth,
+                                  " was ", input_min_tensor.dim_size(0)));
+      OP_REQUIRES(
+          ctx, input_max_tensor.dim_size(0) == depth,
+          errors::InvalidArgument("max has incorrect size, expected ", depth,
+                                  " was ", input_max_tensor.dim_size(0)));
+    }
+
+    TensorShape min_max_shape(input_min_tensor.shape());
+    Tensor* input_min_backprop;
+    OP_REQUIRES_OK(ctx,
+                   ctx->allocate_output(1, min_max_shape, &input_min_backprop));
+
+    Tensor* input_max_backprop;
+    OP_REQUIRES_OK(ctx,
+                   ctx->allocate_output(2, min_max_shape, &input_max_backprop));
+
+    if (axis_ == -1) {
+      functor::QuantizeAndDequantizeOneScaleGradientFunctor<Device, T> f;
+      f(ctx->eigen_device<Device>(), gradient.template flat<T>(),
+        input.template flat<T>(), input_min_tensor.scalar<T>(),
+        input_max_tensor.scalar<T>(), input_backprop->template flat<T>(),
+        input_min_backprop->template scalar<T>(),
+        input_max_backprop->template scalar<T>());
+    } else {
+      functor::QuantizeAndDequantizePerChannelGradientFunctor<Device, T> f;
+      f(ctx->eigen_device<Device>(),
+        gradient.template flat_inner_outer_dims<T, 3>(axis_ - 1),
+        input.template flat_inner_outer_dims<T, 3>(axis_ - 1),
+        &input_min_tensor, &input_max_tensor,
+        input_backprop->template flat_inner_outer_dims<T, 3>(axis_ - 1),
+        input_min_backprop->template flat<T>(),
+        input_max_backprop->template flat<T>());
+    }
+  }
+
+ private:
+  int axis_;
+};
+
+// Simulate quantization precision loss in a float tensor by:
+// 1. Quantize the tensor to fixed point numbers, which should match the target
+//    quantization method when it is used in inference.
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: git_show
+{
+  "ref": "098e7762d909bac47ce1dbabe6dfd06294cb9d58",
+  "context": "class QuantizeAndDequantizeV4GradientOp : public OpKernel"
+}
+commit 098e7762d909bac47ce1dbabe6dfd06294cb9d58
+Author: Alan Liu <liualan@google.com>
+Date:   Thu Apr 28 11:06:02 2022 -0700
+
+    Fix tf.raw_ops.QuantizeAndDequantizeV4Grad vulnerability with invalid input_min or input_max.
+    
+    Check that argument is actually a scalar before treating it as such.
+    
+    PiperOrigin-RevId: 445198280
+
+ tensorflow/core/kernels/quantize_and_dequantize_op.cc | 10 ++++++++--
+ 1 file changed, 8 insertions(+), 2 deletions(-)
+This commit shows that there is a high probability that this code is new, so the corresponding code segment cannot be found in the old version.
+You can call `viewcode` and `locate_symbol` to further check the results step by step. For newly introduced code, we consider that this hunk `need not ported`.
+
+tool: locate_symbol
+{
+  "ref": "75867f82431f8801f26d651ca567a3ff1b0d39c3",
+  "symbol": "QuantizeAndDequantizeV4GradientOp"
+}
+tensorflow/core/kernels/quantize_and_dequantize_op.cc:148
+tensorflow/core/kernels/quantize_and_dequantize_op.cc:150
+tensorflow/core/kernels/quantize_and_dequantize_op.cc:451
+tensorflow/core/kernels/quantize_and_dequantize_op.cc:486
+
+tokens used
+input: 3,993
+cache read: 4,608
+cache write: 0
+output: 243
+reasoning output: 0
+
+The target file contains the same vulnerable scalar path. I’m applying the two diagnostic message fixes and the scalar checks before `scalar<T>()` access when `axis_ == -1`.
+
+tool: validate
+{
+  "ref": "75867f82431f8801f26d651ca567a3ff1b0d39c3",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/quantize_and_dequantize_op.cc b/tensorflow/core/kernels/quantize_and_dequantize_op.cc\n--- a/tensorflow/core/kernels/quantize_and_dequantize_op.cc\n+++ b/tensorflow/core/kernels/quantize_and_dequantize_op.cc\n@@ -174,13 +174,13 @@ class QuantizeAndDequantizeV4GradientOp : public OpKernel {\n     OP_REQUIRES(ctx,\n                 input_min_tensor.dims() == 0 || input_min_tensor.dims() == 1,\n                 errors::InvalidArgument(\n-                    \"Input min tensor must have dimension 1. Recieved \",\n+                    \"Input min tensor must have dimension 0 or 1. Received \",\n                     input_min_tensor.dims(), \".\"));\n     const Tensor& input_max_tensor = ctx->input(3);\n     OP_REQUIRES(ctx,\n                 input_max_tensor.dims() == 0 || input_max_tensor.dims() == 1,\n                 errors::InvalidArgument(\n-                    \"Input max tensor must have dimension 1. Recieved \",\n+                    \"Input max tensor must have dimension 0 or 1. Received \",\n                     input_max_tensor.dims(), \".\"));\n     if (axis_ != -1) {\n       OP_REQUIRES(\n@@ -203,6 +203,12 @@ class QuantizeAndDequantizeV4GradientOp : public OpKernel {\n                    ctx->allocate_output(2, min_max_shape, &input_max_backprop));\n \n     if (axis_ == -1) {\n+      OP_REQUIRES(ctx, TensorShapeUtils::IsScalar(input_min_tensor.shape()),\n+                  errors::InvalidArgument(\n+                      \"input_min must be a scalar if axis is unspecified\"));\n+      OP_REQUIRES(ctx, TensorShapeUtils::IsScalar(input_max_tensor.shape()),\n+                  errors::InvalidArgument(\n+                      \"input_max must be a scalar if axis is unspecified\"));\n       functor::QuantizeAndDequantizeOneScaleGradientFunctor<Device, T> f;\n       f(ctx->eigen_device<Device>(), gradient.template flat<T>(),\n         input.template flat<T>(), input_min_tensor.scalar<T>(),\n"
+}
+Patch applied successfully
+
+tokens used
+input: 5,556
+cache read: 4,608
+cache write: 0
+output: 605
+reasoning output: 30
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/kernels/quantize_and_dequantize_op.cc\n@@\n     OP_REQUIRES(ctx,\n                 input_min_tensor.dims() == 0 || input_min_tensor.dims() == 1,\n                 errors::InvalidArgument(\n-                    \"Input min tensor must have dimension 1. Recieved \",\n+                    \"Input min tensor must have dimension 0 or 1. Received \",\n                     input_min_tensor.dims(), \".\"));\n@@\n     OP_REQUIRES(ctx,\n                 input_max_tensor.dims() == 0 || input_max_tensor.dims() == 1,\n                 errors::InvalidArgument(\n-                    \"Input max tensor must have dimension 1. Recieved \",\n+                    \"Input max tensor must have dimension 0 or 1. Received \",\n                     input_max_tensor.dims(), \".\"));\n@@\n \n     if (axis_ == -1) {\n+      OP_REQUIRES(ctx, TensorShapeUtils::IsScalar(input_min_tensor.shape()),\n+                  errors::InvalidArgument(\n+                      \"input_min must be a scalar if axis is unspecified\"));\n+      OP_REQUIRES(ctx, TensorShapeUtils::IsScalar(input_max_tensor.shape()),\n+                  errors::InvalidArgument(\n+                      \"input_max must be a scalar if axis is unspecified\"));\n       functor::QuantizeAndDequantizeOneScaleGradientFunctor<Device, T> f;\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/kernels/quantize_and_dequantize_op.cc
+
+tokens used
+input: 1,084
+cache read: 9,728
+cache write: 0
+output: 354
+reasoning output: 0
+
+The hunk validated cleanly against the target base and has been applied locally. I’ll inspect the resulting diff once to ensure only the intended file changed.
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/kernels/quantize_and_dequantize_op.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0255-75867f82431f",
+  "timeout": 120000
+}
+warning: in the working copy of 'tensorflow/core/kernels/quantize_and_dequantize_op.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/kernels/quantize_and_dequantize_op.cc b/tensorflow/core/kernels/quantize_and_dequantize_op.cc
+index d63a49a04b..da9257fb9c 100644
+--- a/tensorflow/core/kernels/quantize_and_dequantize_op.cc
++++ b/tensorflow/core/kernels/quantize_and_dequantize_op.cc
+@@ -174,13 +174,13 @@ class QuantizeAndDequantizeV4GradientOp : public OpKernel {
+     OP_REQUIRES(ctx,
+                 input_min_tensor.dims() == 0 || input_min_tensor.dims() == 1,
+                 errors::InvalidArgument(
+-                    "Input min tensor must have dimension 1. Recieved ",
++                    "Input min tensor must have dimension 0 or 1. Received ",
+                     input_min_tensor.dims(), "."));
+     const Tensor& input_max_tensor = ctx->input(3);
+     OP_REQUIRES(ctx,
+                 input_max_tensor.dims() == 0 || input_max_tensor.dims() == 1,
+                 errors::InvalidArgument(
+-                    "Input max tensor must have dimension 1. Recieved ",
++                    "Input max tensor must have dimension 0 or 1. Received ",
+                     input_max_tensor.dims(), "."));
+     if (axis_ != -1) {
+       OP_REQUIRES(
+@@ -203,6 +203,12 @@ class QuantizeAndDequantizeV4GradientOp : public OpKernel {
+                    ctx->allocate_output(2, min_max_shape, &input_max_backprop));
+ 
+     if (axis_ == -1) {
++      OP_REQUIRES(ctx, TensorShapeUtils::IsScalar(input_min_tensor.shape()),
++                  errors::InvalidArgument(
++                      "input_min must be a scalar if axis is unspecified"));
++      OP_REQUIRES(ctx, TensorShapeUtils::IsScalar(input_max_tensor.shape()),
++                  errors::InvalidArgument(
++                      "input_max must be a scalar if axis is unspecified"));
+       functor::QuantizeAndDequantizeOneScaleGradientFunctor<Device, T> f;
+       f(ctx->eigen_device<Device>(), gradient.template flat<T>(),
+         input.template flat<T>(), input_min_tensor.scalar<T>(),
+
+tokens used
+input: 446
+cache read: 10,752
+cache write: 0
+output: 119
+reasoning output: 14
+
+Applied the security backport to `tensorflow/core/kernels/quantize_and_dequantize_op.cc`. The hunk was validated against `75867f82431f8801f26d651ca567a3ff1b0d39c3` in hunk mode.
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/kernels/quantize_and_dequantize_op.cc b/tensorflow/core/kernels/quantize_and_dequantize_op.cc
+    index d63a49a04b..da9257fb9c 100644
+    --- a/tensorflow/core/kernels/quantize_and_dequantize_op.cc
+    +++ b/tensorflow/core/kernels/quantize_and_dequantize_op.cc
+    @@ -174,13 +174,13 @@ class QuantizeAndDequantizeV4GradientOp : public OpKernel {
+         OP_REQUIRES(ctx,
+                     input_min_tensor.dims() == 0 || input_min_tensor.dims() == 1,
+                     errors::InvalidArgument(
+    -                    "Input min tensor must have dimension 1. Recieved ",
+    +                    "Input min tensor must have dimension 0 or 1. Received ",
+                         input_min_tensor.dims(), "."));
+         const Tensor& input_max_tensor = ctx->input(3);
+         OP_REQUIRES(ctx,
+                     input_max_tensor.dims() == 0 || input_max_tensor.dims() == 1,
+                     errors::InvalidArgument(
+    -                    "Input max tensor must have dimension 1. Recieved ",
+    +                    "Input max tensor must have dimension 0 or 1. Received ",
+                         input_max_tensor.dims(), "."));
+         if (axis_ != -1) {
+           OP_REQUIRES(
+    @@ -203,6 +203,12 @@ class QuantizeAndDequantizeV4GradientOp : public OpKernel {
+                        ctx->allocate_output(2, min_max_shape, &input_max_backprop));
+     
+         if (axis_ == -1) {
+    +      OP_REQUIRES(ctx, TensorShapeUtils::IsScalar(input_min_tensor.shape()),
+    +                  errors::InvalidArgument(
+    +                      "input_min must be a scalar if axis is unspecified"));
+    +      OP_REQUIRES(ctx, TensorShapeUtils::IsScalar(input_max_tensor.shape()),
+    +                  errors::InvalidArgument(
+    +                      "input_max must be a scalar if axis is unspecified"));
+           functor::QuantizeAndDequantizeOneScaleGradientFunctor<Device, T> f;
+           f(ctx->eigen_device<Device>(), gradient.template flat<T>(),
+             input.template flat<T>(), input_min_tensor.scalar<T>(),
+  notes: >
+    Backported the scalar shape validation for input_min/input_max before scalar access in QuantizeAndDequantizeV4GradientOp.
+```
+
+tokens used
+input: 1,104
+cache read: 10,752
+cache write: 0
+output: 607
+reasoning output: 15

@@ -1,0 +1,585 @@
+I’ll inspect the target-side `count_ops.cc` around the patched areas, then validate and apply the minimal equivalent hunk against the checked-out 2.5.2 base.
+
+tool: viewcode
+{
+  "ref": "995dc35b68dc52ad2b95a22af50317a80baa79fb",
+  "path": "tensorflow/core/kernels/count_ops.cc",
+  "startline": 210,
+  "endline": 260
+}
+Here are lines 210 through 260.
+
+    // dimension. This could be possibly done better.
+    const auto indices_values = indices.matrix<int64_t>();
+    const auto shape_vector = shape.vec<int64_t>();
+    int num_values = values.NumElements();  // same as first dim of indices
+    int rank = indices.shape().dim_size(1);
+    for (int i = 0; i < num_values; ++i) {
+      for (int j = 0; j < rank; ++j) {
+        OP_REQUIRES(
+            context,
+            indices_values(i, j) >= 0 && indices_values(i, j) < shape_vector(j),
+            errors::InvalidArgument(
+                "Invalid index value at ", i, ": dimension ", j, " has value ",
+                indices_values(i, j), " which is not in [0, ", shape_vector(j),
+                ") (as given by dense shape ", shape.DebugString()));
+      }
+    }
+
+    if (use_weights) {
+      OP_REQUIRES(
+          context, weights.shape() == values.shape(),
+          errors::InvalidArgument(
+              "Weights and values must have the same shape. Weight shape: ",
+              weights.shape().DebugString(),
+              "; values shape: ", values.shape().DebugString()));
+    }
+
+    bool is_1d = shape.NumElements() == 1;
+    auto shape_vector = shape.flat<int64>();
+    int num_batches = is_1d ? 1 : shape_vector(0);
+
+    for (int b = 0; b < shape_vector.size(); b++) {
+      OP_REQUIRES(context, shape_vector(b) >= 0,
+                  errors::InvalidArgument(
+                      "Elements in dense_shape must be >= 0. Instead got:",
+                      shape.DebugString()));
+    }
+
+    OP_REQUIRES(context, num_values == indices.shape().dim_size(0),
+                errors::InvalidArgument(
+                    "Number of values must match first dimension of indices.",
+                    "Got ", num_values,
+                    " values, indices shape: ", indices.shape().DebugString()));
+
+    const auto indices_values = indices.matrix<int64>();
+    const auto values_values = values.flat<T>();
+    const auto weight_values = weights.flat<W>();
+
+    auto per_batch_counts = BatchedMap<W>(num_batches);
+
+    T max_value = 0;
+
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: viewcode
+{
+  "ref": "995dc35b68dc52ad2b95a22af50317a80baa79fb",
+  "path": "tensorflow/core/kernels/count_ops.cc",
+  "startline": 1,
+  "endline": 70
+}
+Here are lines 1 through 70.
+
+/* Copyright 2020 The TensorFlow Authors. All Rights Reserved.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+==============================================================================*/
+
+#include "absl/container/flat_hash_map.h"
+#include "tensorflow/core/framework/op_kernel.h"
+#include "tensorflow/core/framework/op_requires.h"
+#include "tensorflow/core/framework/register_types.h"
+#include "tensorflow/core/framework/tensor.h"
+#include "tensorflow/core/platform/errors.h"
+#include "tensorflow/core/platform/types.h"
+
+namespace tensorflow {
+
+template <class T>
+using BatchedMap = std::vector<absl::flat_hash_map<int64, T>>;
+
+namespace {
+// TODO(momernick): Extend this function to work with outputs of rank > 2.
+template <class T>
+Status OutputSparse(const BatchedMap<T>& per_batch_counts, int num_values,
+                    bool is_1d, OpKernelContext* context) {
+  int total_values = 0;
+  int num_batches = per_batch_counts.size();
+  for (const auto& per_batch_count : per_batch_counts) {
+    total_values += per_batch_count.size();
+  }
+
+  Tensor* indices;
+  int inner_dim = is_1d ? 1 : 2;
+  TF_RETURN_IF_ERROR(context->allocate_output(
+      0, TensorShape({total_values, inner_dim}), &indices));
+
+  Tensor* values;
+  TF_RETURN_IF_ERROR(
+      context->allocate_output(1, TensorShape({total_values}), &values));
+
+  auto output_indices = indices->matrix<int64>();
+  auto output_values = values->flat<T>();
+  int64 value_loc = 0;
+  for (int b = 0; b < num_batches; ++b) {
+    const auto& per_batch_count = per_batch_counts[b];
+    std::vector<std::pair<int, T>> pairs(per_batch_count.begin(),
+                                         per_batch_count.end());
+    std::sort(pairs.begin(), pairs.end());
+    for (const auto& x : pairs) {
+      if (is_1d) {
+        output_indices(value_loc, 0) = x.first;
+      } else {
+        output_indices(value_loc, 0) = b;
+        output_indices(value_loc, 1) = x.first;
+      }
+      output_values(value_loc) = x.second;
+      ++value_loc;
+    }
+  }
+  Tensor* dense_shape;
+  if (is_1d) {
+    TF_RETURN_IF_ERROR(
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tokens used
+input: 3,838
+cache read: 4,608
+cache write: 0
+output: 172
+reasoning output: 0
+
+The target file has the same `SparseCount` allocation path, with minor type spelling differences (`int64` aliases). I’m going to add only the overflow guard and required include/static limit, preserving the target’s existing style.
+
+tool: read
+{
+  "filePath": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0058-995dc35b68dc\\tensorflow\\core\\kernels\\count_ops.cc",
+  "offset": 1,
+  "limit": 280
+}
+<path>C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0058-995dc35b68dc\tensorflow\core\kernels\count_ops.cc</path>
+<type>file</type>
+<content>
+1: /* Copyright 2020 The TensorFlow Authors. All Rights Reserved.
+2: 
+3: Licensed under the Apache License, Version 2.0 (the "License");
+4: you may not use this file except in compliance with the License.
+5: You may obtain a copy of the License at
+6: 
+7:     http://www.apache.org/licenses/LICENSE-2.0
+8: 
+9: Unless required by applicable law or agreed to in writing, software
+10: distributed under the License is distributed on an "AS IS" BASIS,
+11: WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+12: See the License for the specific language governing permissions and
+13: limitations under the License.
+14: ==============================================================================*/
+15: 
+16: #include "absl/container/flat_hash_map.h"
+17: #include "tensorflow/core/framework/op_kernel.h"
+18: #include "tensorflow/core/framework/op_requires.h"
+19: #include "tensorflow/core/framework/register_types.h"
+20: #include "tensorflow/core/framework/tensor.h"
+21: #include "tensorflow/core/platform/errors.h"
+22: #include "tensorflow/core/platform/types.h"
+23: 
+24: namespace tensorflow {
+25: 
+26: template <class T>
+27: using BatchedMap = std::vector<absl::flat_hash_map<int64, T>>;
+28: 
+29: namespace {
+30: // TODO(momernick): Extend this function to work with outputs of rank > 2.
+31: template <class T>
+32: Status OutputSparse(const BatchedMap<T>& per_batch_counts, int num_values,
+33:                     bool is_1d, OpKernelContext* context) {
+34:   int total_values = 0;
+35:   int num_batches = per_batch_counts.size();
+36:   for (const auto& per_batch_count : per_batch_counts) {
+37:     total_values += per_batch_count.size();
+38:   }
+39: 
+40:   Tensor* indices;
+41:   int inner_dim = is_1d ? 1 : 2;
+42:   TF_RETURN_IF_ERROR(context->allocate_output(
+43:       0, TensorShape({total_values, inner_dim}), &indices));
+44: 
+45:   Tensor* values;
+46:   TF_RETURN_IF_ERROR(
+47:       context->allocate_output(1, TensorShape({total_values}), &values));
+48: 
+49:   auto output_indices = indices->matrix<int64>();
+50:   auto output_values = values->flat<T>();
+51:   int64 value_loc = 0;
+52:   for (int b = 0; b < num_batches; ++b) {
+53:     const auto& per_batch_count = per_batch_counts[b];
+54:     std::vector<std::pair<int, T>> pairs(per_batch_count.begin(),
+55:                                          per_batch_count.end());
+56:     std::sort(pairs.begin(), pairs.end());
+57:     for (const auto& x : pairs) {
+58:       if (is_1d) {
+59:         output_indices(value_loc, 0) = x.first;
+60:       } else {
+61:         output_indices(value_loc, 0) = b;
+62:         output_indices(value_loc, 1) = x.first;
+63:       }
+64:       output_values(value_loc) = x.second;
+65:       ++value_loc;
+66:     }
+67:   }
+68:   Tensor* dense_shape;
+69:   if (is_1d) {
+70:     TF_RETURN_IF_ERROR(
+71:         context->allocate_output(2, TensorShape({1}), &dense_shape));
+72:     dense_shape->flat<int64>().data()[0] = num_values;
+73:   } else {
+74:     TF_RETURN_IF_ERROR(
+75:         context->allocate_output(2, TensorShape({2}), &dense_shape));
+76:     dense_shape->flat<int64>().data()[0] = num_batches;
+77:     dense_shape->flat<int64>().data()[1] = num_values;
+78:   }
+79: 
+80:   return Status::OK();
+81: }
+82: 
+83: int GetOutputSize(int max_seen, int max_length, int min_length) {
+84:   return max_length > 0 ? max_length : std::max((max_seen + 1), min_length);
+85: }
+86: 
+87: }  // namespace
+88: 
+89: template <class T, class W>
+90: class DenseCount : public OpKernel {
+91:  public:
+92:   explicit DenseCount(OpKernelConstruction* context) : OpKernel(context) {
+93:     OP_REQUIRES_OK(context, context->GetAttr("minlength", &minlength_));
+94:     OP_REQUIRES_OK(context, context->GetAttr("maxlength", &maxlength_));
+95:     OP_REQUIRES_OK(context, context->GetAttr("binary_output", &binary_output_));
+96:   }
+97: 
+98:   void Compute(OpKernelContext* context) override {
+99:     const Tensor& data = context->input(0);
+100:     const Tensor& weights = context->input(1);
+101:     bool use_weights = weights.NumElements() > 0;
+102: 
+103:     OP_REQUIRES(context,
+104:                 TensorShapeUtils::IsVector(data.shape()) ||
+105:                     TensorShapeUtils::IsMatrix(data.shape()),
+106:                 errors::InvalidArgument(
+107:                     "Input must be a 1 or 2-dimensional tensor. Got: ",
+108:                     data.shape().DebugString()));
+109: 
+110:     if (use_weights) {
+111:       OP_REQUIRES(
+112:           context, weights.shape() == data.shape(),
+113:           errors::InvalidArgument(
+114:               "Weights and data must have the same shape. Weight shape: ",
+115:               weights.shape().DebugString(),
+116:               "; data shape: ", data.shape().DebugString()));
+117:     }
+118: 
+119:     bool is_1d = TensorShapeUtils::IsVector(data.shape());
+120:     int negative_valued_axis = -1;
+121:     int num_batch_dimensions = (data.shape().dims() + negative_valued_axis);
+122: 
+123:     int num_batch_elements = 1;
+124:     for (int i = 0; i < num_batch_dimensions; ++i) {
+125:       OP_REQUIRES(context, data.shape().dim_size(i) != 0,
+126:                   errors::InvalidArgument(
+127:                       "Invalid input: Shapes dimension cannot be 0."));
+128:       num_batch_elements *= data.shape().dim_size(i);
+129:     }
+130:     int num_value_elements = data.shape().num_elements() / num_batch_elements;
+131:     auto per_batch_counts = BatchedMap<W>(num_batch_elements);
+132: 
+133:     T max_value = 0;
+134: 
+135:     const auto data_values = data.flat<T>();
+136:     const auto weight_values = weights.flat<W>();
+137:     int i = 0;
+138:     for (int b = 0; b < num_batch_elements; ++b) {
+139:       for (int v = 0; v < num_value_elements; ++v) {
+140:         const auto& value = data_values(i);
+141:         if (value >= 0 && (maxlength_ <= 0 || value < maxlength_)) {
+142:           if (binary_output_) {
+143:             per_batch_counts[b][value] = 1;
+144:           } else if (use_weights) {
+145:             per_batch_counts[b][value] += weight_values(i);
+146:           } else {
+147:             per_batch_counts[b][value]++;
+148:           }
+149:           if (value > max_value) {
+150:             max_value = value;
+151:           }
+152:         }
+153:         ++i;
+154:       }
+155:     }
+156: 
+157:     int num_output_values = GetOutputSize(max_value, maxlength_, minlength_);
+158:     OP_REQUIRES_OK(context, OutputSparse<W>(per_batch_counts, num_output_values,
+159:                                             is_1d, context));
+160:   }
+161: 
+162:  private:
+163:   int maxlength_;
+164:   int minlength_;
+165:   bool binary_output_;
+166: };
+167: 
+168: template <class T, class W>
+169: class SparseCount : public OpKernel {
+170:  public:
+171:   explicit SparseCount(OpKernelConstruction* context) : OpKernel(context) {
+172:     OP_REQUIRES_OK(context, context->GetAttr("minlength", &minlength_));
+173:     OP_REQUIRES_OK(context, context->GetAttr("maxlength", &maxlength_));
+174:     OP_REQUIRES_OK(context, context->GetAttr("binary_output", &binary_output_));
+175:   }
+176: 
+177:   void Compute(OpKernelContext* context) override {
+178:     const Tensor& indices = context->input(0);
+179:     const Tensor& values = context->input(1);
+180:     const Tensor& shape = context->input(2);
+181:     const Tensor& weights = context->input(3);
+182:     bool use_weights = weights.NumElements() > 0;
+183: 
+184:     OP_REQUIRES(context, TensorShapeUtils::IsMatrix(indices.shape()),
+185:                 errors::InvalidArgument(
+186:                     "Input indices must be a 2-dimensional tensor. Got: ",
+187:                     indices.shape().DebugString()));
+188:     OP_REQUIRES(context, TensorShapeUtils::IsVector(values.shape()),
+189:                 errors::InvalidArgument("Input values must be a vector. Got: ",
+190:                                         values.shape().DebugString()));
+191:     OP_REQUIRES(context, TensorShapeUtils::IsVector(shape.shape()),
+192:                 errors::InvalidArgument("Input shape must be a vector. Got: ",
+193:                                         shape.shape().DebugString()));
+194:     OP_REQUIRES(context,
+195:                 values.shape().dim_size(0) == indices.shape().dim_size(0),
+196:                 errors::InvalidArgument(
+197:                     "Number of values must match first dimension of indices.",
+198:                     "Got ", values.shape().dim_size(0),
+199:                     " values, indices shape: ", indices.shape().DebugString()));
+200:     OP_REQUIRES(
+201:         context, shape.shape().dim_size(0) == indices.shape().dim_size(1),
+202:         errors::InvalidArgument(
+203:             "Number of dimensions must match second dimension of indices.",
+204:             "Got ", shape.shape().dim_size(0),
+205:             " dimensions, indices shape: ", indices.shape().DebugString()));
+206:     OP_REQUIRES(context, shape.NumElements() > 0,
+207:                 errors::InvalidArgument(
+208:                     "The shape argument requires at least one element."));
+209:     // Validate indices: each index must be valid for the corresponding
+210:     // dimension. This could be possibly done better.
+211:     const auto indices_values = indices.matrix<int64_t>();
+212:     const auto shape_vector = shape.vec<int64_t>();
+213:     int num_values = values.NumElements();  // same as first dim of indices
+214:     int rank = indices.shape().dim_size(1);
+215:     for (int i = 0; i < num_values; ++i) {
+216:       for (int j = 0; j < rank; ++j) {
+217:         OP_REQUIRES(
+218:             context,
+219:             indices_values(i, j) >= 0 && indices_values(i, j) < shape_vector(j),
+220:             errors::InvalidArgument(
+221:                 "Invalid index value at ", i, ": dimension ", j, " has value ",
+222:                 indices_values(i, j), " which is not in [0, ", shape_vector(j),
+223:                 ") (as given by dense shape ", shape.DebugString()));
+224:       }
+225:     }
+226: 
+227:     if (use_weights) {
+228:       OP_REQUIRES(
+229:           context, weights.shape() == values.shape(),
+230:           errors::InvalidArgument(
+231:               "Weights and values must have the same shape. Weight shape: ",
+232:               weights.shape().DebugString(),
+233:               "; values shape: ", values.shape().DebugString()));
+234:     }
+235: 
+236:     bool is_1d = shape.NumElements() == 1;
+237:     auto shape_vector = shape.flat<int64>();
+238:     int num_batches = is_1d ? 1 : shape_vector(0);
+239: 
+240:     for (int b = 0; b < shape_vector.size(); b++) {
+241:       OP_REQUIRES(context, shape_vector(b) >= 0,
+242:                   errors::InvalidArgument(
+243:                       "Elements in dense_shape must be >= 0. Instead got:",
+244:                       shape.DebugString()));
+245:     }
+246: 
+247:     OP_REQUIRES(context, num_values == indices.shape().dim_size(0),
+248:                 errors::InvalidArgument(
+249:                     "Number of values must match first dimension of indices.",
+250:                     "Got ", num_values,
+251:                     " values, indices shape: ", indices.shape().DebugString()));
+252: 
+253:     const auto indices_values = indices.matrix<int64>();
+254:     const auto values_values = values.flat<T>();
+255:     const auto weight_values = weights.flat<W>();
+256: 
+257:     auto per_batch_counts = BatchedMap<W>(num_batches);
+258: 
+259:     T max_value = 0;
+260: 
+261:     for (int idx = 0; idx < num_values; ++idx) {
+262:       int batch = is_1d ? 0 : indices_values(idx, 0);
+263:       if (batch >= num_batches) {
+264:         OP_REQUIRES(context, batch < num_batches,
+265:                     errors::InvalidArgument(
+266:                         "Indices value along the first dimension must be ",
+267:                         "lower than the first index of the shape.", "Got ",
+268:                         batch, " as batch and ", num_batches,
+269:                         " as the first dimension of the shape."));
+270:       }
+271:       const auto& value = values_values(idx);
+272:       if (value >= 0 && (maxlength_ <= 0 || value < maxlength_)) {
+273:         if (binary_output_) {
+274:           per_batch_counts[batch][value] = 1;
+275:         } else if (use_weights) {
+276:           per_batch_counts[batch][value] += weight_values(idx);
+277:         } else {
+278:           per_batch_counts[batch][value]++;
+279:         }
+280:         if (value > max_value) {
+
+(Showing lines 1-280 of 407. Use offset=281 to continue.)
+</content>
+
+tokens used
+input: 2,091
+cache read: 7,680
+cache write: 0
+output: 128
+reasoning output: 135
+
+tool: validate
+{
+  "ref": "995dc35b68dc52ad2b95a22af50317a80baa79fb",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/count_ops.cc b/tensorflow/core/kernels/count_ops.cc\nindex cc101b66f81403..3f9df8f0d69d69 100644\n--- a/tensorflow/core/kernels/count_ops.cc\n+++ b/tensorflow/core/kernels/count_ops.cc\n@@ -13,6 +13,8 @@ See the License for the specific language governing permissions and\n limitations under the License.\n ==============================================================================*/\n \n+#include <limits>\n+\n #include \"absl/container/flat_hash_map.h\"\n #include \"tensorflow/core/framework/op_kernel.h\"\n #include \"tensorflow/core/framework/op_requires.h\"\n@@ -23,6 +25,9 @@ limitations under the License.\n \n namespace tensorflow {\n \n+// Don't allocate too large `BatchedMap<T>` objects\n+static int kMaxBatches = std::numeric_limits<int>::max();\n+\n template <class T>\n using BatchedMap = std::vector<absl::flat_hash_map<int64, T>>;\n \n@@ -236,6 +241,10 @@ class SparseCount : public OpKernel {\n     bool is_1d = shape.NumElements() == 1;\n     auto shape_vector = shape.flat<int64>();\n     int num_batches = is_1d ? 1 : shape_vector(0);\n+    OP_REQUIRES(\n+        context, 0 < num_batches && num_batches < kMaxBatches,\n+        errors::InvalidArgument(\"Cannot allocate \", num_batches,\n+                                \" batches, is the dense shape too wide?\"));\n \n     for (int b = 0; b < shape_vector.size(); b++) {\n       OP_REQUIRES(context, shape_vector(b) >= 0,\n"
+}
+Patch applied successfully
+
+tokens used
+input: 4,592
+cache read: 8,704
+cache write: 0
+output: 445
+reasoning output: 160
+
+The candidate hunk applies cleanly to the target base. I’m applying it directly to the workspace now.
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/kernels/count_ops.cc\n@@\n-#include \"absl/container/flat_hash_map.h\"\n+#include <limits>\n+\n+#include \"absl/container/flat_hash_map.h\"\n@@\n namespace tensorflow {\n \n+// Don't allocate too large `BatchedMap<T>` objects\n+static int kMaxBatches = std::numeric_limits<int>::max();\n+\n template <class T>\n using BatchedMap = std::vector<absl::flat_hash_map<int64, T>>;\n@@\n     bool is_1d = shape.NumElements() == 1;\n     auto shape_vector = shape.flat<int64>();\n     int num_batches = is_1d ? 1 : shape_vector(0);\n+    OP_REQUIRES(\n+        context, 0 < num_batches && num_batches < kMaxBatches,\n+        errors::InvalidArgument(\"Cannot allocate \", num_batches,\n+                                \" batches, is the dense shape too wide?\"));\n \n     for (int b = 0; b < shape_vector.size(); b++) {\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/kernels/count_ops.cc
+
+tokens used
+input: 1,114
+cache read: 12,800
+cache write: 0
+output: 306
+reasoning output: 8
+
+I’ll inspect the resulting diff to confirm only the intended backport change is present.
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/kernels/count_ops.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0058-995dc35b68dc"
+}
+warning: in the working copy of 'tensorflow/core/kernels/count_ops.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/kernels/count_ops.cc b/tensorflow/core/kernels/count_ops.cc
+index b0742eb19c..28c9cae966 100644
+--- a/tensorflow/core/kernels/count_ops.cc
++++ b/tensorflow/core/kernels/count_ops.cc
+@@ -13,6 +13,8 @@ See the License for the specific language governing permissions and
+ limitations under the License.
+ ==============================================================================*/
+ 
++#include <limits>
++
+ #include "absl/container/flat_hash_map.h"
+ #include "tensorflow/core/framework/op_kernel.h"
+ #include "tensorflow/core/framework/op_requires.h"
+@@ -23,6 +25,9 @@ limitations under the License.
+ 
+ namespace tensorflow {
+ 
++// Don't allocate too large `BatchedMap<T>` objects
++static int kMaxBatches = std::numeric_limits<int>::max();
++
+ template <class T>
+ using BatchedMap = std::vector<absl::flat_hash_map<int64, T>>;
+ 
+@@ -236,6 +241,10 @@ class SparseCount : public OpKernel {
+     bool is_1d = shape.NumElements() == 1;
+     auto shape_vector = shape.flat<int64>();
+     int num_batches = is_1d ? 1 : shape_vector(0);
++    OP_REQUIRES(
++        context, 0 < num_batches && num_batches < kMaxBatches,
++        errors::InvalidArgument("Cannot allocate ", num_batches,
++                                " batches, is the dense shape too wide?"));
+ 
+     for (int b = 0; b < shape_vector.size(); b++) {
+       OP_REQUIRES(context, shape_vector(b) >= 0,
+
+tokens used
+input: 430
+cache read: 13,824
+cache write: 0
+output: 94
+reasoning output: 14
+
+Applied the TensorFlow 2.5.3 security guard to the equivalent 2.5.2 `SparseCount` path and validated the hunk against the target base.
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/kernels/count_ops.cc b/tensorflow/core/kernels/count_ops.cc
+    index b0742eb19c..28c9cae966 100644
+    --- a/tensorflow/core/kernels/count_ops.cc
+    +++ b/tensorflow/core/kernels/count_ops.cc
+    @@ -13,6 +13,8 @@ See the License for the specific language governing permissions and
+     limitations under the License.
+     ==============================================================================*/
+     
+    +#include <limits>
+    +
+     #include "absl/container/flat_hash_map.h"
+     #include "tensorflow/core/framework/op_kernel.h"
+     #include "tensorflow/core/framework/op_requires.h"
+    @@ -23,6 +25,9 @@ limitations under the License.
+     
+     namespace tensorflow {
+     
+    +// Don't allocate too large `BatchedMap<T>` objects
+    +static int kMaxBatches = std::numeric_limits<int>::max();
+    +
+     template <class T>
+     using BatchedMap = std::vector<absl::flat_hash_map<int64, T>>;
+     
+    @@ -236,6 +241,10 @@ class SparseCount : public OpKernel {
+         bool is_1d = shape.NumElements() == 1;
+         auto shape_vector = shape.flat<int64>();
+         int num_batches = is_1d ? 1 : shape_vector(0);
+    +    OP_REQUIRES(
+    +        context, 0 < num_batches && num_batches < kMaxBatches,
+    +        errors::InvalidArgument("Cannot allocate ", num_batches,
+    +                                " batches, is the dense shape too wide?"));
+     
+         for (int b = 0; b < shape_vector.size(); b++) {
+           OP_REQUIRES(context, shape_vector(b) >= 0,
+  notes: >
+    Added the SparseCount batch allocation bound check and limits include from the newer security fix.
+```
+
+tokens used
+input: 936
+cache read: 13,824
+cache write: 0
+output: 464
+reasoning output: 24

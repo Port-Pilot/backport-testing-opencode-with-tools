@@ -1,0 +1,377 @@
+I’ll locate the equivalent `BoostedTreesCreateEnsembleOp` code in the target tree, verify the hunk context against the target base, then apply only the UAF-prevention line if the ownership pattern matches.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target boosted trees resource op context",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Validate backport hunk against target base",
+      "status": "pending",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply minimal source change",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "content": "Capture final diff",
+      "status": "pending",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target boosted trees resource op context",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Validate backport hunk against target base",
+    "status": "pending",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply minimal source change",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "content": "Capture final diff",
+    "status": "pending",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 3,744
+cache read: 4,608
+cache write: 0
+output: 139
+reasoning output: 0
+
+tool: viewcode
+{
+  "ref": "c7c1ff48f1e8b00ba6e42fb082a0862f7f389a7e",
+  "path": "tensorflow/core/kernels/boosted_trees/resource_ops.cc",
+  "startline": 35,
+  "endline": 75
+}
+Here are lines 35 through 75.
+
+// Creates a tree ensemble resource.
+class BoostedTreesCreateEnsembleOp : public OpKernel {
+ public:
+  explicit BoostedTreesCreateEnsembleOp(OpKernelConstruction* context)
+      : OpKernel(context) {}
+
+  void Compute(OpKernelContext* context) override {
+    // Get the stamp token.
+    const Tensor* stamp_token_t;
+    OP_REQUIRES_OK(context, context->input("stamp_token", &stamp_token_t));
+    int64 stamp_token = stamp_token_t->scalar<int64>()();
+
+    // Get the tree ensemble proto.
+    const Tensor* tree_ensemble_serialized_t;
+    OP_REQUIRES_OK(context, context->input("tree_ensemble_serialized",
+                                           &tree_ensemble_serialized_t));
+    std::unique_ptr<BoostedTreesEnsembleResource> result(
+        new BoostedTreesEnsembleResource());
+    if (!result->InitFromSerialized(
+            tree_ensemble_serialized_t->scalar<tstring>()(), stamp_token)) {
+      result->Unref();
+      OP_REQUIRES(
+          context, false,
+          errors::InvalidArgument("Unable to parse tree ensemble proto."));
+    }
+
+    // Only create one, if one does not exist already. Report status for all
+    // other exceptions.
+    auto status =
+        CreateResource(context, HandleFromInput(context, 0), result.release());
+    if (status.code() != tensorflow::error::ALREADY_EXISTS) {
+      OP_REQUIRES_OK(context, status);
+    }
+  }
+};
+
+REGISTER_KERNEL_BUILDER(Name("BoostedTreesCreateEnsemble").Device(DEVICE_CPU),
+                        BoostedTreesCreateEnsembleOp);
+
+// Op for retrieving some model states (needed for training).
+class BoostedTreesGetEnsembleStatesOp : public OpKernel {
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: locate_symbol
+{
+  "ref": "c7c1ff48f1e8b00ba6e42fb082a0862f7f389a7e",
+  "symbol": "BoostedTreesCreateEnsembleOp"
+}
+tensorflow/core/kernels/boosted_trees/resource_ops.cc:36
+tensorflow/core/kernels/boosted_trees/resource_ops.cc:38
+tensorflow/core/kernels/boosted_trees/resource_ops.cc:72
+
+tokens used
+input: 945
+cache read: 7,680
+cache write: 0
+output: 138
+reasoning output: 0
+
+The target code is in the same file with the same ownership sequence: `unique_ptr` holds the resource, parse failure calls `result->Unref()`, then exits via `OP_REQUIRES`. I’m validating the exact minimal hunk before editing.
+
+tool: validate
+{
+  "ref": "c7c1ff48f1e8b00ba6e42fb082a0862f7f389a7e",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/boosted_trees/resource_ops.cc b/tensorflow/core/kernels/boosted_trees/resource_ops.cc\n--- a/tensorflow/core/kernels/boosted_trees/resource_ops.cc\n+++ b/tensorflow/core/kernels/boosted_trees/resource_ops.cc\n@@ -53,6 +53,7 @@ class BoostedTreesCreateEnsembleOp : public OpKernel {\n     if (!result->InitFromSerialized(\n             tree_ensemble_serialized_t->scalar<tstring>()(), stamp_token)) {\n       result->Unref();\n+      result.release();  // Needed due to the `->Unref` above, to prevent UAF\n       OP_REQUIRES(\n           context, false,\n           errors::InvalidArgument(\"Unable to parse tree ensemble proto.\"));\n"
+}
+Patch applied successfully
+
+tokens used
+input: 1,543
+cache read: 7,680
+cache write: 0
+output: 293
+reasoning output: 27
+
+Validation succeeded; I’m applying the same one-line ownership fix in the target checkout.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target boosted trees resource op context",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate backport hunk against target base",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply minimal source change",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Capture final diff",
+      "status": "pending",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target boosted trees resource op context",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate backport hunk against target base",
+    "status": "completed",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply minimal source change",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Capture final diff",
+    "status": "pending",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 852
+cache read: 8,704
+cache write: 0
+output: 111
+reasoning output: 0
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/kernels/boosted_trees/resource_ops.cc\n@@\n     if (!result->InitFromSerialized(\n             tree_ensemble_serialized_t->scalar<tstring>()(), stamp_token)) {\n       result->Unref();\n+      result.release();  // Needed due to the `->Unref` above, to prevent UAF\n       OP_REQUIRES(\n           context, false,\n           errors::InvalidArgument(\"Unable to parse tree ensemble proto.\"));\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/kernels/boosted_trees/resource_ops.cc
+
+tokens used
+input: 1,097
+cache read: 8,704
+cache write: 0
+output: 133
+reasoning output: 0
+
+The source edit is applied. I’m capturing the resulting diff for the final backport report.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target boosted trees resource op context",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate backport hunk against target base",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply minimal source change",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Capture final diff",
+      "status": "in_progress",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target boosted trees resource op context",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate backport hunk against target base",
+    "status": "completed",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply minimal source change",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Capture final diff",
+    "status": "in_progress",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 237
+cache read: 9,728
+cache write: 0
+output: 113
+reasoning output: 0
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/kernels/boosted_trees/resource_ops.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0202-c7c1ff48f1e8"
+}
+warning: in the working copy of 'tensorflow/core/kernels/boosted_trees/resource_ops.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/kernels/boosted_trees/resource_ops.cc b/tensorflow/core/kernels/boosted_trees/resource_ops.cc
+index ac1fb5652d..8036f2b20f 100644
+--- a/tensorflow/core/kernels/boosted_trees/resource_ops.cc
++++ b/tensorflow/core/kernels/boosted_trees/resource_ops.cc
+@@ -53,6 +53,7 @@ class BoostedTreesCreateEnsembleOp : public OpKernel {
+     if (!result->InitFromSerialized(
+             tree_ensemble_serialized_t->scalar<tstring>()(), stamp_token)) {
+       result->Unref();
++      result.release();  // Needed due to the `->Unref` above, to prevent UAF
+       OP_REQUIRES(
+           context, false,
+           errors::InvalidArgument("Unable to parse tree ensemble proto."));
+
+tokens used
+input: 484
+cache read: 9,728
+cache write: 0
+output: 76
+reasoning output: 0
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target boosted trees resource op context",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate backport hunk against target base",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply minimal source change",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Capture final diff",
+      "status": "completed",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target boosted trees resource op context",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate backport hunk against target base",
+    "status": "completed",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply minimal source change",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Capture final diff",
+    "status": "completed",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 795
+cache read: 9,728
+cache write: 0
+output: 86
+reasoning output: 0
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/kernels/boosted_trees/resource_ops.cc b/tensorflow/core/kernels/boosted_trees/resource_ops.cc
+    index ac1fb5652d..8036f2b20f 100644
+    --- a/tensorflow/core/kernels/boosted_trees/resource_ops.cc
+    +++ b/tensorflow/core/kernels/boosted_trees/resource_ops.cc
+    @@ -53,6 +53,7 @@ class BoostedTreesCreateEnsembleOp : public OpKernel {
+         if (!result->InitFromSerialized(
+                 tree_ensemble_serialized_t->scalar<tstring>()(), stamp_token)) {
+           result->Unref();
+    +      result.release();  // Needed due to the `->Unref` above, to prevent UAF
+           OP_REQUIRES(
+               context, false,
+               errors::InvalidArgument("Unable to parse tree ensemble proto."));
+  notes: >
+    Backported the BoostedTreesCreateEnsemble ownership fix so the unique_ptr releases after manual Unref on parse failure, preventing use-after-free.
+```
+
+tokens used
+input: 1,014
+cache read: 9,728
+cache write: 0
+output: 251
+reasoning output: 0

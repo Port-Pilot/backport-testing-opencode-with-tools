@@ -1,0 +1,326 @@
+I’ll locate the target `Examples::Initialize` implementation in the checked-out TensorFlow 2.3.4 tree, compare the local context against the provided newer hunk, then apply the minimal equivalent bounds check.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target sdca_internal.cc context for Examples::Initialize",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Validate and apply minimal backport hunk",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "content": "Review resulting diff and report YAML",
+      "status": "pending",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target sdca_internal.cc context for Examples::Initialize",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Validate and apply minimal backport hunk",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "content": "Review resulting diff and report YAML",
+    "status": "pending",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 3,725
+cache read: 4,608
+cache write: 0
+output: 130
+reasoning output: 0
+
+tool: viewcode
+{
+  "ref": "6c1eb9637e0218d2d04c72c8838e17e72ebd00d5",
+  "path": "tensorflow/core/kernels/sdca_internal.cc",
+  "startline": 340,
+  "endline": 410
+}
+Here are lines 340 through 410.
+
+
+  OpInputList sparse_example_indices_inputs;
+  TF_RETURN_IF_ERROR(context->input_list("sparse_example_indices",
+                                         &sparse_example_indices_inputs));
+  if (sparse_example_indices_inputs.size() != num_sparse_features)
+    return errors::InvalidArgument(
+        "Expected ", num_sparse_features,
+        " tensors in sparse_example_indices but got ",
+        sparse_example_indices_inputs.size());
+  OpInputList sparse_feature_indices_inputs;
+  TF_RETURN_IF_ERROR(context->input_list("sparse_feature_indices",
+                                         &sparse_feature_indices_inputs));
+  if (sparse_feature_indices_inputs.size() != num_sparse_features)
+    return errors::InvalidArgument(
+        "Expected ", num_sparse_features,
+        " tensors in sparse_feature_indices but got ",
+        sparse_feature_indices_inputs.size());
+  OpInputList sparse_feature_values_inputs;
+  if (num_sparse_features_with_values > 0) {
+    TF_RETURN_IF_ERROR(context->input_list("sparse_feature_values",
+                                           &sparse_feature_values_inputs));
+    if (sparse_feature_values_inputs.size() != num_sparse_features_with_values)
+      return errors::InvalidArgument(
+          "Expected ", num_sparse_features_with_values,
+          " tensors in sparse_feature_values but got ",
+          sparse_feature_values_inputs.size());
+  }
+
+  const Tensor* example_weights_t;
+  TF_RETURN_IF_ERROR(context->input("example_weights", &example_weights_t));
+  auto example_weights = example_weights_t->flat<float>();
+
+  if (example_weights.size() >= std::numeric_limits<int>::max()) {
+    return errors::InvalidArgument(strings::Printf(
+        "Too many examples in a mini-batch: %zu > %d", example_weights.size(),
+        std::numeric_limits<int>::max()));
+  }
+
+  // The static_cast here is safe since num_examples can be at max an int.
+  const int num_examples = static_cast<int>(example_weights.size());
+  const Tensor* example_labels_t;
+  TF_RETURN_IF_ERROR(context->input("example_labels", &example_labels_t));
+  auto example_labels = example_labels_t->flat<float>();
+
+  OpInputList dense_features_inputs;
+  TF_RETURN_IF_ERROR(
+      context->input_list("dense_features", &dense_features_inputs));
+
+  examples_.clear();
+  examples_.resize(num_examples);
+  probabilities_.resize(num_examples);
+  sampled_index_.resize(num_examples);
+  sampled_count_.resize(num_examples);
+  for (int example_id = 0; example_id < num_examples; ++example_id) {
+    Example* const example = &examples_[example_id];
+    example->sparse_features_.resize(num_sparse_features);
+    example->dense_vectors_.resize(num_dense_features);
+    example->example_weight_ = example_weights(example_id);
+    example->example_label_ = example_labels(example_id);
+  }
+  const DeviceBase::CpuWorkerThreads& worker_threads =
+      *context->device()->tensorflow_cpu_worker_threads();
+  TF_RETURN_IF_ERROR(CreateSparseFeatureRepresentation(
+      worker_threads, num_examples, num_sparse_features, weights,
+      sparse_example_indices_inputs, sparse_feature_indices_inputs,
+      sparse_feature_values_inputs, &examples_));
+  TF_RETURN_IF_ERROR(CreateDenseFeatureRepresentation(
+      worker_threads, num_examples, num_dense_features, weights,
+      dense_features_inputs, &examples_));
+  TF_RETURN_IF_ERROR(ComputeSquaredNormPerExample(
+      worker_threads, num_examples, num_sparse_features, num_dense_features,
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: locate_symbol
+{
+  "ref": "6c1eb9637e0218d2d04c72c8838e17e72ebd00d5",
+  "symbol": "Examples::Initialize"
+}
+tensorflow/core/kernels/sdca_internal.cc:334
+
+tokens used
+input: 896
+cache read: 7,680
+cache write: 0
+output: 129
+reasoning output: 0
+
+The target implementation has the same vulnerable shape: `num_examples` is derived from `example_weights`, then `example_labels(example_id)` is indexed without verifying the label tensor length. I’m adding the same `InvalidArgument` guard immediately after flattening `example_labels`.
+
+tool: validate
+{
+  "ref": "6c1eb9637e0218d2d04c72c8838e17e72ebd00d5",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/sdca_internal.cc b/tensorflow/core/kernels/sdca_internal.cc\n--- a/tensorflow/core/kernels/sdca_internal.cc\n+++ b/tensorflow/core/kernels/sdca_internal.cc\n@@ -380,6 +380,11 @@ Status Examples::Initialize(OpKernelContext* const context,\n   const Tensor* example_labels_t;\n   TF_RETURN_IF_ERROR(context->input(\"example_labels\", &example_labels_t));\n   auto example_labels = example_labels_t->flat<float>();\n+  if (example_labels.size() != num_examples) {\n+    return errors::InvalidArgument(\"Expected \", num_examples,\n+                                   \" example labels but got \",\n+                                   example_labels.size());\n+  }\n \n   OpInputList dense_features_inputs;\n   TF_RETURN_IF_ERROR(\n"
+}
+Patch applied successfully
+
+tokens used
+input: 1,784
+cache read: 7,680
+cache write: 0
+output: 304
+reasoning output: 40
+
+The hunk applies cleanly to the target base, so I’m updating only `tensorflow/core/kernels/sdca_internal.cc`.
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/kernels/sdca_internal.cc\n@@\n   const Tensor* example_labels_t;\n   TF_RETURN_IF_ERROR(context->input(\"example_labels\", &example_labels_t));\n   auto example_labels = example_labels_t->flat<float>();\n+  if (example_labels.size() != num_examples) {\n+    return errors::InvalidArgument(\"Expected \", num_examples,\n+                                   \" example labels but got \",\n+                                   example_labels.size());\n+  }\n \n   OpInputList dense_features_inputs;\n   TF_RETURN_IF_ERROR(\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/kernels/sdca_internal.cc
+
+tokens used
+input: 1,117
+cache read: 8,704
+cache write: 0
+output: 188
+reasoning output: 0
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target sdca_internal.cc context for Examples::Initialize",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate and apply minimal backport hunk",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Review resulting diff and report YAML",
+      "status": "in_progress",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target sdca_internal.cc context for Examples::Initialize",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate and apply minimal backport hunk",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Review resulting diff and report YAML",
+    "status": "in_progress",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 309
+cache read: 9,728
+cache write: 0
+output: 79
+reasoning output: 0
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/kernels/sdca_internal.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0216-6c1eb9637e02"
+}
+warning: in the working copy of 'tensorflow/core/kernels/sdca_internal.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/kernels/sdca_internal.cc b/tensorflow/core/kernels/sdca_internal.cc
+index 11a3be8bf4..ed7149bf83 100644
+--- a/tensorflow/core/kernels/sdca_internal.cc
++++ b/tensorflow/core/kernels/sdca_internal.cc
+@@ -380,6 +380,11 @@ Status Examples::Initialize(OpKernelContext* const context,
+   const Tensor* example_labels_t;
+   TF_RETURN_IF_ERROR(context->input("example_labels", &example_labels_t));
+   auto example_labels = example_labels_t->flat<float>();
++  if (example_labels.size() != num_examples) {
++    return errors::InvalidArgument("Expected ", num_examples,
++                                   " example labels but got ",
++                                   example_labels.size());
++  }
+ 
+   OpInputList dense_features_inputs;
+   TF_RETURN_IF_ERROR(
+
+tokens used
+input: 501
+cache read: 9,728
+cache write: 0
+output: 72
+reasoning output: 0
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target sdca_internal.cc context for Examples::Initialize",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate and apply minimal backport hunk",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Review resulting diff and report YAML",
+      "status": "completed",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target sdca_internal.cc context for Examples::Initialize",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate and apply minimal backport hunk",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Review resulting diff and report YAML",
+    "status": "completed",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 807
+cache read: 9,728
+cache write: 0
+output: 78
+reasoning output: 0
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/kernels/sdca_internal.cc b/tensorflow/core/kernels/sdca_internal.cc
+    index 11a3be8bf4..ed7149bf83 100644
+    --- a/tensorflow/core/kernels/sdca_internal.cc
+    +++ b/tensorflow/core/kernels/sdca_internal.cc
+    @@ -380,6 +380,11 @@ Status Examples::Initialize(OpKernelContext* const context,
+       const Tensor* example_labels_t;
+       TF_RETURN_IF_ERROR(context->input("example_labels", &example_labels_t));
+       auto example_labels = example_labels_t->flat<float>();
+    +  if (example_labels.size() != num_examples) {
+    +    return errors::InvalidArgument("Expected ", num_examples,
+    +                                   " example labels but got ",
+    +                                   example_labels.size());
+    +  }
+     
+       OpInputList dense_features_inputs;
+       TF_RETURN_IF_ERROR(
+  notes: >
+    Added validation that example_labels has exactly num_examples entries before indexing it in SDCA example initialization.
+```
+
+tokens used
+input: 997
+cache read: 9,728
+cache write: 0
+output: 247
+reasoning output: 0

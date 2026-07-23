@@ -1,0 +1,252 @@
+I’ll inspect the target-side implementation around the patched SparseSparseBinaryOpShared logic, then apply the minimal equivalent validation change and verify the hunk against the target base.
+
+tool: viewcode
+{
+  "ref": "91e33078963e062d9baf803abe862a187bb46b8e",
+  "path": "tensorflow/core/kernels/sparse_sparse_binary_op_shared.cc",
+  "startline": 130,
+  "endline": 205
+}
+Here are lines 130 through 205.
+
+    OP_REQUIRES_OK(ctx, ctx->input("b_values", &b_values_t));
+    OP_REQUIRES_OK(ctx, ctx->input("b_shape", &b_shape_t));
+
+    // Validations.
+    OP_REQUIRES(
+        ctx,
+        TensorShapeUtils::IsMatrix(a_indices_t->shape()) &&
+            TensorShapeUtils::IsMatrix(b_indices_t->shape()),
+        errors::InvalidArgument("Inputs a_indices and b_indices should be "
+                                "matrices but received shapes: ",
+                                a_indices_t->shape().DebugString(), ", ",
+                                b_indices_t->shape().DebugString()));
+    OP_REQUIRES(ctx,
+                TensorShapeUtils::IsVector(a_values_t->shape()) &&
+                    TensorShapeUtils::IsVector(b_values_t->shape()),
+                errors::InvalidArgument(
+                    "Inputs a_values and b_values should be vectors "
+                    "but received shapes: ",
+                    a_values_t->shape().DebugString(), " and ",
+                    b_values_t->shape().DebugString()));
+
+    const int64 a_nnz = a_indices_t->dim_size(0);
+    const int64 b_nnz = b_indices_t->dim_size(0);
+    const auto a_values = a_values_t->vec<T>();
+    const auto b_values = b_values_t->vec<T>();
+
+    OP_REQUIRES(
+        ctx, a_values.size() == a_nnz && b_values.size() == b_nnz,
+        errors::InvalidArgument("Expected ", a_nnz, " and ", b_nnz,
+                                " non-empty input values, got ",
+                                a_values.size(), " and ", b_values.size()));
+
+    OP_REQUIRES(ctx,
+                TensorShapeUtils::IsVector(a_shape_t->shape()) &&
+                    TensorShapeUtils::IsVector(b_shape_t->shape()),
+                errors::InvalidArgument(
+                    "Input shapes should be a vector but received shapes ",
+                    a_shape_t->shape().DebugString(), " and ",
+                    b_shape_t->shape().DebugString()));
+    OP_REQUIRES(ctx, a_shape_t->IsSameSize(*b_shape_t),
+                errors::InvalidArgument(
+                    "Operands do not have the same ranks; got shapes: ",
+                    a_shape_t->SummarizeValue(10), " and ",
+                    b_shape_t->SummarizeValue(10)));
+    const auto a_shape = a_shape_t->flat<int64>();
+    const auto b_shape = b_shape_t->flat<int64>();
+    for (int i = 0; i < a_shape_t->NumElements(); ++i) {
+      OP_REQUIRES(ctx, a_shape(i) == b_shape(i),
+                  errors::InvalidArgument("Operands' shapes do not match: got ",
+                                          a_shape(i), " and ", b_shape(i),
+                                          " for dimension ", i));
+    }
+
+    OP_REQUIRES(
+        ctx, a_indices_t->dim_size(1) == b_indices_t->dim_size(1),
+        errors::InvalidArgument(
+            "Indices' dimensions do not match: got ", a_indices_t->dim_size(1),
+            " and ", b_indices_t->dim_size(1), " for the second dimension."));
+    const int num_dims = a_indices_t->dim_size(1);
+    const auto a_indices_mat = a_indices_t->matrix<int64>();
+    const auto b_indices_mat = b_indices_t->matrix<int64>();
+    std::vector<T> a_augmented_values, b_augmented_values;
+    std::vector<std::pair<bool, int64>> entries_to_copy;  // from_a?, idx
+    UnionSparseIndicesAndValues(a_indices_mat, a_values, a_nnz, b_indices_mat,
+                                b_values, b_nnz, num_dims, &a_augmented_values,
+                                &b_augmented_values, &entries_to_copy);
+
+    // Allocates and fills output tensors.
+    const int64 sum_nnz = a_augmented_values.size();
+    Tensor *output_indices_t, *output_values_t;
+    OP_REQUIRES_OK(ctx,
+                   ctx->allocate_output(0, TensorShape({sum_nnz, num_dims}),
+                                        &output_indices_t));
+    OP_REQUIRES_OK(
+        ctx, ctx->allocate_output(1, TensorShape({sum_nnz}), &output_values_t));
+    auto output_indices_mat = output_indices_t->matrix<int64>();
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: locate_symbol
+{
+  "ref": "91e33078963e062d9baf803abe862a187bb46b8e",
+  "symbol": "SparseSparseBinaryOpShared"
+}
+tensorflow/core/kernels/sparse_sparse_binary_op_shared.cc:118
+tensorflow/core/kernels/sparse_sparse_binary_op_shared.cc:120
+tensorflow/core/kernels/sparse_sparse_binary_op_shared.cc:237
+tensorflow/core/kernels/sparse_sparse_binary_op_shared.cc:241
+
+tokens used
+input: 4,042
+cache read: 4,608
+cache write: 0
+output: 162
+reasoning output: 0
+
+The target file has the same validation block as the source patch. I’m moving `num_dims` earlier, adding the `a_shape` rank and non-empty checks, and removing the later redundant index-dimension equality check as in the security fix.
+
+tool: validate
+{
+  "ref": "91e33078963e062d9baf803abe862a187bb46b8e",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/sparse_sparse_binary_op_shared.cc b/tensorflow/core/kernels/sparse_sparse_binary_op_shared.cc\n--- a/tensorflow/core/kernels/sparse_sparse_binary_op_shared.cc\n+++ b/tensorflow/core/kernels/sparse_sparse_binary_op_shared.cc\n@@ -150,6 +150,7 @@ class SparseSparseBinaryOpShared : public OpKernel {\n \n     const int64 a_nnz = a_indices_t->dim_size(0);\n     const int64 b_nnz = b_indices_t->dim_size(0);\n+\n     const auto a_values = a_values_t->vec<T>();\n     const auto b_values = b_values_t->vec<T>();\n \n@@ -166,6 +167,14 @@ class SparseSparseBinaryOpShared : public OpKernel {\n                     \"Input shapes should be a vector but received shapes \",\n                     a_shape_t->shape().DebugString(), \" and \",\n                     b_shape_t->shape().DebugString()));\n+    const int num_dims = a_indices_t->dim_size(1);\n+    OP_REQUIRES(\n+        ctx, a_shape_t->NumElements() == num_dims,\n+        errors::InvalidArgument(\"Second dimension of a_indices and length of \"\n+                                \"a_shape must match, got \",\n+                                num_dims, \" and \", a_shape_t->NumElements()));\n+    OP_REQUIRES(ctx, num_dims > 0,\n+                errors::InvalidArgument(\"Tensors must not be empty\"));\n     OP_REQUIRES(ctx, a_shape_t->IsSameSize(*b_shape_t),\n                 errors::InvalidArgument(\n                     \"Operands do not have the same ranks; got shapes: \",\n@@ -180,12 +189,6 @@ class SparseSparseBinaryOpShared : public OpKernel {\n                                           \" for dimension \", i));\n     }\n \n-    OP_REQUIRES(\n-        ctx, a_indices_t->dim_size(1) == b_indices_t->dim_size(1),\n-        errors::InvalidArgument(\n-            \"Indices' dimensions do not match: got \", a_indices_t->dim_size(1),\n-            \" and \", b_indices_t->dim_size(1), \" for the second dimension.\"));\n-    const int num_dims = a_indices_t->dim_size(1);\n     const auto a_indices_mat = a_indices_t->matrix<int64>();\n     const auto b_indices_mat = b_indices_t->matrix<int64>();\n     std::vector<T> a_augmented_values, b_augmented_values;\n"
+}
+Patch applied successfully
+
+tokens used
+input: 2,145
+cache read: 7,680
+cache write: 0
+output: 688
+reasoning output: 52
+
+The hunk validates cleanly against the target base. I’m applying it directly to the checked-out file.
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/kernels/sparse_sparse_binary_op_shared.cc\n@@\n     const int64 a_nnz = a_indices_t->dim_size(0);\n     const int64 b_nnz = b_indices_t->dim_size(0);\n+\n     const auto a_values = a_values_t->vec<T>();\n     const auto b_values = b_values_t->vec<T>();\n@@\n                     \"Input shapes should be a vector but received shapes \",\n                     a_shape_t->shape().DebugString(), \" and \",\n                     b_shape_t->shape().DebugString()));\n+    const int num_dims = a_indices_t->dim_size(1);\n+    OP_REQUIRES(\n+        ctx, a_shape_t->NumElements() == num_dims,\n+        errors::InvalidArgument(\"Second dimension of a_indices and length of \"\n+                                \"a_shape must match, got \",\n+                                num_dims, \" and \", a_shape_t->NumElements()));\n+    OP_REQUIRES(ctx, num_dims > 0,\n+                errors::InvalidArgument(\"Tensors must not be empty\"));\n     OP_REQUIRES(ctx, a_shape_t->IsSameSize(*b_shape_t),\n                 errors::InvalidArgument(\n                     \"Operands do not have the same ranks; got shapes: \",\n@@\n-    OP_REQUIRES(\n-        ctx, a_indices_t->dim_size(1) == b_indices_t->dim_size(1),\n-        errors::InvalidArgument(\n-            \"Indices' dimensions do not match: got \", a_indices_t->dim_size(1),\n-            \" and \", b_indices_t->dim_size(1), \" for the second dimension.\"));\n-    const int num_dims = a_indices_t->dim_size(1);\n     const auto a_indices_mat = a_indices_t->matrix<int64>();\n     const auto b_indices_mat = b_indices_t->matrix<int64>();\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/kernels/sparse_sparse_binary_op_shared.cc
+
+tokens used
+input: 850
+cache read: 9,728
+cache write: 0
+output: 497
+reasoning output: 0
+
+The source change is applied. I’m checking the resulting diff to ensure only the intended TensorFlow kernel was modified.
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/kernels/sparse_sparse_binary_op_shared.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0120-91e33078963e",
+  "timeout": 120000
+}
+warning: in the working copy of 'tensorflow/core/kernels/sparse_sparse_binary_op_shared.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/kernels/sparse_sparse_binary_op_shared.cc b/tensorflow/core/kernels/sparse_sparse_binary_op_shared.cc
+index 8f1d0e30a7..3ad87bb2e4 100644
+--- a/tensorflow/core/kernels/sparse_sparse_binary_op_shared.cc
++++ b/tensorflow/core/kernels/sparse_sparse_binary_op_shared.cc
+@@ -150,6 +150,7 @@ class SparseSparseBinaryOpShared : public OpKernel {
+ 
+     const int64 a_nnz = a_indices_t->dim_size(0);
+     const int64 b_nnz = b_indices_t->dim_size(0);
++
+     const auto a_values = a_values_t->vec<T>();
+     const auto b_values = b_values_t->vec<T>();
+ 
+@@ -166,6 +167,14 @@ class SparseSparseBinaryOpShared : public OpKernel {
+                     "Input shapes should be a vector but received shapes ",
+                     a_shape_t->shape().DebugString(), " and ",
+                     b_shape_t->shape().DebugString()));
++    const int num_dims = a_indices_t->dim_size(1);
++    OP_REQUIRES(
++        ctx, a_shape_t->NumElements() == num_dims,
++        errors::InvalidArgument("Second dimension of a_indices and length of "
++                                "a_shape must match, got ",
++                                num_dims, " and ", a_shape_t->NumElements()));
++    OP_REQUIRES(ctx, num_dims > 0,
++                errors::InvalidArgument("Tensors must not be empty"));
+     OP_REQUIRES(ctx, a_shape_t->IsSameSize(*b_shape_t),
+                 errors::InvalidArgument(
+                     "Operands do not have the same ranks; got shapes: ",
+@@ -180,12 +189,6 @@ class SparseSparseBinaryOpShared : public OpKernel {
+                                           " for dimension ", i));
+     }
+ 
+-    OP_REQUIRES(
+-        ctx, a_indices_t->dim_size(1) == b_indices_t->dim_size(1),
+-        errors::InvalidArgument(
+-            "Indices' dimensions do not match: got ", a_indices_t->dim_size(1),
+-            " and ", b_indices_t->dim_size(1), " for the second dimension."));
+-    const int num_dims = a_indices_t->dim_size(1);
+     const auto a_indices_mat = a_indices_t->matrix<int64>();
+     const auto b_indices_mat = b_indices_t->matrix<int64>();
+     std::vector<T> a_augmented_values, b_augmented_values;
+
+tokens used
+input: 1,377
+cache read: 9,728
+cache write: 0
+output: 107
+reasoning output: 0
+
+Applied the SparseAdd validation backport in `tensorflow/core/kernels/sparse_sparse_binary_op_shared.cc`. The hunk was validated with `validate(..., mode="hunk")` against the target base before applying.
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/kernels/sparse_sparse_binary_op_shared.cc b/tensorflow/core/kernels/sparse_sparse_binary_op_shared.cc
+    index 8f1d0e30a7..3ad87bb2e4 100644
+    --- a/tensorflow/core/kernels/sparse_sparse_binary_op_shared.cc
+    +++ b/tensorflow/core/kernels/sparse_sparse_binary_op_shared.cc
+    @@ -150,6 +150,7 @@ class SparseSparseBinaryOpShared : public OpKernel {
+     
+         const int64 a_nnz = a_indices_t->dim_size(0);
+         const int64 b_nnz = b_indices_t->dim_size(0);
+    +
+         const auto a_values = a_values_t->vec<T>();
+         const auto b_values = b_values_t->vec<T>();
+     
+    @@ -166,6 +167,14 @@ class SparseSparseBinaryOpShared : public OpKernel {
+                         "Input shapes should be a vector but received shapes ",
+                         a_shape_t->shape().DebugString(), " and ",
+                         b_shape_t->shape().DebugString()));
+    +    const int num_dims = a_indices_t->dim_size(1);
+    +    OP_REQUIRES(
+    +        ctx, a_shape_t->NumElements() == num_dims,
+    +        errors::InvalidArgument("Second dimension of a_indices and length of "
+    +                                "a_shape must match, got ",
+    +                                num_dims, " and ", a_shape_t->NumElements()));
+    +    OP_REQUIRES(ctx, num_dims > 0,
+    +                errors::InvalidArgument("Tensors must not be empty"));
+         OP_REQUIRES(ctx, a_shape_t->IsSameSize(*b_shape_t),
+                     errors::InvalidArgument(
+                         "Operands do not have the same ranks; got shapes: ",
+    @@ -180,12 +189,6 @@ class SparseSparseBinaryOpShared : public OpKernel {
+                                               " for dimension ", i));
+         }
+     
+    -    OP_REQUIRES(
+    -        ctx, a_indices_t->dim_size(1) == b_indices_t->dim_size(1),
+    -        errors::InvalidArgument(
+    -            "Indices' dimensions do not match: got ", a_indices_t->dim_size(1),
+    -            " and ", b_indices_t->dim_size(1), " for the second dimension."));
+    -    const int num_dims = a_indices_t->dim_size(1);
+         const auto a_indices_mat = a_indices_t->matrix<int64>();
+         const auto b_indices_mat = b_indices_t->matrix<int64>();
+         std::vector<T> a_augmented_values, b_augmented_values;
+  notes: >
+    Added validation that a_indices rank matches a_shape length and rejects empty sparse tensor dimensions, matching the provided security fix.
+```
+
+tokens used
+input: 1,049
+cache read: 10,752
+cache write: 0
+output: 662
+reasoning output: 27

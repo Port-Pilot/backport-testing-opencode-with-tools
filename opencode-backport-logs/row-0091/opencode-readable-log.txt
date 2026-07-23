@@ -1,0 +1,1872 @@
+I’ll inspect the target-side locations for the two provided hunks, then apply the smallest matching source and test changes without looking at the held-out backport commit.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target code locations for image resize state and test hunks",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Validate candidate patch hunks against target base",
+      "status": "pending",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply final backport changes in workspace",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "content": "Review resulting diff and report YAML",
+      "status": "pending",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target code locations for image resize state and test hunks",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Validate candidate patch hunks against target base",
+    "status": "pending",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply final backport changes in workspace",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "content": "Review resulting diff and report YAML",
+    "status": "pending",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 4,023
+cache read: 4,608
+cache write: 0
+output: 138
+reasoning output: 0
+
+tool: viewcode
+{
+  "ref": "4c0b84bf2a714bcdd18da1f1f94d533d72399d52",
+  "path": "tensorflow/python/ops/image_ops_test.py",
+  "startline": 3135,
+  "endline": 3185
+}
+Here are lines 3135 through 3185.
+
+    x_shape = [100, 100, 10]
+    x = np.random.uniform(size=x_shape)
+
+    self._assertResizeCheckShape(x, x_shape, [150, 200], [150, 150, 10])
+
+  def testPreserveAspectRatioSameRatio(self):
+    x_shape = [1920, 1080, 3]
+    x = np.random.uniform(size=x_shape)
+
+    self._assertResizeCheckShape(x, x_shape, [3840, 2160], [3840, 2160, 3])
+
+  def testPreserveAspectRatioSquare(self):
+    x_shape = [299, 299, 3]
+    x = np.random.uniform(size=x_shape)
+
+    self._assertResizeCheckShape(x, x_shape, [320, 320], [320, 320, 3])
+
+
+class ResizeImagesTest(test_util.TensorFlowTestCase,
+                       parameterized.TestCase):
+
+  METHODS = [
+      image_ops.ResizeMethodV1.BILINEAR,
+      image_ops.ResizeMethodV1.NEAREST_NEIGHBOR,
+      image_ops.ResizeMethodV1.BICUBIC, image_ops.ResizeMethodV1.AREA
+  ]
+
+  TYPES = [
+      np.uint8, np.int8, np.uint16, np.int16, np.int32, np.int64, np.float16,
+      np.float32, np.float64
+  ]
+
+  def _assertShapeInference(self, pre_shape, size, post_shape):
+    # Try single image resize
+    single_image = array_ops.placeholder(dtypes.float32, shape=pre_shape)
+    y = image_ops.resize_images(single_image, size)
+    self.assertEqual(y.get_shape().as_list(), post_shape)
+    # Try batch images resize with known batch size
+    images = array_ops.placeholder(dtypes.float32, shape=[99] + pre_shape)
+    y = image_ops.resize_images(images, size)
+    self.assertEqual(y.get_shape().as_list(), [99] + post_shape)
+    # Try batch images resize with unknown batch size
+    images = array_ops.placeholder(dtypes.float32, shape=[None] + pre_shape)
+    y = image_ops.resize_images(images, size)
+    self.assertEqual(y.get_shape().as_list(), [None] + post_shape)
+
+  def shouldRunOnGPU(self, method, nptype):
+    if (method == image_ops.ResizeMethodV1.NEAREST_NEIGHBOR and
+        nptype in [np.float32, np.float64]):
+      return True
+    else:
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: viewcode
+{
+  "ref": "4c0b84bf2a714bcdd18da1f1f94d533d72399d52",
+  "path": "tensorflow/core/util/image_resizer_state.h",
+  "startline": 120,
+  "endline": 170
+}
+Here are lines 120 through 170.
+
+
+    // Guard against overflows
+    OP_REQUIRES(context,
+                ceilf((out_height - 1) * height_scale) <=
+                    static_cast<float>(std::numeric_limits<int64>::max()),
+                errors::InvalidArgument(
+                    "input image height scale would cause an overflow"));
+    OP_REQUIRES(
+        context,
+        ceilf((out_width - 1) * width_scale) <= static_cast<float>(INT_MAX),
+        errors::InvalidArgument(
+            "input image width scale would cause an overflow"));
+  }
+
+  // Calculates all the required variables, and allocates the output.
+  void ValidateAndCreateOutput(OpKernelContext* context, const Tensor& input) {
+    ValidateAndCalculateOutputSize(context, input);
+    if (!context->status().ok()) return;
+    OP_REQUIRES_OK(context, context->allocate_output(
+                                0,
+                                TensorShape({input.dim_size(0), out_height,
+                                             out_width, input.dim_size(3)}),
+                                &output));
+  }
+
+  int64 batch_size;
+  int64 out_height;
+  int64 out_width;
+  int64 in_height;
+  int64 in_width;
+  int64 channels;
+  float height_scale;
+  float width_scale;
+  Tensor* output = nullptr;
+
+ private:
+  bool align_corners_;
+  bool half_pixel_centers_;
+};
+
+struct ImageResizerGradientState {
+  explicit ImageResizerGradientState(bool align_corners,
+                                     bool half_pixel_centers)
+      : align_corners_(align_corners),
+        half_pixel_centers_(half_pixel_centers) {}
+
+  void ValidateAndCreateOutput(OpKernelContext* context, const Tensor& input,
+                               const Tensor& original_image) {
+    OP_REQUIRES(
+        context,
+        !half_pixel_centers_ || (half_pixel_centers_ && !align_corners_),
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: locate_symbol
+{
+  "ref": "4c0b84bf2a714bcdd18da1f1f94d533d72399d52",
+  "symbol": "ValidateAndCreateOutput"
+}
+tensorflow/core/util/image_resizer_state.h:135
+tensorflow/core/util/image_resizer_state.h:166
+tensorflow/core/kernels/image/resize_area_op.cc:153
+tensorflow/core/kernels/image/resize_bicubic_op.cc:562
+tensorflow/core/kernels/image/resize_bicubic_op.cc:595
+tensorflow/core/kernels/image/resize_bilinear_op.cc:59
+tensorflow/core/kernels/image/resize_bilinear_op.cc:377
+tensorflow/core/kernels/image/resize_nearest_neighbor_op.cc:51
+tensorflow/core/kernels/quantized_resize_bilinear_op.cc:716
+
+tokens used
+input: 1,234
+cache read: 7,680
+cache write: 0
+output: 186
+reasoning output: 0
+
+tool: viewcode
+{
+  "ref": "4c0b84bf2a714bcdd18da1f1f94d533d72399d52",
+  "path": "tensorflow/core/util/image_resizer_state.h",
+  "startline": 1,
+  "endline": 140
+}
+Here are lines 1 through 140.
+
+/* Copyright 2016 The TensorFlow Authors. All Rights Reserved.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+==============================================================================*/
+
+// This is a helper struct to package up the input and output
+// parameters of an image resizer (the height, widths, etc.).  To
+// reduce code duplication and ensure consistency across the different
+// resizers, it performs the input validation.
+
+#ifndef TENSORFLOW_CORE_KERNELS_UTIL_IMAGE_RESIZER_STATE_H_
+#define TENSORFLOW_CORE_KERNELS_UTIL_IMAGE_RESIZER_STATE_H_
+
+#define EIGEN_USE_THREADS
+#include <math.h>
+
+#include <algorithm>
+#include <array>
+
+#include "third_party/eigen3/unsupported/Eigen/CXX11/Tensor"
+#include "tensorflow/core/framework/bounds_check.h"
+#include "tensorflow/core/framework/op_kernel.h"
+#include "tensorflow/core/framework/register_types.h"
+#include "tensorflow/core/framework/tensor.h"
+#include "tensorflow/core/framework/tensor_shape.h"
+#include "tensorflow/core/framework/types.h"
+
+namespace tensorflow {
+
+// CalculateResizeScale determines the float scaling factor.
+inline float CalculateResizeScale(int64 in_size, int64 out_size,
+                                  bool align_corners) {
+  return (align_corners && out_size > 1)
+             ? (in_size - 1) / static_cast<float>(out_size - 1)
+             : in_size / static_cast<float>(out_size);
+}
+
+// Half pixel scaler scales assuming that the pixel centers are at 0.5, i.e. the
+// floating point coordinates of the top,left pixel is 0.5,0.5.
+struct HalfPixelScaler {
+  HalfPixelScaler(){};
+  inline float operator()(const int x, const float scale) const {
+    // Note that we subtract 0.5 from the return value, as the existing bilinear
+    // sampling code etc assumes pixels are in the old coordinate system.
+    return (static_cast<float>(x) + 0.5f) * scale - 0.5f;
+  }
+};
+
+// Older incorrect scaling method that causes all resizes to have a slight
+// translation leading to inconsistent results. For example, a flip then a
+// resize gives different results then a resize then a flip.
+struct LegacyScaler {
+  LegacyScaler(){};
+  inline float operator()(const int x, const float scale) const {
+    return static_cast<float>(x) * scale;
+  }
+};
+
+struct ImageResizerState {
+  explicit ImageResizerState(bool align_corners, bool half_pixel_centers)
+      : align_corners_(align_corners),
+        half_pixel_centers_(half_pixel_centers) {}
+
+  // ValidateAndCalculateOutputSize checks the bounds on the input tensors
+  // and requested size, sets up some of the resizing state such as the
+  // height_scale and width_scale, and calculates the output size.
+  // If any of these operations fails, it sets an error status in
+  // the context, which the caller must check.
+  void ValidateAndCalculateOutputSize(OpKernelContext* context,
+                                      const Tensor& input) {
+    OP_REQUIRES(
+        context,
+        !half_pixel_centers_ || (half_pixel_centers_ && !align_corners_),
+        errors::InvalidArgument("If half_pixel_centers is True, "
+                                "align_corners must be False."));
+    OP_REQUIRES(context, input.dims() == 4,
+                errors::InvalidArgument("input must be 4-dimensional",
+                                        input.shape().DebugString()));
+    const Tensor& shape_t = context->input(1);
+    OP_REQUIRES(context, shape_t.dims() == 1,
+                errors::InvalidArgument("shape_t must be 1-dimensional",
+                                        shape_t.shape().DebugString()));
+    OP_REQUIRES(context, shape_t.NumElements() == 2,
+                errors::InvalidArgument("shape_t must have two elements",
+                                        shape_t.shape().DebugString()));
+    auto Svec = shape_t.vec<int32>();
+    batch_size = input.dim_size(0);
+    out_height = internal::SubtleMustCopy(Svec(0));
+    out_width = internal::SubtleMustCopy(Svec(1));
+    OP_REQUIRES(
+        context,
+        FastBoundsCheck(input.dim_size(1), std::numeric_limits<int32>::max()) &&
+            FastBoundsCheck(input.dim_size(2),
+                            std::numeric_limits<int32>::max()),
+        errors::InvalidArgument("input sizes must be between 0 and max int32"));
+
+    in_height = static_cast<int32>(input.dim_size(1));
+    in_width = static_cast<int32>(input.dim_size(2));
+    channels = input.dim_size(3);
+    OP_REQUIRES(context, out_height > 0 && out_width > 0,
+                errors::InvalidArgument("output dimensions must be positive"));
+    OP_REQUIRES(
+        context, channels > 0,
+        errors::InvalidArgument("image must have at least one channel"));
+    OP_REQUIRES(
+        context, input.dim_size(1) > 0 && input.dim_size(2) > 0,
+        errors::InvalidArgument("input image must be of non-zero size"));
+    height_scale = CalculateResizeScale(in_height, out_height, align_corners_);
+    width_scale = CalculateResizeScale(in_width, out_width, align_corners_);
+
+    // Guard against overflows
+    OP_REQUIRES(context,
+                ceilf((out_height - 1) * height_scale) <=
+                    static_cast<float>(std::numeric_limits<int64>::max()),
+                errors::InvalidArgument(
+                    "input image height scale would cause an overflow"));
+    OP_REQUIRES(
+        context,
+        ceilf((out_width - 1) * width_scale) <= static_cast<float>(INT_MAX),
+        errors::InvalidArgument(
+            "input image width scale would cause an overflow"));
+  }
+
+  // Calculates all the required variables, and allocates the output.
+  void ValidateAndCreateOutput(OpKernelContext* context, const Tensor& input) {
+    ValidateAndCalculateOutputSize(context, input);
+    if (!context->status().ok()) return;
+    OP_REQUIRES_OK(context, context->allocate_output(
+                                0,
+                                TensorShape({input.dim_size(0), out_height,
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tokens used
+input: 1,536
+cache read: 8,704
+cache write: 0
+output: 65
+reasoning output: 27
+
+tool: grep
+{
+  "pattern": "from tensorflow.python.framework import errors",
+  "path": "tensorflow/python/ops/image_ops_test.py"
+}
+Found 51 matches
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0091-4c0b84bf2a71\tensorflow\python\ops\bincount_ops_test.py:
+  Line 25: from tensorflow.python.framework import errors
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0091-4c0b84bf2a71\tensorflow\python\ops\check_ops.py:
+  Line 28: from tensorflow.python.framework import errors
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0091-4c0b84bf2a71\tensorflow\python\ops\collective_ops_gpu_test.py:
+  Line 30: from tensorflow.python.framework import errors
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0091-4c0b84bf2a71\tensorflow\python\ops\collective_ops_test.py:
+  Line 30: from tensorflow.python.framework import errors
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0091-4c0b84bf2a71\tensorflow\python\ops\cond_v2.py:
+  Line 34: from tensorflow.python.framework import errors_impl
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0091-4c0b84bf2a71\tensorflow\python\ops\control_flow_ops.py:
+  Line 36: from tensorflow.python.framework import errors
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0091-4c0b84bf2a71\tensorflow\python\ops\control_flow_ops_test.py:
+  Line 36: from tensorflow.python.framework import errors
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0091-4c0b84bf2a71\tensorflow\python\ops\image_ops_test.py:
+  Line 41: from tensorflow.python.framework import errors
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0091-4c0b84bf2a71\tensorflow\python\ops\linalg\linear_operator_householder.py:
+  Line 21: from tensorflow.python.framework import errors
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0091-4c0b84bf2a71\tensorflow\python\ops\math_ops_test.py:
+  Line 26: from tensorflow.python.framework import errors
+
+  Line 27: from tensorflow.python.framework import errors_impl
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0091-4c0b84bf2a71\tensorflow\python\ops\linalg\linear_operator_kronecker.py:
+  Line 22: from tensorflow.python.framework import errors
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0091-4c0b84bf2a71\tensorflow\python\ops\nccl_ops_test.py:
+  Line 25: from tensorflow.python.framework import errors
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0091-4c0b84bf2a71\tensorflow\python\ops\linalg\linear_operator_zeros.py:
+  Line 24: from tensorflow.python.framework import errors
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0091-4c0b84bf2a71\tensorflow\python\ops\nn_loss_scaling_utilities_test.py:
+  Line 29: from tensorflow.python.framework import errors
+
+  Line 30: from tensorflow.python.framework import errors_impl
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0091-4c0b84bf2a71\tensorflow\python\ops\nn_ops.py:
+  Line 30: from tensorflow.python.framework import errors_impl
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0091-4c0b84bf2a71\tensorflow\python\ops\nn_test.py:
+  Line 30: from tensorflow.python.framework import errors
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0091-4c0b84bf2a71\tensorflow\python\ops\numpy_ops\np_math_ops.py:
+  Line 30: from tensorflow.python.framework import errors
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0091-4c0b84bf2a71\tensorflow\python\ops\parallel_for\gradients_test.py:
+  Line 30: from tensorflow.python.framework import errors
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0091-4c0b84bf2a71\tensorflow\python\ops\numpy_ops\np_math_ops_test.py:
+  Line 26: from tensorflow.python.framework import errors
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0091-4c0b84bf2a71\tensorflow\python\ops\raw_ops_test.py:
+  Line 25: from tensorflow.python.framework import errors
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0091-4c0b84bf2a71\tensorflow\python\ops\ragged\ragged_batch_gather_op_test.py:
+  Line 26: from tensorflow.python.framework import errors
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0091-4c0b84bf2a71\tensorflow\python\ops\resource_variable_ops.py:
+  Line 38: from tensorflow.python.framework import errors
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0091-4c0b84bf2a71\tensorflow\python\ops\ragged\ragged_boolean_mask_op_test.py:
+  Line 25: from tensorflow.python.framework import errors
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0091-4c0b84bf2a71\tensorflow\python\ops\ragged\ragged_concat_op_test.py:
+  Line 26: from tensorflow.python.framework import errors
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0091-4c0b84bf2a71\tensorflow\python\ops\ragged\ragged_cross_op_test.py:
+  Line 26: from tensorflow.python.framework import errors
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0091-4c0b84bf2a71\tensorflow\python\ops\ragged\ragged_dispatch_test.py:
+  Line 26: from tensorflow.python.framework import errors
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0091-4c0b84bf2a71\tensorflow\python\ops\ragged\ragged_dynamic_partition_op_test.py:
+  Line 25: from tensorflow.python.framework import errors
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0091-4c0b84bf2a71\tensorflow\python\ops\sort_ops_test.py:
+  Line 25: from tensorflow.python.framework import errors
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0091-4c0b84bf2a71\tensorflow\python\ops\ragged\ragged_from_sparse_op_test.py:
+  Line 23: from tensorflow.python.framework import errors
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0091-4c0b84bf2a71\tensorflow\python\ops\sparse_ops_test.py:
+  Line 27: from tensorflow.python.framework import errors
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0091-4c0b84bf2a71\tensorflow\python\ops\ragged\ragged_gather_nd_op_test.py:
+  Line 26: from tensorflow.python.framework import errors
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0091-4c0b84bf2a71\tensorflow\python\ops\special_math_ops_test.py:
+  Line 31: from tensorflow.python.framework import errors
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0091-4c0b84bf2a71\tensorflow\python\ops\ragged\ragged_gather_op_test.py:
+  Line 28: from tensorflow.python.framework import errors
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0091-4c0b84bf2a71\tensorflow\python\ops\stateful_random_ops_test.py:
+  Line 34: from tensorflow.python.framework import errors
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0091-4c0b84bf2a71\tensorflow\python\ops\ragged\ragged_getitem_test.py:
+  Line 28: from tensorflow.python.framework import errors
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0091-4c0b84bf2a71\tensorflow\python\ops\ragged\ragged_map_flat_values_op_test.py:
+  Line 23: from tensorflow.python.framework import errors
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0091-4c0b84bf2a71\tensorflow\python\ops\ragged\ragged_map_fn_op_test.py:
+  Line 24: from tensorflow.python.framework import errors
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0091-4c0b84bf2a71\tensorflow\python\ops\ragged\ragged_one_hot_op_test.py:
+  Line 26: from tensorflow.python.framework import errors
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0091-4c0b84bf2a71\tensorflow\python\ops\tensor_array_ops.py:
+  Line 32: from tensorflow.python.framework import errors_impl
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0091-4c0b84bf2a71\tensorflow\python\ops\structured\structured_tensor_test.py:
+  Line 29: from tensorflow.python.framework import errors
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0091-4c0b84bf2a71\tensorflow\python\ops\ragged\ragged_range_op_test.py:
+  Line 21: from tensorflow.python.framework import errors
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0091-4c0b84bf2a71\tensorflow\python\ops\ragged\ragged_row_lengths_op_test.py:
+  Line 23: from tensorflow.python.framework import errors
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0091-4c0b84bf2a71\tensorflow\python\ops\ragged\ragged_segment_op_test.py:
+  Line 26: from tensorflow.python.framework import errors
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0091-4c0b84bf2a71\tensorflow\python\ops\ragged\ragged_squeeze_op_test.py:
+  Line 24: from tensorflow.python.framework import errors
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0091-4c0b84bf2a71\tensorflow\python\ops\ragged\ragged_tensor_test.py:
+  Line 30: from tensorflow.python.framework import errors
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0091-4c0b84bf2a71\tensorflow\python\ops\ragged\ragged_to_sparse_op_test.py:
+  Line 23: from tensorflow.python.framework import errors
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0091-4c0b84bf2a71\tensorflow\python\ops\ragged\ragged_to_tensor_op_test.py:
+  Line 31: from tensorflow.python.framework import errors
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0091-4c0b84bf2a71\tensorflow\python\ops\ragged\ragged_where_op_test.py:
+  Line 24: from tensorflow.python.framework import errors
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0091-4c0b84bf2a71\tensorflow\python\ops\ragged\row_partition_test.py:
+  Line 27: from tensorflow.python.framework import errors
+
+tokens used
+input: 2,047
+cache read: 9,728
+cache write: 0
+output: 36
+reasoning output: 26
+
+The target code has the same vulnerable allocation pattern, but this branch’s `ValidateAndCreateOutput` still takes `const Tensor& input`, so the shape guard should use the already-populated state fields (`batch_size`, `out_height`, `out_width`, `channels`) rather than the newer signature’s direct members.
+
+tool: grep
+{
+  "pattern": "AddDimWithStatus",
+  "path": "tensorflow/core",
+  "include": "*.h"
+}
+No files found
+
+tokens used
+input: 4,521
+cache read: 10,752
+cache write: 0
+output: 104
+reasoning output: 42
+
+tool: grep
+{
+  "pattern": "Status.*AddDim|AddDimWithStatus|Safe.*Dim",
+  "path": "tensorflow/core/framework",
+  "include": "tensor_shape*"
+}
+No files found
+
+tokens used
+input: 585
+cache read: 14,848
+cache write: 0
+output: 44
+reasoning output: 17
+
+`TensorShape::AddDimWithStatus` is not present in this target checkout, so I’m checking the available TensorShape overflow-safe API before choosing the minimal equivalent.
+
+tool: viewcode
+{
+  "ref": "4c0b84bf2a714bcdd18da1f1f94d533d72399d52",
+  "path": "tensorflow/core/framework/tensor_shape.h",
+  "startline": 1,
+  "endline": 240
+}
+Here are lines 1 through 240.
+
+/* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+==============================================================================*/
+
+#ifndef TENSORFLOW_CORE_FRAMEWORK_TENSOR_SHAPE_H_
+#define TENSORFLOW_CORE_FRAMEWORK_TENSOR_SHAPE_H_
+
+#include <string>
+
+#include "third_party/eigen3/unsupported/Eigen/CXX11/Tensor"
+#include "tensorflow/core/framework/types.pb.h"
+#include "tensorflow/core/lib/core/errors.h"
+#include "tensorflow/core/lib/core/status.h"
+#include "tensorflow/core/lib/core/stringpiece.h"
+#include "tensorflow/core/lib/gtl/array_slice.h"
+#include "tensorflow/core/lib/gtl/inlined_vector.h"
+#include "tensorflow/core/lib/strings/str_util.h"
+#include "tensorflow/core/platform/logging.h"
+
+namespace tensorflow {
+
+// START_SKIP_DOXYGEN
+template <class Shape>
+class TensorShapeIter;
+class TensorShape;
+class TensorShapeProto;
+class PartialTensorShape;
+// END_SKIP_DOXYGEN
+
+/// Internal representation for both TensorShape and PartialTensorShape.
+class TensorShapeRep {
+ public:
+  ~TensorShapeRep();
+
+  /// Copy the specified shape
+  TensorShapeRep(const TensorShapeRep& b);
+  void operator=(const TensorShapeRep& b);
+
+  /// Move the specified shape.  After moving, `b` is safe for destruction and
+  // can be reassigned into, but its dimensions and number of elements can be
+  // nonsensical (e.g., negative dimension sizes, or number of elements not
+  // properly recomputed).
+  TensorShapeRep(TensorShapeRep&& b);
+  void operator=(TensorShapeRep&& b);
+
+  /// Clear a tensor shape, producing the scalar shape.
+  void Clear();
+
+  // Maximum number of dimensions in a tensor.
+  // It's 254 because 255 = kUnknownRank is used to represent unknown rank.
+  static constexpr int MaxDimensions() { return 254; }
+
+  /// \brief Returns the number of elements in the tensor.
+  ///
+  /// We use `int64` and not `size_t` to be compatible with `Eigen::Tensor`
+  /// which uses `ptrdiff_t`.  For PartialTensorShape, -1 means not fully
+  /// defined.
+  int64 num_elements() const { return num_elements_; }
+
+  /// For error messages.
+  std::string DebugString() const;
+  static std::string DebugString(const TensorShapeProto& proto);
+
+ protected:
+  // Constructable only via TensorShapeBase
+  TensorShapeRep() = default;
+
+  void ClearAllButDataType();
+
+  // We use 16 bytes to represent a TensorShape.  Because we need to
+  // be able to support full 64-bit dimension sizes and an arbitrary
+  // number of dimensions for a Tensor, but most tensor dimensions are
+  // significantly smaller than 64 bits and most tensors are 1, 2, or 3
+  // dimensions, we have several representations.
+  // Rep16: Supports up to 6 dimensions where each dimension is < 2^16 - 1
+  // Rep32: Supports up to 3 dimensions where each dimension is < 2^32 - 1
+  // Rep64: Supports arbitrary dimensionality, 64-bit dimensions using
+  //        an out of line vector.
+  // For PartialTensorShape, a dimension of static_cast<uint??>(-1) is unknown.
+  // This value is not allowed in TensorShape either for format compatibility.
+  struct Rep16 {
+    uint16 dims_[6];
+  };
+  struct Rep32 {
+    uint32 dims_[3];
+  };
+  struct Rep64 {
+    gtl::InlinedVector<int64, 4>* dims_;
+  };
+
+  // We use the max value of uint16 or uint32 to represent unknown shapes, so
+  // the maximum representable valid shape in these representations is one less.
+  static constexpr int64 kMaxRep16 = std::numeric_limits<uint16>::max() - 1;
+  static constexpr int64 kMaxRep32 = std::numeric_limits<uint32>::max() - 1;
+  static constexpr uint16 kUnknownRep16 = std::numeric_limits<uint16>::max();
+  static constexpr uint32 kUnknownRep32 = std::numeric_limits<uint32>::max();
+
+  Rep16* as16() { return reinterpret_cast<Rep16*>(buf()); }
+  Rep32* as32() { return reinterpret_cast<Rep32*>(buf()); }
+  Rep64* as64() { return reinterpret_cast<Rep64*>(buf()); }
+
+  const Rep16* as16() const { return reinterpret_cast<const Rep16*>(buf()); }
+  const Rep32* as32() const { return reinterpret_cast<const Rep32*>(buf()); }
+  const Rep64* as64() const { return reinterpret_cast<const Rep64*>(buf()); }
+
+  enum RepTag { REP16 = 0, REP32 = 1, REP_OUT_OF_LINE = 2 };
+
+  // Since we have a convenient extra byte available, we allow the
+  // Tensor class to store an 8-bit value in this extra storage.  This
+  // allows it to store the Tensor's datatype enum value here and avoid
+  // an extra word of storage.
+  friend class Tensor;
+  friend class TensorShapeTestHelper;
+  DataType data_type() const { return static_cast<DataType>(buf()[13]); }
+  void set_data_type(DataType dt) {
+    // We only have 8 bits available to store DataType, so make sure it fits
+    DCHECK_LT(static_cast<uint32>(dt), 256u);
+    buf()[13] = static_cast<uint8>(dt);
+  }
+
+  // We store the number of dimensions in byte 14, and the RepTag in byte 15.
+  // Bytes [0..13] vary depending on the representation.
+  // A value of 255 indicates unknown rank in the PartialTensorShape case.
+  static constexpr uint8 kUnknownRank = 255;
+  uint8 ndims_byte() const { return buf()[14]; }
+  void set_ndims_byte(uint8 nd) { buf()[14] = nd; }
+
+  RepTag tag() const { return static_cast<RepTag>(buf()[15]); }
+  void set_tag(RepTag tag) { buf()[15] = static_cast<uint8>(tag); }
+
+  void set_num_elements(int64 n) { num_elements_ = n; }
+
+ private:
+  void DestructorOutOfLine();
+  void SlowCopyFrom(const TensorShapeRep& b);
+
+  uint8* buf() { return &u_.buf[0]; }
+  const uint8* buf() const { return &u_.buf[0]; }
+
+  union {
+    uint8 buf[16];
+    // Force data to be aligned enough for a pointer.
+    Rep64* unused_aligner;
+  } u_;
+  int64 num_elements_;
+};
+
+/// Base class for TensorShape and PartialTensorShape.
+/// The class is templatized by either TensorShape or PartialTensorShape to
+/// allow skipping known/unknown checks in the TensorShape case, but the
+/// representation is shared exactly for fast conversion.
+template <class Shape>
+class TensorShapeBase : public TensorShapeRep {
+ public:
+  /// \brief Construct a `TensorShapeBase` from the provided sizes.
+  /// REQUIRES: `dim_sizes[i] >= 0` (or >= -1 for PartialTensorShape)
+  explicit TensorShapeBase(gtl::ArraySlice<int64> dim_sizes);
+  TensorShapeBase(std::initializer_list<int64> dim_sizes)
+      : TensorShapeBase(gtl::ArraySlice<int64>(dim_sizes)) {}
+
+  /// Construct an empty TensorShape, or an unknown rank PartialTensorShape
+  TensorShapeBase();
+
+  TensorShapeBase(const TensorShapeProto& proto);
+
+  /// Returns `true` iff `proto` is a valid tensor shape.
+  // For TensorShape, the proto shape must be fully defined.
+  static bool IsValid(const TensorShapeProto& proto);
+
+  /// Returns `OK` iff `proto` is a valid tensor shape, and a descriptive error
+  /// status otherwise.
+  static Status IsValidShape(const TensorShapeProto& proto);
+
+  /// Returns `true` iff this is a valid tensor shape.
+  bool IsValid();
+
+  /// \brief Add a dimension to the end ("inner-most").
+  /// REQUIRES: `size >= 0`
+  void AddDim(int64 size);
+
+  /// Appends all the dimensions from `shape`.
+  void AppendShape(const TensorShapeBase& shape);
+
+  /// \brief Insert a dimension somewhere in the `TensorShape`.
+  /// REQUIRES: `0 <= d <= dims()`
+  /// REQUIRES: `size >= 0`
+  void InsertDim(int d, int64 size);
+
+  /// \brief Modifies the size of the dimension `d` to be `size`
+  /// REQUIRES: `0 <= d < dims()`
+  /// REQUIRES: `size >= 0`
+  void set_dim(int d, int64 size);
+
+  /// \brief Removes dimension `d` from the `TensorShape`.
+  /// REQUIRES: `0 <= d < dims()`
+  void RemoveDim(int d) {
+    CHECK_GE(d, 0);
+    RemoveDimRange(d, d + 1);
+  }
+
+  /// \brief Removes last `n` dimensions from the `TensorShape`.
+  /// REQUIRES: `0 <= n <= dims()`
+  void RemoveLastDims(int n) {
+    CHECK_LE(n, dims());
+    RemoveDimRange(dims() - n, dims());
+  }
+
+  /// \brief Removes the dimensions in range `[begin:end)` from `TensorShape`.
+  /// Negative values of `end` are interpreted as `dims() + end + 1` (as in
+  /// Python). The same is true for negative values of `begin`. REQUIRES:
+  /// `-(dims()+1) <= begin <= dims()` REQUIRES: `-(dims()+1) <= end <= dims()`
+  void RemoveDimRange(int begin, int end);
+
+  /// Return whether the rank is unknown
+  bool unknown_rank() const {
+    return kIsPartial && ndims_byte() == kUnknownRank;
+  }
+
+  /// Return the number of dimensions in the tensor.
+  /// Can be -1 meaning unknown rank for PartialTensorShape.
+  int dims() const {
+    uint8 dims = ndims_byte();
+    return kIsPartial && dims == kUnknownRank ? -1 : dims;
+  }
+
+  /// \brief Returns the number of elements in dimension `d`.
+  /// REQUIRES: `0 <= d < dims()`
+  // TODO(touts): Rename to `dimension()` to match
+  // `Eigen::Tensor::dimension()`?
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tokens used
+input: 660
+cache read: 14,848
+cache write: 0
+output: 103
+reasoning output: 0
+
+tool: grep
+{
+  "pattern": "too many elements|Encountered overflow|Shape.*overflow|AddDim\\(",
+  "path": "tensorflow/core/framework",
+  "include": "tensor_shape*"
+}
+Found 31 matches
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0091-4c0b84bf2a71\tensorflow\core\framework\tensor_shape.h:
+  Line 190:   void AddDim(int64 size);
+
+  Line 276:   void UnsafeAddDim(int64 size, int64 new_num_elements);
+
+  Line 297: /// zero dimensions and one element, and call AddDim() to add dimensions later.
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0091-4c0b84bf2a71\tensorflow\core\framework\tensor_shape_test.cc:
+  Line 67:   s.AddDim(100);
+
+  Line 179:   s.AddDim(1);
+
+  Line 181:   s.AddDim(100000);
+
+  Line 184:   s.AddDim(2);
+
+  Line 186:   s.AddDim(4);
+
+  Line 188:   s.AddDim(3);
+
+  Line 228:   /// then call `AddDim()` on.
+
+  Line 243:   void AddDim(int64 size);
+
+  Line 386:     AddDim(d.size());
+
+  Line 394:     AddDim(s);
+
+  Line 405: void TensorShapeOld::AddDim(int64 size) {
+
+  Line 414:   for (auto d : shape) AddDim(d.size);
+
+  Line 545:       s.AddDim(sz);
+
+  Line 546:       sold.AddDim(sz);
+
+  Line 604:               TensorShapeUtils::MakeShape(overflow, &shape).code());
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0091-4c0b84bf2a71\tensorflow\core\framework\tensor_shape.cc:
+  Line 151:       AddDim(d.size());
+
+  Line 246:     AddDim(internal::SubtleMustCopy(s));
+
+  Line 343: void TensorShapeBase<Shape>::AddDim(int64 size) {
+
+  Line 354:   UnsafeAddDim(size, new_num_elements);
+
+  Line 358: void TensorShapeBase<Shape>::UnsafeAddDim(int64 size, int64 new_num_elements) {
+
+  Line 404:   for (auto d : shape) AddDim(d.size);
+
+  Line 418:     AddDim(dval);
+
+  Line 451:       AddDim(dval);
+
+  Line 472:     AddDim(dval);
+
+  Line 602:     out->UnsafeAddDim(dim, new_num_elements);
+
+  Line 634:   out.AddDim(size);
+
+  Line 644:   for (auto dim : shape) out.AddDim(dim.size);
+
+  Line 674:     result->AddDim(dim0 >= 0 ? dim0 : dim1);
+
+tokens used
+input: 3,159
+cache read: 14,848
+cache write: 0
+output: 46
+reasoning output: 22
+
+tool: viewcode
+{
+  "ref": "4c0b84bf2a714bcdd18da1f1f94d533d72399d52",
+  "path": "tensorflow/core/framework/tensor_shape.cc",
+  "startline": 330,
+  "endline": 365
+}
+Here are lines 330 through 365.
+
+  int64 n = 1;
+  for (auto dim : *this) {
+    if (kIsPartial && dim.size < 0) {
+      n = -1;
+      break;
+    }
+    n = MultiplyWithoutOverflow(n, dim.size);
+    CHECK_LE(0, n);
+  }
+  set_num_elements(n);
+}
+
+template <class Shape>
+void TensorShapeBase<Shape>::AddDim(int64 size) {
+  if (!kIsPartial) CHECK_GE(size, 0);
+  if (unknown_rank()) return;
+  CHECK_LT(ndims_byte(), MaxDimensions()) << "Too many dimensions in tensor";
+  int64 new_num_elements;
+  if (kIsPartial && (num_elements() < 0 || size < 0)) {
+    new_num_elements = -1;
+  } else {
+    new_num_elements = MultiplyWithoutOverflow(num_elements(), size);
+    CHECK_LE(0, new_num_elements);
+  }
+  UnsafeAddDim(size, new_num_elements);
+}
+
+template <class Shape>
+void TensorShapeBase<Shape>::UnsafeAddDim(int64 size, int64 new_num_elements) {
+  const int nd = ndims_byte();
+  if (tag() == REP16 && nd < 6 && size < kMaxRep16) {
+    as16()->dims_[nd] =
+        kIsPartial && size < 0 ? kUnknownRep16 : static_cast<uint16>(size);
+  } else if (tag() == REP32 && nd < 3 && size < kMaxRep32) {
+    as32()->dims_[nd] =
+        kIsPartial && size < 0 ? kUnknownRep32 : static_cast<uint32>(size);
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tokens used
+input: 821
+cache read: 17,920
+cache write: 0
+output: 62
+reasoning output: 0
+
+tool: viewcode
+{
+  "ref": "4c0b84bf2a714bcdd18da1f1f94d533d72399d52",
+  "path": "tensorflow/core/framework/tensor_shape.cc",
+  "startline": 570,
+  "endline": 610
+}
+Here are lines 570 through 610.
+
+  if (n > TensorShape::MaxDimensions()) {
+    return errors::InvalidArgument("Too many dimensions");
+  }
+  if (n < 0) {
+    return errors::InvalidArgument("Negative number of dimensions ", n);
+  }
+  for (int64 i = 0; i < n; ++i) {
+    T dim = internal::SubtleMustCopy(dims[i]);
+    int64 new_num_elements;
+    if (dim < 0) {
+      if (!out->kIsPartial) {
+        return errors::InvalidArgument("Dimension ", dim, " must be >= 0");
+      }
+      if (dim < -1) {
+        return errors::InvalidArgument("Dimension ", dim, " must be >= -1");
+      }
+      dim = -1;
+      new_num_elements = -1;
+    } else if (out->num_elements() < 0) {
+      new_num_elements = -1;
+    } else {
+      new_num_elements = MultiplyWithoutOverflow(out->num_elements(), dim);
+      if (TF_PREDICT_FALSE(new_num_elements < 0)) {
+        TensorShapeProto proto;
+        for (int64 j = 0; j < n; ++j) {
+          proto.add_dim()->set_size(internal::SubtleMustCopy(dims[j]));
+        }
+        return errors::InvalidArgument(
+            "Shape ", TensorShape::DebugString(proto),
+            " would have more than 2**63 - 1 elements");
+      }
+    }
+    out->UnsafeAddDim(dim, new_num_elements);
+  }
+  return Status::OK();
+}
+
+#define MAKE_SHAPE(T, Shape)                                                 \
+  Status TensorShapeUtils::MakeShape(const T* dims, int64 n, Shape* out) {   \
+    return MakeShapeHelper(dims, n, out);                                    \
+  }                                                                          \
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tokens used
+input: 1,277
+cache read: 17,920
+cache write: 0
+output: 62
+reasoning output: 0
+
+tool: grep
+{
+  "pattern": "class TensorShapeUtils|MakeShape\\(",
+  "path": "tensorflow/core/framework/tensor_shape.h"
+}
+Found 60 matches
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0091-4c0b84bf2a71\tensorflow\core\framework\common_shape_fns.cc:
+  Line 305:   c->set_output(0, c->MakeShape(output_dims));
+
+  Line 515:   *out = context->MakeShape(dims_actual);
+
+  Line 571:   *shape = context->MakeShape(out_dims);
+
+  Line 777:         c->MakeShape({{dim('N'), dim('0'), dim('1'), dim('2'), dim('C')}});
+
+  Line 847:     output_shape = c->MakeShape({batch_size_dim, output_depth_dim,
+
+  Line 850:     output_shape = c->MakeShape({batch_size_dim, output_planes, output_rows,
+
+  Line 974:         c->MakeShape({{c->Dim(input_shape, 0), c->Dim(input_shape, 2),
+
+  Line 1042:         c->MakeShape({batch_size_dim, output_depth, output_rows, output_cols});
+
+  Line 1045:         c->MakeShape({batch_size_dim, output_rows, output_cols, output_depth});
+
+  Line 1325:   c->set_output(0, c->MakeShape(dims));
+
+  Line 1745:         c->MakeShape({{dim('N'), dim('0'), dim('1'), dim('2'), dim('C')}});
+
+  Line 1783:     output_shape = c->MakeShape({batch_size_dim, output_depth_dim,
+
+  Line 1786:     output_shape = c->MakeShape({batch_size_dim, output_planes, output_rows,
+
+  Line 1889:   c->set_output(0, c->MakeShape(dims));
+
+  Line 1926:     c->set_output(0, c->MakeShape(dims));
+
+  Line 2077:           *out = c->MakeShape({});
+
+  Line 2086:   *out = c->MakeShape(dims);
+
+  Line 2198:     c->set_output(0, c->MakeShape(dims));
+
+  Line 2220:       c->set_output(0, c->MakeShape(dims));
+
+  Line 2460:     c->set_output(0, c->MakeShape(dims));
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0091-4c0b84bf2a71\tensorflow\core\framework\shape_inference.cc:
+  Line 324:     ShapeHandle shp = shape_manager_.MakeShape(dims);
+
+  Line 448:   *prefix_out = MakeShape(dims);
+
+  Line 450:   *s_out = MakeShape(dims);
+
+  Line 496:   *out = MakeShape(dims);
+
+  Line 673: ShapeHandle InferenceContext::MakeShape(
+
+  Line 675:   return shape_manager_.MakeShape(dims);
+
+  Line 678: ShapeHandle InferenceContext::MakeShape(
+
+  Line 686:   return shape_manager_.MakeShape(dims_actual);
+
+  Line 703:   return MakeShape(dims);
+
+  Line 706: ShapeHandle InferenceContext::Scalar() { return MakeShape({}); }
+
+  Line 709:   return MakeShape({dim});
+
+  Line 714:   return MakeShape({dim1, dim2});
+
+  Line 1256: ShapeHandle InferenceContext::ShapeManager::MakeShape(
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0091-4c0b84bf2a71\tensorflow\core\framework\shape_inference.h:
+  Line 444:   ShapeHandle MakeShape(const std::vector<DimensionHandle>& dims);
+
+  Line 445:   ShapeHandle MakeShape(std::initializer_list<DimensionOrConstant> dims);
+
+  Line 646:     ShapeHandle MakeShape(const std::vector<DimensionHandle>& dims);
+
+  Line 686:     *out = MakeShape(dims);
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0091-4c0b84bf2a71\tensorflow\core\framework\shape_inference_test.cc:
+  Line 968:   auto s = c.MakeShape(dims);
+
+  Line 972:   auto s2 = c.MakeShape(dims);
+
+  Line 976:   auto s3 = c.MakeShape({1, 2, dims[2]});
+
+  Line 998:   auto s = c.MakeShape({1, 2, 3});
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0091-4c0b84bf2a71\tensorflow\core\framework\shape_inference_testutil.cc:
+  Line 267:   *output = manager->MakeShape(dims);
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0091-4c0b84bf2a71\tensorflow\core\framework\shape_inference_testutil_test.cc:
+  Line 141:     c->set_output(0, c->MakeShape({c->Dim(c->input(0), 1), c->MakeDim(2),
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0091-4c0b84bf2a71\tensorflow\core\framework\tensor_shape_test.cc:
+  Line 604:               TensorShapeUtils::MakeShape(overflow, &shape).code());
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0091-4c0b84bf2a71\tensorflow\core\framework\tensor_shape.cc:
+  Line 608:   Status TensorShapeUtils::MakeShape(const T* dims, int64 n, Shape* out) {   \
+
+  Line 611:   Status TensorShapeUtils::MakeShape(gtl::ArraySlice<T> shape, Shape* out) { \
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0091-4c0b84bf2a71\tensorflow\core\framework\tensor_shape.h:
+  Line 370: class TensorShapeUtils {
+
+  Line 392:   static Status MakeShape(const int32* dims, int64 n, TensorShape* out);
+
+  Line 393:   static Status MakeShape(const int64* dims, int64 n, TensorShape* out);
+
+  Line 394:   static Status MakeShape(gtl::ArraySlice<int32> shape, TensorShape* out);
+
+  Line 395:   static Status MakeShape(gtl::ArraySlice<int64> shape, TensorShape* out);
+
+  Line 396:   static Status MakeShape(const int32* dims, int64 n, PartialTensorShape* out);
+
+  Line 397:   static Status MakeShape(const int64* dims, int64 n, PartialTensorShape* out);
+
+  Line 398:   static Status MakeShape(gtl::ArraySlice<int32> shape,
+
+  Line 400:   static Status MakeShape(gtl::ArraySlice<int64> shape,
+
+  Line 461:     return TensorShapeUtils::MakeShape(dims, n, out);
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0091-4c0b84bf2a71\tensorflow\core\framework\tensor_util.h:
+  Line 330: Status MakeShape(const Tensor& shape_t, TensorShape* out);
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0091-4c0b84bf2a71\tensorflow\core\framework\tensor_util.cc:
+  Line 372: Status MakeShape(const Tensor& shape, TensorShape* out) {
+
+  Line 380:     return TensorShapeUtils::MakeShape(vec.data(), vec.size(), out);
+
+  Line 383:     return TensorShapeUtils::MakeShape(vec.data(), vec.size(), out);
+
+tokens used
+input: 743
+cache read: 18,944
+cache write: 0
+output: 37
+reasoning output: 16
+
+tool: grep
+{
+  "pattern": "MultiplyWithoutOverflow",
+  "path": "tensorflow/core",
+  "include": "*.h"
+}
+Found 1 matches
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0091-4c0b84bf2a71\tensorflow\core\util\overflow.h:
+  Line 26: inline int64 MultiplyWithoutOverflow(const int64 x, const int64 y) {
+
+tokens used
+input: 2,702
+cache read: 18,944
+cache write: 0
+output: 32
+reasoning output: 371
+
+tool: viewcode
+{
+  "ref": "4c0b84bf2a714bcdd18da1f1f94d533d72399d52",
+  "path": "tensorflow/core/util/overflow.h",
+  "startline": 1,
+  "endline": 80
+}
+This file only has 51 lines. Here are lines 1 through 51.
+
+/* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+==============================================================================*/
+
+#ifndef TENSORFLOW_CORE_UTIL_OVERFLOW_H_
+#define TENSORFLOW_CORE_UTIL_OVERFLOW_H_
+
+#include "tensorflow/core/platform/logging.h"
+#include "tensorflow/core/platform/macros.h"
+#include "tensorflow/core/platform/types.h"
+
+namespace tensorflow {
+
+// Multiply two nonnegative int64's, returning negative for overflow
+inline int64 MultiplyWithoutOverflow(const int64 x, const int64 y) {
+  // Multiply in uint64 rather than int64 since signed overflow is undefined.
+  // Negative values will wrap around to large unsigned values in the casts
+  // (see section 4.7 [conv.integral] of the C++14 standard).
+  const uint64 ux = x;
+  const uint64 uy = y;
+  const uint64 uxy = ux * uy;
+
+  // Check if we overflow uint64, using a cheap check if both inputs are small
+  if (TF_PREDICT_FALSE((ux | uy) >> 32 != 0)) {
+    // Ensure nonnegativity.  Note that negative numbers will appear "large"
+    // to the unsigned comparisons above.
+    CHECK(x >= 0 && y >= 0);
+
+    // Otherwise, detect overflow using a division
+    if (ux != 0 && uxy / ux != uy) return -1;
+  }
+
+  // Cast back to signed.  Any negative value will signal an error.
+  return static_cast<int64>(uxy);
+}
+
+}  // namespace tensorflow
+
+#endif  // TENSORFLOW_CORE_UTIL_OVERFLOW_H_
+
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tokens used
+input: 1,146
+cache read: 20,992
+cache write: 0
+output: 61
+reasoning output: 0
+
+tool: git_show
+{
+  "ref": "e5272d4204ff5b46136a1ef1204fc00597e21837"
+}
+commit e5272d4204ff5b46136a1ef1204fc00597e21837
+Merge: 1efc908373 660ad5e76d
+Author: TensorFlower Gardener <gardener@tensorflow.org>
+Date:   Tue Aug 17 17:19:53 2021 -0700
+
+    Merge pull request #51497 from yongtang:46914-image.resize
+    
+    PiperOrigin-RevId: 391409572
+    Change-Id: I027c4901c9717ae7ee8266e5f57baba950b3e1e3
+
+ tensorflow/core/util/image_resizer_state.h | 14 +++++++++-----
+ tensorflow/python/ops/image_ops_test.py    |  8 ++++++++
+ 2 files changed, 17 insertions(+), 5 deletions(-)
+
+--- Commit Details ---
+commit e5272d4204ff5b46136a1ef1204fc00597e21837
+Merge: 1efc908373 660ad5e76d
+Author: TensorFlower Gardener <gardener@tensorflow.org>
+Date:   Tue Aug 17 17:19:53 2021 -0700
+
+    Merge pull request #51497 from yongtang:46914-image.resize
+    
+    PiperOrigin-RevId: 391409572
+    Change-Id: I027c4901c9717ae7ee8266e5f57baba950b3e1e3
+
+diff --cc tensorflow/core/util/image_resizer_state.h
+index 31764bdd87,2cb5715260..48e51705b4
+--- a/tensorflow/core/util/image_resizer_state.h
++++ b/tensorflow/core/util/image_resizer_state.h
+@@@ -143,11 -143,17 +143,15 @@@ struct ImageResizerState 
+    void ValidateAndCreateOutput(OpKernelContext* context) {
+      ValidateAndCalculateOutputSize(context);
+      if (!context->status().ok()) return;
+-     OP_REQUIRES_OK(
+-         context,
+-         context->allocate_output(
+-             0, TensorShape({batch_size, out_height, out_width, channels}),
+-             &output));
++ 
++     TensorShape shape;
++     // Guard against shape overflow
++     OP_REQUIRES_OK(context, shape.AddDimWithStatus(batch_size));
++     OP_REQUIRES_OK(context, shape.AddDimWithStatus(out_height));
++     OP_REQUIRES_OK(context, shape.AddDimWithStatus(out_width));
++     OP_REQUIRES_OK(context, shape.AddDimWithStatus(channels));
++ 
+ -    OP_REQUIRES_OK(
+ -        context,
+ -        context->allocate_output( 0, shape, &output));
+++    OP_REQUIRES_OK(context, context->allocate_output(0, shape, &output));
+    }
+  
+    int64_t batch_size;
+diff --cc tensorflow/python/ops/image_ops_test.py
+index d589c7525b,2eb82a213f..fe0d6022d9
+--- a/tensorflow/python/ops/image_ops_test.py
++++ b/tensorflow/python/ops/image_ops_test.py
+@@@ -3161,6 -3161,14 +3161,14 @@@ class ResizeImagesV2Test(test_util.Tens
+  
+      self._assertResizeCheckShape(x, x_shape, [320, 320], [320, 320, 3])
+  
++   def testLargeDim(self):
++     with self.session():
++       with self.assertRaises(errors.InternalError):
++         x = np.ones((5, 1, 1, 2))
+ -        v = image_ops.resize_images_v2(
+ -          x, [1610637938, 1610637938], image_ops.ResizeMethod.BILINEAR)
+++        v = image_ops.resize_images_v2(x, [1610637938, 1610637938],
+++                                       image_ops.ResizeMethod.BILINEAR)
++         _ = self.evaluate(v)
++ 
+  
+  class ResizeImagesTest(test_util.TensorFlowTestCase,
+                         parameterized.TestCase):
+
+tokens used
+input: 675
+cache read: 22,016
+cache write: 0
+output: 41
+reasoning output: 52
+
+I’m going to use `TensorShapeUtils::MakeShape` as the target-version equivalent status-returning shape constructor, and wrap its failure as `Internal` so the security regression test matches the source fix’s observable error class.
+
+tool: validate
+{
+  "ref": "4c0b84bf2a714bcdd18da1f1f94d533d72399d52",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/util/image_resizer_state.h b/tensorflow/core/util/image_resizer_state.h\n--- a/tensorflow/core/util/image_resizer_state.h\n+++ b/tensorflow/core/util/image_resizer_state.h\n@@ -135,12 +135,17 @@ struct ImageResizerState {\n   void ValidateAndCreateOutput(OpKernelContext* context, const Tensor& input) {\n     ValidateAndCalculateOutputSize(context, input);\n     if (!context->status().ok()) return;\n-    OP_REQUIRES_OK(context, context->allocate_output(\n-                                0,\n-                                TensorShape({input.dim_size(0), out_height,\n-                                             out_width, input.dim_size(3)}),\n-                                &output));\n+\n+    TensorShape shape;\n+    int64 shape_dims[] = {batch_size, out_height, out_width, channels};\n+    Status shape_status = TensorShapeUtils::MakeShape(shape_dims, 4, &shape);\n+    OP_REQUIRES(context, shape_status.ok(),\n+                errors::Internal(shape_status.error_message()));\n+\n+    OP_REQUIRES_OK(context, context->allocate_output(0, shape, &output));\n   }\n \n   int64 batch_size;\ndiff --git a/tensorflow/python/ops/image_ops_test.py b/tensorflow/python/ops/image_ops_test.py\n--- a/tensorflow/python/ops/image_ops_test.py\n+++ b/tensorflow/python/ops/image_ops_test.py\n@@ -3147,6 +3147,14 @@ class ResizeImagesV2Test(test_util.TensorFlowTestCase,\n \n     self._assertResizeCheckShape(x, x_shape, [320, 320], [320, 320, 3])\n \n+  def testLargeDim(self):\n+    with self.session():\n+      with self.assertRaises(errors.InternalError):\n+        x = np.ones((5, 1, 1, 2))\n+        v = image_ops.resize_images_v2(x, [1610637938, 1610637938],\n+                                       image_ops.ResizeMethod.BILINEAR)\n+        _ = self.evaluate(v)\n+\n \n class ResizeImagesTest(test_util.TensorFlowTestCase,\n                        parameterized.TestCase):\n"
+}
+This patch does not apply to the target TensorFlow ref.
+Git apply output:
+error: corrupt patch at line 24
+Touched files:
+- tensorflow/core/util/image_resizer_state.h
+- tensorflow/python/ops/image_ops_test.py
+Fix the patch context against the older TensorFlow version, then run validate again in hunk mode.
+
+tokens used
+input: 1,665
+cache read: 22,016
+cache write: 0
+output: 620
+reasoning output: 798
+
+tool: validate
+{
+  "ref": "4c0b84bf2a714bcdd18da1f1f94d533d72399d52",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/util/image_resizer_state.h b/tensorflow/core/util/image_resizer_state.h\n--- a/tensorflow/core/util/image_resizer_state.h\n+++ b/tensorflow/core/util/image_resizer_state.h\n@@ -135,12 +135,17 @@ struct ImageResizerState {\n   void ValidateAndCreateOutput(OpKernelContext* context, const Tensor& input) {\n     ValidateAndCalculateOutputSize(context, input);\n     if (!context->status().ok()) return;\n-    OP_REQUIRES_OK(context, context->allocate_output(\n-                                0,\n-                                TensorShape({input.dim_size(0), out_height,\n-                                             out_width, input.dim_size(3)}),\n-                                &output));\n+\n+    TensorShape shape;\n+    int64 shape_dims[] = {batch_size, out_height, out_width, channels};\n+    Status shape_status = TensorShapeUtils::MakeShape(shape_dims, 4, &shape);\n+    OP_REQUIRES(context, shape_status.ok(),\n+                errors::Internal(shape_status.error_message()));\n+\n+    OP_REQUIRES_OK(context, context->allocate_output(0, shape, &output));\n   }\n \n   int64 batch_size;\n"
+}
+This patch does not apply to the target TensorFlow ref.
+Git apply output:
+error: corrupt patch at line 24
+Touched files:
+- tensorflow/core/util/image_resizer_state.h
+Fix the patch context against the older TensorFlow version, then run validate again in hunk mode.
+
+tokens used
+input: 2,137
+cache read: 23,040
+cache write: 0
+output: 335
+reasoning output: 312
+
+tool: validate
+{
+  "ref": "4c0b84bf2a714bcdd18da1f1f94d533d72399d52",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/util/image_resizer_state.h b/tensorflow/core/util/image_resizer_state.h\n--- a/tensorflow/core/util/image_resizer_state.h\n+++ b/tensorflow/core/util/image_resizer_state.h\n@@ -135,11 +135,16 @@ struct ImageResizerState {\n   void ValidateAndCreateOutput(OpKernelContext* context, const Tensor& input) {\n     ValidateAndCalculateOutputSize(context, input);\n     if (!context->status().ok()) return;\n-    OP_REQUIRES_OK(context, context->allocate_output(\n-                                0,\n-                                TensorShape({input.dim_size(0), out_height,\n-                                             out_width, input.dim_size(3)}),\n-                                &output));\n+\n+    TensorShape shape;\n+    int64 shape_dims[] = {batch_size, out_height, out_width, channels};\n+    Status shape_status = TensorShapeUtils::MakeShape(shape_dims, 4, &shape);\n+    OP_REQUIRES(context, shape_status.ok(),\n+                errors::Internal(shape_status.error_message()));\n+\n+    OP_REQUIRES_OK(context, context->allocate_output(0, shape, &output));\n   }\n \n   int64 batch_size;\n"
+}
+This patch does not apply to the target TensorFlow ref.
+Git apply output:
+error: corrupt patch at line 24
+Touched files:
+- tensorflow/core/util/image_resizer_state.h
+Fix the patch context against the older TensorFlow version, then run validate again in hunk mode.
+
+tokens used
+input: 804
+cache read: 25,088
+cache write: 0
+output: 335
+reasoning output: 85
+
+tool: validate
+{
+  "ref": "4c0b84bf2a714bcdd18da1f1f94d533d72399d52",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/util/image_resizer_state.h b/tensorflow/core/util/image_resizer_state.h\n--- a/tensorflow/core/util/image_resizer_state.h\n+++ b/tensorflow/core/util/image_resizer_state.h\n@@ -135,11 +135,14 @@ struct ImageResizerState {\n   void ValidateAndCreateOutput(OpKernelContext* context, const Tensor& input) {\n     ValidateAndCalculateOutputSize(context, input);\n     if (!context->status().ok()) return;\n-    OP_REQUIRES_OK(context, context->allocate_output(\n-                                0,\n-                                TensorShape({input.dim_size(0), out_height,\n-                                             out_width, input.dim_size(3)}),\n-                                &output));\n+\n+    TensorShape shape;\n+    int64 shape_dims[] = {batch_size, out_height, out_width, channels};\n+    Status shape_status = TensorShapeUtils::MakeShape(shape_dims, 4, &shape);\n+    OP_REQUIRES(context, shape_status.ok(),\n+                errors::Internal(shape_status.error_message()));\n+\n+    OP_REQUIRES_OK(context, context->allocate_output(0, shape, &output));\n   }\n \n   int64 batch_size;\n"
+}
+Patch applied successfully
+
+tokens used
+input: 1,292
+cache read: 25,088
+cache write: 0
+output: 335
+reasoning output: 44
+
+tool: validate
+{
+  "ref": "4c0b84bf2a714bcdd18da1f1f94d533d72399d52",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/python/ops/image_ops_test.py b/tensorflow/python/ops/image_ops_test.py\n--- a/tensorflow/python/ops/image_ops_test.py\n+++ b/tensorflow/python/ops/image_ops_test.py\n@@ -3144,6 +3144,14 @@ class ResizeImagesV2Test(test_util.TensorFlowTestCase,\n     x = np.random.uniform(size=x_shape)\n \n     self._assertResizeCheckShape(x, x_shape, [320, 320], [320, 320, 3])\n+\n+  def testLargeDim(self):\n+    with self.session():\n+      with self.assertRaises(errors.InternalError):\n+        x = np.ones((5, 1, 1, 2))\n+        v = image_ops.resize_images_v2(x, [1610637938, 1610637938],\n+                                       image_ops.ResizeMethod.BILINEAR)\n+        _ = self.evaluate(v)\n \n \n class ResizeImagesTest(test_util.TensorFlowTestCase,\n"
+}
+Patch applied successfully
+
+tokens used
+input: 660
+cache read: 26,112
+cache write: 0
+output: 286
+reasoning output: 13
+
+The adapted hunks validate individually against the target base. I’m applying those two changes now.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target code locations for image resize state and test hunks",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate candidate patch hunks against target base",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply final backport changes in workspace",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Review resulting diff and report YAML",
+      "status": "pending",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target code locations for image resize state and test hunks",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate candidate patch hunks against target base",
+    "status": "completed",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply final backport changes in workspace",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Review resulting diff and report YAML",
+    "status": "pending",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 972
+cache read: 26,112
+cache write: 0
+output: 124
+reasoning output: 0
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/util/image_resizer_state.h\n@@\n   void ValidateAndCreateOutput(OpKernelContext* context, const Tensor& input) {\n     ValidateAndCalculateOutputSize(context, input);\n     if (!context->status().ok()) return;\n-    OP_REQUIRES_OK(context, context->allocate_output(\n-                                0,\n-                                TensorShape({input.dim_size(0), out_height,\n-                                             out_width, input.dim_size(3)}),\n-                                &output));\n+\n+    TensorShape shape;\n+    int64 shape_dims[] = {batch_size, out_height, out_width, channels};\n+    Status shape_status = TensorShapeUtils::MakeShape(shape_dims, 4, &shape);\n+    OP_REQUIRES(context, shape_status.ok(),\n+                errors::Internal(shape_status.error_message()));\n+\n+    OP_REQUIRES_OK(context, context->allocate_output(0, shape, &output));\n   }\n*** Update File: tensorflow/python/ops/image_ops_test.py\n@@\n   def testPreserveAspectRatioSquare(self):\n     x_shape = [299, 299, 3]\n     x = np.random.uniform(size=x_shape)\n \n     self._assertResizeCheckShape(x, x_shape, [320, 320], [320, 320, 3])\n+\n+  def testLargeDim(self):\n+    with self.session():\n+      with self.assertRaises(errors.InternalError):\n+        x = np.ones((5, 1, 1, 2))\n+        v = image_ops.resize_images_v2(x, [1610637938, 1610637938],\n+                                       image_ops.ResizeMethod.BILINEAR)\n+        _ = self.evaluate(v)\n \n \n class ResizeImagesTest(test_util.TensorFlowTestCase,\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/util/image_resizer_state.h
+M tensorflow/python/ops/image_ops_test.py
+
+tokens used
+input: 1,241
+cache read: 26,112
+cache write: 0
+output: 446
+reasoning output: 0
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target code locations for image resize state and test hunks",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate candidate patch hunks against target base",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply final backport changes in workspace",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Review resulting diff and report YAML",
+      "status": "in_progress",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target code locations for image resize state and test hunks",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate candidate patch hunks against target base",
+    "status": "completed",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply final backport changes in workspace",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Review resulting diff and report YAML",
+    "status": "in_progress",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 700
+cache read: 27,136
+cache write: 0
+output: 100
+reasoning output: 14
+
+I’m reviewing the final workspace diff now; no full build or full validation will be run per the constraints.
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/util/image_resizer_state.h tensorflow/python/ops/image_ops_test.py",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0091-4c0b84bf2a71"
+}
+warning: in the working copy of 'tensorflow/core/util/image_resizer_state.h', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'tensorflow/python/ops/image_ops_test.py', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/util/image_resizer_state.h b/tensorflow/core/util/image_resizer_state.h
+index 84459c9447..37bc56ad9e 100644
+--- a/tensorflow/core/util/image_resizer_state.h
++++ b/tensorflow/core/util/image_resizer_state.h
+@@ -135,11 +135,14 @@ struct ImageResizerState {
+   void ValidateAndCreateOutput(OpKernelContext* context, const Tensor& input) {
+     ValidateAndCalculateOutputSize(context, input);
+     if (!context->status().ok()) return;
+-    OP_REQUIRES_OK(context, context->allocate_output(
+-                                0,
+-                                TensorShape({input.dim_size(0), out_height,
+-                                             out_width, input.dim_size(3)}),
+-                                &output));
++
++    TensorShape shape;
++    int64 shape_dims[] = {batch_size, out_height, out_width, channels};
++    Status shape_status = TensorShapeUtils::MakeShape(shape_dims, 4, &shape);
++    OP_REQUIRES(context, shape_status.ok(),
++                errors::Internal(shape_status.error_message()));
++
++    OP_REQUIRES_OK(context, context->allocate_output(0, shape, &output));
+   }
+ 
+   int64 batch_size;
+diff --git a/tensorflow/python/ops/image_ops_test.py b/tensorflow/python/ops/image_ops_test.py
+index 320facf5af..7f361a489a 100644
+--- a/tensorflow/python/ops/image_ops_test.py
++++ b/tensorflow/python/ops/image_ops_test.py
+@@ -3149,6 +3149,14 @@ class ResizeImagesV2Test(test_util.TensorFlowTestCase, parameterized.TestCase):
+ 
+     self._assertResizeCheckShape(x, x_shape, [320, 320], [320, 320, 3])
+ 
++  def testLargeDim(self):
++    with self.session():
++      with self.assertRaises(errors.InternalError):
++        x = np.ones((5, 1, 1, 2))
++        v = image_ops.resize_images_v2(x, [1610637938, 1610637938],
++                                       image_ops.ResizeMethod.BILINEAR)
++        _ = self.evaluate(v)
++
+ 
+ class ResizeImagesTest(test_util.TensorFlowTestCase,
+                        parameterized.TestCase):
+
+tokens used
+input: 959
+cache read: 27,136
+cache write: 0
+output: 80
+reasoning output: 0
+
+tool: bash
+{}
+Tool execution aborted
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/util/image_resizer_state.h\n@@\n \n     TensorShape shape;\n+    // Guard against shape overflow.\n     int64 shape_dims[] = {batch_size, out_height, out_width, channels};\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/util/image_resizer_state.h
+
+tokens used
+input: 1,678
+cache read: 27,136
+cache write: 0
+output: 81
+reasoning output: 144
+
+tool: validate
+{
+  "ref": "4c0b84bf2a714bcdd18da1f1f94d533d72399d52",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/util/image_resizer_state.h b/tensorflow/core/util/image_resizer_state.h\n--- a/tensorflow/core/util/image_resizer_state.h\n+++ b/tensorflow/core/util/image_resizer_state.h\n@@ -135,11 +135,15 @@ struct ImageResizerState {\n   void ValidateAndCreateOutput(OpKernelContext* context, const Tensor& input) {\n     ValidateAndCalculateOutputSize(context, input);\n     if (!context->status().ok()) return;\n-    OP_REQUIRES_OK(context, context->allocate_output(\n-                                0,\n-                                TensorShape({input.dim_size(0), out_height,\n-                                             out_width, input.dim_size(3)}),\n-                                &output));\n+\n+    TensorShape shape;\n+    // Guard against shape overflow.\n+    int64 shape_dims[] = {batch_size, out_height, out_width, channels};\n+    Status shape_status = TensorShapeUtils::MakeShape(shape_dims, 4, &shape);\n+    OP_REQUIRES(context, shape_status.ok(),\n+                errors::Internal(shape_status.error_message()));\n+\n+    OP_REQUIRES_OK(context, context->allocate_output(0, shape, &output));\n   }\n \n   int64 batch_size;\n"
+}
+Patch applied successfully
+
+tokens used
+input: 906
+cache read: 28,160
+cache write: 0
+output: 344
+reasoning output: 31
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/util/image_resizer_state.h tensorflow/python/ops/image_ops_test.py",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0091-4c0b84bf2a71"
+}
+warning: in the working copy of 'tensorflow/core/util/image_resizer_state.h', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'tensorflow/python/ops/image_ops_test.py', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/util/image_resizer_state.h b/tensorflow/core/util/image_resizer_state.h
+index 84459c9447..baa6a9a0f1 100644
+--- a/tensorflow/core/util/image_resizer_state.h
++++ b/tensorflow/core/util/image_resizer_state.h
+@@ -135,11 +135,15 @@ struct ImageResizerState {
+   void ValidateAndCreateOutput(OpKernelContext* context, const Tensor& input) {
+     ValidateAndCalculateOutputSize(context, input);
+     if (!context->status().ok()) return;
+-    OP_REQUIRES_OK(context, context->allocate_output(
+-                                0,
+-                                TensorShape({input.dim_size(0), out_height,
+-                                             out_width, input.dim_size(3)}),
+-                                &output));
++
++    TensorShape shape;
++    // Guard against shape overflow.
++    int64 shape_dims[] = {batch_size, out_height, out_width, channels};
++    Status shape_status = TensorShapeUtils::MakeShape(shape_dims, 4, &shape);
++    OP_REQUIRES(context, shape_status.ok(),
++                errors::Internal(shape_status.error_message()));
++
++    OP_REQUIRES_OK(context, context->allocate_output(0, shape, &output));
+   }
+ 
+   int64 batch_size;
+diff --git a/tensorflow/python/ops/image_ops_test.py b/tensorflow/python/ops/image_ops_test.py
+index 320facf5af..7f361a489a 100644
+--- a/tensorflow/python/ops/image_ops_test.py
++++ b/tensorflow/python/ops/image_ops_test.py
+@@ -3149,6 +3149,14 @@ class ResizeImagesV2Test(test_util.TensorFlowTestCase, parameterized.TestCase):
+ 
+     self._assertResizeCheckShape(x, x_shape, [320, 320], [320, 320, 3])
+ 
++  def testLargeDim(self):
++    with self.session():
++      with self.assertRaises(errors.InternalError):
++        x = np.ones((5, 1, 1, 2))
++        v = image_ops.resize_images_v2(x, [1610637938, 1610637938],
++                                       image_ops.ResizeMethod.BILINEAR)
++        _ = self.evaluate(v)
++
+ 
+ class ResizeImagesTest(test_util.TensorFlowTestCase,
+                        parameterized.TestCase):
+
+tokens used
+input: 1,294
+cache read: 28,160
+cache write: 0
+output: 82
+reasoning output: 16
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target code locations for image resize state and test hunks",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate candidate patch hunks against target base",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply final backport changes in workspace",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Review resulting diff and report YAML",
+      "status": "completed",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target code locations for image resize state and test hunks",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate candidate patch hunks against target base",
+    "status": "completed",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply final backport changes in workspace",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Review resulting diff and report YAML",
+    "status": "completed",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 960
+cache read: 29,184
+cache write: 0
+output: 99
+reasoning output: 21
+
+Applied the TensorFlow image resize overflow guard backport and added the regression test. Validated the adapted hunks with `validate` in hunk mode; no full build/test was run.
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/util/image_resizer_state.h b/tensorflow/core/util/image_resizer_state.h
+    index 84459c9447..baa6a9a0f1 100644
+    --- a/tensorflow/core/util/image_resizer_state.h
+    +++ b/tensorflow/core/util/image_resizer_state.h
+    @@ -135,11 +135,15 @@ struct ImageResizerState {
+       void ValidateAndCreateOutput(OpKernelContext* context, const Tensor& input) {
+         ValidateAndCalculateOutputSize(context, input);
+         if (!context->status().ok()) return;
+    -    OP_REQUIRES_OK(context, context->allocate_output(
+    -                                0,
+    -                                TensorShape({input.dim_size(0), out_height,
+    -                                             out_width, input.dim_size(3)}),
+    -                                &output));
+    +
+    +    TensorShape shape;
+    +    // Guard against shape overflow.
+    +    int64 shape_dims[] = {batch_size, out_height, out_width, channels};
+    +    Status shape_status = TensorShapeUtils::MakeShape(shape_dims, 4, &shape);
+    +    OP_REQUIRES(context, shape_status.ok(),
+    +                errors::Internal(shape_status.error_message()));
+    +
+    +    OP_REQUIRES_OK(context, context->allocate_output(0, shape, &output));
+       }
+     
+       int64 batch_size;
+    diff --git a/tensorflow/python/ops/image_ops_test.py b/tensorflow/python/ops/image_ops_test.py
+    index 320facf5af..7f361a489a 100644
+    --- a/tensorflow/python/ops/image_ops_test.py
+    +++ b/tensorflow/python/ops/image_ops_test.py
+    @@ -3149,6 +3149,14 @@ class ResizeImagesV2Test(test_util.TensorFlowTestCase, parameterized.TestCase):
+     
+         self._assertResizeCheckShape(x, x_shape, [320, 320], [320, 320, 3])
+     
+    +  def testLargeDim(self):
+    +    with self.session():
+    +      with self.assertRaises(errors.InternalError):
+    +        x = np.ones((5, 1, 1, 2))
+    +        v = image_ops.resize_images_v2(x, [1610637938, 1610637938],
+    +                                       image_ops.ResizeMethod.BILINEAR)
+    +        _ = self.evaluate(v)
+    +
+     
+     class ResizeImagesTest(test_util.TensorFlowTestCase,
+                            parameterized.TestCase):
+  notes: >
+    Backported the resize output shape overflow guard using the target branch's status-returning TensorShapeUtils::MakeShape API and added the large-dimension regression test.
+```
+
+tokens used
+input: 1,224
+cache read: 29,184
+cache write: 0
+output: 650
+reasoning output: 0

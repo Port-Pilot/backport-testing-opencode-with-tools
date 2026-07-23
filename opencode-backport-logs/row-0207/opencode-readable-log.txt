@@ -1,0 +1,347 @@
+I’ll locate the corresponding quantile stream resource op in the checked-out TensorFlow 2.3.4 tree, confirm the older context matches the security fix intent, then apply the minimal argument validation.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect source patch and target-side quantile op context",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Validate minimal backport hunk against target base",
+      "status": "pending",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply source change and capture final diff",
+      "status": "pending",
+      "priority": "high"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect source patch and target-side quantile op context",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Validate minimal backport hunk against target base",
+    "status": "pending",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply source change and capture final diff",
+    "status": "pending",
+    "priority": "high"
+  }
+]
+
+tokens used
+input: 3,753
+cache read: 4,608
+cache write: 0
+output: 128
+reasoning output: 0
+
+tool: git_show
+{
+  "ref": "8a84f7a2b5a2b27ecf88d25bad9ac777cd2f7992"
+}
+commit 8a84f7a2b5a2b27ecf88d25bad9ac777cd2f7992
+Author: Laura Pak <lpak@google.com>
+Date:   Wed Jul 28 15:34:04 2021 -0700
+
+    Ensure num_streams >= 0 in tf.raw_ops.BoostedTreesCreateQuantileStreamResource
+    
+    PiperOrigin-RevId: 387452765
+    Change-Id: I9990c760e177fabca6a3b9b4612ceeaeeba51495
+
+ tensorflow/core/kernels/boosted_trees/quantile_ops.cc | 3 +++
+ 1 file changed, 3 insertions(+)
+
+--- Commit Details ---
+commit 8a84f7a2b5a2b27ecf88d25bad9ac777cd2f7992
+Author: Laura Pak <lpak@google.com>
+Date:   Wed Jul 28 15:34:04 2021 -0700
+
+    Ensure num_streams >= 0 in tf.raw_ops.BoostedTreesCreateQuantileStreamResource
+    
+    PiperOrigin-RevId: 387452765
+    Change-Id: I9990c760e177fabca6a3b9b4612ceeaeeba51495
+
+diff --git a/tensorflow/core/kernels/boosted_trees/quantile_ops.cc b/tensorflow/core/kernels/boosted_trees/quantile_ops.cc
+index c245b25aab..13a0056060 100644
+--- a/tensorflow/core/kernels/boosted_trees/quantile_ops.cc
++++ b/tensorflow/core/kernels/boosted_trees/quantile_ops.cc
+@@ -116,6 +116,9 @@ class BoostedTreesCreateQuantileStreamResourceOp : public OpKernel {
+     const Tensor* num_streams_t;
+     OP_REQUIRES_OK(context, context->input(kNumStreamsName, &num_streams_t));
+     int64_t num_streams = num_streams_t->scalar<int64>()();
++    OP_REQUIRES(context, num_streams >= 0,
++                errors::InvalidArgument(
++                    "Num_streams input cannot be a negative integer"));
+ 
+     auto result =
+         new QuantileStreamResource(epsilon, max_elements_, num_streams);
+
+tool: viewcode
+{
+  "ref": "fd73277008858dca223e9fe7fc0c8dd597f19d55",
+  "path": "tensorflow/core/kernels/boosted_trees/quantile_ops.cc",
+  "startline": 90,
+  "endline": 140
+}
+Here are lines 90 through 140.
+
+REGISTER_RESOURCE_HANDLE_KERNEL(BoostedTreesQuantileStreamResource);
+
+REGISTER_KERNEL_BUILDER(
+    Name("IsBoostedTreesQuantileStreamResourceInitialized").Device(DEVICE_CPU),
+    IsResourceInitialized<BoostedTreesQuantileStreamResource>);
+
+class BoostedTreesCreateQuantileStreamResourceOp : public OpKernel {
+ public:
+  explicit BoostedTreesCreateQuantileStreamResourceOp(
+      OpKernelConstruction* const context)
+      : OpKernel(context) {
+    OP_REQUIRES_OK(context, context->GetAttr(kMaxElementsName, &max_elements_));
+  }
+
+  void Compute(OpKernelContext* context) override {
+    // Only create one, if one does not exist already. Report status for all
+    // other exceptions. If one already exists, it unrefs the new one.
+    // An epsilon value of zero could cause performance issues and is therefore,
+    // disallowed.
+    const Tensor* epsilon_t;
+    OP_REQUIRES_OK(context, context->input(kEpsilonName, &epsilon_t));
+    float epsilon = epsilon_t->scalar<float>()();
+    OP_REQUIRES(
+        context, epsilon > 0,
+        errors::InvalidArgument("An epsilon value of zero is not allowed."));
+
+    const Tensor* num_streams_t;
+    OP_REQUIRES_OK(context, context->input(kNumStreamsName, &num_streams_t));
+    int64 num_streams = num_streams_t->scalar<int64>()();
+
+    auto result =
+        new QuantileStreamResource(epsilon, max_elements_, num_streams);
+    auto status = CreateResource(context, HandleFromInput(context, 0), result);
+    if (!status.ok() && status.code() != tensorflow::error::ALREADY_EXISTS) {
+      OP_REQUIRES(context, false, status);
+    }
+  }
+
+ private:
+  // An upper bound on the number of entries that the summaries might have
+  // for a feature.
+  int64 max_elements_;
+};
+
+REGISTER_KERNEL_BUILDER(
+    Name("BoostedTreesCreateQuantileStreamResource").Device(DEVICE_CPU),
+    BoostedTreesCreateQuantileStreamResourceOp);
+
+class BoostedTreesMakeQuantileSummariesOp : public OpKernel {
+ public:
+  explicit BoostedTreesMakeQuantileSummariesOp(
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: locate_symbol
+{
+  "ref": "fd73277008858dca223e9fe7fc0c8dd597f19d55",
+  "symbol": "BoostedTreesCreateQuantileStreamResourceOp"
+}
+tensorflow/core/kernels/boosted_trees/quantile_ops.cc:96
+tensorflow/core/kernels/boosted_trees/quantile_ops.cc:98
+tensorflow/core/kernels/boosted_trees/quantile_ops.cc:136
+
+tokens used
+input: 923
+cache read: 7,680
+cache write: 0
+output: 170
+reasoning output: 0
+
+The target code is the same op and call site; the only adaptation needed is the older TensorFlow typedef style (`int64` instead of `int64_t`). I’ll validate that exact minimal hunk before editing.
+
+tool: validate
+{
+  "ref": "fd73277008858dca223e9fe7fc0c8dd597f19d55",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/boosted_trees/quantile_ops.cc b/tensorflow/core/kernels/boosted_trees/quantile_ops.cc\n--- a/tensorflow/core/kernels/boosted_trees/quantile_ops.cc\n+++ b/tensorflow/core/kernels/boosted_trees/quantile_ops.cc\n@@ -116,6 +116,9 @@ class BoostedTreesCreateQuantileStreamResourceOp : public OpKernel {\n     const Tensor* num_streams_t;\n     OP_REQUIRES_OK(context, context->input(kNumStreamsName, &num_streams_t));\n     int64 num_streams = num_streams_t->scalar<int64>()();\n+    OP_REQUIRES(context, num_streams >= 0,\n+                errors::InvalidArgument(\n+                    \"Num_streams input cannot be a negative integer\"));\n \n     auto result =\n         new QuantileStreamResource(epsilon, max_elements_, num_streams);\n"
+}
+Patch applied successfully
+
+tokens used
+input: 2,182
+cache read: 7,680
+cache write: 0
+output: 319
+reasoning output: 33
+
+The hunk applies cleanly against the target base. I’m applying the same validation in the current checkout now.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect source patch and target-side quantile op context",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate minimal backport hunk against target base",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply source change and capture final diff",
+      "status": "in_progress",
+      "priority": "high"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect source patch and target-side quantile op context",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate minimal backport hunk against target base",
+    "status": "completed",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply source change and capture final diff",
+    "status": "in_progress",
+    "priority": "high"
+  }
+]
+
+tokens used
+input: 499
+cache read: 9,728
+cache write: 0
+output: 110
+reasoning output: 0
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/kernels/boosted_trees/quantile_ops.cc\n@@\n     const Tensor* num_streams_t;\n     OP_REQUIRES_OK(context, context->input(kNumStreamsName, &num_streams_t));\n     int64 num_streams = num_streams_t->scalar<int64>()();\n+    OP_REQUIRES(context, num_streams >= 0,\n+                errors::InvalidArgument(\n+                    \"Num_streams input cannot be a negative integer\"));\n \n     auto result =\n         new QuantileStreamResource(epsilon, max_elements_, num_streams);\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/kernels/boosted_trees/quantile_ops.cc
+
+tokens used
+input: 723
+cache read: 9,728
+cache write: 0
+output: 165
+reasoning output: 0
+
+The source change is applied; I’ll inspect the resulting diff to ensure only the intended backport is present.
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/kernels/boosted_trees/quantile_ops.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0207-fd7327700885"
+}
+warning: in the working copy of 'tensorflow/core/kernels/boosted_trees/quantile_ops.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/kernels/boosted_trees/quantile_ops.cc b/tensorflow/core/kernels/boosted_trees/quantile_ops.cc
+index 0065bdd66a..916db1f436 100644
+--- a/tensorflow/core/kernels/boosted_trees/quantile_ops.cc
++++ b/tensorflow/core/kernels/boosted_trees/quantile_ops.cc
+@@ -116,6 +116,9 @@ class BoostedTreesCreateQuantileStreamResourceOp : public OpKernel {
+     const Tensor* num_streams_t;
+     OP_REQUIRES_OK(context, context->input(kNumStreamsName, &num_streams_t));
+     int64 num_streams = num_streams_t->scalar<int64>()();
++    OP_REQUIRES(context, num_streams >= 0,
++                errors::InvalidArgument(
++                    "Num_streams input cannot be a negative integer"));
+ 
+     auto result =
+         new QuantileStreamResource(epsilon, max_elements_, num_streams);
+
+tokens used
+input: 921
+cache read: 9,728
+cache write: 0
+output: 103
+reasoning output: 0
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect source patch and target-side quantile op context",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate minimal backport hunk against target base",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply source change and capture final diff",
+      "status": "completed",
+      "priority": "high"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect source patch and target-side quantile op context",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate minimal backport hunk against target base",
+    "status": "completed",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply source change and capture final diff",
+    "status": "completed",
+    "priority": "high"
+  }
+]
+
+tokens used
+input: 1,294
+cache read: 9,728
+cache write: 0
+output: 79
+reasoning output: 0
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/kernels/boosted_trees/quantile_ops.cc b/tensorflow/core/kernels/boosted_trees/quantile_ops.cc
+    index 0065bdd66a..916db1f436 100644
+    --- a/tensorflow/core/kernels/boosted_trees/quantile_ops.cc
+    +++ b/tensorflow/core/kernels/boosted_trees/quantile_ops.cc
+    @@ -116,6 +116,9 @@ class BoostedTreesCreateQuantileStreamResourceOp : public OpKernel {
+         const Tensor* num_streams_t;
+         OP_REQUIRES_OK(context, context->input(kNumStreamsName, &num_streams_t));
+         int64 num_streams = num_streams_t->scalar<int64>()();
+    +    OP_REQUIRES(context, num_streams >= 0,
+    +                errors::InvalidArgument(
+    +                    "Num_streams input cannot be a negative integer"));
+     
+         auto result =
+             new QuantileStreamResource(epsilon, max_elements_, num_streams);
+  notes: >
+    Added validation rejecting negative num_streams in BoostedTreesCreateQuantileStreamResourceOp, adapted to the target's int64 style.
+```
+
+tokens used
+input: 462
+cache read: 10,752
+cache write: 0
+output: 284
+reasoning output: 0

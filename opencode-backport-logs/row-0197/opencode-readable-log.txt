@@ -1,0 +1,191 @@
+I’ll locate the `TensorListReserve` implementation in the target release and verify the exact older-context hunk before applying the minimal guard.
+
+tool: viewcode
+{
+  "ref": "3929ffacfbef7c431e8397920d040aaf47acff19",
+  "path": "tensorflow/core/kernels/list_kernels.cc",
+  "startline": 280,
+  "endline": 330
+}
+Here are lines 280 through 330.
+
+  }
+};
+
+REGISTER_KERNEL_BUILDER(Name("TensorListElementShape").Device(DEVICE_CPU),
+                        TensorListElementShape);
+
+#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+
+REGISTER_KERNEL_BUILDER(Name("TensorListElementShape")
+                            .Device(DEVICE_GPU)
+                            .HostMemory("element_shape"),
+                        TensorListElementShape);
+
+#endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+
+class TensorListReserve : public OpKernel {
+ public:
+  explicit TensorListReserve(OpKernelConstruction* c) : OpKernel(c) {
+    OP_REQUIRES_OK(c, c->GetAttr("element_dtype", &element_dtype_));
+  }
+
+  void Compute(OpKernelContext* c) override {
+    PartialTensorShape element_shape;
+    OP_REQUIRES_OK(c, TensorShapeFromTensor(c->input(0), &element_shape));
+    int32 num_elements = c->input(1).scalar<int32>()();
+    TensorList output;
+    output.element_shape = element_shape;
+    output.element_dtype = element_dtype_;
+    output.tensors().resize(num_elements, Tensor(DT_INVALID));
+    Tensor* result;
+    AllocatorAttributes attr;
+    attr.set_on_host(true);
+    OP_REQUIRES_OK(c, c->allocate_output(0, TensorShape{}, &result, attr));
+    result->scalar<Variant>()() = std::move(output);
+  }
+
+ private:
+  DataType element_dtype_;
+};
+
+REGISTER_KERNEL_BUILDER(Name("TensorListReserve").Device(DEVICE_CPU),
+                        TensorListReserve);
+
+#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+
+REGISTER_KERNEL_BUILDER(Name("TensorListReserve")
+                            .Device(DEVICE_GPU)
+                            .HostMemory("element_shape")
+                            .HostMemory("num_elements"),
+                        TensorListReserve);
+
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: locate_symbol
+{
+  "ref": "3929ffacfbef7c431e8397920d040aaf47acff19",
+  "symbol": "TensorListReserve"
+}
+tensorflow/core/kernels/list_kernels.cc:295
+tensorflow/compiler/jit/mark_for_compilation_pass_test.cc:1289
+tensorflow/compiler/jit/mark_for_compilation_pass_test.cc:1337
+tensorflow/core/kernels/list_kernels.cc:297
+tensorflow/go/op/wrappers.go:26242
+tensorflow/core/grappler/optimizers/auto_mixed_precision_test.cc:695
+tensorflow/core/grappler/optimizers/auto_mixed_precision_test.cc:719
+tensorflow/core/grappler/optimizers/auto_mixed_precision_test.cc:1276
+tensorflow/core/grappler/optimizers/auto_mixed_precision_test.cc:1300
+tensorflow/compiler/jit/mark_for_compilation_pass.cc:2045
+tensorflow/compiler/mlir/lite/tests/lower-static-tensor-list.mlir:150
+tensorflow/compiler/mlir/lite/tests/lower-static-tensor-list.mlir:166
+tensorflow/compiler/mlir/lite/tests/lower-static-tensor-list.mlir:178
+tensorflow/compiler/mlir/tensorflow/ir/tf_ops.td:634
+tensorflow/compiler/mlir/tensorflow/tests/graphdef2mlir/tensor-list.pbtxt:4
+tensorflow/compiler/mlir/tensorflow/tests/graphdef2mlir/tensor-list.pbtxt:105
+tensorflow/compiler/mlir/tensorflow/tests/graphdef2mlir/tensor-list.pbtxt:131
+tensorflow/compiler/mlir/tensorflow/tests/graphdef2mlir/tensor-list.pbtxt:132
+tensorflow/compiler/mlir/tensorflow/tests/graphdef2mlir/tensor-list.pbtxt:133
+tensorflow/compiler/mlir/tensorflow/tests/graphdef2mlir/tensor-list.pbtxt:134
+
+tokens used
+input: 3,722
+cache read: 4,608
+cache write: 0
+output: 151
+reasoning output: 0
+
+The target implementation matches the patched newer code around `num_elements`; the backport is the same local check inserted before resizing the tensor list.
+
+tool: validate
+{
+  "ref": "3929ffacfbef7c431e8397920d040aaf47acff19",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/list_kernels.cc b/tensorflow/core/kernels/list_kernels.cc\n--- a/tensorflow/core/kernels/list_kernels.cc\n+++ b/tensorflow/core/kernels/list_kernels.cc\n@@ -301,6 +301,10 @@ class TensorListReserve : public OpKernel {\n     PartialTensorShape element_shape;\n     OP_REQUIRES_OK(c, TensorShapeFromTensor(c->input(0), &element_shape));\n     int32 num_elements = c->input(1).scalar<int32>()();\n+    OP_REQUIRES(c, num_elements >= 0,\n+                errors::InvalidArgument(\"The num_elements to reserve must be a \"\n+                                        \"non negative number, but got \",\n+                                        num_elements));\n     TensorList output;\n     output.element_shape = element_shape;\n     output.element_dtype = element_dtype_;\n"
+}
+Patch applied successfully
+
+tokens used
+input: 1,578
+cache read: 7,680
+cache write: 0
+output: 283
+reasoning output: 30
+
+I’m applying the validated one-hunk source change now.
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/kernels/list_kernels.cc\n@@\n     PartialTensorShape element_shape;\n     OP_REQUIRES_OK(c, TensorShapeFromTensor(c->input(0), &element_shape));\n     int32 num_elements = c->input(1).scalar<int32>()();\n+    OP_REQUIRES(c, num_elements >= 0,\n+                errors::InvalidArgument(\"The num_elements to reserve must be a \"\n+                                        \"non negative number, but got \",\n+                                        num_elements));\n     TensorList output;\n     output.element_shape = element_shape;\n     output.element_dtype = element_dtype_;\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/kernels/list_kernels.cc
+
+tokens used
+input: 880
+cache read: 8,704
+cache write: 0
+output: 189
+reasoning output: 0
+
+I’ll inspect the resulting diff to confirm only the intended guard was added.
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/kernels/list_kernels.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0197-3929ffacfbef",
+  "timeout": 120000
+}
+warning: in the working copy of 'tensorflow/core/kernels/list_kernels.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/kernels/list_kernels.cc b/tensorflow/core/kernels/list_kernels.cc
+index 9a2f373f5c..488e02337f 100644
+--- a/tensorflow/core/kernels/list_kernels.cc
++++ b/tensorflow/core/kernels/list_kernels.cc
+@@ -302,6 +302,10 @@ class TensorListReserve : public OpKernel {
+     PartialTensorShape element_shape;
+     OP_REQUIRES_OK(c, TensorShapeFromTensor(c->input(0), &element_shape));
+     int32 num_elements = c->input(1).scalar<int32>()();
++    OP_REQUIRES(c, num_elements >= 0,
++                errors::InvalidArgument("The num_elements to reserve must be a "
++                                        "non negative number, but got ",
++                                        num_elements));
+     TensorList output;
+     output.element_shape = element_shape;
+     output.element_dtype = element_dtype_;
+
+tokens used
+input: 5,192
+cache read: 4,608
+cache write: 0
+output: 96
+reasoning output: 0
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/kernels/list_kernels.cc b/tensorflow/core/kernels/list_kernels.cc
+    index 9a2f373f5c..488e02337f 100644
+    --- a/tensorflow/core/kernels/list_kernels.cc
+    +++ b/tensorflow/core/kernels/list_kernels.cc
+    @@ -302,6 +302,10 @@ class TensorListReserve : public OpKernel {
+         PartialTensorShape element_shape;
+         OP_REQUIRES_OK(c, TensorShapeFromTensor(c->input(0), &element_shape));
+         int32 num_elements = c->input(1).scalar<int32>()();
+    +    OP_REQUIRES(c, num_elements >= 0,
+    +                errors::InvalidArgument("The num_elements to reserve must be a "
+    +                                        "non negative number, but got ",
+    +                                        num_elements));
+         TensorList output;
+         output.element_shape = element_shape;
+         output.element_dtype = element_dtype_;
+  notes: >
+    Added validation rejecting negative TensorListReserve num_elements before resizing the backing tensor list.
+```
+
+tokens used
+input: 413
+cache read: 9,728
+cache write: 0
+output: 255
+reasoning output: 0

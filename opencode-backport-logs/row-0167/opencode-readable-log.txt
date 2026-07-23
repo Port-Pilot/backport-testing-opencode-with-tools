@@ -1,0 +1,348 @@
+I’ll locate the older `QuantizedAddOp` implementation, compare the relevant surrounding context to the 2.6.0 hunk, then apply the minimal guard if the same vector-addition path exists.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect newer patch context and target QuantizedAddOp location",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Validate and apply minimal backport hunk",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "content": "Inspect resulting diff and report YAML",
+      "status": "pending",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect newer patch context and target QuantizedAddOp location",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Validate and apply minimal backport hunk",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "content": "Inspect resulting diff and report YAML",
+    "status": "pending",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 3,709
+cache read: 4,608
+cache write: 0
+output: 129
+reasoning output: 0
+
+tool: viewcode
+{
+  "ref": "56744466408c2ddb8119e949eccb3ac2a46eaff6",
+  "path": "tensorflow/core/kernels/quantized_add_op.cc",
+  "startline": 500,
+  "endline": 570
+}
+Here are lines 500 through 570.
+
+      if (x.NumElements() == 1) {
+        ScalarAddition<T, Toutput>(context, y_data, min_y, max_y,
+                                   y.NumElements(), x_data[0], min_x, max_x,
+                                   min_z_value, max_z_value, z_data);
+      } else if (y.NumElements() == 1) {
+        ScalarAddition<T, Toutput>(context, x_data, min_x, max_x,
+                                   x.NumElements(), y_data[0], min_y, max_y,
+                                   min_z_value, max_z_value, z_data);
+      } else {
+        VectorAddition<T, Toutput>(context, x_data, min_x, max_x, y_data, min_y,
+                                   max_y, x.NumElements(), min_z_value,
+                                   max_z_value, z_data);
+      }
+    } else if (ndims == 2) {
+      const T* vector_data;
+      int64 vector_num_elements;
+      float vector_min;
+      float vector_max;
+      const T* tensor_data;
+      int64 tensor_num_elements;
+      float tensor_min;
+      float tensor_max;
+      if (x.NumElements() < y.NumElements()) {
+        vector_data = x_data;
+        vector_num_elements = x.NumElements();
+        vector_min = min_x;
+        vector_max = max_x;
+        tensor_data = y_data;
+        tensor_num_elements = y.NumElements();
+        tensor_min = min_y;
+        tensor_max = max_y;
+      } else {
+        vector_data = y_data;
+        vector_num_elements = y.NumElements();
+        vector_min = min_y;
+        vector_max = max_y;
+        tensor_data = x_data;
+        tensor_num_elements = x.NumElements();
+        tensor_min = min_x;
+        tensor_max = max_x;
+      }
+      VectorTensorAddition<T, Toutput>(
+          vector_data, vector_min, vector_max, vector_num_elements, tensor_data,
+          tensor_min, tensor_max, tensor_num_elements, min_z_value, max_z_value,
+          z_data);
+    } else {
+      LOG(INFO) << "ndims=" << ndims;
+      LOG(INFO) << "bcast.x_reshape()="
+                << TensorShape(bcast.x_reshape()).DebugString();
+      LOG(INFO) << "bcast.y_reshape()="
+                << TensorShape(bcast.y_reshape()).DebugString();
+      LOG(INFO) << "bcast.x_bcast()="
+                << TensorShape(bcast.x_bcast()).DebugString();
+      LOG(INFO) << "bcast.y_bcast()="
+                << TensorShape(bcast.y_bcast()).DebugString();
+
+      context->SetStatus(errors::Unimplemented(
+          "Broadcast between ", context->input(0).shape().DebugString(),
+          " and ", context->input(1).shape().DebugString(),
+          " is not supported yet."));
+      return;
+    }
+
+    Tensor* z_min = nullptr;
+    OP_REQUIRES_OK(context, context->allocate_output(1, {}, &z_min));
+    z_min->flat<float>()(0) = min_z_value;
+
+    Tensor* z_max = nullptr;
+    OP_REQUIRES_OK(context, context->allocate_output(2, {}, &z_max));
+    z_max->flat<float>()(0) = max_z_value;
+  }
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: git_show
+{
+  "ref": "744009c9e5cc5d0447f0dc39d055f917e1fd9e16",
+  "context": "class QuantizedAddOp : public OpKernel {\n      VectorTensorAddition<T, Toutput>("
+}
+commit 744009c9e5cc5d0447f0dc39d055f917e1fd9e16
+Author: Mihai Maruseac <mihaimaruseac@google.com>
+Date:   Fri Apr 23 12:00:12 2021 -0700
+
+    Validate work in `QuantizedAdd`, ensure at least one element.
+    
+    PiperOrigin-RevId: 370127996
+    Change-Id: I57c6f3e01afdeada84737820a131590137463855
+
+ tensorflow/core/kernels/quantized_add_op.cc | 2 ++
+ 1 file changed, 2 insertions(+)
+This commit shows that there is a high probability that this code is new, so the corresponding code segment cannot be found in the old version.
+You can call `viewcode` and `locate_symbol` to further check the results step by step. For newly introduced code, we consider that this hunk `need not ported`.
+
+tool: locate_symbol
+{
+  "ref": "56744466408c2ddb8119e949eccb3ac2a46eaff6",
+  "symbol": "QuantizedAddOp"
+}
+tensorflow/core/kernels/quantized_add_op.cc:453
+tensorflow/core/kernels/quantized_add_op.cc:455
+tensorflow/core/kernels/quantized_add_op.cc:578
+
+tokens used
+input: 879
+cache read: 7,680
+cache write: 0
+output: 180
+reasoning output: 0
+
+The target 2.1.4 file has the same `ndims == 2` vector/tensor addition path and no existing zero-element guard, so the backport is the same two-line `OP_REQUIRES` insertion before `VectorTensorAddition`.
+
+tool: validate
+{
+  "ref": "56744466408c2ddb8119e949eccb3ac2a46eaff6",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/quantized_add_op.cc b/tensorflow/core/kernels/quantized_add_op.cc\n--- a/tensorflow/core/kernels/quantized_add_op.cc\n+++ b/tensorflow/core/kernels/quantized_add_op.cc\n@@ -535,6 +535,8 @@ class QuantizedAddOp : public OpKernel {\n         tensor_min = min_x;\n         tensor_max = max_x;\n       }\n+      OP_REQUIRES(context, vector_num_elements > 0,\n+                  errors::InvalidArgument(\"Must have some elements to add\"));\n       VectorTensorAddition<T, Toutput>(\n           vector_data, vector_min, vector_max, vector_num_elements, tensor_data,\n           tensor_min, tensor_max, tensor_num_elements, min_z_value, max_z_value,\n"
+}
+Patch applied successfully
+
+tokens used
+input: 2,060
+cache read: 7,680
+cache write: 0
+output: 289
+reasoning output: 20
+
+The hunk validates cleanly against the specified base. I’m applying only that source change now.
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/kernels/quantized_add_op.cc\n@@\n       } else {\n         vector_data = y_data;\n         vector_num_elements = y.NumElements();\n         vector_min = min_y;\n         vector_max = max_y;\n@@\n         tensor_min = min_x;\n         tensor_max = max_x;\n       }\n+      OP_REQUIRES(context, vector_num_elements > 0,\n+                  errors::InvalidArgument(\"Must have some elements to add\"));\n       VectorTensorAddition<T, Toutput>(\n           vector_data, vector_min, vector_max, vector_num_elements, tensor_data,\n           tensor_min, tensor_max, tensor_num_elements, min_z_value, max_z_value,\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/kernels/quantized_add_op.cc
+
+tokens used
+input: 1,358
+cache read: 8,704
+cache write: 0
+output: 214
+reasoning output: 0
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect newer patch context and target QuantizedAddOp location",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate and apply minimal backport hunk",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Inspect resulting diff and report YAML",
+      "status": "in_progress",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect newer patch context and target QuantizedAddOp location",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate and apply minimal backport hunk",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Inspect resulting diff and report YAML",
+    "status": "in_progress",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 577
+cache read: 9,728
+cache write: 0
+output: 79
+reasoning output: 0
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/kernels/quantized_add_op.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0167-56744466408c"
+}
+warning: in the working copy of 'tensorflow/core/kernels/quantized_add_op.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/kernels/quantized_add_op.cc b/tensorflow/core/kernels/quantized_add_op.cc
+index 55c69de7d3..b186f00f15 100644
+--- a/tensorflow/core/kernels/quantized_add_op.cc
++++ b/tensorflow/core/kernels/quantized_add_op.cc
+@@ -538,6 +538,8 @@ class QuantizedAddOp : public OpKernel {
+         tensor_min = min_x;
+         tensor_max = max_x;
+       }
++      OP_REQUIRES(context, vector_num_elements > 0,
++                  errors::InvalidArgument("Must have some elements to add"));
+       VectorTensorAddition<T, Toutput>(
+           vector_data, vector_min, vector_max, vector_num_elements, tensor_data,
+           tensor_min, tensor_max, tensor_num_elements, min_z_value, max_z_value,
+
+tool: bash
+{
+  "command": "git status --short",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0167-56744466408c"
+}
+ M tensorflow/core/kernels/quantized_add_op.cc
+
+tokens used
+input: 769
+cache read: 9,728
+cache write: 0
+output: 143
+reasoning output: 0
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect newer patch context and target QuantizedAddOp location",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate and apply minimal backport hunk",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Inspect resulting diff and report YAML",
+      "status": "completed",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect newer patch context and target QuantizedAddOp location",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate and apply minimal backport hunk",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Inspect resulting diff and report YAML",
+    "status": "completed",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 6,287
+cache read: 4,608
+cache write: 0
+output: 80
+reasoning output: 15
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/kernels/quantized_add_op.cc b/tensorflow/core/kernels/quantized_add_op.cc
+    index 55c69de7d3..b186f00f15 100644
+    --- a/tensorflow/core/kernels/quantized_add_op.cc
+    +++ b/tensorflow/core/kernels/quantized_add_op.cc
+    @@ -538,6 +538,8 @@ class QuantizedAddOp : public OpKernel {
+             tensor_min = min_x;
+             tensor_max = max_x;
+           }
+    +      OP_REQUIRES(context, vector_num_elements > 0,
+    +                  errors::InvalidArgument("Must have some elements to add"));
+           VectorTensorAddition<T, Toutput>(
+               vector_data, vector_min, vector_max, vector_num_elements, tensor_data,
+               tensor_min, tensor_max, tensor_num_elements, min_z_value, max_z_value,
+  notes: >
+    Added the missing zero-element validation before QuantizedAdd vector/tensor addition in TensorFlow 2.1.4.
+```
+
+tokens used
+input: 350
+cache read: 10,752
+cache write: 0
+output: 248
+reasoning output: 0

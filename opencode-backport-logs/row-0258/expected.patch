@@ -1,0 +1,42 @@
+diff --git a/tensorflow/core/kernels/stage_op.cc b/tensorflow/core/kernels/stage_op.cc
+index 58c41c4d0e51ba..866139953f2461 100644
+--- a/tensorflow/core/kernels/stage_op.cc
++++ b/tensorflow/core/kernels/stage_op.cc
+@@ -264,6 +264,8 @@ class StagePeekOp : public OpKernel {
+     core::ScopedUnref scope(buf);
+     Buffer::Tuple tuple;
+ 
++    OP_REQUIRES(ctx, TensorShapeUtils::IsScalar(ctx->input(0).shape()),
++                errors::InvalidArgument("index must be scalar"));
+     std::size_t index = ctx->input(0).scalar<int>()();
+ 
+     OP_REQUIRES_OK(ctx, buf->Peek(index, &tuple));
+diff --git a/tensorflow/python/kernel_tests/stage_op_test.py b/tensorflow/python/kernel_tests/stage_op_test.py
+index 8ea4c5daa2ee27..dd3a46f36168d5 100644
+--- a/tensorflow/python/kernel_tests/stage_op_test.py
++++ b/tensorflow/python/kernel_tests/stage_op_test.py
+@@ -17,6 +17,7 @@
+ from __future__ import print_function
+ 
+ from tensorflow.python.framework import dtypes
++from tensorflow.python.framework import errors
+ from tensorflow.python.framework import ops
+ from tensorflow.python.framework import test_util
+ from tensorflow.python.ops import array_ops
+@@ -138,6 +139,16 @@ def testPeek(self):
+       for i in range(10):
+         self.assertTrue(sess.run(peek, feed_dict={p: i}) == [i])
+ 
++  def testPeekBadIndex(self):
++    stager = data_flow_ops.StagingArea([
++        dtypes.int32,
++    ], shapes=[[10]])
++    stager.put([array_ops.zeros([10], dtype=dtypes.int32)])
++
++    with self.assertRaisesRegex((ValueError, errors.InvalidArgumentError),
++                                'must be scalar'):
++      self.evaluate(stager.peek([]))
++
+   @test_util.run_deprecated_v1
+   def testSizeAndClear(self):
+     with ops.Graph().as_default() as G:

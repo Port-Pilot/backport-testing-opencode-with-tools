@@ -1,0 +1,176 @@
+I’ll inspect the target-side `DequantizeOp` context, validate the minimal hunk against the specified base, then apply only that source change.
+
+tool: grep
+{
+  "pattern": "class DequantizeOp",
+  "path": "tensorflow/core/kernels",
+  "include": "dequantize_op.cc"
+}
+Found 1 matches
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0068-62473d158ca8\tensorflow\core\kernels\dequantize_op.cc:
+  Line 52: class DequantizeOp : public OpKernel {
+
+tool: viewcode
+{
+  "ref": "62473d158ca8e886510980adb85b3318acafc850",
+  "path": "tensorflow/core/kernels/dequantize_op.cc",
+  "startline": 70,
+  "endline": 120
+}
+Here are lines 70 through 120.
+
+                  errors::InvalidArgument("Mode string must be 'MIN_COMBINED',"
+                                          " 'MIN_FIRST', or 'SCALED', is '" +
+                                          mode_string + "'"));
+    } else {
+      OP_REQUIRES(
+          ctx, (mode_string == "MIN_COMBINED"),
+          errors::InvalidArgument("When output type is bfloat16, Mode"
+                                  " string must be 'MIN_COMBINED', is '" +
+                                  mode_string + "'"));
+    }
+
+    if (mode_string == "MIN_COMBINED") {
+      mode_ = QUANTIZE_MODE_MIN_COMBINED;
+    } else if (mode_string == "MIN_FIRST") {
+      mode_ = QUANTIZE_MODE_MIN_FIRST;
+    } else if (mode_string == "SCALED") {
+      mode_ = QUANTIZE_MODE_SCALED;
+    }
+    OP_REQUIRES_OK(ctx, ctx->GetAttr("narrow_range", &narrow_range_));
+    OP_REQUIRES_OK(ctx, ctx->GetAttr("axis", &axis_));
+  }
+
+  void Compute(OpKernelContext* ctx) override {
+    const Tensor& input = ctx->input(0);
+    const Tensor& input_min_tensor = ctx->input(1);
+    const Tensor& input_max_tensor = ctx->input(2);
+
+    int num_slices = 1;
+    if (axis_ > -1) {
+      num_slices = input.dim_size(axis_);
+    }
+    OP_REQUIRES(ctx, input_min_tensor.NumElements() == num_slices,
+                errors::InvalidArgument(
+                    "input_min_tensor must have as many elements as input on "
+                    "the dequantization axis (",
+                    axis_, "), got ", input_min_tensor.NumElements(),
+                    ", expected ", num_slices));
+    OP_REQUIRES(ctx, input_max_tensor.NumElements() == num_slices,
+                errors::InvalidArgument(
+                    "input_max_tensor must have as many elements as input on "
+                    "the dequantization axis (",
+                    axis_, "), got ", input_max_tensor.NumElements(),
+                    ", expected ", num_slices));
+
+    Tensor* output = nullptr;
+    OP_REQUIRES_OK(ctx, ctx->allocate_output(0, input.shape(), &output));
+    Tensor float_output =
+        need_cast_ ? tensorflow::Tensor(DT_FLOAT, input.shape()) : *output;
+    if (num_slices == 1) {
+      const float min_range = input_min_tensor.flat<float>()(0);
+      const float max_range = input_max_tensor.flat<float>()(0);
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tokens used
+input: 3,686
+cache read: 4,608
+cache write: 0
+output: 145
+reasoning output: 0
+
+The target file has the same vulnerable flow: `axis_` is used in `input.dim_size(axis_)` without first checking it is less than `input.dims()`. I’m validating the direct backport hunk before editing.
+
+tool: validate
+{
+  "ref": "62473d158ca8e886510980adb85b3318acafc850",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/dequantize_op.cc b/tensorflow/core/kernels/dequantize_op.cc\n--- a/tensorflow/core/kernels/dequantize_op.cc\n+++ b/tensorflow/core/kernels/dequantize_op.cc\n@@ -94,6 +94,11 @@ class DequantizeOp : public OpKernel {\n     const Tensor& input_min_tensor = ctx->input(1);\n     const Tensor& input_max_tensor = ctx->input(2);\n \n+    OP_REQUIRES(\n+        ctx, axis_ < input.dims(),\n+        errors::InvalidArgument(\"Axis must be less than input dimension(\",\n+                                input.dims(), \"), got \", axis_));\n+\n     int num_slices = 1;\n     if (axis_ > -1) {\n       num_slices = input.dim_size(axis_);\n"
+}
+Patch applied successfully
+
+tokens used
+input: 1,415
+cache read: 7,680
+cache write: 0
+output: 299
+reasoning output: 23
+
+The hunk applies cleanly to the target base. I’m applying that exact minimal guard in `dequantize_op.cc`.
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/kernels/dequantize_op.cc\n@@\n     const Tensor& input_min_tensor = ctx->input(1);\n     const Tensor& input_max_tensor = ctx->input(2);\n \n+    OP_REQUIRES(\n+        ctx, axis_ < input.dims(),\n+        errors::InvalidArgument(\"Axis must be less than input dimension(\",\n+                                input.dims(), \"), got \", axis_));\n+\n     int num_slices = 1;\n     if (axis_ > -1) {\n       num_slices = input.dim_size(axis_);\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/kernels/dequantize_op.cc
+
+tokens used
+input: 726
+cache read: 8,704
+cache write: 0
+output: 197
+reasoning output: 0
+
+The source change is applied. I’m checking the resulting diff to confirm only the intended file changed.
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/kernels/dequantize_op.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0068-62473d158ca8"
+}
+warning: in the working copy of 'tensorflow/core/kernels/dequantize_op.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/kernels/dequantize_op.cc b/tensorflow/core/kernels/dequantize_op.cc
+index 7a90e0c340..ddb70167b5 100644
+--- a/tensorflow/core/kernels/dequantize_op.cc
++++ b/tensorflow/core/kernels/dequantize_op.cc
+@@ -94,6 +94,11 @@ class DequantizeOp : public OpKernel {
+     const Tensor& input_min_tensor = ctx->input(1);
+     const Tensor& input_max_tensor = ctx->input(2);
+ 
++    OP_REQUIRES(
++        ctx, axis_ < input.dims(),
++        errors::InvalidArgument("Axis must be less than input dimension(",
++                                input.dims(), "), got ", axis_));
++
+     int num_slices = 1;
+     if (axis_ > -1) {
+       num_slices = input.dim_size(axis_);
+
+tokens used
+input: 9,655
+cache read: 0
+cache write: 0
+output: 99
+reasoning output: 13
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/kernels/dequantize_op.cc b/tensorflow/core/kernels/dequantize_op.cc
+    index 7a90e0c340..ddb70167b5 100644
+    --- a/tensorflow/core/kernels/dequantize_op.cc
+    +++ b/tensorflow/core/kernels/dequantize_op.cc
+    @@ -94,6 +94,11 @@ class DequantizeOp : public OpKernel {
+         const Tensor& input_min_tensor = ctx->input(1);
+         const Tensor& input_max_tensor = ctx->input(2);
+     
+    +    OP_REQUIRES(
+    +        ctx, axis_ < input.dims(),
+    +        errors::InvalidArgument("Axis must be less than input dimension(",
+    +                                input.dims(), "), got ", axis_));
+    +
+         int num_slices = 1;
+         if (axis_ > -1) {
+           num_slices = input.dim_size(axis_);
+  notes: >
+    Added the Dequantize axis bounds check before input.dim_size(axis_) to prevent out-of-bounds access.
+```
+
+tokens used
+input: 1,305
+cache read: 8,704
+cache write: 0
+output: 258
+reasoning output: 0

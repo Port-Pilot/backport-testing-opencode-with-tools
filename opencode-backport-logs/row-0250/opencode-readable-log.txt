@@ -1,0 +1,303 @@
+I’ll locate the equivalent `ConstantFolding::EvaluateOneFoldable` implementation in the 2.5.3 target, compare the surrounding code against the provided newer hunk, then apply the minimal guard for reference dtypes.
+
+tool: locate_symbol
+{
+  "ref": "4b0c40623453430cdb486e72caff3dfa4ea23b79",
+  "symbol": "ConstantFolding::EvaluateOneFoldable"
+}
+tensorflow/core/grappler/optimizers/constant_folding.cc:1327
+
+tokens used
+input: 3,714
+cache read: 4,608
+cache write: 0
+output: 105
+reasoning output: 0
+
+tool: viewcode
+{
+  "ref": "4b0c40623453430cdb486e72caff3dfa4ea23b79",
+  "path": "tensorflow/core/grappler/optimizers/constant_folding.cc",
+  "startline": 1300,
+  "endline": 1375
+}
+Here are lines 1300 through 1375.
+
+  if (optimized) {
+    // Also specify type and shape.
+    t->set_dtype(tensor->dtype());
+    tensor->shape().AsProto(t->mutable_tensor_shape());
+  } else {
+    // DT_HALF, DT_BFLOAT16, DT_QINT32, DT_QINT16, DT_QUINT16, DT_QINT8,
+    // DT_QUINT8
+    tensor->AsProtoTensorContent(t);
+    encoded_size = t->tensor_content().size();
+  }
+  node->mutable_attr()->insert({"value", attr_tensor});
+
+  if (encoded_size > original_size && encoded_size >= kMaxConstantSize) {
+    return errors::InvalidArgument(
+        strings::StrCat("Can't fold ", name, ", its size would be too large (",
+                        encoded_size, " >= ", kMaxConstantSize, " bytes)"));
+  }
+  return Status::OK();
+}
+
+Status ConstantFolding::EvaluateNode(const NodeDef& node,
+                                     const TensorVector& inputs,
+                                     TensorVector* output) const {
+  return ::tensorflow::grappler::EvaluateNode(node, inputs, cpu_device_,
+                                              resource_mgr_.get(), output);
+}
+
+Status ConstantFolding::EvaluateOneFoldable(const NodeDef& node,
+                                            std::vector<NodeDef>* outputs,
+                                            bool* result_too_large) {
+  TensorVector inputs;
+  TensorVector output_tensors;
+  auto inputs_cleanup = gtl::MakeCleanup([&inputs, &output_tensors] {
+    for (const auto& input : inputs) {
+      delete input.tensor;
+    }
+    for (const auto& output : output_tensors) {
+      if (output.tensor) {
+        delete output.tensor;
+      }
+    }
+  });
+
+  size_t total_inputs_size = 0;
+  for (const auto& input : node.input()) {
+    const TensorId input_tensor = ParseTensorName(input);
+    if (input_tensor.index() < 0) {
+      // Control dependency
+      break;
+    }
+    const NodeDef* input_node = node_map_->GetNode(input);
+    if (!IsReallyConstant(*input_node)) {
+      return Status(error::INVALID_ARGUMENT,
+                    strings::StrCat("Can't fold ", node.name(), ", its ", input,
+                                    " isn't constant"));
+    }
+    TF_RETURN_IF_ERROR(CheckAttrExists(*input_node, "value"));
+    const TensorProto& raw_val = input_node->attr().at("value").tensor();
+    Tensor* value = new Tensor(raw_val.dtype(), raw_val.tensor_shape());
+    CHECK(value->FromProto(raw_val))
+        << "Unable to make Tensor from proto for " << node.name()
+        << " with shape " << raw_val.tensor_shape().DebugString();
+    inputs.emplace_back(value);
+    total_inputs_size += value->TotalBytes();
+  }
+
+  TF_RETURN_IF_ERROR(EvaluateNode(node, inputs, &output_tensors));
+  if (output_tensors.empty()) {
+    return Status(error::INVALID_ARGUMENT, "Expected at least one output.");
+  }
+
+  outputs->resize(output_tensors.size());
+  for (size_t i = 0; i < output_tensors.size(); i++) {
+    string node_name = OptimizedNodeName(node, "-folded");
+    if (output_tensors.size() > 1) {
+      node_name = strings::StrCat(node_name, "-", i);
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tokens used
+input: 775
+cache read: 7,680
+cache write: 0
+output: 67
+reasoning output: 0
+
+The target has the same fold path, but older 2.5.3 still uses `CHECK(value->FromProto(raw_val))` rather than returning an error. I’m adding the new precondition immediately before constructing the `Tensor`, which preserves the security intent and avoids triggering invalid reference dtype construction.
+
+tool: viewcode
+{
+  "ref": "4b0c40623453430cdb486e72caff3dfa4ea23b79",
+  "path": "tensorflow/core/grappler/optimizers/constant_folding.cc",
+  "startline": 1,
+  "endline": 80
+}
+Here are lines 1 through 80.
+
+/* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+==============================================================================*/
+
+#define EIGEN_USE_THREADS
+
+#include "tensorflow/core/grappler/optimizers/constant_folding.h"
+
+#include <cmath>
+
+#include "absl/strings/string_view.h"
+#include "absl/strings/substitute.h"
+#include "tensorflow/core/framework/allocator.h"
+#include "tensorflow/core/framework/attr_value.pb.h"
+#include "tensorflow/core/framework/function.pb.h"
+#include "tensorflow/core/framework/node_def.pb.h"
+#include "tensorflow/core/framework/op.h"
+#include "tensorflow/core/framework/op_def.pb.h"
+#include "tensorflow/core/framework/tensor.pb.h"
+#include "tensorflow/core/framework/tensor_shape.pb.h"
+#include "tensorflow/core/framework/tensor_util.h"
+#include "tensorflow/core/framework/types.h"
+#include "tensorflow/core/framework/types.pb.h"
+#include "tensorflow/core/framework/versions.pb.h"
+#include "tensorflow/core/grappler/clusters/cluster.h"
+#include "tensorflow/core/grappler/costs/graph_properties.h"
+#include "tensorflow/core/grappler/grappler_item.h"
+#include "tensorflow/core/grappler/op_types.h"
+#include "tensorflow/core/grappler/optimizers/evaluation_utils.h"
+#include "tensorflow/core/grappler/utils.h"
+#include "tensorflow/core/grappler/utils/symbolic_shapes.h"
+#include "tensorflow/core/lib/core/errors.h"
+#include "tensorflow/core/lib/core/stringpiece.h"
+#include "tensorflow/core/lib/gtl/cleanup.h"
+#include "tensorflow/core/lib/gtl/inlined_vector.h"
+#include "tensorflow/core/lib/strings/numbers.h"
+#include "tensorflow/core/lib/strings/strcat.h"
+#include "tensorflow/core/platform/cpu_info.h"
+#include "tensorflow/core/platform/denormal.h"
+#include "tensorflow/core/platform/env.h"
+#include "tensorflow/core/platform/setround.h"
+#include "tensorflow/core/platform/tensor_coding.h"
+#include "tensorflow/core/public/version.h"
+#include "tensorflow/core/util/bcast.h"
+#include "tensorflow/core/util/saved_tensor_slice_util.h"
+
+namespace tensorflow {
+namespace grappler {
+using TensorVector = gtl::InlinedVector<TensorValue, 4>;
+
+// We only fold/materialize constants smaller than 100kB.
+const int64 kMaxConstantSize = 100 * 1024;
+
+namespace {
+template <typename T>
+bool AllValuesAre(const TensorProto& proto, const T& value) {
+  Tensor tensor;
+  if (!tensor.FromProto(proto)) {
+    return false;
+  }
+  auto values = tensor.flat<T>();
+  for (int i = 0; i < tensor.NumElements(); ++i) {
+    if (values(i) != value) {
+      return false;
+    }
+  }
+  return true;
+}
+
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tokens used
+input: 1,577
+cache read: 7,680
+cache write: 0
+output: 135
+reasoning output: 25
+
+tool: validate
+{
+  "ref": "4b0c40623453430cdb486e72caff3dfa4ea23b79",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/grappler/optimizers/constant_folding.cc b/tensorflow/core/grappler/optimizers/constant_folding.cc\n--- a/tensorflow/core/grappler/optimizers/constant_folding.cc\n+++ b/tensorflow/core/grappler/optimizers/constant_folding.cc\n@@ -1350,6 +1350,11 @@ Status ConstantFolding::EvaluateOneFoldable(const NodeDef& node,\n     }\n     TF_RETURN_IF_ERROR(CheckAttrExists(*input_node, \"value\"));\n     const TensorProto& raw_val = input_node->attr().at(\"value\").tensor();\n+    if (IsRefType(raw_val.dtype())) {\n+      return errors::InvalidArgument(\n+          \"Not allowed to construct a tensor with reference dtype, got \",\n+          DataTypeString(raw_val.dtype()));\n+    }\n     Tensor* value = new Tensor(raw_val.dtype(), raw_val.tensor_shape());\n     CHECK(value->FromProto(raw_val))\n         << \"Unable to make Tensor from proto for \" << node.name()\n"
+}
+Patch applied successfully
+
+tokens used
+input: 1,425
+cache read: 8,704
+cache write: 0
+output: 291
+reasoning output: 46
+
+The hunk validates against the target base. I’m applying exactly that local change now.
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/grappler/optimizers/constant_folding.cc\n@@\n     }\n     TF_RETURN_IF_ERROR(CheckAttrExists(*input_node, \"value\"));\n     const TensorProto& raw_val = input_node->attr().at(\"value\").tensor();\n+    if (IsRefType(raw_val.dtype())) {\n+      return errors::InvalidArgument(\n+          \"Not allowed to construct a tensor with reference dtype, got \",\n+          DataTypeString(raw_val.dtype()));\n+    }\n     Tensor* value = new Tensor(raw_val.dtype(), raw_val.tensor_shape());\n     CHECK(value->FromProto(raw_val))\n         << \"Unable to make Tensor from proto for \" << node.name()\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/grappler/optimizers/constant_folding.cc
+
+tokens used
+input: 751
+cache read: 9,728
+cache write: 0
+output: 214
+reasoning output: 0
+
+I’ll inspect the resulting diff to confirm only the intended guard was added.
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/grappler/optimizers/constant_folding.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0250-4b0c40623453"
+}
+warning: in the working copy of 'tensorflow/core/grappler/optimizers/constant_folding.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/grappler/optimizers/constant_folding.cc b/tensorflow/core/grappler/optimizers/constant_folding.cc
+index 357b034086..db88130b4a 100644
+--- a/tensorflow/core/grappler/optimizers/constant_folding.cc
++++ b/tensorflow/core/grappler/optimizers/constant_folding.cc
+@@ -1355,6 +1355,11 @@ Status ConstantFolding::EvaluateOneFoldable(const NodeDef& node,
+     }
+     TF_RETURN_IF_ERROR(CheckAttrExists(*input_node, "value"));
+     const TensorProto& raw_val = input_node->attr().at("value").tensor();
++    if (IsRefType(raw_val.dtype())) {
++      return errors::InvalidArgument(
++          "Not allowed to construct a tensor with reference dtype, got ",
++          DataTypeString(raw_val.dtype()));
++    }
+     Tensor* value = new Tensor(raw_val.dtype(), raw_val.tensor_shape());
+     CHECK(value->FromProto(raw_val))
+         << "Unable to make Tensor from proto for " << node.name()
+
+tokens used
+input: 997
+cache read: 9,728
+cache write: 0
+output: 99
+reasoning output: 14
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/grappler/optimizers/constant_folding.cc b/tensorflow/core/grappler/optimizers/constant_folding.cc
+    index 357b034086..db88130b4a 100644
+    --- a/tensorflow/core/grappler/optimizers/constant_folding.cc
+    +++ b/tensorflow/core/grappler/optimizers/constant_folding.cc
+    @@ -1355,6 +1355,11 @@ Status ConstantFolding::EvaluateOneFoldable(const NodeDef& node,
+         }
+         TF_RETURN_IF_ERROR(CheckAttrExists(*input_node, "value"));
+         const TensorProto& raw_val = input_node->attr().at("value").tensor();
+    +    if (IsRefType(raw_val.dtype())) {
+    +      return errors::InvalidArgument(
+    +          "Not allowed to construct a tensor with reference dtype, got ",
+    +          DataTypeString(raw_val.dtype()));
+    +    }
+         Tensor* value = new Tensor(raw_val.dtype(), raw_val.tensor_shape());
+         CHECK(value->FromProto(raw_val))
+             << "Unable to make Tensor from proto for " << node.name()
+  notes: >
+    Added the reference dtype rejection before Tensor construction in ConstantFolding::EvaluateOneFoldable; the hunk was validated against the target base.
+```
+
+tokens used
+input: 1,396
+cache read: 9,728
+cache write: 0
+output: 306
+reasoning output: 28

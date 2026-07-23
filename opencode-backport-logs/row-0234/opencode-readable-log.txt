@@ -1,0 +1,2465 @@
+I’ll inspect the target 2.6.4 code around the three affected files, then apply the minimal equivalent changes without looking at the held-out backport diff.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target ScatterNd implementation and tests",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Backport status-return and bounds checks",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "content": "Backport focused ScatterNd tests",
+      "status": "pending",
+      "priority": "medium"
+    },
+    {
+      "content": "Validate diff shape and summarize result",
+      "status": "pending",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target ScatterNd implementation and tests",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Backport status-return and bounds checks",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "content": "Backport focused ScatterNd tests",
+    "status": "pending",
+    "priority": "medium"
+  },
+  {
+    "content": "Validate diff shape and summarize result",
+    "status": "pending",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 5,305
+cache read: 4,608
+cache write: 0
+output: 132
+reasoning output: 0
+
+tool: grep
+{
+  "pattern": "template <typename IndicesT, typename UpdatesT>[\\s\\S]*ScatterNd|inline .*ScatterNd",
+  "path": "tensorflow/lite/kernels/internal/reference",
+  "include": "reference_ops.h"
+}
+Found 1 matches
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0234-b6d179410712\tensorflow\lite\kernels\internal\reference\reference_ops.h:
+  Line 659: inline void ScatterNd(const RuntimeShape& indices_shape,
+
+tool: grep
+{
+  "pattern": "TfLiteStatus ScatterNd|EvalScatterNd|ScatterNdOpTest",
+  "path": "tensorflow/lite/kernels",
+  "include": "scatter_nd*"
+}
+Found 16 matches
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0234-b6d179410712\tensorflow\lite\kernels\scatter_nd.cc:
+  Line 130: TfLiteStatus ScatterNd(const TfLiteTensor* indices, const TfLiteTensor* updates,
+
+  Line 140: TfLiteStatus EvalScatterNd(TfLiteContext* context, const TfLiteTensor* indices,
+
+  Line 186:       return EvalScatterNd<int32_t>(context, indices, updates, shape, output);
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0234-b6d179410712\tensorflow\lite\kernels\scatter_nd_test.cc:
+  Line 73: TEST(ScatterNdOpTest, ScatterElementIntoVector) {
+
+  Line 86: TEST(ScatterNdOpTest, ScatterMatrixIntoRank3Tensor) {
+
+  Line 104: TEST(ScatterNdOpTest, ScatterVectorIntoMatrix) {
+
+  Line 129: TEST(ScatterNdOpTest, ScatterMatricesIntoRank4Tensor) {
+
+  Line 147: TEST(ScatterNdOpTest, ScatterVectorIntoRank4Tensor) {
+
+  Line 191: TEST(ScatterNdOpTest, ScatterVectorIntoRank3Tensor) {
+
+  Line 211: TEST(ScatterNdOpTest, OverlappedIndicesSummed) {
+
+  Line 231: TEST(ScatterNdOpTest, Int32IndicesUint8Updates) {
+
+  Line 251: TEST(ScatterNdOpTest, Int32IndicesInt8Updates) {
+
+  Line 271: TEST(ScatterNdOpTest, Int32IndicesInt32Updates) {
+
+  Line 291: TEST(ScatterNdOpTest, Int32IndicesInt64Updates) {
+
+  Line 311: TEST(ScatterNdOpTest, Int32IndicesBoolUpdates) {
+
+  Line 325: TEST(ScatterNdOpTest, DynamicShape) {
+
+tool: locate_symbol
+{
+  "ref": "b6d17941071244562ce3eb4cba235a91d4b4d326",
+  "symbol": "ScatterNd"
+}
+tensorflow/compiler/mlir/tensorflow/tests/lower_tf.mlir:809
+tensorflow/core/kernels/fuzzing/scatter_nd_fuzz.cc:33
+tensorflow/go/op/wrappers.go:41727
+tensorflow/lite/kernels/internal/reference/reference_ops.h:659
+tensorflow/lite/kernels/scatter_nd.cc:130
+tensorflow/lite/kernels/scatter_nd.cc:132
+tensorflow/cc/gradients/array_grad.cc:207
+tensorflow/cc/gradients/array_grad_test.cc:238
+tensorflow/cc/gradients/array_grad_test.cc:248
+tensorflow/cc/gradients/array_grad.cc:300
+tensorflow/compiler/jit/mark_for_compilation_pass.cc:2144
+tensorflow/compiler/mlir/lite/tests/legalize-tf.mlir:439
+tensorflow/compiler/mlir/lite/tests/legalize-tf.mlir:449
+tensorflow/compiler/mlir/lite/tests/legalize-tf.mlir:458
+tensorflow/compiler/mlir/lite/tests/prepare-composite-functions-tf.mlir:632
+tensorflow/compiler/mlir/tensorflow/ir/tf_generated_ops.td:14259
+tensorflow/compiler/mlir/tensorflow/tests/lower_tf.mlir:814
+tensorflow/compiler/tests/randomized_tests.cc:2755
+tensorflow/compiler/tests/randomized_tests.cc:2760
+tensorflow/compiler/tf2xla/g3doc/cpu_supported_ops.md:201
+
+tokens used
+input: 455
+cache read: 9,728
+cache write: 0
+output: 155
+reasoning output: 0
+
+The target files and symbol locations match the source patch closely, so this looks like a direct small backport. I’m reading the local contexts before editing to avoid disturbing surrounding 2.6.4 differences.
+
+tool: read
+{
+  "filePath": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0234-b6d179410712\\tensorflow\\lite\\kernels\\scatter_nd.cc",
+  "offset": 120,
+  "limit": 90
+}
+<path>C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0234-b6d179410712\tensorflow\lite\kernels\scatter_nd.cc</path>
+<type>file</type>
+<content>
+120:             TfLiteTypeGetName(indices->type));
+121:         return kTfLiteError;
+122:     }
+123:   } else {
+124:     SetTensorToDynamic(output);
+125:     return kTfLiteOk;
+126:   }
+127: }
+128: 
+129: template <typename IndicesT, typename UpdatesT>
+130: TfLiteStatus ScatterNd(const TfLiteTensor* indices, const TfLiteTensor* updates,
+131:                        TfLiteTensor* output) {
+132:   reference_ops::ScatterNd(
+133:       GetTensorShape(indices), GetTensorData<IndicesT>(indices),
+134:       GetTensorShape(updates), GetTensorData<UpdatesT>(updates),
+135:       GetTensorShape(output), GetTensorData<UpdatesT>(output));
+136:   return kTfLiteOk;
+137: }
+138: 
+139: template <typename IndicesT>
+140: TfLiteStatus EvalScatterNd(TfLiteContext* context, const TfLiteTensor* indices,
+141:                            const TfLiteTensor* updates,
+142:                            const TfLiteTensor* shape, TfLiteTensor* output) {
+143:   if (IsDynamicTensor(output)) {
+144:     TF_LITE_ENSURE_OK(
+145:         context, CheckShapes<IndicesT>(
+146:                      context, GetTensorShape(indices), GetTensorShape(updates),
+147:                      GetTensorShape(shape), GetTensorData<IndicesT>(shape)));
+148:     TF_LITE_ENSURE_OK(context,
+149:                       ResizeOutputTensor<IndicesT>(context, shape, output));
+150:   }
+151: 
+152:   switch (updates->type) {
+153:     case kTfLiteFloat32:
+154:       return ScatterNd<IndicesT, float>(indices, updates, output);
+155:     case kTfLiteUInt8:
+156:       return ScatterNd<IndicesT, uint8_t>(indices, updates, output);
+157:     case kTfLiteBool:
+158:       return ScatterNd<IndicesT, bool>(indices, updates, output);
+159:     case kTfLiteInt8:
+160:       return ScatterNd<IndicesT, int8_t>(indices, updates, output);
+161:     case kTfLiteInt32:
+162:       return ScatterNd<IndicesT, int32_t>(indices, updates, output);
+163:     case kTfLiteInt64:
+164:       return ScatterNd<IndicesT, int64_t>(indices, updates, output);
+165:     default:
+166:       TF_LITE_KERNEL_LOG(
+167:           context, "Updates of type '%s' are not supported by scatter_nd.",
+168:           TfLiteTypeGetName(updates->type));
+169:       return kTfLiteError;
+170:   }
+171: }
+172: 
+173: TfLiteStatus Eval(TfLiteContext* context, TfLiteNode* node) {
+174:   const TfLiteTensor* indices;
+175:   TF_LITE_ENSURE_OK(context, GetInputSafe(context, node, kIndices, &indices));
+176:   const TfLiteTensor* updates;
+177:   TF_LITE_ENSURE_OK(context, GetInputSafe(context, node, kUpdates, &updates));
+178:   const TfLiteTensor* shape;
+179:   TF_LITE_ENSURE_OK(context, GetInputSafe(context, node, kShape, &shape));
+180:   TfLiteTensor* output;
+181:   TF_LITE_ENSURE_OK(context,
+182:                     GetOutputSafe(context, node, kOutputTensor, &output));
+183: 
+184:   switch (indices->type) {
+185:     case kTfLiteInt32:
+186:       return EvalScatterNd<int32_t>(context, indices, updates, shape, output);
+187:     default:
+188:       TF_LITE_KERNEL_LOG(
+189:           context, "Indices of type '%s' are not supported by scatter_nd.",
+190:           TfLiteTypeGetName(indices->type));
+191:       return kTfLiteError;
+192:   }
+193: }
+194: 
+195: }  // namespace scatter_nd
+196: 
+197: TfLiteRegistration* Register_SCATTER_ND() {
+198:   static TfLiteRegistration r = {/*init*/ nullptr, /*free*/ nullptr,
+199:                                  scatter_nd::Prepare, scatter_nd::Eval};
+200:   return &r;
+201: }
+202: }  // namespace builtin
+203: }  // namespace ops
+204: }  // namespace tflite
+
+(End of file - total 204 lines)
+</content>
+
+tool: read
+{
+  "filePath": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0234-b6d179410712\\tensorflow\\lite\\kernels\\scatter_nd_test.cc",
+  "offset": 1,
+  "limit": 380
+}
+<path>C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0234-b6d179410712\tensorflow\lite\kernels\scatter_nd_test.cc</path>
+<type>file</type>
+<content>
+1: /* Copyright 2019 The TensorFlow Authors. All Rights Reserved.
+2: 
+3: Licensed under the Apache License, Version 2.0 (the "License");
+4: you may not use this file except in compliance with the License.
+5: You may obtain a copy of the License at
+6: 
+7:     http://www.apache.org/licenses/LICENSE-2.0
+8: 
+9: Unless required by applicable law or agreed to in writing, software
+10: distributed under the License is distributed on an "AS IS" BASIS,
+11: WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+12: See the License for the specific language governing permissions and
+13: limitations under the License.
+14: ==============================================================================*/
+15: #include <stdint.h>
+16: 
+17: #include <initializer_list>
+18: #include <vector>
+19: 
+20: #include <gtest/gtest.h>
+21: #include "flatbuffers/flatbuffers.h"  // from @flatbuffers
+22: #include "tensorflow/lite/kernels/test_util.h"
+23: #include "tensorflow/lite/schema/schema_generated.h"
+24: 
+25: namespace tflite {
+26: namespace {
+27: 
+28: using ::testing::ElementsAreArray;
+29: 
+30: class ScatterNdOpModel : public SingleOpModel {
+31:  public:
+32:   ScatterNdOpModel(const TensorData& indices, const TensorData& updates,
+33:                    const TensorData& shape) {
+34:     indices_ = AddInput(indices);
+35:     updates_ = AddInput(updates);
+36:     shape_ = AddInput(shape);
+37:     output_ = AddOutput(updates.type);
+38:     SetBuiltinOp(BuiltinOperator_SCATTER_ND, BuiltinOptions_ScatterNdOptions,
+39:                  CreateScatterNdOptions(builder_).Union());
+40:     BuildInterpreter(
+41:         {GetShape(indices_), GetShape(updates_), GetShape(shape_)});
+42:   }
+43: 
+44:   template <typename T>
+45:   void SetIndices(std::initializer_list<T> data) {
+46:     PopulateTensor<T>(indices_, data);
+47:   }
+48: 
+49:   template <typename T>
+50:   void SetUpdates(std::initializer_list<T> data) {
+51:     PopulateTensor<T>(updates_, data);
+52:   }
+53: 
+54:   template <typename T>
+55:   void SetShape(std::initializer_list<T> data) {
+56:     PopulateTensor<T>(shape_, data);
+57:   }
+58: 
+59:   template <typename T>
+60:   std::vector<T> GetOutput() {
+61:     return ExtractVector<T>(output_);
+62:   }
+63: 
+64:   std::vector<int> GetOutputShape() { return GetTensorShape(output_); }
+65: 
+66:  protected:
+67:   int indices_;
+68:   int updates_;
+69:   int shape_;
+70:   int output_;
+71: };
+72: 
+73: TEST(ScatterNdOpTest, ScatterElementIntoVector) {
+74:   ScatterNdOpModel m({TensorType_INT32, {4, 1}}, {TensorType_FLOAT32, {4}},
+75:                      {TensorType_INT32, {1}});
+76:   m.SetIndices<int32_t>({4, 3, 1, 7});
+77:   m.SetUpdates<float>({9, 10, 11, 12});
+78:   m.SetShape<int32_t>({8});
+79:   ASSERT_EQ(m.Invoke(), kTfLiteOk);
+80: 
+81:   EXPECT_THAT(m.GetOutputShape(), ElementsAreArray({8}));
+82:   EXPECT_THAT(m.GetOutput<float>(),
+83:               ElementsAreArray({0, 11, 0, 10, 9, 0, 0, 12}));
+84: }
+85: 
+86: TEST(ScatterNdOpTest, ScatterMatrixIntoRank3Tensor) {
+87:   ScatterNdOpModel m({TensorType_INT32, {2, 1}},
+88:                      {TensorType_FLOAT32, {2, 4, 4}}, {TensorType_INT32, {3}});
+89:   m.SetIndices<int32_t>({0, 2});
+90:   m.SetUpdates<float>({5, 5, 5, 5, 6, 6, 6, 6, 7, 7, 7, 7, 8, 8, 8, 8,
+91:                        5, 5, 5, 5, 6, 6, 6, 6, 7, 7, 7, 7, 8, 8, 8, 8});
+92:   m.SetShape<int32_t>({4, 4, 4});
+93:   ASSERT_EQ(m.Invoke(), kTfLiteOk);
+94: 
+95:   EXPECT_THAT(m.GetOutputShape(), ElementsAreArray({4, 4, 4}));
+96:   EXPECT_THAT(
+97:       m.GetOutput<float>(),
+98:       ElementsAreArray({5, 5, 5, 5, 6, 6, 6, 6, 7, 7, 7, 7, 8, 8, 8, 8,
+99:                         0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+100:                         5, 5, 5, 5, 6, 6, 6, 6, 7, 7, 7, 7, 8, 8, 8, 8,
+101:                         0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}));
+102: }
+103: 
+104: TEST(ScatterNdOpTest, ScatterVectorIntoMatrix) {
+105:   ScatterNdOpModel m({TensorType_INT32, {4, 1}}, {TensorType_FLOAT32, {4, 4}},
+106:                      {TensorType_INT32, {2}});
+107:   m.SetIndices<int32_t>({/*0*/ 9, /*1*/ 8, /*2*/ 0, /*3*/ 1});
+108:   m.SetUpdates<float>({/*0*/ 1, 2, 3, 4,
+109:                        /*1*/ 5, 6, 7, 8,
+110:                        /*2*/ 9, 10, 11, 12,
+111:                        /*3*/ 13, 14, 15, 16});
+112:   m.SetShape<int32_t>({10, 4});
+113:   ASSERT_EQ(m.Invoke(), kTfLiteOk);
+114: 
+115:   EXPECT_THAT(m.GetOutputShape(), ElementsAreArray({10, 4}));
+116:   EXPECT_THAT(m.GetOutput<float>(),
+117:               ElementsAreArray({/*0*/ 9,  10, 11, 12,
+118:                                 /*1*/ 13, 14, 15, 16,
+119:                                 /*2*/ 0,  0,  0,  0,
+120:                                 /*3*/ 0,  0,  0,  0,
+121:                                 /*4*/ 0,  0,  0,  0,
+122:                                 /*5*/ 0,  0,  0,  0,
+123:                                 /*6*/ 0,  0,  0,  0,
+124:                                 /*7*/ 0,  0,  0,  0,
+125:                                 /*8*/ 5,  6,  7,  8,
+126:                                 /*9*/ 1,  2,  3,  4}));
+127: }
+128: 
+129: TEST(ScatterNdOpTest, ScatterMatricesIntoRank4Tensor) {
+130:   ScatterNdOpModel m({TensorType_INT32, {2, 2, 2}},
+131:                      {TensorType_FLOAT32, {2, 2, 2, 2}},
+132:                      {TensorType_INT32, {4}});
+133:   m.SetIndices<int32_t>(
+134:       {/*0,0*/ 1, 1, /*0,1*/ 0, 1, /*1,0*/ 0, 0, /*1,1*/ 1, 0});
+135:   m.SetUpdates<float>({/*0,0*/ 1, 2, 3, 4, /*0,1*/ 5, 6, 7, 8,
+136:                        /*1,0*/ 9, 10, 11, 12, /*1,1*/ 13, 14, 15, 16});
+137:   m.SetShape<int32_t>({2, 2, 2, 2});
+138:   ASSERT_EQ(m.Invoke(), kTfLiteOk);
+139: 
+140:   EXPECT_THAT(m.GetOutputShape(), ElementsAreArray({2, 2, 2, 2}));
+141:   EXPECT_THAT(m.GetOutput<float>(), ElementsAreArray({/*0, 0*/ 9, 10, 11, 12,
+142:                                                       /*0, 1*/ 5, 6, 7, 8,
+143:                                                       /*1, 0*/ 13, 14, 15, 16,
+144:                                                       /*1, 1*/ 1, 2, 3, 4}));
+145: }
+146: 
+147: TEST(ScatterNdOpTest, ScatterVectorIntoRank4Tensor) {
+148:   ScatterNdOpModel m({TensorType_INT32, {2, 2, 3}},
+149:                      {TensorType_FLOAT32, {2, 2, 5}}, {TensorType_INT32, {4}});
+150:   m.SetIndices<int32_t>(
+151:       {/*0,0*/ 2, 2, 2, /*0,1*/ 1, 0, 1, /*1,0*/ 0, 2, 0, /*1,0*/ 2, 2, 0});
+152:   m.SetUpdates<float>(
+153:       {/*0,0*/ 1,  2,  3,  4,  5,  /*0,1*/ 6,  7,  8,  9,  10,
+154:        /*1,0*/ 11, 12, 13, 14, 15, /*1,1*/ 16, 17, 18, 19, 20});
+155:   m.SetShape<int32_t>({3, 3, 3, 5});
+156:   ASSERT_EQ(m.Invoke(), kTfLiteOk);
+157: 
+158:   EXPECT_THAT(m.GetOutputShape(), ElementsAreArray({3, 3, 3, 5}));
+159:   EXPECT_THAT(m.GetOutput<float>(),
+160:               ElementsAreArray({
+161:                   /*0, 0, 0*/ 0,  0,  0,  0,  0,
+162:                   /*0, 0, 1*/ 0,  0,  0,  0,  0,
+163:                   /*0, 0, 2*/ 0,  0,  0,  0,  0,
+164:                   /*0, 1, 0*/ 0,  0,  0,  0,  0,
+165:                   /*0, 1, 1*/ 0,  0,  0,  0,  0,
+166:                   /*0, 1, 2*/ 0,  0,  0,  0,  0,
+167:                   /*0, 2, 0*/ 11, 12, 13, 14, 15,
+168:                   /*0, 2, 1*/ 0,  0,  0,  0,  0,
+169:                   /*0, 2, 2*/ 0,  0,  0,  0,  0,
+170:                   /*1, 0, 0*/ 0,  0,  0,  0,  0,
+171:                   /*1, 0, 1*/ 6,  7,  8,  9,  10,
+172:                   /*1, 0, 2*/ 0,  0,  0,  0,  0,
+173:                   /*1, 1, 0*/ 0,  0,  0,  0,  0,
+174:                   /*1, 1, 1*/ 0,  0,  0,  0,  0,
+175:                   /*1, 1, 2*/ 0,  0,  0,  0,  0,
+176:                   /*1, 2, 0*/ 0,  0,  0,  0,  0,
+177:                   /*1, 2, 1*/ 0,  0,  0,  0,  0,
+178:                   /*1, 2, 2*/ 0,  0,  0,  0,  0,
+179:                   /*2, 0, 0*/ 0,  0,  0,  0,  0,
+180:                   /*2, 0, 1*/ 0,  0,  0,  0,  0,
+181:                   /*2, 0, 2*/ 0,  0,  0,  0,  0,
+182:                   /*2, 1, 0*/ 0,  0,  0,  0,  0,
+183:                   /*2, 1, 1*/ 0,  0,  0,  0,  0,
+184:                   /*2, 1, 2*/ 0,  0,  0,  0,  0,
+185:                   /*2, 2, 0*/ 16, 17, 18, 19, 20,
+186:                   /*2, 2, 1*/ 0,  0,  0,  0,  0,
+187:                   /*2, 2, 2*/ 1,  2,  3,  4,  5,
+188:               }));
+189: }
+190: 
+191: TEST(ScatterNdOpTest, ScatterVectorIntoRank3Tensor) {
+192:   ScatterNdOpModel m({TensorType_INT32, {4, 2}}, {TensorType_FLOAT32, {4, 5}},
+193:                      {TensorType_INT32, {3}});
+194:   m.SetIndices<int32_t>({/*0*/ 0, 0, /*1*/ 1, 0, /*2*/ 0, 2, /*3*/ 1, 2});
+195:   m.SetUpdates<float>(
+196:       {/*0*/ 1,  2,  3,  4,  5,  /*1*/ 6,  7,  8,  9,  10,
+197:        /*2*/ 11, 12, 13, 14, 15, /*3*/ 16, 17, 18, 19, 20});
+198:   m.SetShape<int32_t>({2, 3, 5});
+199:   ASSERT_EQ(m.Invoke(), kTfLiteOk);
+200: 
+201:   EXPECT_THAT(m.GetOutputShape(), ElementsAreArray({2, 3, 5}));
+202:   EXPECT_THAT(m.GetOutput<float>(),
+203:               ElementsAreArray({/*0, 0*/ 1,  2,  3,  4,  5,
+204:                                 /*0, 1*/ 0,  0,  0,  0,  0,
+205:                                 /*0, 2*/ 11, 12, 13, 14, 15,
+206:                                 /*1, 0*/ 6,  7,  8,  9,  10,
+207:                                 /*1, 1*/ 0,  0,  0,  0,  0,
+208:                                 /*1, 2*/ 16, 17, 18, 19, 20}));
+209: }
+210: 
+211: TEST(ScatterNdOpTest, OverlappedIndicesSummed) {
+212:   ScatterNdOpModel m({TensorType_INT32, {4, 2}}, {TensorType_FLOAT32, {4, 5}},
+213:                      {TensorType_INT32, {3}});
+214:   m.SetIndices<int32_t>({/*0*/ 1, 0, /*1*/ 0, 2, /*2*/ 0, 2, /*3*/ 1, 0});
+215:   m.SetUpdates<float>(
+216:       {/*0*/ 1,  2,  3,  4,  5,  /*1*/ 6,  7,  8,  9,  10,
+217:        /*2*/ 11, 12, 13, 14, 15, /*3*/ 16, 17, 18, 19, 20});
+218:   m.SetShape<int32_t>({2, 3, 5});
+219:   ASSERT_EQ(m.Invoke(), kTfLiteOk);
+220: 
+221:   EXPECT_THAT(m.GetOutputShape(), ElementsAreArray({2, 3, 5}));
+222:   EXPECT_THAT(m.GetOutput<float>(),
+223:               ElementsAreArray({/*0, 0*/ 0,  0,  0,  0,  0,
+224:                                 /*0, 1*/ 0,  0,  0,  0,  0,
+225:                                 /*0, 2*/ 17, 19, 21, 23, 25,
+226:                                 /*1, 0*/ 17, 19, 21, 23, 25,
+227:                                 /*1, 1*/ 0,  0,  0,  0,  0,
+228:                                 /*1, 2*/ 0,  0,  0,  0,  0}));
+229: }
+230: 
+231: TEST(ScatterNdOpTest, Int32IndicesUint8Updates) {
+232:   ScatterNdOpModel m({TensorType_INT32, {4, 2}}, {TensorType_UINT8, {4, 5}},
+233:                      {TensorType_INT32, {3}});
+234:   m.SetIndices<int32_t>({/*0*/ 0, 0, /*1*/ 1, 0, /*2*/ 0, 2, /*3*/ 1, 2});
+235:   m.SetUpdates<uint8_t>(
+236:       {/*0*/ 1,  2,  3,  4,  5,  /*1*/ 6,  7,  8,  9,  10,
+237:        /*2*/ 11, 12, 13, 14, 15, /*3*/ 16, 17, 18, 19, 20});
+238:   m.SetShape<int32_t>({2, 3, 5});
+239:   ASSERT_EQ(m.Invoke(), kTfLiteOk);
+240: 
+241:   EXPECT_THAT(m.GetOutputShape(), ElementsAreArray({2, 3, 5}));
+242:   EXPECT_THAT(m.GetOutput<uint8_t>(),
+243:               ElementsAreArray({/*0, 0*/ 1,  2,  3,  4,  5,
+244:                                 /*0, 1*/ 0,  0,  0,  0,  0,
+245:                                 /*0, 2*/ 11, 12, 13, 14, 15,
+246:                                 /*1, 0*/ 6,  7,  8,  9,  10,
+247:                                 /*1, 1*/ 0,  0,  0,  0,  0,
+248:                                 /*1, 2*/ 16, 17, 18, 19, 20}));
+249: }
+250: 
+251: TEST(ScatterNdOpTest, Int32IndicesInt8Updates) {
+252:   ScatterNdOpModel m({TensorType_INT32, {4, 2}}, {TensorType_INT8, {4, 5}},
+253:                      {TensorType_INT32, {3}});
+254:   m.SetIndices<int32_t>({/*0*/ 0, 0, /*1*/ 1, 0, /*2*/ 0, 2, /*3*/ 1, 2});
+255:   m.SetUpdates<int8_t>(
+256:       {/*0*/ 1,  2,  3,  4,  5,  /*1*/ 6,  7,  8,  9,  10,
+257:        /*2*/ 11, 12, 13, 14, 15, /*3*/ 16, 17, 18, 19, 20});
+258:   m.SetShape<int32_t>({2, 3, 5});
+259:   ASSERT_EQ(m.Invoke(), kTfLiteOk);
+260: 
+261:   EXPECT_THAT(m.GetOutputShape(), ElementsAreArray({2, 3, 5}));
+262:   EXPECT_THAT(m.GetOutput<int8_t>(),
+263:               ElementsAreArray({/*0, 0*/ 1,  2,  3,  4,  5,
+264:                                 /*0, 1*/ 0,  0,  0,  0,  0,
+265:                                 /*0, 2*/ 11, 12, 13, 14, 15,
+266:                                 /*1, 0*/ 6,  7,  8,  9,  10,
+267:                                 /*1, 1*/ 0,  0,  0,  0,  0,
+268:                                 /*1, 2*/ 16, 17, 18, 19, 20}));
+269: }
+270: 
+271: TEST(ScatterNdOpTest, Int32IndicesInt32Updates) {
+272:   ScatterNdOpModel m({TensorType_INT32, {4, 2}}, {TensorType_INT32, {4, 5}},
+273:                      {TensorType_INT32, {3}});
+274:   m.SetIndices<int32_t>({/*0*/ 0, 0, /*1*/ 1, 0, /*2*/ 0, 2, /*3*/ 1, 2});
+275:   m.SetUpdates<int32_t>(
+276:       {/*0*/ 1,  2,  3,  4,  5,  /*1*/ 6,  7,  8,  9,  10,
+277:        /*2*/ 11, 12, 13, 14, 15, /*3*/ 16, 17, 18, 19, 20});
+278:   m.SetShape<int32_t>({2, 3, 5});
+279:   ASSERT_EQ(m.Invoke(), kTfLiteOk);
+280: 
+281:   EXPECT_THAT(m.GetOutputShape(), ElementsAreArray({2, 3, 5}));
+282:   EXPECT_THAT(m.GetOutput<int32_t>(),
+283:               ElementsAreArray({/*0, 0*/ 1,  2,  3,  4,  5,
+284:                                 /*0, 1*/ 0,  0,  0,  0,  0,
+285:                                 /*0, 2*/ 11, 12, 13, 14, 15,
+286:                                 /*1, 0*/ 6,  7,  8,  9,  10,
+287:                                 /*1, 1*/ 0,  0,  0,  0,  0,
+288:                                 /*1, 2*/ 16, 17, 18, 19, 20}));
+289: }
+290: 
+291: TEST(ScatterNdOpTest, Int32IndicesInt64Updates) {
+292:   ScatterNdOpModel m({TensorType_INT32, {4, 2}}, {TensorType_INT64, {4, 5}},
+293:                      {TensorType_INT32, {3}});
+294:   m.SetIndices<int32_t>({/*0*/ 0, 0, /*1*/ 1, 0, /*2*/ 0, 2, /*3*/ 1, 2});
+295:   m.SetUpdates<int64_t>(
+296:       {/*0*/ 1,  2,  3,  4,  5,  /*1*/ 6,  7,  8,  9,  10,
+297:        /*2*/ 11, 12, 13, 14, 15, /*3*/ 16, 17, 18, 19, 20});
+298:   m.SetShape<int32_t>({2, 3, 5});
+299:   ASSERT_EQ(m.Invoke(), kTfLiteOk);
+300: 
+301:   EXPECT_THAT(m.GetOutputShape(), ElementsAreArray({2, 3, 5}));
+302:   EXPECT_THAT(m.GetOutput<int64_t>(),
+303:               ElementsAreArray({/*0, 0*/ 1,  2,  3,  4,  5,
+304:                                 /*0, 1*/ 0,  0,  0,  0,  0,
+305:                                 /*0, 2*/ 11, 12, 13, 14, 15,
+306:                                 /*1, 0*/ 6,  7,  8,  9,  10,
+307:                                 /*1, 1*/ 0,  0,  0,  0,  0,
+308:                                 /*1, 2*/ 16, 17, 18, 19, 20}));
+309: }
+310: 
+311: TEST(ScatterNdOpTest, Int32IndicesBoolUpdates) {
+312:   ScatterNdOpModel m({TensorType_INT32, {4, 1}}, {TensorType_BOOL, {4}},
+313:                      {TensorType_INT32, {1}});
+314:   m.SetIndices<int32_t>({4, 3, 1, 7});
+315:   m.SetUpdates<bool>({true, false, true, false});
+316:   m.SetShape<int32_t>({8});
+317:   ASSERT_EQ(m.Invoke(), kTfLiteOk);
+318: 
+319:   EXPECT_THAT(m.GetOutputShape(), ElementsAreArray({8}));
+320:   EXPECT_THAT(
+321:       m.GetOutput<bool>(),
+322:       ElementsAreArray({false, true, false, false, true, false, false, false}));
+323: }
+324: 
+325: TEST(ScatterNdOpTest, DynamicShape) {
+326:   ScatterNdOpModel m({TensorType_INT32, {4, 2}}, {TensorType_INT64, {4, 5}},
+327:                      {TensorType_INT32, {3}});
+328:   m.SetIndices<int32_t>({/*0*/ 0, 0, /*1*/ 1, 0, /*2*/ 0, 2, /*3*/ 1, 2});
+329:   m.SetUpdates<int64_t>(
+330:       {/*0*/ 1,  2,  3,  4,  5,  /*1*/ 6,  7,  8,  9,  10,
+331:        /*2*/ 11, 12, 13, 14, 15, /*3*/ 16, 17, 18, 19, 20});
+332:   m.SetShape<int32_t>({2, 3, 5});
+333:   ASSERT_EQ(m.Invoke(), kTfLiteOk);
+334: 
+335:   EXPECT_THAT(m.GetOutputShape(), ElementsAreArray({2, 3, 5}));
+336:   EXPECT_THAT(m.GetOutput<int64_t>(),
+337:               ElementsAreArray({/*0, 0*/ 1,  2,  3,  4,  5,
+338:                                 /*0, 1*/ 0,  0,  0,  0,  0,
+339:                                 /*0, 2*/ 11, 12, 13, 14, 15,
+340:                                 /*1, 0*/ 6,  7,  8,  9,  10,
+341:                                 /*1, 1*/ 0,  0,  0,  0,  0,
+342:                                 /*1, 2*/ 16, 17, 18, 19, 20}));
+343: 
+344:   m.SetIndices<int32_t>({/*0*/ 2, 3, /*1*/ 1, 0, /*2*/ 2, 0, /*3*/ 1, 2});
+345:   m.SetShape<int32_t>({3, 4, 5});
+346:   ASSERT_EQ(m.Invoke(), kTfLiteOk);
+347: 
+348:   EXPECT_THAT(m.GetOutputShape(), ElementsAreArray({3, 4, 5}));
+349:   EXPECT_THAT(m.GetOutput<int64_t>(),
+350:               ElementsAreArray({/*0, 0*/ 0,  0,  0,  0,  0,
+351:                                 /*0, 1*/ 0,  0,  0,  0,  0,
+352:                                 /*0, 2*/ 0,  0,  0,  0,  0,
+353:                                 /*0, 3*/ 0,  0,  0,  0,  0,
+354:                                 /*1, 0*/ 6,  7,  8,  9,  10,
+355:                                 /*1, 1*/ 0,  0,  0,  0,  0,
+356:                                 /*1, 2*/ 16, 17, 18, 19, 20,
+357:                                 /*1, 3*/ 0,  0,  0,  0,  0,
+358:                                 /*2, 0*/ 11, 12, 13, 14, 15,
+359:                                 /*2, 1*/ 0,  0,  0,  0,  0,
+360:                                 /*2, 2*/ 0,  0,  0,  0,  0,
+361:                                 /*2, 3*/ 1,  2,  3,  4,  5}));
+362: }
+363: 
+364: }  // namespace
+365: }  // namespace tflite
+
+(End of file - total 365 lines)
+</content>
+
+tool: read
+{
+  "filePath": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0234-b6d179410712\\tensorflow\\lite\\kernels\\internal\\reference\\reference_ops.h",
+  "offset": 640,
+  "limit": 85
+}
+<path>C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0234-b6d179410712\tensorflow\lite\kernels\internal\reference\reference_ops.h</path>
+<type>file</type>
+<content>
+640:   DynamicBuffer buffer;
+641:   for (int i = 0; i < res.n_slices; ++i) {
+642:     int64_t from_pos = 0;
+643:     for (int j = 0; j < res.indices_nd; ++j) {
+644:       from_pos += indices_data[i * res.indices_nd + j] * res.dims_to_count[j];
+645:     }
+646:     if (from_pos < 0 || from_pos + res.slice_size > params_shape.FlatSize()) {
+647:       return kTfLiteError;
+648:     }
+649:     for (int j = 0; j < res.slice_size; ++j) {
+650:       buffer.AddString(GetString(params_data, from_pos + j));
+651:     }
+652:   }
+653:   buffer.WriteToTensor(output_data, /*new_shape=*/nullptr);
+654:   return kTfLiteOk;
+655: }
+656: #endif
+657: 
+658: template <typename IndicesT, typename UpdatesT>
+659: inline void ScatterNd(const RuntimeShape& indices_shape,
+660:                       const IndicesT* indices_data,
+661:                       const RuntimeShape& updates_shape,
+662:                       const UpdatesT* updates_data,
+663:                       const RuntimeShape& output_shape, UpdatesT* output_data) {
+664:   ruy::profiler::ScopeLabel label("ScatterNd");
+665: 
+666:   int n_slices = 1;
+667:   int slice_size = 1;
+668:   const int outer_dims = indices_shape.DimensionsCount() - 1;
+669:   const int indices_nd = indices_shape.Dims(outer_dims);
+670:   const int updates_dims = updates_shape.DimensionsCount();
+671:   for (int i = 0; i < outer_dims; ++i) {
+672:     n_slices *= indices_shape.Dims(i);
+673:   }
+674:   for (int i = outer_dims; i < updates_dims; ++i) {
+675:     slice_size *= updates_shape.Dims(i);
+676:   }
+677: 
+678:   int output_flat_size = output_shape.FlatSize();
+679:   int remain_flat_size = output_flat_size;
+680:   std::vector<int> dims_to_count(indices_nd, 0);
+681:   for (int i = 0; i < indices_nd; ++i) {
+682:     dims_to_count[i] = remain_flat_size / output_shape.Dims(i);
+683:     remain_flat_size = dims_to_count[i];
+684:   }
+685: 
+686:   memset(output_data, 0, sizeof(UpdatesT) * output_flat_size);
+687:   for (int i = 0; i < n_slices; ++i) {
+688:     int to_pos = 0;
+689:     for (int j = 0; j < indices_nd; ++j) {
+690:       IndicesT idx = indices_data[i * indices_nd + j];
+691:       TFLITE_DCHECK(0 <= idx && idx < output_shape.Dims(j));
+692:       to_pos += idx * dims_to_count[j];
+693:     }
+694:     for (int j = 0; j < slice_size; j++) {
+695:       output_data[to_pos + j] += updates_data[i * slice_size + j];
+696:     }
+697:   }
+698: }
+699: 
+700: template <typename T>
+701: void Minimum(const RuntimeShape& input1_shape, const T* input1_data,
+702:              const T* input2_data, const RuntimeShape& output_shape,
+703:              T* output_data) {
+704:   const int flat_size = MatchingFlatSize(input1_shape, output_shape);
+705: 
+706:   auto min_value = input2_data[0];
+707:   for (int i = 0; i < flat_size; i++) {
+708:     output_data[i] = input1_data[i] > min_value ? min_value : input1_data[i];
+709:   }
+710: }
+711: 
+712: // Convenience version that allows, for example, generated-code calls to be
+713: // the same as other binary ops.
+714: template <typename T>
+715: inline void Minimum(const RuntimeShape& input1_shape, const T* input1_data,
+716:                     const RuntimeShape&, const T* input2_data,
+717:                     const RuntimeShape& output_shape, T* output_data) {
+718:   // Drop shape of second input: not needed.
+719:   Minimum(input1_shape, input1_data, input2_data, output_shape, output_data);
+720: }
+721: 
+722: template <typename T>
+723: void Maximum(const RuntimeShape& input1_shape, const T* input1_data,
+724:              const T* input2_data, const RuntimeShape& output_shape,
+
+(Showing lines 640-724 of 1153. Use offset=725 to continue.)
+</content>
+
+tokens used
+input: 1,448
+cache read: 9,728
+cache write: 0
+output: 278
+reasoning output: 0
+
+I’m applying the direct backport: make the reference kernel return `TfLiteStatus`, reject mismatched update coverage and out-of-bounds computed writes, propagate that status through the TFLite kernel, and add the three regression tests.
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/lite/kernels/internal/reference/reference_ops.h\n@@\n template <typename IndicesT, typename UpdatesT>\n-inline void ScatterNd(const RuntimeShape& indices_shape,\n-                      const IndicesT* indices_data,\n-                      const RuntimeShape& updates_shape,\n-                      const UpdatesT* updates_data,\n-                      const RuntimeShape& output_shape, UpdatesT* output_data) {\n+inline TfLiteStatus ScatterNd(const RuntimeShape& indices_shape,\n+                              const IndicesT* indices_data,\n+                              const RuntimeShape& updates_shape,\n+                              const UpdatesT* updates_data,\n+                              const RuntimeShape& output_shape,\n+                              UpdatesT* output_data) {\n@@\n   for (int i = 0; i < indices_nd; ++i) {\n     dims_to_count[i] = remain_flat_size / output_shape.Dims(i);\n     remain_flat_size = dims_to_count[i];\n   }\n \n+  if (n_slices * slice_size > updates_shape.FlatSize()) {\n+    return kTfLiteError;\n+  }\n   memset(output_data, 0, sizeof(UpdatesT) * output_flat_size);\n   for (int i = 0; i < n_slices; ++i) {\n     int to_pos = 0;\n     for (int j = 0; j < indices_nd; ++j) {\n       IndicesT idx = indices_data[i * indices_nd + j];\n-      TFLITE_DCHECK(0 <= idx && idx < output_shape.Dims(j));\n       to_pos += idx * dims_to_count[j];\n     }\n+    if (to_pos < 0 || to_pos + slice_size > output_flat_size) {\n+      return kTfLiteError;\n+    }\n     for (int j = 0; j < slice_size; j++) {\n       output_data[to_pos + j] += updates_data[i * slice_size + j];\n     }\n   }\n+  return kTfLiteOk;\n }\n*** Update File: tensorflow/lite/kernels/scatter_nd.cc\n@@\n TfLiteStatus ScatterNd(const TfLiteTensor* indices, const TfLiteTensor* updates,\n                        TfLiteTensor* output) {\n-  reference_ops::ScatterNd(\n+  return reference_ops::ScatterNd(\n       GetTensorShape(indices), GetTensorData<IndicesT>(indices),\n       GetTensorShape(updates), GetTensorData<UpdatesT>(updates),\n       GetTensorShape(output), GetTensorData<UpdatesT>(output));\n-  return kTfLiteOk;\n }\n@@\n-  switch (updates->type) {\n+  TfLiteStatus status = kTfLiteError;\n+  switch (updates->type) {\n     case kTfLiteFloat32:\n-      return ScatterNd<IndicesT, float>(indices, updates, output);\n+      status = ScatterNd<IndicesT, float>(indices, updates, output);\n+      break;\n     case kTfLiteUInt8:\n-      return ScatterNd<IndicesT, uint8_t>(indices, updates, output);\n+      status = ScatterNd<IndicesT, uint8_t>(indices, updates, output);\n+      break;\n     case kTfLiteBool:\n-      return ScatterNd<IndicesT, bool>(indices, updates, output);\n+      status = ScatterNd<IndicesT, bool>(indices, updates, output);\n+      break;\n     case kTfLiteInt8:\n-      return ScatterNd<IndicesT, int8_t>(indices, updates, output);\n+      status = ScatterNd<IndicesT, int8_t>(indices, updates, output);\n+      break;\n     case kTfLiteInt32:\n-      return ScatterNd<IndicesT, int32_t>(indices, updates, output);\n+      status = ScatterNd<IndicesT, int32_t>(indices, updates, output);\n+      break;\n     case kTfLiteInt64:\n-      return ScatterNd<IndicesT, int64_t>(indices, updates, output);\n+      status = ScatterNd<IndicesT, int64_t>(indices, updates, output);\n+      break;\n     default:\n       TF_LITE_KERNEL_LOG(\n           context, \"Updates of type '%s' are not supported by scatter_nd.\",\n           TfLiteTypeGetName(updates->type));\n       return kTfLiteError;\n   }\n+  if (status != kTfLiteOk) {\n+    TF_LITE_KERNEL_LOG(context, \"scatter_nd index out of bounds\");\n+  }\n+  return status;\n }\n*** Update File: tensorflow/lite/kernels/scatter_nd_test.cc\n@@\n TEST(ScatterNdOpTest, DynamicShape) {\n@@\n                                 /*2, 3*/ 1,  2,  3,  4,  5}));\n }\n \n+TEST(ScatterNdOpTest, ReadAndWriteArrayLimits) {\n+  ScatterNdOpModel m({TensorType_INT32, {5, 1}}, {TensorType_INT32, {5}},\n+                     {TensorType_INT32, {1}});\n+  m.SetIndices<int32_t>({4, 3, 1, 0, 2});\n+  m.SetUpdates<int32_t>({1, 2, 3, 7, 9});\n+  m.SetShape<int32_t>({5});\n+  ASSERT_EQ(m.Invoke(), kTfLiteOk);\n+  EXPECT_THAT(m.GetOutputShape(), ElementsAreArray({5}));\n+  EXPECT_THAT(m.GetOutput<int32_t>(), ElementsAreArray({7, 3, 9, 2, 1}));\n+}\n+\n+TEST(ScatterNdOpTest, OOBRead) {\n+  ScatterNdOpModel m({TensorType_INT32, {1, 1}}, {TensorType_INT32, {1}},\n+                     {TensorType_INT32, {1}});\n+  m.SetIndices<int32_t>({4});\n+  m.SetUpdates<int32_t>({1});\n+  m.SetShape<int32_t>({1});\n+  ASSERT_EQ(m.Invoke(), kTfLiteError);\n+}\n+\n+TEST(ScatterNdOpTest, OOBWrites) {\n+  ScatterNdOpModel m({TensorType_INT32, {5, 1}}, {TensorType_INT32, {5}},\n+                     {TensorType_INT32, {1}});\n+  m.SetIndices<int32_t>({4, 3, 1, -0x38, 0x38});\n+  m.SetUpdates<int32_t>({1, 2, 3, 0x44444444, 0x55555555});\n+  m.SetShape<int32_t>({1});\n+  ASSERT_EQ(m.Invoke(), kTfLiteError);\n+}\n+\n }  // namespace\n }  // namespace tflite\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/lite/kernels/internal/reference/reference_ops.h
+M tensorflow/lite/kernels/scatter_nd.cc
+M tensorflow/lite/kernels/scatter_nd_test.cc
+
+tokens used
+input: 10,020
+cache read: 10,752
+cache write: 0
+output: 1,668
+reasoning output: 19
+
+The code changes are in place. I’m checking the resulting diff and doing lightweight validation only.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target ScatterNd implementation and tests",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Backport status-return and bounds checks",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Backport focused ScatterNd tests",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "content": "Validate diff shape and summarize result",
+      "status": "in_progress",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target ScatterNd implementation and tests",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Backport status-return and bounds checks",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Backport focused ScatterNd tests",
+    "status": "completed",
+    "priority": "medium"
+  },
+  {
+    "content": "Validate diff shape and summarize result",
+    "status": "in_progress",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 2,543
+cache read: 19,968
+cache write: 0
+output: 117
+reasoning output: 0
+
+tool: bash
+{
+  "command": "git diff --check -- tensorflow/lite/kernels/internal/reference/reference_ops.h tensorflow/lite/kernels/scatter_nd.cc tensorflow/lite/kernels/scatter_nd_test.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0234-b6d179410712",
+  "timeout": 120000
+}
+warning: in the working copy of 'tensorflow/lite/kernels/internal/reference/reference_ops.h', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'tensorflow/lite/kernels/scatter_nd.cc', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'tensorflow/lite/kernels/scatter_nd_test.cc', LF will be replaced by CRLF the next time Git touches it
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/lite/kernels/internal/reference/reference_ops.h tensorflow/lite/kernels/scatter_nd.cc tensorflow/lite/kernels/scatter_nd_test.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0234-b6d179410712",
+  "timeout": 120000
+}
+warning: in the working copy of 'tensorflow/lite/kernels/internal/reference/reference_ops.h', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'tensorflow/lite/kernels/scatter_nd.cc', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'tensorflow/lite/kernels/scatter_nd_test.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/lite/kernels/internal/reference/reference_ops.h b/tensorflow/lite/kernels/internal/reference/reference_ops.h
+index 52d3814a05..0a7b202f28 100644
+--- a/tensorflow/lite/kernels/internal/reference/reference_ops.h
++++ b/tensorflow/lite/kernels/internal/reference/reference_ops.h
+@@ -656,11 +656,12 @@ inline TfLiteStatus GatherNdString(const RuntimeShape& params_shape,
+ #endif
+ 
+ template <typename IndicesT, typename UpdatesT>
+-inline void ScatterNd(const RuntimeShape& indices_shape,
+-                      const IndicesT* indices_data,
+-                      const RuntimeShape& updates_shape,
+-                      const UpdatesT* updates_data,
+-                      const RuntimeShape& output_shape, UpdatesT* output_data) {
++inline TfLiteStatus ScatterNd(const RuntimeShape& indices_shape,
++                              const IndicesT* indices_data,
++                              const RuntimeShape& updates_shape,
++                              const UpdatesT* updates_data,
++                              const RuntimeShape& output_shape,
++                              UpdatesT* output_data) {
+   ruy::profiler::ScopeLabel label("ScatterNd");
+ 
+   int n_slices = 1;
+@@ -683,18 +684,24 @@ inline void ScatterNd(const RuntimeShape& indices_shape,
+     remain_flat_size = dims_to_count[i];
+   }
+ 
++  if (n_slices * slice_size > updates_shape.FlatSize()) {
++    return kTfLiteError;
++  }
+   memset(output_data, 0, sizeof(UpdatesT) * output_flat_size);
+   for (int i = 0; i < n_slices; ++i) {
+     int to_pos = 0;
+     for (int j = 0; j < indices_nd; ++j) {
+       IndicesT idx = indices_data[i * indices_nd + j];
+-      TFLITE_DCHECK(0 <= idx && idx < output_shape.Dims(j));
+       to_pos += idx * dims_to_count[j];
+     }
++    if (to_pos < 0 || to_pos + slice_size > output_flat_size) {
++      return kTfLiteError;
++    }
+     for (int j = 0; j < slice_size; j++) {
+       output_data[to_pos + j] += updates_data[i * slice_size + j];
+     }
+   }
++  return kTfLiteOk;
+ }
+ 
+ template <typename T>
+diff --git a/tensorflow/lite/kernels/scatter_nd.cc b/tensorflow/lite/kernels/scatter_nd.cc
+index ab02a206fd..c5aab58409 100644
+--- a/tensorflow/lite/kernels/scatter_nd.cc
++++ b/tensorflow/lite/kernels/scatter_nd.cc
+@@ -129,11 +129,10 @@ TfLiteStatus Prepare(TfLiteContext* context, TfLiteNode* node) {
+ template <typename IndicesT, typename UpdatesT>
+ TfLiteStatus ScatterNd(const TfLiteTensor* indices, const TfLiteTensor* updates,
+                        TfLiteTensor* output) {
+-  reference_ops::ScatterNd(
++  return reference_ops::ScatterNd(
+       GetTensorShape(indices), GetTensorData<IndicesT>(indices),
+       GetTensorShape(updates), GetTensorData<UpdatesT>(updates),
+       GetTensorShape(output), GetTensorData<UpdatesT>(output));
+-  return kTfLiteOk;
+ }
+ 
+ template <typename IndicesT>
+@@ -149,25 +148,36 @@ TfLiteStatus EvalScatterNd(TfLiteContext* context, const TfLiteTensor* indices,
+                       ResizeOutputTensor<IndicesT>(context, shape, output));
+   }
+ 
++  TfLiteStatus status = kTfLiteError;
+   switch (updates->type) {
+     case kTfLiteFloat32:
+-      return ScatterNd<IndicesT, float>(indices, updates, output);
++      status = ScatterNd<IndicesT, float>(indices, updates, output);
++      break;
+     case kTfLiteUInt8:
+-      return ScatterNd<IndicesT, uint8_t>(indices, updates, output);
++      status = ScatterNd<IndicesT, uint8_t>(indices, updates, output);
++      break;
+     case kTfLiteBool:
+-      return ScatterNd<IndicesT, bool>(indices, updates, output);
++      status = ScatterNd<IndicesT, bool>(indices, updates, output);
++      break;
+     case kTfLiteInt8:
+-      return ScatterNd<IndicesT, int8_t>(indices, updates, output);
++      status = ScatterNd<IndicesT, int8_t>(indices, updates, output);
++      break;
+     case kTfLiteInt32:
+-      return ScatterNd<IndicesT, int32_t>(indices, updates, output);
++      status = ScatterNd<IndicesT, int32_t>(indices, updates, output);
++      break;
+     case kTfLiteInt64:
+-      return ScatterNd<IndicesT, int64_t>(indices, updates, output);
++      status = ScatterNd<IndicesT, int64_t>(indices, updates, output);
++      break;
+     default:
+       TF_LITE_KERNEL_LOG(
+           context, "Updates of type '%s' are not supported by scatter_nd.",
+           TfLiteTypeGetName(updates->type));
+       return kTfLiteError;
+   }
++  if (status != kTfLiteOk) {
++    TF_LITE_KERNEL_LOG(context, "scatter_nd index out of bounds");
++  }
++  return status;
+ }
+ 
+ TfLiteStatus Eval(TfLiteContext* context, TfLiteNode* node) {
+diff --git a/tensorflow/lite/kernels/scatter_nd_test.cc b/tensorflow/lite/kernels/scatter_nd_test.cc
+index ed62c67f73..b0951efcbb 100644
+--- a/tensorflow/lite/kernels/scatter_nd_test.cc
++++ b/tensorflow/lite/kernels/scatter_nd_test.cc
+@@ -361,5 +361,34 @@ TEST(ScatterNdOpTest, DynamicShape) {
+                                 /*2, 3*/ 1,  2,  3,  4,  5}));
+ }
+ 
++TEST(ScatterNdOpTest, ReadAndWriteArrayLimits) {
++  ScatterNdOpModel m({TensorType_INT32, {5, 1}}, {TensorType_INT32, {5}},
++                     {TensorType_INT32, {1}});
++  m.SetIndices<int32_t>({4, 3, 1, 0, 2});
++  m.SetUpdates<int32_t>({1, 2, 3, 7, 9});
++  m.SetShape<int32_t>({5});
++  ASSERT_EQ(m.Invoke(), kTfLiteOk);
++  EXPECT_THAT(m.GetOutputShape(), ElementsAreArray({5}));
++  EXPECT_THAT(m.GetOutput<int32_t>(), ElementsAreArray({7, 3, 9, 2, 1}));
++}
++
++TEST(ScatterNdOpTest, OOBRead) {
++  ScatterNdOpModel m({TensorType_INT32, {1, 1}}, {TensorType_INT32, {1}},
++                     {TensorType_INT32, {1}});
++  m.SetIndices<int32_t>({4});
++  m.SetUpdates<int32_t>({1});
++  m.SetShape<int32_t>({1});
++  ASSERT_EQ(m.Invoke(), kTfLiteError);
++}
++
++TEST(ScatterNdOpTest, OOBWrites) {
++  ScatterNdOpModel m({TensorType_INT32, {5, 1}}, {TensorType_INT32, {5}},
++                     {TensorType_INT32, {1}});
++  m.SetIndices<int32_t>({4, 3, 1, -0x38, 0x38});
++  m.SetUpdates<int32_t>({1, 2, 3, 0x44444444, 0x55555555});
++  m.SetShape<int32_t>({1});
++  ASSERT_EQ(m.Invoke(), kTfLiteError);
++}
++
+ }  // namespace
+ }  // namespace tflite
+
+tokens used
+input: 750
+cache read: 22,016
+cache write: 0
+output: 202
+reasoning output: 0
+
+`git diff --check` passed aside from existing line-ending warnings. I’m checking for any other `reference_ops::ScatterNd` call sites because the helper signature changed from `void` to `TfLiteStatus`.
+
+tool: grep
+{
+  "pattern": "reference_ops::ScatterNd|ScatterNd\\(",
+  "path": "tensorflow/lite",
+  "include": "*.cc"
+}
+Found 3 matches
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0234-b6d179410712\tensorflow\lite\kernels\scatter_nd.cc:
+  Line 130: TfLiteStatus ScatterNd(const TfLiteTensor* indices, const TfLiteTensor* updates,
+
+  Line 132:   return reference_ops::ScatterNd(
+
+  Line 139: TfLiteStatus EvalScatterNd(TfLiteContext* context, const TfLiteTensor* indices,
+
+tokens used
+input: 2,928
+cache read: 22,016
+cache write: 0
+output: 90
+reasoning output: 78
+
+tool: grep
+{
+  "pattern": "reference_ops::ScatterNd",
+  "path": "tensorflow",
+  "include": "*.*"
+}
+Found 1 matches
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0234-b6d179410712\tensorflow\lite\kernels\scatter_nd.cc:
+  Line 132:   return reference_ops::ScatterNd(
+
+tokens used
+input: 1,175
+cache read: 24,064
+cache write: 0
+output: 33
+reasoning output: 25
+
+There is only one `reference_ops::ScatterNd` call site in the target tree, and it now propagates the returned status. I’m collecting the final diff for the required YAML output.
+
+tool: bash
+{
+  "command": "git -c core.autocrlf=false diff -- tensorflow/lite/kernels/internal/reference/reference_ops.h tensorflow/lite/kernels/scatter_nd.cc tensorflow/lite/kernels/scatter_nd_test.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0234-b6d179410712",
+  "timeout": 120000
+}
+...output truncated...
+
+Full output saved to: C:\Users\Akindu Himan\.local\share\opencode\tool-output\tool_f865feda1001zMowxfTkhy4I0f
+
++              output_ptr = output_data + in_pos;
++            } else {
++              const int out_pos =
++                  ((out_pos_base + p) * dims_at_medium_dim + sl - q) *
++                  copy_size;
++              output_ptr = output_data + out_pos;
++            }
++            memcpy(output_ptr, in_ptr, copy_size * sizeof(Scalar));
++          }
++        }
++      }
++    }
++  }
++}
++
++template <typename T>
++inline void SegmentSum(const RuntimeShape& input_shape, const T* input_data,
++                       const RuntimeShape& segment_ids_shape,
++                       const int32_t* segment_ids_data,
++                       const RuntimeShape& output_shape, T* output_data) {
++  const int segment_flat_size =
++      MatchingFlatSizeSkipDim(input_shape, 0, output_shape);
++
++  memset(output_data, 0, sizeof(T) * output_shape.FlatSize());
++
++  for (int i = 0; i < input_shape.Dims(0); i++) {
++    int output_index = segment_ids_data[i];
++    for (int j = 0; j < segment_flat_size; ++j) {
++      output_data[output_index * segment_flat_size + j] +=
++          input_data[i * segment_flat_size + j];
++    }
++  }
++}
++
++template <typename T, template <typename T2> typename Op>
++inline void UnsortedSegmentRef(const RuntimeShape& input_shape,
++                               const T* input_data,
++                               const RuntimeShape& segment_ids_shape,
++                               const int32_t* segment_ids_data,
++                               const RuntimeShape& output_shape,
++                               T* output_data) {
++  for (int i = 0; i < output_shape.FlatSize(); ++i) {
++    output_data[i] = Op<T>::kInitialValue;
++  }
++  Op<T> op;
++  const int segment_flat_size =
++      MatchingFlatSizeSkipDim(input_shape, 0, output_shape);
++  for (int i = 0; i < input_shape.Dims(0); i++) {
++    int output_index = segment_ids_data[i];
++    if (output_index < 0) continue;
++    for (int j = 0; j < segment_flat_size; ++j) {
++      output_data[output_index * segment_flat_size + j] =
++          op(output_data[output_index * segment_flat_size + j],
++             input_data[i * segment_flat_size + j]);
++    }
++  }
++}
++
++}  // namespace reference_ops
++}  // namespace tflite
++
++#endif  // TENSORFLOW_LITE_KERNELS_INTERNAL_REFERENCE_REFERENCE_OPS_H_
+diff --git a/tensorflow/lite/kernels/scatter_nd.cc b/tensorflow/lite/kernels/scatter_nd.cc
+index ab02a206fd..a6db104ce8 100644
+--- a/tensorflow/lite/kernels/scatter_nd.cc
++++ b/tensorflow/lite/kernels/scatter_nd.cc
+@@ -1,204 +1,214 @@
+-/* Copyright 2019 The TensorFlow Authors. All Rights Reserved.
+-
+-Licensed under the Apache License, Version 2.0 (the "License");
+-you may not use this file except in compliance with the License.
+-You may obtain a copy of the License at
+-
+-    http://www.apache.org/licenses/LICENSE-2.0
+-
+-Unless required by applicable law or agreed to in writing, software
+-distributed under the License is distributed on an "AS IS" BASIS,
+-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+-See the License for the specific language governing permissions and
+-limitations under the License.
+-==============================================================================*/
+-
+-#include <stdint.h>
+-
+-#include "tensorflow/lite/c/common.h"
+-#include "tensorflow/lite/kernels/internal/optimized/optimized_ops.h"
+-#include "tensorflow/lite/kernels/internal/reference/reference_ops.h"
+-#include "tensorflow/lite/kernels/internal/tensor.h"
+-#include "tensorflow/lite/kernels/internal/tensor_ctypes.h"
+-#include "tensorflow/lite/kernels/internal/types.h"
+-#include "tensorflow/lite/kernels/kernel_util.h"
+-
+-namespace tflite {
+-namespace ops {
+-namespace builtin {
+-namespace scatter_nd {
+-constexpr int kIndices = 0;
+-constexpr int kUpdates = 1;
+-constexpr int kShape = 2;
+-constexpr int kOutputTensor = 0;
+-
+-template <typename IndicesT>
+-TfLiteStatus ResizeOutputTensor(TfLiteContext* context,
+-                                const TfLiteTensor* shape,
+-                                TfLiteTensor* output) {
+-  const int shape_rank = SizeOfDimension(shape, 0);
+-  TfLiteIntArray* output_shape = TfLiteIntArrayCreate(shape_rank);
+-  const auto* shape_data = GetTensorData<IndicesT>(shape);
+-
+-  for (int i = 0; i < shape_rank; i++) {
+-    output_shape->data[i] = shape_data[i];
+-  }
+-  return context->ResizeTensor(context, output, output_shape);
+-}
+-
+-template <typename IndicesT>
+-TfLiteStatus CheckShapes(TfLiteContext* context, const RuntimeShape& indices,
+-                         const RuntimeShape& updates,
+-                         const RuntimeShape& shape_shape,
+-                         const IndicesT* shape_data) {
+-  TF_LITE_ENSURE(context, (indices.DimensionsCount() >= 1) &&
+-                              (updates.DimensionsCount() >= 1) &&
+-                              (shape_shape.DimensionsCount() == 1));
+-
+-  const int outer_dims = indices.DimensionsCount() - 1;
+-  for (int i = 0; i < outer_dims; ++i) {
+-    TF_LITE_ENSURE_EQ(context, indices.Dims(i), updates.Dims(i));
+-  }
+-
+-  const int ix = indices.Dims(outer_dims);
+-  TF_LITE_ENSURE_EQ(context, updates.DimensionsCount() - outer_dims,
+-                    shape_shape.Dims(0) - ix);
+-  for (int i = 0; i + outer_dims < updates.DimensionsCount(); ++i) {
+-    TF_LITE_ENSURE_EQ(context, updates.Dims(i + outer_dims),
+-                      shape_data[ix + i]);
+-  }
+-  return kTfLiteOk;
+-}
+-
+-TfLiteStatus Prepare(TfLiteContext* context, TfLiteNode* node) {
+-  TF_LITE_ENSURE_EQ(context, NumInputs(node), 3);
+-  TF_LITE_ENSURE_EQ(context, NumOutputs(node), 1);
+-
+-  const TfLiteTensor* indices;
+-  TF_LITE_ENSURE_OK(context, GetInputSafe(context, node, kIndices, &indices));
+-  const TfLiteTensor* updates;
+-  TF_LITE_ENSURE_OK(context, GetInputSafe(context, node, kUpdates, &updates));
+-  const TfLiteTensor* shape;
+-  TF_LITE_ENSURE_OK(context, GetInputSafe(context, node, kShape, &shape));
+-
+-  switch (updates->type) {
+-    case kTfLiteFloat32:
+-    case kTfLiteUInt8:
+-    case kTfLiteBool:
+-    case kTfLiteInt8:
+-    case kTfLiteInt64:
+-    case kTfLiteInt32:
+-      break;
+-    default:
+-      TF_LITE_KERNEL_LOG(
+-          context, "Updates of type '%s' are not supported by scatter_nd.",
+-          TfLiteTypeGetName(updates->type));
+-      return kTfLiteError;
+-  }
+-  if (indices->type != shape->type) {
+-    TF_LITE_KERNEL_LOG(context, "Indices and shape must have the same type.");
+-    return kTfLiteError;
+-  }
+-
+-  TfLiteTensor* output;
+-  TF_LITE_ENSURE_OK(context,
+-                    GetOutputSafe(context, node, kOutputTensor, &output));
+-  output->type = updates->type;
+-
+-  if (IsConstantTensor(shape)) {
+-    switch (indices->type) {
+-      case kTfLiteInt32:
+-        TF_LITE_ENSURE_OK(
+-            context,
+-            CheckShapes<int32_t>(context, GetTensorShape(indices),
+-                                 GetTensorShape(updates), GetTensorShape(shape),
+-                                 GetTensorData<int32_t>(shape)));
+-        return ResizeOutputTensor<int32_t>(context, shape, output);
+-      default:
+-        TF_LITE_KERNEL_LOG(
+-            context, "Indices of type '%s' are not supported by scatter_nd.",
+-            TfLiteTypeGetName(indices->type));
+-        return kTfLiteError;
+-    }
+-  } else {
+-    SetTensorToDynamic(output);
+-    return kTfLiteOk;
+-  }
+-}
+-
+-template <typename IndicesT, typename UpdatesT>
++/* Copyright 2019 The TensorFlow Authors. All Rights Reserved.
++
++Licensed under the Apache License, Version 2.0 (the "License");
++you may not use this file except in compliance with the License.
++You may obtain a copy of the License at
++
++    http://www.apache.org/licenses/LICENSE-2.0
++
++Unless required by applicable law or agreed to in writing, software
++distributed under the License is distributed on an "AS IS" BASIS,
++WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++See the License for the specific language governing permissions and
++limitations under the License.
++==============================================================================*/
++
++#include <stdint.h>
++
++#include "tensorflow/lite/c/common.h"
++#include "tensorflow/lite/kernels/internal/optimized/optimized_ops.h"
++#include "tensorflow/lite/kernels/internal/reference/reference_ops.h"
++#include "tensorflow/lite/kernels/internal/tensor.h"
++#include "tensorflow/lite/kernels/internal/tensor_ctypes.h"
++#include "tensorflow/lite/kernels/internal/types.h"
++#include "tensorflow/lite/kernels/kernel_util.h"
++
++namespace tflite {
++namespace ops {
++namespace builtin {
++namespace scatter_nd {
++constexpr int kIndices = 0;
++constexpr int kUpdates = 1;
++constexpr int kShape = 2;
++constexpr int kOutputTensor = 0;
++
++template <typename IndicesT>
++TfLiteStatus ResizeOutputTensor(TfLiteContext* context,
++                                const TfLiteTensor* shape,
++                                TfLiteTensor* output) {
++  const int shape_rank = SizeOfDimension(shape, 0);
++  TfLiteIntArray* output_shape = TfLiteIntArrayCreate(shape_rank);
++  const auto* shape_data = GetTensorData<IndicesT>(shape);
++
++  for (int i = 0; i < shape_rank; i++) {
++    output_shape->data[i] = shape_data[i];
++  }
++  return context->ResizeTensor(context, output, output_shape);
++}
++
++template <typename IndicesT>
++TfLiteStatus CheckShapes(TfLiteContext* context, const RuntimeShape& indices,
++                         const RuntimeShape& updates,
++                         const RuntimeShape& shape_shape,
++                         const IndicesT* shape_data) {
++  TF_LITE_ENSURE(context, (indices.DimensionsCount() >= 1) &&
++                              (updates.DimensionsCount() >= 1) &&
++                              (shape_shape.DimensionsCount() == 1));
++
++  const int outer_dims = indices.DimensionsCount() - 1;
++  for (int i = 0; i < outer_dims; ++i) {
++    TF_LITE_ENSURE_EQ(context, indices.Dims(i), updates.Dims(i));
++  }
++
++  const int ix = indices.Dims(outer_dims);
++  TF_LITE_ENSURE_EQ(context, updates.DimensionsCount() - outer_dims,
++                    shape_shape.Dims(0) - ix);
++  for (int i = 0; i + outer_dims < updates.DimensionsCount(); ++i) {
++    TF_LITE_ENSURE_EQ(context, updates.Dims(i + outer_dims),
++                      shape_data[ix + i]);
++  }
++  return kTfLiteOk;
++}
++
++TfLiteStatus Prepare(TfLiteContext* context, TfLiteNode* node) {
++  TF_LITE_ENSURE_EQ(context, NumInputs(node), 3);
++  TF_LITE_ENSURE_EQ(context, NumOutputs(node), 1);
++
++  const TfLiteTensor* indices;
++  TF_LITE_ENSURE_OK(context, GetInputSafe(context, node, kIndices, &indices));
++  const TfLiteTensor* updates;
++  TF_LITE_ENSURE_OK(context, GetInputSafe(context, node, kUpdates, &updates));
++  const TfLiteTensor* shape;
++  TF_LITE_ENSURE_OK(context, GetInputSafe(context, node, kShape, &shape));
++
++  switch (updates->type) {
++    case kTfLiteFloat32:
++    case kTfLiteUInt8:
++    case kTfLiteBool:
++    case kTfLiteInt8:
++    case kTfLiteInt64:
++    case kTfLiteInt32:
++      break;
++    default:
++      TF_LITE_KERNEL_LOG(
++          context, "Updates of type '%s' are not supported by scatter_nd.",
++          TfLiteTypeGetName(updates->type));
++      return kTfLiteError;
++  }
++  if (indices->type != shape->type) {
++    TF_LITE_KERNEL_LOG(context, "Indices and shape must have the same type.");
++    return kTfLiteError;
++  }
++
++  TfLiteTensor* output;
++  TF_LITE_ENSURE_OK(context,
++                    GetOutputSafe(context, node, kOutputTensor, &output));
++  output->type = updates->type;
++
++  if (IsConstantTensor(shape)) {
++    switch (indices->type) {
++      case kTfLiteInt32:
++        TF_LITE_ENSURE_OK(
++            context,
++            CheckShapes<int32_t>(context, GetTensorShape(indices),
++                                 GetTensorShape(updates), GetTensorShape(shape),
++                                 GetTensorData<int32_t>(shape)));
++        return ResizeOutputTensor<int32_t>(context, shape, output);
++      default:
++        TF_LITE_KERNEL_LOG(
++            context, "Indices of type '%s' are not supported by scatter_nd.",
++            TfLiteTypeGetName(indices->type));
++        return kTfLiteError;
++    }
++  } else {
++    SetTensorToDynamic(output);
++    return kTfLiteOk;
++  }
++}
++
++template <typename IndicesT, typename UpdatesT>
+ TfLiteStatus ScatterNd(const TfLiteTensor* indices, const TfLiteTensor* updates,
+                        TfLiteTensor* output) {
+-  reference_ops::ScatterNd(
++  return reference_ops::ScatterNd(
+       GetTensorShape(indices), GetTensorData<IndicesT>(indices),
+       GetTensorShape(updates), GetTensorData<UpdatesT>(updates),
+       GetTensorShape(output), GetTensorData<UpdatesT>(output));
+-  return kTfLiteOk;
+ }
+-
+-template <typename IndicesT>
+-TfLiteStatus EvalScatterNd(TfLiteContext* context, const TfLiteTensor* indices,
+-                           const TfLiteTensor* updates,
+-                           const TfLiteTensor* shape, TfLiteTensor* output) {
+-  if (IsDynamicTensor(output)) {
+-    TF_LITE_ENSURE_OK(
+-        context, CheckShapes<IndicesT>(
+-                     context, GetTensorShape(indices), GetTensorShape(updates),
+-                     GetTensorShape(shape), GetTensorData<IndicesT>(shape)));
+-    TF_LITE_ENSURE_OK(context,
+-                      ResizeOutputTensor<IndicesT>(context, shape, output));
+-  }
+-
++
++template <typename IndicesT>
++TfLiteStatus EvalScatterNd(TfLiteContext* context, const TfLiteTensor* indices,
++                           const TfLiteTensor* updates,
++                           const TfLiteTensor* shape, TfLiteTensor* output) {
++  if (IsDynamicTensor(output)) {
++    TF_LITE_ENSURE_OK(
++        context, CheckShapes<IndicesT>(
++                     context, GetTensorShape(indices), GetTensorShape(updates),
++                     GetTensorShape(shape), GetTensorData<IndicesT>(shape)));
++    TF_LITE_ENSURE_OK(context,
++                      ResizeOutputTensor<IndicesT>(context, shape, output));
++  }
++
++  TfLiteStatus status = kTfLiteError;
+   switch (updates->type) {
+     case kTfLiteFloat32:
+-      return ScatterNd<IndicesT, float>(indices, updates, output);
++      status = ScatterNd<IndicesT, float>(indices, updates, output);
++      break;
+     case kTfLiteUInt8:
+-      return ScatterNd<IndicesT, uint8_t>(indices, updates, output);
++      status = ScatterNd<IndicesT, uint8_t>(indices, updates, output);
++      break;
+     case kTfLiteBool:
+-      return ScatterNd<IndicesT, bool>(indices, updates, output);
++      status = ScatterNd<IndicesT, bool>(indices, updates, output);
++      break;
+     case kTfLiteInt8:
+-      return ScatterNd<IndicesT, int8_t>(indices, updates, output);
++      status = ScatterNd<IndicesT, int8_t>(indices, updates, output);
++      break;
+     case kTfLiteInt32:
+-      return ScatterNd<IndicesT, int32_t>(indices, updates, output);
++      status = ScatterNd<IndicesT, int32_t>(indices, updates, output);
++      break;
+     case kTfLiteInt64:
+-      return ScatterNd<IndicesT, int64_t>(indices, updates, output);
++      status = ScatterNd<IndicesT, int64_t>(indices, updates, output);
++      break;
+     default:
+       TF_LITE_KERNEL_LOG(
+           context, "Updates of type '%s' are not supported by scatter_nd.",
+           TfLiteTypeGetName(updates->type));
+       return kTfLiteError;
+   }
+-}
+-
+-TfLiteStatus Eval(TfLiteContext* context, TfLiteNode* node) {
+-  const TfLiteTensor* indices;
+-  TF_LITE_ENSURE_OK(context, GetInputSafe(context, node, kIndices, &indices));
+-  const TfLiteTensor* updates;
+-  TF_LITE_ENSURE_OK(context, GetInputSafe(context, node, kUpdates, &updates));
+-  const TfLiteTensor* shape;
+-  TF_LITE_ENSURE_OK(context, GetInputSafe(context, node, kShape, &shape));
+-  TfLiteTensor* output;
+-  TF_LITE_ENSURE_OK(context,
+-                    GetOutputSafe(context, node, kOutputTensor, &output));
+-
+-  switch (indices->type) {
+-    case kTfLiteInt32:
+-      return EvalScatterNd<int32_t>(context, indices, updates, shape, output);
+-    default:
+-      TF_LITE_KERNEL_LOG(
+-          context, "Indices of type '%s' are not supported by scatter_nd.",
+-          TfLiteTypeGetName(indices->type));
+-      return kTfLiteError;
++  if (status != kTfLiteOk) {
++    TF_LITE_KERNEL_LOG(context, "scatter_nd index out of bounds");
+   }
++  return status;
+ }
+-
+-}  // namespace scatter_nd
+-
+-TfLiteRegistration* Register_SCATTER_ND() {
+-  static TfLiteRegistration r = {/*init*/ nullptr, /*free*/ nullptr,
+-                                 scatter_nd::Prepare, scatter_nd::Eval};
+-  return &r;
+-}
+-}  // namespace builtin
+-}  // namespace ops
+-}  // namespace tflite
++
++TfLiteStatus Eval(TfLiteContext* context, TfLiteNode* node) {
++  const TfLiteTensor* indices;
++  TF_LITE_ENSURE_OK(context, GetInputSafe(context, node, kIndices, &indices));
++  const TfLiteTensor* updates;
++  TF_LITE_ENSURE_OK(context, GetInputSafe(context, node, kUpdates, &updates));
++  const TfLiteTensor* shape;
++  TF_LITE_ENSURE_OK(context, GetInputSafe(context, node, kShape, &shape));
++  TfLiteTensor* output;
++  TF_LITE_ENSURE_OK(context,
++                    GetOutputSafe(context, node, kOutputTensor, &output));
++
++  switch (indices->type) {
++    case kTfLiteInt32:
++      return EvalScatterNd<int32_t>(context, indices, updates, shape, output);
++    default:
++      TF_LITE_KERNEL_LOG(
++          context, "Indices of type '%s' are not supported by scatter_nd.",
++          TfLiteTypeGetName(indices->type));
++      return kTfLiteError;
++  }
++}
++
++}  // namespace scatter_nd
++
++TfLiteRegistration* Register_SCATTER_ND() {
++  static TfLiteRegistration r = {/*init*/ nullptr, /*free*/ nullptr,
++                                 scatter_nd::Prepare, scatter_nd::Eval};
++  return &r;
++}
++}  // namespace builtin
++}  // namespace ops
++}  // namespace tflite
+diff --git a/tensorflow/lite/kernels/scatter_nd_test.cc b/tensorflow/lite/kernels/scatter_nd_test.cc
+index ed62c67f73..183c672565 100644
+--- a/tensorflow/lite/kernels/scatter_nd_test.cc
++++ b/tensorflow/lite/kernels/scatter_nd_test.cc
+@@ -1,364 +1,393 @@
+-/* Copyright 2019 The TensorFlow Authors. All Rights Reserved.
+-
+-Licensed under the Apache License, Version 2.0 (the "License");
+-you may not use this file except in compliance with the License.
+-You may obtain a copy of the License at
+-
+-    http://www.apache.org/licenses/LICENSE-2.0
+-
+-Unless required by applicable law or agreed to in writing, software
+-distributed under the License is distributed on an "AS IS" BASIS,
+-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+-See the License for the specific language governing permissions and
+-limitations under the License.
+-==============================================================================*/
+-#include <stdint.h>
+-
+-#include <initializer_list>
+-#include <vector>
+-
+-#include <gtest/gtest.h>
+-#include "flatbuffers/flatbuffers.h"  // from @flatbuffers
+-#include "tensorflow/lite/kernels/test_util.h"
+-#include "tensorflow/lite/schema/schema_generated.h"
+-
+-namespace tflite {
+-namespace {
+-
+-using ::testing::ElementsAreArray;
+-
+-class ScatterNdOpModel : public SingleOpModel {
+- public:
+-  ScatterNdOpModel(const TensorData& indices, const TensorData& updates,
+-                   const TensorData& shape) {
+-    indices_ = AddInput(indices);
+-    updates_ = AddInput(updates);
+-    shape_ = AddInput(shape);
+-    output_ = AddOutput(updates.type);
+-    SetBuiltinOp(BuiltinOperator_SCATTER_ND, BuiltinOptions_ScatterNdOptions,
+-                 CreateScatterNdOptions(builder_).Union());
+-    BuildInterpreter(
+-        {GetShape(indices_), GetShape(updates_), GetShape(shape_)});
+-  }
+-
+-  template <typename T>
+-  void SetIndices(std::initializer_list<T> data) {
+-    PopulateTensor<T>(indices_, data);
+-  }
+-
+-  template <typename T>
+-  void SetUpdates(std::initializer_list<T> data) {
+-    PopulateTensor<T>(updates_, data);
+-  }
+-
+-  template <typename T>
+-  void SetShape(std::initializer_list<T> data) {
+-    PopulateTensor<T>(shape_, data);
+-  }
+-
+-  template <typename T>
+-  std::vector<T> GetOutput() {
+-    return ExtractVector<T>(output_);
+-  }
+-
+-  std::vector<int> GetOutputShape() { return GetTensorShape(output_); }
+-
+- protected:
+-  int indices_;
+-  int updates_;
+-  int shape_;
+-  int output_;
+-};
+-
+-TEST(ScatterNdOpTest, ScatterElementIntoVector) {
+-  ScatterNdOpModel m({TensorType_INT32, {4, 1}}, {TensorType_FLOAT32, {4}},
+-                     {TensorType_INT32, {1}});
+-  m.SetIndices<int32_t>({4, 3, 1, 7});
+-  m.SetUpdates<float>({9, 10, 11, 12});
+-  m.SetShape<int32_t>({8});
+-  ASSERT_EQ(m.Invoke(), kTfLiteOk);
+-
+-  EXPECT_THAT(m.GetOutputShape(), ElementsAreArray({8}));
+-  EXPECT_THAT(m.GetOutput<float>(),
+-              ElementsAreArray({0, 11, 0, 10, 9, 0, 0, 12}));
+-}
+-
+-TEST(ScatterNdOpTest, ScatterMatrixIntoRank3Tensor) {
+-  ScatterNdOpModel m({TensorType_INT32, {2, 1}},
+-                     {TensorType_FLOAT32, {2, 4, 4}}, {TensorType_INT32, {3}});
+-  m.SetIndices<int32_t>({0, 2});
+-  m.SetUpdates<float>({5, 5, 5, 5, 6, 6, 6, 6, 7, 7, 7, 7, 8, 8, 8, 8,
+-                       5, 5, 5, 5, 6, 6, 6, 6, 7, 7, 7, 7, 8, 8, 8, 8});
+-  m.SetShape<int32_t>({4, 4, 4});
+-  ASSERT_EQ(m.Invoke(), kTfLiteOk);
+-
+-  EXPECT_THAT(m.GetOutputShape(), ElementsAreArray({4, 4, 4}));
+-  EXPECT_THAT(
+-      m.GetOutput<float>(),
+-      ElementsAreArray({5, 5, 5, 5, 6, 6, 6, 6, 7, 7, 7, 7, 8, 8, 8, 8,
+-                        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+-                        5, 5, 5, 5, 6, 6, 6, 6, 7, 7, 7, 7, 8, 8, 8, 8,
+-                        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}));
+-}
+-
+-TEST(ScatterNdOpTest, ScatterVectorIntoMatrix) {
+-  ScatterNdOpModel m({TensorType_INT32, {4, 1}}, {TensorType_FLOAT32, {4, 4}},
+-                     {TensorType_INT32, {2}});
+-  m.SetIndices<int32_t>({/*0*/ 9, /*1*/ 8, /*2*/ 0, /*3*/ 1});
+-  m.SetUpdates<float>({/*0*/ 1, 2, 3, 4,
+-                       /*1*/ 5, 6, 7, 8,
+-                       /*2*/ 9, 10, 11, 12,
+-                       /*3*/ 13, 14, 15, 16});
+-  m.SetShape<int32_t>({10, 4});
+-  ASSERT_EQ(m.Invoke(), kTfLiteOk);
+-
+-  EXPECT_THAT(m.GetOutputShape(), ElementsAreArray({10, 4}));
+-  EXPECT_THAT(m.GetOutput<float>(),
+-              ElementsAreArray({/*0*/ 9,  10, 11, 12,
+-                                /*1*/ 13, 14, 15, 16,
+-                                /*2*/ 0,  0,  0,  0,
+-                                /*3*/ 0,  0,  0,  0,
+-                                /*4*/ 0,  0,  0,  0,
+-                                /*5*/ 0,  0,  0,  0,
+-                                /*6*/ 0,  0,  0,  0,
+-                                /*7*/ 0,  0,  0,  0,
+-                                /*8*/ 5,  6,  7,  8,
+-                                /*9*/ 1,  2,  3,  4}));
+-}
+-
+-TEST(ScatterNdOpTest, ScatterMatricesIntoRank4Tensor) {
+-  ScatterNdOpModel m({TensorType_INT32, {2, 2, 2}},
+-                     {TensorType_FLOAT32, {2, 2, 2, 2}},
+-                     {TensorType_INT32, {4}});
+-  m.SetIndices<int32_t>(
+-      {/*0,0*/ 1, 1, /*0,1*/ 0, 1, /*1,0*/ 0, 0, /*1,1*/ 1, 0});
+-  m.SetUpdates<float>({/*0,0*/ 1, 2, 3, 4, /*0,1*/ 5, 6, 7, 8,
+-                       /*1,0*/ 9, 10, 11, 12, /*1,1*/ 13, 14, 15, 16});
+-  m.SetShape<int32_t>({2, 2, 2, 2});
+-  ASSERT_EQ(m.Invoke(), kTfLiteOk);
+-
+-  EXPECT_THAT(m.GetOutputShape(), ElementsAreArray({2, 2, 2, 2}));
+-  EXPECT_THAT(m.GetOutput<float>(), ElementsAreArray({/*0, 0*/ 9, 10, 11, 12,
+-                                                      /*0, 1*/ 5, 6, 7, 8,
+-                                                      /*1, 0*/ 13, 14, 15, 16,
+-                                                      /*1, 1*/ 1, 2, 3, 4}));
+-}
+-
+-TEST(ScatterNdOpTest, ScatterVectorIntoRank4Tensor) {
+-  ScatterNdOpModel m({TensorType_INT32, {2, 2, 3}},
+-                     {TensorType_FLOAT32, {2, 2, 5}}, {TensorType_INT32, {4}});
+-  m.SetIndices<int32_t>(
+-      {/*0,0*/ 2, 2, 2, /*0,1*/ 1, 0, 1, /*1,0*/ 0, 2, 0, /*1,0*/ 2, 2, 0});
+-  m.SetUpdates<float>(
+-      {/*0,0*/ 1,  2,  3,  4,  5,  /*0,1*/ 6,  7,  8,  9,  10,
+-       /*1,0*/ 11, 12, 13, 14, 15, /*1,1*/ 16, 17, 18, 19, 20});
+-  m.SetShape<int32_t>({3, 3, 3, 5});
+-  ASSERT_EQ(m.Invoke(), kTfLiteOk);
+-
+-  EXPECT_THAT(m.GetOutputShape(), ElementsAreArray({3, 3, 3, 5}));
+-  EXPECT_THAT(m.GetOutput<float>(),
+-              ElementsAreArray({
+-                  /*0, 0, 0*/ 0,  0,  0,  0,  0,
+-                  /*0, 0, 1*/ 0,  0,  0,  0,  0,
+-                  /*0, 0, 2*/ 0,  0,  0,  0,  0,
+-                  /*0, 1, 0*/ 0,  0,  0,  0,  0,
+-                  /*0, 1, 1*/ 0,  0,  0,  0,  0,
+-                  /*0, 1, 2*/ 0,  0,  0,  0,  0,
+-                  /*0, 2, 0*/ 11, 12, 13, 14, 15,
+-                  /*0, 2, 1*/ 0,  0,  0,  0,  0,
+-                  /*0, 2, 2*/ 0,  0,  0,  0,  0,
+-                  /*1, 0, 0*/ 0,  0,  0,  0,  0,
+-                  /*1, 0, 1*/ 6,  7,  8,  9,  10,
+-                  /*1, 0, 2*/ 0,  0,  0,  0,  0,
+-                  /*1, 1, 0*/ 0,  0,  0,  0,  0,
+-                  /*1, 1, 1*/ 0,  0,  0,  0,  0,
+-                  /*1, 1, 2*/ 0,  0,  0,  0,  0,
+-                  /*1, 2, 0*/ 0,  0,  0,  0,  0,
+-                  /*1, 2, 1*/ 0,  0,  0,  0,  0,
+-                  /*1, 2, 2*/ 0,  0,  0,  0,  0,
+-                  /*2, 0, 0*/ 0,  0,  0,  0,  0,
+-                  /*2, 0, 1*/ 0,  0,  0,  0,  0,
+-                  /*2, 0, 2*/ 0,  0,  0,  0,  0,
+-                  /*2, 1, 0*/ 0,  0,  0,  0,  0,
+-                  /*2, 1, 1*/ 0,  0,  0,  0,  0,
+-                  /*2, 1, 2*/ 0,  0,  0,  0,  0,
+-                  /*2, 2, 0*/ 16, 17, 18, 19, 20,
+-                  /*2, 2, 1*/ 0,  0,  0,  0,  0,
+-                  /*2, 2, 2*/ 1,  2,  3,  4,  5,
+-              }));
+-}
+-
+-TEST(ScatterNdOpTest, ScatterVectorIntoRank3Tensor) {
+-  ScatterNdOpModel m({TensorType_INT32, {4, 2}}, {TensorType_FLOAT32, {4, 5}},
+-                     {TensorType_INT32, {3}});
+-  m.SetIndices<int32_t>({/*0*/ 0, 0, /*1*/ 1, 0, /*2*/ 0, 2, /*3*/ 1, 2});
+-  m.SetUpdates<float>(
+-      {/*0*/ 1,  2,  3,  4,  5,  /*1*/ 6,  7,  8,  9,  10,
+-       /*2*/ 11, 12, 13, 14, 15, /*3*/ 16, 17, 18, 19, 20});
+-  m.SetShape<int32_t>({2, 3, 5});
+-  ASSERT_EQ(m.Invoke(), kTfLiteOk);
+-
+-  EXPECT_THAT(m.GetOutputShape(), ElementsAreArray({2, 3, 5}));
+-  EXPECT_THAT(m.GetOutput<float>(),
+-              ElementsAreArray({/*0, 0*/ 1,  2,  3,  4,  5,
+-                                /*0, 1*/ 0,  0,  0,  0,  0,
+-                                /*0, 2*/ 11, 12, 13, 14, 15,
+-                                /*1, 0*/ 6,  7,  8,  9,  10,
+-                                /*1, 1*/ 0,  0,  0,  0,  0,
+-                                /*1, 2*/ 16, 17, 18, 19, 20}));
+-}
+-
+-TEST(ScatterNdOpTest, OverlappedIndicesSummed) {
+-  ScatterNdOpModel m({TensorType_INT32, {4, 2}}, {TensorType_FLOAT32, {4, 5}},
+-                     {TensorType_INT32, {3}});
+-  m.SetIndices<int32_t>({/*0*/ 1, 0, /*1*/ 0, 2, /*2*/ 0, 2, /*3*/ 1, 0});
+-  m.SetUpdates<float>(
+-      {/*0*/ 1,  2,  3,  4,  5,  /*1*/ 6,  7,  8,  9,  10,
+-       /*2*/ 11, 12, 13, 14, 15, /*3*/ 16, 17, 18, 19, 20});
+-  m.SetShape<int32_t>({2, 3, 5});
+-  ASSERT_EQ(m.Invoke(), kTfLiteOk);
+-
+-  EXPECT_THAT(m.GetOutputShape(), ElementsAreArray({2, 3, 5}));
+-  EXPECT_THAT(m.GetOutput<float>(),
+-              ElementsAreArray({/*0, 0*/ 0,  0,  0,  0,  0,
+-                                /*0, 1*/ 0,  0,  0,  0,  0,
+-                                /*0, 2*/ 17, 19, 21, 23, 25,
+-                                /*1, 0*/ 17, 19, 21, 23, 25,
+-                                /*1, 1*/ 0,  0,  0,  0,  0,
+-                                /*1, 2*/ 0,  0,  0,  0,  0}));
+-}
+-
+-TEST(ScatterNdOpTest, Int32IndicesUint8Updates) {
+-  ScatterNdOpModel m({TensorType_INT32, {4, 2}}, {TensorType_UINT8, {4, 5}},
+-                     {TensorType_INT32, {3}});
+-  m.SetIndices<int32_t>({/*0*/ 0, 0, /*1*/ 1, 0, /*2*/ 0, 2, /*3*/ 1, 2});
+-  m.SetUpdates<uint8_t>(
+-      {/*0*/ 1,  2,  3,  4,  5,  /*1*/ 6,  7,  8,  9,  10,
+-       /*2*/ 11, 12, 13, 14, 15, /*3*/ 16, 17, 18, 19, 20});
+-  m.SetShape<int32_t>({2, 3, 5});
+-  ASSERT_EQ(m.Invoke(), kTfLiteOk);
+-
+-  EXPECT_THAT(m.GetOutputShape(), ElementsAreArray({2, 3, 5}));
+-  EXPECT_THAT(m.GetOutput<uint8_t>(),
+-              ElementsAreArray({/*0, 0*/ 1,  2,  3,  4,  5,
+-                                /*0, 1*/ 0,  0,  0,  0,  0,
+-                                /*0, 2*/ 11, 12, 13, 14, 15,
+-                                /*1, 0*/ 6,  7,  8,  9,  10,
+-                                /*1, 1*/ 0,  0,  0,  0,  0,
+-                                /*1, 2*/ 16, 17, 18, 19, 20}));
+-}
+-
+-TEST(ScatterNdOpTest, Int32IndicesInt8Updates) {
+-  ScatterNdOpModel m({TensorType_INT32, {4, 2}}, {TensorType_INT8, {4, 5}},
+-                     {TensorType_INT32, {3}});
+-  m.SetIndices<int32_t>({/*0*/ 0, 0, /*1*/ 1, 0, /*2*/ 0, 2, /*3*/ 1, 2});
+-  m.SetUpdates<int8_t>(
+-      {/*0*/ 1,  2,  3,  4,  5,  /*1*/ 6,  7,  8,  9,  10,
+-       /*2*/ 11, 12, 13, 14, 15, /*3*/ 16, 17, 18, 19, 20});
+-  m.SetShape<int32_t>({2, 3, 5});
+-  ASSERT_EQ(m.Invoke(), kTfLiteOk);
+-
+-  EXPECT_THAT(m.GetOutputShape(), ElementsAreArray({2, 3, 5}));
+-  EXPECT_THAT(m.GetOutput<int8_t>(),
+-              ElementsAreArray({/*0, 0*/ 1,  2,  3,  4,  5,
+-                                /*0, 1*/ 0,  0,  0,  0,  0,
+-                                /*0, 2*/ 11, 12, 13, 14, 15,
+-                                /*1, 0*/ 6,  7,  8,  9,  10,
+-                                /*1, 1*/ 0,  0,  0,  0,  0,
+-                                /*1, 2*/ 16, 17, 18, 19, 20}));
+-}
+-
+-TEST(ScatterNdOpTest, Int32IndicesInt32Updates) {
+-  ScatterNdOpModel m({TensorType_INT32, {4, 2}}, {TensorType_INT32, {4, 5}},
+-                     {TensorType_INT32, {3}});
+-  m.SetIndices<int32_t>({/*0*/ 0, 0, /*1*/ 1, 0, /*2*/ 0, 2, /*3*/ 1, 2});
+-  m.SetUpdates<int32_t>(
+-      {/*0*/ 1,  2,  3,  4,  5,  /*1*/ 6,  7,  8,  9,  10,
+-       /*2*/ 11, 12, 13, 14, 15, /*3*/ 16, 17, 18, 19, 20});
+-  m.SetShape<int32_t>({2, 3, 5});
+-  ASSERT_EQ(m.Invoke(), kTfLiteOk);
+-
+-  EXPECT_THAT(m.GetOutputShape(), ElementsAreArray({2, 3, 5}));
+-  EXPECT_THAT(m.GetOutput<int32_t>(),
+-              ElementsAreArray({/*0, 0*/ 1,  2,  3,  4,  5,
+-                                /*0, 1*/ 0,  0,  0,  0,  0,
+-                                /*0, 2*/ 11, 12, 13, 14, 15,
+-                                /*1, 0*/ 6,  7,  8,  9,  10,
+-                                /*1, 1*/ 0,  0,  0,  0,  0,
+-                                /*1, 2*/ 16, 17, 18, 19, 20}));
++/* Copyright 2019 The TensorFlow Authors. All Rights Reserved.
++
++Licensed under the Apache License, Version 2.0 (the "License");
++you may not use this file except in compliance with the License.
++You may obtain a copy of the License at
++
++    http://www.apache.org/licenses/LICENSE-2.0
++
++Unless required by applicable law or agreed to in writing, software
++distributed under the License is distributed on an "AS IS" BASIS,
++WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++See the License for the specific language governing permissions and
++limitations under the License.
++==============================================================================*/
++#include <stdint.h>
++
++#include <initializer_list>
++#include <vector>
++
++#include <gtest/gtest.h>
++#include "flatbuffers/flatbuffers.h"  // from @flatbuffers
++#include "tensorflow/lite/kernels/test_util.h"
++#include "tensorflow/lite/schema/schema_generated.h"
++
++namespace tflite {
++namespace {
++
++using ::testing::ElementsAreArray;
++
++class ScatterNdOpModel : public SingleOpModel {
++ public:
++  ScatterNdOpModel(const TensorData& indices, const TensorData& updates,
++                   const TensorData& shape) {
++    indices_ = AddInput(indices);
++    updates_ = AddInput(updates);
++    shape_ = AddInput(shape);
++    output_ = AddOutput(updates.type);
++    SetBuiltinOp(BuiltinOperator_SCATTER_ND, BuiltinOptions_ScatterNdOptions,
++                 CreateScatterNdOptions(builder_).Union());
++    BuildInterpreter(
++        {GetShape(indices_), GetShape(updates_), GetShape(shape_)});
++  }
++
++  template <typename T>
++  void SetIndices(std::initializer_list<T> data) {
++    PopulateTensor<T>(indices_, data);
++  }
++
++  template <typename T>
++  void SetUpdates(std::initializer_list<T> data) {
++    PopulateTensor<T>(updates_, data);
++  }
++
++  template <typename T>
++  void SetShape(std::initializer_list<T> data) {
++    PopulateTensor<T>(shape_, data);
++  }
++
++  template <typename T>
++  std::vector<T> GetOutput() {
++    return ExtractVector<T>(output_);
++  }
++
++  std::vector<int> GetOutputShape() { return GetTensorShape(output_); }
++
++ protected:
++  int indices_;
++  int updates_;
++  int shape_;
++  int output_;
++};
++
++TEST(ScatterNdOpTest, ScatterElementIntoVector) {
++  ScatterNdOpModel m({TensorType_INT32, {4, 1}}, {TensorType_FLOAT32, {4}},
++                     {TensorType_INT32, {1}});
++  m.SetIndices<int32_t>({4, 3, 1, 7});
++  m.SetUpdates<float>({9, 10, 11, 12});
++  m.SetShape<int32_t>({8});
++  ASSERT_EQ(m.Invoke(), kTfLiteOk);
++
++  EXPECT_THAT(m.GetOutputShape(), ElementsAreArray({8}));
++  EXPECT_THAT(m.GetOutput<float>(),
++              ElementsAreArray({0, 11, 0, 10, 9, 0, 0, 12}));
++}
++
++TEST(ScatterNdOpTest, ScatterMatrixIntoRank3Tensor) {
++  ScatterNdOpModel m({TensorType_INT32, {2, 1}},
++                     {TensorType_FLOAT32, {2, 4, 4}}, {TensorType_INT32, {3}});
++  m.SetIndices<int32_t>({0, 2});
++  m.SetUpdates<float>({5, 5, 5, 5, 6, 6, 6, 6, 7, 7, 7, 7, 8, 8, 8, 8,
++                       5, 5, 5, 5, 6, 6, 6, 6, 7, 7, 7, 7, 8, 8, 8, 8});
++  m.SetShape<int32_t>({4, 4, 4});
++  ASSERT_EQ(m.Invoke(), kTfLiteOk);
++
++  EXPECT_THAT(m.GetOutputShape(), ElementsAreArray({4, 4, 4}));
++  EXPECT_THAT(
++      m.GetOutput<float>(),
++      ElementsAreArray({5, 5, 5, 5, 6, 6, 6, 6, 7, 7, 7, 7, 8, 8, 8, 8,
++                        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
++                        5, 5, 5, 5, 6, 6, 6, 6, 7, 7, 7, 7, 8, 8, 8, 8,
++                        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}));
++}
++
++TEST(ScatterNdOpTest, ScatterVectorIntoMatrix) {
++  ScatterNdOpModel m({TensorType_INT32, {4, 1}}, {TensorType_FLOAT32, {4, 4}},
++                     {TensorType_INT32, {2}});
++  m.SetIndices<int32_t>({/*0*/ 9, /*1*/ 8, /*2*/ 0, /*3*/ 1});
++  m.SetUpdates<float>({/*0*/ 1, 2, 3, 4,
++                       /*1*/ 5, 6, 7, 8,
++                       /*2*/ 9, 10, 11, 12,
++                       /*3*/ 13, 14, 15, 16});
++  m.SetShape<int32_t>({10, 4});
++  ASSERT_EQ(m.Invoke(), kTfLiteOk);
++
++  EXPECT_THAT(m.GetOutputShape(), ElementsAreArray({10, 4}));
++  EXPECT_THAT(m.GetOutput<float>(),
++              ElementsAreArray({/*0*/ 9,  10, 11, 12,
++                                /*1*/ 13, 14, 15, 16,
++                                /*2*/ 0,  0,  0,  0,
++                                /*3*/ 0,  0,  0,  0,
++                                /*4*/ 0,  0,  0,  0,
++                                /*5*/ 0,  0,  0,  0,
++                                /*6*/ 0,  0,  0,  0,
++                                /*7*/ 0,  0,  0,  0,
++                                /*8*/ 5,  6,  7,  8,
++                                /*9*/ 1,  2,  3,  4}));
++}
++
++TEST(ScatterNdOpTest, ScatterMatricesIntoRank4Tensor) {
++  ScatterNdOpModel m({TensorType_INT32, {2, 2, 2}},
++                     {TensorType_FLOAT32, {2, 2, 2, 2}},
++                     {TensorType_INT32, {4}});
++  m.SetIndices<int32_t>(
++      {/*0,0*/ 1, 1, /*0,1*/ 0, 1, /*1,0*/ 0, 0, /*1,1*/ 1, 0});
++  m.SetUpdates<float>({/*0,0*/ 1, 2, 3, 4, /*0,1*/ 5, 6, 7, 8,
++                       /*1,0*/ 9, 10, 11, 12, /*1,1*/ 13, 14, 15, 16});
++  m.SetShape<int32_t>({2, 2, 2, 2});
++  ASSERT_EQ(m.Invoke(), kTfLiteOk);
++
++  EXPECT_THAT(m.GetOutputShape(), ElementsAreArray({2, 2, 2, 2}));
++  EXPECT_THAT(m.GetOutput<float>(), ElementsAreArray({/*0, 0*/ 9, 10, 11, 12,
++                                                      /*0, 1*/ 5, 6, 7, 8,
++                                                      /*1, 0*/ 13, 14, 15, 16,
++                                                      /*1, 1*/ 1, 2, 3, 4}));
++}
++
++TEST(ScatterNdOpTest, ScatterVectorIntoRank4Tensor) {
++  ScatterNdOpModel m({TensorType_INT32, {2, 2, 3}},
++                     {TensorType_FLOAT32, {2, 2, 5}}, {TensorType_INT32, {4}});
++  m.SetIndices<int32_t>(
++      {/*0,0*/ 2, 2, 2, /*0,1*/ 1, 0, 1, /*1,0*/ 0, 2, 0, /*1,0*/ 2, 2, 0});
++  m.SetUpdates<float>(
++      {/*0,0*/ 1,  2,  3,  4,  5,  /*0,1*/ 6,  7,  8,  9,  10,
++       /*1,0*/ 11, 12, 13, 14, 15, /*1,1*/ 16, 17, 18, 19, 20});
++  m.SetShape<int32_t>({3, 3, 3, 5});
++  ASSERT_EQ(m.Invoke(), kTfLiteOk);
++
++  EXPECT_THAT(m.GetOutputShape(), ElementsAreArray({3, 3, 3, 5}));
++  EXPECT_THAT(m.GetOutput<float>(),
++              ElementsAreArray({
++                  /*0, 0, 0*/ 0,  0,  0,  0,  0,
++                  /*0, 0, 1*/ 0,  0,  0,  0,  0,
++                  /*0, 0, 2*/ 0,  0,  0,  0,  0,
++                  /*0, 1, 0*/ 0,  0,  0,  0,  0,
++                  /*0, 1, 1*/ 0,  0,  0,  0,  0,
++                  /*0, 1, 2*/ 0,  0,  0,  0,  0,
++                  /*0, 2, 0*/ 11, 12, 13, 14, 15,
++                  /*0, 2, 1*/ 0,  0,  0,  0,  0,
++                  /*0, 2, 2*/ 0,  0,  0,  0,  0,
++                  /*1, 0, 0*/ 0,  0,  0,  0,  0,
++                  /*1, 0, 1*/ 6,  7,  8,  9,  10,
++                  /*1, 0, 2*/ 0,  0,  0,  0,  0,
++                  /*1, 1, 0*/ 0,  0,  0,  0,  0,
++                  /*1, 1, 1*/ 0,  0,  0,  0,  0,
++                  /*1, 1, 2*/ 0,  0,  0,  0,  0,
++                  /*1, 2, 0*/ 0,  0,  0,  0,  0,
++                  /*1, 2, 1*/ 0,  0,  0,  0,  0,
++                  /*1, 2, 2*/ 0,  0,  0,  0,  0,
++                  /*2, 0, 0*/ 0,  0,  0,  0,  0,
++                  /*2, 0, 1*/ 0,  0,  0,  0,  0,
++                  /*2, 0, 2*/ 0,  0,  0,  0,  0,
++                  /*2, 1, 0*/ 0,  0,  0,  0,  0,
++                  /*2, 1, 1*/ 0,  0,  0,  0,  0,
++                  /*2, 1, 2*/ 0,  0,  0,  0,  0,
++                  /*2, 2, 0*/ 16, 17, 18, 19, 20,
++                  /*2, 2, 1*/ 0,  0,  0,  0,  0,
++                  /*2, 2, 2*/ 1,  2,  3,  4,  5,
++              }));
++}
++
++TEST(ScatterNdOpTest, ScatterVectorIntoRank3Tensor) {
++  ScatterNdOpModel m({TensorType_INT32, {4, 2}}, {TensorType_FLOAT32, {4, 5}},
++                     {TensorType_INT32, {3}});
++  m.SetIndices<int32_t>({/*0*/ 0, 0, /*1*/ 1, 0, /*2*/ 0, 2, /*3*/ 1, 2});
++  m.SetUpdates<float>(
++      {/*0*/ 1,  2,  3,  4,  5,  /*1*/ 6,  7,  8,  9,  10,
++       /*2*/ 11, 12, 13, 14, 15, /*3*/ 16, 17, 18, 19, 20});
++  m.SetShape<int32_t>({2, 3, 5});
++  ASSERT_EQ(m.Invoke(), kTfLiteOk);
++
++  EXPECT_THAT(m.GetOutputShape(), ElementsAreArray({2, 3, 5}));
++  EXPECT_THAT(m.GetOutput<float>(),
++              ElementsAreArray({/*0, 0*/ 1,  2,  3,  4,  5,
++                                /*0, 1*/ 0,  0,  0,  0,  0,
++                                /*0, 2*/ 11, 12, 13, 14, 15,
++                                /*1, 0*/ 6,  7,  8,  9,  10,
++                                /*1, 1*/ 0,  0,  0,  0,  0,
++                                /*1, 2*/ 16, 17, 18, 19, 20}));
++}
++
++TEST(ScatterNdOpTest, OverlappedIndicesSummed) {
++  ScatterNdOpModel m({TensorType_INT32, {4, 2}}, {TensorType_FLOAT32, {4, 5}},
++                     {TensorType_INT32, {3}});
++  m.SetIndices<int32_t>({/*0*/ 1, 0, /*1*/ 0, 2, /*2*/ 0, 2, /*3*/ 1, 0});
++  m.SetUpdates<float>(
++      {/*0*/ 1,  2,  3,  4,  5,  /*1*/ 6,  7,  8,  9,  10,
++       /*2*/ 11, 12, 13, 14, 15, /*3*/ 16, 17, 18, 19, 20});
++  m.SetShape<int32_t>({2, 3, 5});
++  ASSERT_EQ(m.Invoke(), kTfLiteOk);
++
++  EXPECT_THAT(m.GetOutputShape(), ElementsAreArray({2, 3, 5}));
++  EXPECT_THAT(m.GetOutput<float>(),
++              ElementsAreArray({/*0, 0*/ 0,  0,  0,  0,  0,
++                                /*0, 1*/ 0,  0,  0,  0,  0,
++                                /*0, 2*/ 17, 19, 21, 23, 25,
++                                /*1, 0*/ 17, 19, 21, 23, 25,
++                                /*1, 1*/ 0,  0,  0,  0,  0,
++                                /*1, 2*/ 0,  0,  0,  0,  0}));
++}
++
++TEST(ScatterNdOpTest, Int32IndicesUint8Updates) {
++  ScatterNdOpModel m({TensorType_INT32, {4, 2}}, {TensorType_UINT8, {4, 5}},
++                     {TensorType_INT32, {3}});
++  m.SetIndices<int32_t>({/*0*/ 0, 0, /*1*/ 1, 0, /*2*/ 0, 2, /*3*/ 1, 2});
++  m.SetUpdates<uint8_t>(
++      {/*0*/ 1,  2,  3,  4,  5,  /*1*/ 6,  7,  8,  9,  10,
++       /*2*/ 11, 12, 13, 14, 15, /*3*/ 16, 17, 18, 19, 20});
++  m.SetShape<int32_t>({2, 3, 5});
++  ASSERT_EQ(m.Invoke(), kTfLiteOk);
++
++  EXPECT_THAT(m.GetOutputShape(), ElementsAreArray({2, 3, 5}));
++  EXPECT_THAT(m.GetOutput<uint8_t>(),
++              ElementsAreArray({/*0, 0*/ 1,  2,  3,  4,  5,
++                                /*0, 1*/ 0,  0,  0,  0,  0,
++                                /*0, 2*/ 11, 12, 13, 14, 15,
++                                /*1, 0*/ 6,  7,  8,  9,  10,
++                                /*1, 1*/ 0,  0,  0,  0,  0,
++                                /*1, 2*/ 16, 17, 18, 19, 20}));
++}
++
++TEST(ScatterNdOpTest, Int32IndicesInt8Updates) {
++  ScatterNdOpModel m({TensorType_INT32, {4, 2}}, {TensorType_INT8, {4, 5}},
++                     {TensorType_INT32, {3}});
++  m.SetIndices<int32_t>({/*0*/ 0, 0, /*1*/ 1, 0, /*2*/ 0, 2, /*3*/ 1, 2});
++  m.SetUpdates<int8_t>(
++      {/*0*/ 1,  2,  3,  4,  5,  /*1*/ 6,  7,  8,  9,  10,
++       /*2*/ 11, 12, 13, 14, 15, /*3*/ 16, 17, 18, 19, 20});
++  m.SetShape<int32_t>({2, 3, 5});
++  ASSERT_EQ(m.Invoke(), kTfLiteOk);
++
++  EXPECT_THAT(m.GetOutputShape(), ElementsAreArray({2, 3, 5}));
++  EXPECT_THAT(m.GetOutput<int8_t>(),
++              ElementsAreArray({/*0, 0*/ 1,  2,  3,  4,  5,
++                                /*0, 1*/ 0,  0,  0,  0,  0,
++                                /*0, 2*/ 11, 12, 13, 14, 15,
++                                /*1, 0*/ 6,  7,  8,  9,  10,
++                                /*1, 1*/ 0,  0,  0,  0,  0,
++                                /*1, 2*/ 16, 17, 18, 19, 20}));
++}
++
++TEST(ScatterNdOpTest, Int32IndicesInt32Updates) {
++  ScatterNdOpModel m({TensorType_INT32, {4, 2}}, {TensorType_INT32, {4, 5}},
++                     {TensorType_INT32, {3}});
++  m.SetIndices<int32_t>({/*0*/ 0, 0, /*1*/ 1, 0, /*2*/ 0, 2, /*3*/ 1, 2});
++  m.SetUpdates<int32_t>(
++      {/*0*/ 1,  2,  3,  4,  5,  /*1*/ 6,  7,  8,  9,  10,
++       /*2*/ 11, 12, 13, 14, 15, /*3*/ 16, 17, 18, 19, 20});
++  m.SetShape<int32_t>({2, 3, 5});
++  ASSERT_EQ(m.Invoke(), kTfLiteOk);
++
++  EXPECT_THAT(m.GetOutputShape(), ElementsAreArray({2, 3, 5}));
++  EXPECT_THAT(m.GetOutput<int32_t>(),
++              ElementsAreArray({/*0, 0*/ 1,  2,  3,  4,  5,
++                                /*0, 1*/ 0,  0,  0,  0,  0,
++                                /*0, 2*/ 11, 12, 13, 14, 15,
++                                /*1, 0*/ 6,  7,  8,  9,  10,
++                                /*1, 1*/ 0,  0,  0,  0,  0,
++                                /*1, 2*/ 16, 17, 18, 19, 20}));
++}
++
++TEST(ScatterNdOpTest, Int32IndicesInt64Updates) {
++  ScatterNdOpModel m({TensorType_INT32, {4, 2}}, {TensorType_INT64, {4, 5}},
++                     {TensorType_INT32, {3}});
++  m.SetIndices<int32_t>({/*0*/ 0, 0, /*1*/ 1, 0, /*2*/ 0, 2, /*3*/ 1, 2});
++  m.SetUpdates<int64_t>(
++      {/*0*/ 1,  2,  3,  4,  5,  /*1*/ 6,  7,  8,  9,  10,
++       /*2*/ 11, 12, 13, 14, 15, /*3*/ 16, 17, 18, 19, 20});
++  m.SetShape<int32_t>({2, 3, 5});
++  ASSERT_EQ(m.Invoke(), kTfLiteOk);
++
++  EXPECT_THAT(m.GetOutputShape(), ElementsAreArray({2, 3, 5}));
++  EXPECT_THAT(m.GetOutput<int64_t>(),
++              ElementsAreArray({/*0, 0*/ 1,  2,  3,  4,  5,
++                                /*0, 1*/ 0,  0,  0,  0,  0,
++                                /*0, 2*/ 11, 12, 13, 14, 15,
++                                /*1, 0*/ 6,  7,  8,  9,  10,
++                                /*1, 1*/ 0,  0,  0,  0,  0,
++                                /*1, 2*/ 16, 17, 18, 19, 20}));
++}
++
++TEST(ScatterNdOpTest, Int32IndicesBoolUpdates) {
++  ScatterNdOpModel m({TensorType_INT32, {4, 1}}, {TensorType_BOOL, {4}},
++                     {TensorType_INT32, {1}});
++  m.SetIndices<int32_t>({4, 3, 1, 7});
++  m.SetUpdates<bool>({true, false, true, false});
++  m.SetShape<int32_t>({8});
++  ASSERT_EQ(m.Invoke(), kTfLiteOk);
++
++  EXPECT_THAT(m.GetOutputShape(), ElementsAreArray({8}));
++  EXPECT_THAT(
++      m.GetOutput<bool>(),
++      ElementsAreArray({false, true, false, false, true, false, false, false}));
++}
++
++TEST(ScatterNdOpTest, DynamicShape) {
++  ScatterNdOpModel m({TensorType_INT32, {4, 2}}, {TensorType_INT64, {4, 5}},
++                     {TensorType_INT32, {3}});
++  m.SetIndices<int32_t>({/*0*/ 0, 0, /*1*/ 1, 0, /*2*/ 0, 2, /*3*/ 1, 2});
++  m.SetUpdates<int64_t>(
++      {/*0*/ 1,  2,  3,  4,  5,  /*1*/ 6,  7,  8,  9,  10,
++       /*2*/ 11, 12, 13, 14, 15, /*3*/ 16, 17, 18, 19, 20});
++  m.SetShape<int32_t>({2, 3, 5});
++  ASSERT_EQ(m.Invoke(), kTfLiteOk);
++
++  EXPECT_THAT(m.GetOutputShape(), ElementsAreArray({2, 3, 5}));
++  EXPECT_THAT(m.GetOutput<int64_t>(),
++              ElementsAreArray({/*0, 0*/ 1,  2,  3,  4,  5,
++                                /*0, 1*/ 0,  0,  0,  0,  0,
++                                /*0, 2*/ 11, 12, 13, 14, 15,
++                                /*1, 0*/ 6,  7,  8,  9,  10,
++                                /*1, 1*/ 0,  0,  0,  0,  0,
++                                /*1, 2*/ 16, 17, 18, 19, 20}));
++
++  m.SetIndices<int32_t>({/*0*/ 2, 3, /*1*/ 1, 0, /*2*/ 2, 0, /*3*/ 1, 2});
++  m.SetShape<int32_t>({3, 4, 5});
++  ASSERT_EQ(m.Invoke(), kTfLiteOk);
++
++  EXPECT_THAT(m.GetOutputShape(), ElementsAreArray({3, 4, 5}));
++  EXPECT_THAT(m.GetOutput<int64_t>(),
++              ElementsAreArray({/*0, 0*/ 0,  0,  0,  0,  0,
++                                /*0, 1*/ 0,  0,  0,  0,  0,
++                                /*0, 2*/ 0,  0,  0,  0,  0,
++                                /*0, 3*/ 0,  0,  0,  0,  0,
++                                /*1, 0*/ 6,  7,  8,  9,  10,
++                                /*1, 1*/ 0,  0,  0,  0,  0,
++                                /*1, 2*/ 16, 17, 18, 19, 20,
++                                /*1, 3*/ 0,  0,  0,  0,  0,
++                                /*2, 0*/ 11, 12, 13, 14, 15,
++                                /*2, 1*/ 0,  0,  0,  0,  0,
++                                /*2, 2*/ 0,  0,  0,  0,  0,
++                                /*2, 3*/ 1,  2,  3,  4,  5}));
+ }
+ 
+-TEST(ScatterNdOpTest, Int32IndicesInt64Updates) {
+-  ScatterNdOpModel m({TensorType_INT32, {4, 2}}, {TensorType_INT64, {4, 5}},
+-                     {TensorType_INT32, {3}});
+-  m.SetIndices<int32_t>({/*0*/ 0, 0, /*1*/ 1, 0, /*2*/ 0, 2, /*3*/ 1, 2});
+-  m.SetUpdates<int64_t>(
+-      {/*0*/ 1,  2,  3,  4,  5,  /*1*/ 6,  7,  8,  9,  10,
+-       /*2*/ 11, 12, 13, 14, 15, /*3*/ 16, 17, 18, 19, 20});
+-  m.SetShape<int32_t>({2, 3, 5});
++TEST(ScatterNdOpTest, ReadAndWriteArrayLimits) {
++  ScatterNdOpModel m({TensorType_INT32, {5, 1}}, {TensorType_INT32, {5}},
++                     {TensorType_INT32, {1}});
++  m.SetIndices<int32_t>({4, 3, 1, 0, 2});
++  m.SetUpdates<int32_t>({1, 2, 3, 7, 9});
++  m.SetShape<int32_t>({5});
+   ASSERT_EQ(m.Invoke(), kTfLiteOk);
+-
+-  EXPECT_THAT(m.GetOutputShape(), ElementsAreArray({2, 3, 5}));
+-  EXPECT_THAT(m.GetOutput<int64_t>(),
+-              ElementsAreArray({/*0, 0*/ 1,  2,  3,  4,  5,
+-                                /*0, 1*/ 0,  0,  0,  0,  0,
+-                                /*0, 2*/ 11, 12, 13, 14, 15,
+-                                /*1, 0*/ 6,  7,  8,  9,  10,
+-                                /*1, 1*/ 0,  0,  0,  0,  0,
+-                                /*1, 2*/ 16, 17, 18, 19, 20}));
++  EXPECT_THAT(m.GetOutputShape(), ElementsAreArray({5}));
++  EXPECT_THAT(m.GetOutput<int32_t>(), ElementsAreArray({7, 3, 9, 2, 1}));
+ }
+ 
+-TEST(ScatterNdOpTest, Int32IndicesBoolUpdates) {
+-  ScatterNdOpModel m({TensorType_INT32, {4, 1}}, {TensorType_BOOL, {4}},
++TEST(ScatterNdOpTest, OOBRead) {
++  ScatterNdOpModel m({TensorType_INT32, {1, 1}}, {TensorType_INT32, {1}},
+                      {TensorType_INT32, {1}});
+-  m.SetIndices<int32_t>({4, 3, 1, 7});
+-  m.SetUpdates<bool>({true, false, true, false});
+-  m.SetShape<int32_t>({8});
+-  ASSERT_EQ(m.Invoke(), kTfLiteOk);
+-
+-  EXPECT_THAT(m.GetOutputShape(), ElementsAreArray({8}));
+-  EXPECT_THAT(
+-      m.GetOutput<bool>(),
+-      ElementsAreArray({false, true, false, false, true, false, false, false}));
++  m.SetIndices<int32_t>({4});
++  m.SetUpdates<int32_t>({1});
++  m.SetShape<int32_t>({1});
++  ASSERT_EQ(m.Invoke(), kTfLiteError);
+ }
+ 
+-TEST(ScatterNdOpTest, DynamicShape) {
+-  ScatterNdOpModel m({TensorType_INT32, {4, 2}}, {TensorType_INT64, {4, 5}},
+-                     {TensorType_INT32, {3}});
+-  m.SetIndices<int32_t>({/*0*/ 0, 0, /*1*/ 1, 0, /*2*/ 0, 2, /*3*/ 1, 2});
+-  m.SetUpdates<int64_t>(
+-      {/*0*/ 1,  2,  3,  4,  5,  /*1*/ 6,  7,  8,  9,  10,
+-       /*2*/ 11, 12, 13, 14, 15, /*3*/ 16, 17, 18, 19, 20});
+-  m.SetShape<int32_t>({2, 3, 5});
+-  ASSERT_EQ(m.Invoke(), kTfLiteOk);
+-
+-  EXPECT_THAT(m.GetOutputShape(), ElementsAreArray({2, 3, 5}));
+-  EXPECT_THAT(m.GetOutput<int64_t>(),
+-              ElementsAreArray({/*0, 0*/ 1,  2,  3,  4,  5,
+-                                /*0, 1*/ 0,  0,  0,  0,  0,
+-                                /*0, 2*/ 11, 12, 13, 14, 15,
+-                                /*1, 0*/ 6,  7,  8,  9,  10,
+-                                /*1, 1*/ 0,  0,  0,  0,  0,
+-                                /*1, 2*/ 16, 17, 18, 19, 20}));
+-
+-  m.SetIndices<int32_t>({/*0*/ 2, 3, /*1*/ 1, 0, /*2*/ 2, 0, /*3*/ 1, 2});
+-  m.SetShape<int32_t>({3, 4, 5});
+-  ASSERT_EQ(m.Invoke(), kTfLiteOk);
+-
+-  EXPECT_THAT(m.GetOutputShape(), ElementsAreArray({3, 4, 5}));
+-  EXPECT_THAT(m.GetOutput<int64_t>(),
+-              ElementsAreArray({/*0, 0*/ 0,  0,  0,  0,  0,
+-                                /*0, 1*/ 0,  0,  0,  0,  0,
+-                                /*0, 2*/ 0,  0,  0,  0,  0,
+-                                /*0, 3*/ 0,  0,  0,  0,  0,
+-                                /*1, 0*/ 6,  7,  8,  9,  10,
+-                                /*1, 1*/ 0,  0,  0,  0,  0,
+-                                /*1, 2*/ 16, 17, 18, 19, 20,
+-                                /*1, 3*/ 0,  0,  0,  0,  0,
+-                                /*2, 0*/ 11, 12, 13, 14, 15,
+-                                /*2, 1*/ 0,  0,  0,  0,  0,
+-                                /*2, 2*/ 0,  0,  0,  0,  0,
+-                                /*2, 3*/ 1,  2,  3,  4,  5}));
++TEST(ScatterNdOpTest, OOBWrites) {
++  ScatterNdOpModel m({TensorType_INT32, {5, 1}}, {TensorType_INT32, {5}},
++                     {TensorType_INT32, {1}});
++  m.SetIndices<int32_t>({4, 3, 1, -0x38, 0x38});
++  m.SetUpdates<int32_t>({1, 2, 3, 0x44444444, 0x55555555});
++  m.SetShape<int32_t>({1});
++  ASSERT_EQ(m.Invoke(), kTfLiteError);
+ }
+ 
+ }  // namespace
+
+tokens used
+input: 287
+cache read: 25,088
+cache write: 0
+output: 150
+reasoning output: 85
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target ScatterNd implementation and tests",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Backport status-return and bounds checks",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Backport focused ScatterNd tests",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "content": "Validate diff shape and summarize result",
+      "status": "completed",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target ScatterNd implementation and tests",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Backport status-return and bounds checks",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Backport focused ScatterNd tests",
+    "status": "completed",
+    "priority": "medium"
+  },
+  {
+    "content": "Validate diff shape and summarize result",
+    "status": "completed",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 19,129
+cache read: 25,088
+cache write: 0
+output: 92
+reasoning output: 354
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/lite/kernels/internal/reference/reference_ops.h b/tensorflow/lite/kernels/internal/reference/reference_ops.h
+    index 52d3814a05..0a7b202f28 100644
+    --- a/tensorflow/lite/kernels/internal/reference/reference_ops.h
+    +++ b/tensorflow/lite/kernels/internal/reference/reference_ops.h
+    @@ -656,11 +656,12 @@ inline TfLiteStatus GatherNdString(const RuntimeShape& params_shape,
+     #endif
+     
+     template <typename IndicesT, typename UpdatesT>
+    -inline void ScatterNd(const RuntimeShape& indices_shape,
+    -                      const IndicesT* indices_data,
+    -                      const RuntimeShape& updates_shape,
+    -                      const UpdatesT* updates_data,
+    -                      const RuntimeShape& output_shape, UpdatesT* output_data) {
+    +inline TfLiteStatus ScatterNd(const RuntimeShape& indices_shape,
+    +                              const IndicesT* indices_data,
+    +                              const RuntimeShape& updates_shape,
+    +                              const UpdatesT* updates_data,
+    +                              const RuntimeShape& output_shape,
+    +                              UpdatesT* output_data) {
+       ruy::profiler::ScopeLabel label("ScatterNd");
+     
+       int n_slices = 1;
+    @@ -683,18 +684,24 @@ inline void ScatterNd(const RuntimeShape& indices_shape,
+         remain_flat_size = dims_to_count[i];
+       }
+     
+    +  if (n_slices * slice_size > updates_shape.FlatSize()) {
+    +    return kTfLiteError;
+    +  }
+       memset(output_data, 0, sizeof(UpdatesT) * output_flat_size);
+       for (int i = 0; i < n_slices; ++i) {
+         int to_pos = 0;
+         for (int j = 0; j < indices_nd; ++j) {
+           IndicesT idx = indices_data[i * indices_nd + j];
+    -      TFLITE_DCHECK(0 <= idx && idx < output_shape.Dims(j));
+           to_pos += idx * dims_to_count[j];
+         }
+    +    if (to_pos < 0 || to_pos + slice_size > output_flat_size) {
+    +      return kTfLiteError;
+    +    }
+         for (int j = 0; j < slice_size; j++) {
+           output_data[to_pos + j] += updates_data[i * slice_size + j];
+         }
+       }
+    +  return kTfLiteOk;
+     }
+     
+     template <typename T>
+    diff --git a/tensorflow/lite/kernels/scatter_nd.cc b/tensorflow/lite/kernels/scatter_nd.cc
+    index ab02a206fd..c5aab58409 100644
+    --- a/tensorflow/lite/kernels/scatter_nd.cc
+    +++ b/tensorflow/lite/kernels/scatter_nd.cc
+    @@ -129,11 +129,10 @@ TfLiteStatus Prepare(TfLiteContext* context, TfLiteNode* node) {
+     template <typename IndicesT, typename UpdatesT>
+     TfLiteStatus ScatterNd(const TfLiteTensor* indices, const TfLiteTensor* updates,
+                            TfLiteTensor* output) {
+    -  reference_ops::ScatterNd(
+    +  return reference_ops::ScatterNd(
+           GetTensorShape(indices), GetTensorData<IndicesT>(indices),
+           GetTensorShape(updates), GetTensorData<UpdatesT>(updates),
+           GetTensorShape(output), GetTensorData<UpdatesT>(output));
+    -  return kTfLiteOk;
+     }
+     
+     template <typename IndicesT>
+    @@ -149,25 +148,36 @@ TfLiteStatus EvalScatterNd(TfLiteContext* context, const TfLiteTensor* indices,
+                           ResizeOutputTensor<IndicesT>(context, shape, output));
+       }
+     
+    +  TfLiteStatus status = kTfLiteError;
+       switch (updates->type) {
+         case kTfLiteFloat32:
+    -      return ScatterNd<IndicesT, float>(indices, updates, output);
+    +      status = ScatterNd<IndicesT, float>(indices, updates, output);
+    +      break;
+         case kTfLiteUInt8:
+    -      return ScatterNd<IndicesT, uint8_t>(indices, updates, output);
+    +      status = ScatterNd<IndicesT, uint8_t>(indices, updates, output);
+    +      break;
+         case kTfLiteBool:
+    -      return ScatterNd<IndicesT, bool>(indices, updates, output);
+    +      status = ScatterNd<IndicesT, bool>(indices, updates, output);
+    +      break;
+         case kTfLiteInt8:
+    -      return ScatterNd<IndicesT, int8_t>(indices, updates, output);
+    +      status = ScatterNd<IndicesT, int8_t>(indices, updates, output);
+    +      break;
+         case kTfLiteInt32:
+    -      return ScatterNd<IndicesT, int32_t>(indices, updates, output);
+    +      status = ScatterNd<IndicesT, int32_t>(indices, updates, output);
+    +      break;
+         case kTfLiteInt64:
+    -      return ScatterNd<IndicesT, int64_t>(indices, updates, output);
+    +      status = ScatterNd<IndicesT, int64_t>(indices, updates, output);
+    +      break;
+         default:
+           TF_LITE_KERNEL_LOG(
+               context, "Updates of type '%s' are not supported by scatter_nd.",
+               TfLiteTypeGetName(updates->type));
+           return kTfLiteError;
+       }
+    +  if (status != kTfLiteOk) {
+    +    TF_LITE_KERNEL_LOG(context, "scatter_nd index out of bounds");
+    +  }
+    +  return status;
+     }
+     
+     TfLiteStatus Eval(TfLiteContext* context, TfLiteNode* node) {
+    diff --git a/tensorflow/lite/kernels/scatter_nd_test.cc b/tensorflow/lite/kernels/scatter_nd_test.cc
+    index ed62c67f73..b0951efcbb 100644
+    --- a/tensorflow/lite/kernels/scatter_nd_test.cc
+    +++ b/tensorflow/lite/kernels/scatter_nd_test.cc
+    @@ -361,5 +361,34 @@ TEST(ScatterNdOpTest, DynamicShape) {
+                                     /*2, 3*/ 1,  2,  3,  4,  5}));
+     }
+     
+    +TEST(ScatterNdOpTest, ReadAndWriteArrayLimits) {
+    +  ScatterNdOpModel m({TensorType_INT32, {5, 1}}, {TensorType_INT32, {5}},
+    +                     {TensorType_INT32, {1}});
+    +  m.SetIndices<int32_t>({4, 3, 1, 0, 2});
+    +  m.SetUpdates<int32_t>({1, 2, 3, 7, 9});
+    +  m.SetShape<int32_t>({5});
+    +  ASSERT_EQ(m.Invoke(), kTfLiteOk);
+    +  EXPECT_THAT(m.GetOutputShape(), ElementsAreArray({5}));
+    +  EXPECT_THAT(m.GetOutput<int32_t>(), ElementsAreArray({7, 3, 9, 2, 1}));
+    +}
+    +
+    +TEST(ScatterNdOpTest, OOBRead) {
+    +  ScatterNdOpModel m({TensorType_INT32, {1, 1}}, {TensorType_INT32, {1}},
+    +                     {TensorType_INT32, {1}});
+    +  m.SetIndices<int32_t>({4});
+    +  m.SetUpdates<int32_t>({1});
+    +  m.SetShape<int32_t>({1});
+    +  ASSERT_EQ(m.Invoke(), kTfLiteError);
+    +}
+    +
+    +TEST(ScatterNdOpTest, OOBWrites) {
+    +  ScatterNdOpModel m({TensorType_INT32, {5, 1}}, {TensorType_INT32, {5}},
+    +                     {TensorType_INT32, {1}});
+    +  m.SetIndices<int32_t>({4, 3, 1, -0x38, 0x38});
+    +  m.SetUpdates<int32_t>({1, 2, 3, 0x44444444, 0x55555555});
+    +  m.SetShape<int32_t>({1});
+    +  ASSERT_EQ(m.Invoke(), kTfLiteError);
+    +}
+    +
+     }  // namespace
+     }  // namespace tflite
+  notes: >
+    Backported ScatterNd bounds/error propagation and regression tests; lightweight diff validation passed.
+```
+
+tokens used
+input: 1,280
+cache read: 43,520
+cache write: 0
+output: 1,911
+reasoning output: 0

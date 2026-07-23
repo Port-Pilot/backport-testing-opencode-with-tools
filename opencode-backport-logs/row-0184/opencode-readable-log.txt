@@ -1,0 +1,435 @@
+I’ll locate the equivalent `MaxPoolGradWithArgmax` CPU implementation in the 2.1.4 checkout, compare the surrounding loop shape to the newer hunk, then apply the smallest guard needed.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Locate equivalent MaxPoolGradWithArgmax CPU code in target TensorFlow 2.1.4",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Validate the adapted hunk against target base",
+      "status": "pending",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply source change and inspect final diff",
+      "status": "pending",
+      "priority": "high"
+    }
+  ]
+}
+[
+  {
+    "content": "Locate equivalent MaxPoolGradWithArgmax CPU code in target TensorFlow 2.1.4",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Validate the adapted hunk against target base",
+    "status": "pending",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply source change and inspect final diff",
+    "status": "pending",
+    "priority": "high"
+  }
+]
+
+tokens used
+input: 3,705
+cache read: 4,608
+cache write: 0
+output: 139
+reasoning output: 0
+
+tool: viewcode
+{
+  "ref": "47612cd69a2fdd76156360ca9102816e156f7e5c",
+  "path": "tensorflow/core/kernels/maxpooling_op.cc",
+  "startline": 930,
+  "endline": 1045
+}
+Here are lines 930 through 1045.
+
+    }
+
+    TensorShape out_shape({params.tensor_in_batch, params.out_height,
+                           params.out_width, params.depth});
+    Tensor* output = nullptr;
+    OP_REQUIRES_OK(context, context->allocate_output(0, out_shape, &output));
+    Tensor* argmax = nullptr;
+    OP_REQUIRES_OK(context, context->allocate_output(1, out_shape, &argmax));
+
+    LaunchMaxPoolingWithArgmax<Device, T>::launch(
+        context, params, tensor_in, output, argmax, propagate_nans_,
+        include_batch_in_index_);
+  }
+
+ private:
+  std::vector<int32> ksize_;
+  std::vector<int32> stride_;
+  Padding padding_;
+  bool propagate_nans_;
+  bool include_batch_in_index_;
+};
+
+template <typename Device, typename T>
+struct LaunchMaxPoolingGradWithArgmax;
+
+template <typename T>
+struct LaunchMaxPoolingGradWithArgmax<CPUDevice, T> {
+  typedef Eigen::Map<Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic>>
+      EigenMatrixMap;
+
+  static void launch(OpKernelContext* context, const PoolParameters& params,
+                     const Tensor& grad_in, const Tensor& argmax,
+                     Tensor* grad_out, const bool include_batch_in_index) {
+    const DeviceBase::CpuWorkerThreads& worker_threads =
+        *(context->device()->tensorflow_cpu_worker_threads());
+
+    auto shard = [&grad_in, &argmax, &grad_out, include_batch_in_index](
+                     int64 start, int64 limit) {
+      const int64 batch_size =
+          GetTensorDim(grad_out->shape(), FORMAT_NHWC, 'N');
+      const int64 output_size_per_batch = grad_out->NumElements() / batch_size;
+      const int64 input_size_per_batch = grad_in.NumElements() / batch_size;
+
+      {
+        auto grad_out_flat = grad_out->flat<T>();
+        auto argmax_flat = argmax.flat<int64>();
+        auto grad_in_flat = grad_in.flat<T>();
+
+        const int64 output_start = start * output_size_per_batch;
+        const int64 output_end = limit * output_size_per_batch;
+        EigenMatrixMap inputShard(grad_out_flat.data() + output_start, 1,
+                                  output_end - output_start);
+        inputShard.setConstant(T(0));
+
+        const int input_start = start * input_size_per_batch;
+        const int input_end = limit * input_size_per_batch;
+        for (int64 index = input_start; index < input_end; index++) {
+          int64 grad_out_index = argmax_flat(index);
+          if (!include_batch_in_index) {
+            const int64 cur_batch = index / input_size_per_batch;
+            grad_out_index += cur_batch * output_size_per_batch;
+          }
+          CHECK(grad_out_index >= output_start && grad_out_index < output_end)
+              << "Invalid output gradient index: " << grad_out_index << ", "
+              << output_start << ", " << output_end;
+          grad_out_flat(grad_out_index) += grad_in_flat(index);
+        }
+      }
+    };
+
+    const int64 batch_size = GetTensorDim(grad_out->shape(), FORMAT_NHWC, 'N');
+    const int64 shard_cost = grad_out->NumElements() / batch_size;
+    Shard(worker_threads.num_threads, worker_threads.workers, batch_size,
+          shard_cost, shard);
+  }
+};
+
+template <typename Device, typename T>
+class MaxPoolingGradWithArgmaxOp : public OpKernel {
+ public:
+  explicit MaxPoolingGradWithArgmaxOp(OpKernelConstruction* context)
+      : OpKernel(context) {
+    string data_format_str;
+    auto status = context->GetAttr("data_format", &data_format_str);
+    if (status.ok()) {
+      OP_REQUIRES(context, FormatFromString(data_format_str, &data_format_),
+                  errors::InvalidArgument("Invalid data format"));
+    }
+
+    OP_REQUIRES_OK(context, context->GetAttr("ksize", &ksize_));
+    OP_REQUIRES(context, ksize_.size() == 4,
+                errors::InvalidArgument("Sliding window ksize field must "
+                                        "specify 4 dimensions"));
+    OP_REQUIRES_OK(context, context->GetAttr("strides", &stride_));
+    OP_REQUIRES(context, stride_.size() == 4,
+                errors::InvalidArgument("Sliding window stride field must "
+                                        "specify 4 dimensions"));
+    OP_REQUIRES_OK(context, context->GetAttr("padding", &padding_));
+    OP_REQUIRES(context, ksize_[0] == 1 && stride_[0] == 1,
+                errors::Unimplemented(
+                    "Pooling is not yet supported on the batch dimension."));
+    OP_REQUIRES_OK(context, context->GetAttr("include_batch_in_index",
+                                             &include_batch_in_index_));
+  }
+
+  void Compute(OpKernelContext* context) override {
+    const Tensor& tensor_in = context->input(0);
+    const Tensor& grad_in = context->input(1);
+    const Tensor& argmax = context->input(2);
+
+    PoolParameters params{context,  ksize_,      stride_,
+                          padding_, FORMAT_NHWC, tensor_in.shape()};
+    if (!context->status().ok()) {
+      return;
+    }
+
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: git_show
+{
+  "ref": "dcd7867de0fea4b72a2b34bd41eb74548dc23886",
+  "context": "for (int64 index = input_start; index < input_end; index++) {\n          int64 grad_out_index = argmax_flat(index);\n          if (!include_batch_in_index) {"
+}
+commit dcd7867de0fea4b72a2b34bd41eb74548dc23886
+Author: Mihai Maruseac <mihaimaruseac@google.com>
+Date:   Wed May 5 08:38:03 2021 -0700
+
+    Fix heap buffer overflow
+    
+    PiperOrigin-RevId: 372132844
+    Change-Id: Idef9895efaf145f2b1c23d31983601ec980cd5e4
+
+ tensorflow/core/kernels/maxpooling_op.cc | 3 +++
+ 1 file changed, 3 insertions(+)
+This commit shows that there is a high probability that this code is new, so the corresponding code segment cannot be found in the old version.
+You can call `viewcode` and `locate_symbol` to further check the results step by step. For newly introduced code, we consider that this hunk `need not ported`.
+
+tool: locate_symbol
+{
+  "ref": "47612cd69a2fdd76156360ca9102816e156f7e5c",
+  "symbol": "LaunchMaxPoolingGradWithArgmax"
+}
+tensorflow/core/kernels/maxpooling_op.cc:953
+tensorflow/core/kernels/maxpooling_op.cc:956
+tensorflow/core/kernels/maxpooling_op.cc:1340
+tensorflow/core/kernels/maxpooling_op.cc:1052
+
+tokens used
+input: 895
+cache read: 7,680
+cache write: 0
+output: 202
+reasoning output: 0
+
+The target file has the same CPU shard loop and same `argmax_flat(index)` access pattern, so the newer fix maps directly with only line-number/context adjustment.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Locate equivalent MaxPoolGradWithArgmax CPU code in target TensorFlow 2.1.4",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate the adapted hunk against target base",
+      "status": "in_progress",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply source change and inspect final diff",
+      "status": "pending",
+      "priority": "high"
+    }
+  ]
+}
+[
+  {
+    "content": "Locate equivalent MaxPoolGradWithArgmax CPU code in target TensorFlow 2.1.4",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate the adapted hunk against target base",
+    "status": "in_progress",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply source change and inspect final diff",
+    "status": "pending",
+    "priority": "high"
+  }
+]
+
+tokens used
+input: 2,522
+cache read: 7,680
+cache write: 0
+output: 131
+reasoning output: 14
+
+tool: validate
+{
+  "ref": "47612cd69a2fdd76156360ca9102816e156f7e5c",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/maxpooling_op.cc b/tensorflow/core/kernels/maxpooling_op.cc\nindex 000000000000..000000000000 100644\n--- a/tensorflow/core/kernels/maxpooling_op.cc\n+++ b/tensorflow/core/kernels/maxpooling_op.cc\n@@ -977,6 +977,9 @@ struct LaunchMaxPoolingGradWithArgmax<CPUDevice, T> {\n         const int input_start = start * input_size_per_batch;\n         const int input_end = limit * input_size_per_batch;\n         for (int64 index = input_start; index < input_end; index++) {\n+          if (index >= argmax.NumElements()) {\n+            break;\n+          }\n           int64 grad_out_index = argmax_flat(index);\n           if (!include_batch_in_index) {\n             const int64 cur_batch = index / input_size_per_batch;\n"
+}
+Patch applied successfully
+
+tokens used
+input: 742
+cache read: 9,728
+cache write: 0
+output: 250
+reasoning output: 0
+
+The adapted hunk applies cleanly to the target base. I’m applying that exact guard in `tensorflow/core/kernels/maxpooling_op.cc` now.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Locate equivalent MaxPoolGradWithArgmax CPU code in target TensorFlow 2.1.4",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate the adapted hunk against target base",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply source change and inspect final diff",
+      "status": "in_progress",
+      "priority": "high"
+    }
+  ]
+}
+[
+  {
+    "content": "Locate equivalent MaxPoolGradWithArgmax CPU code in target TensorFlow 2.1.4",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate the adapted hunk against target base",
+    "status": "completed",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply source change and inspect final diff",
+    "status": "in_progress",
+    "priority": "high"
+  }
+]
+
+tokens used
+input: 1,005
+cache read: 9,728
+cache write: 0
+output: 128
+reasoning output: 0
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/kernels/maxpooling_op.cc\n@@\n         const int input_start = start * input_size_per_batch;\n         const int input_end = limit * input_size_per_batch;\n         for (int64 index = input_start; index < input_end; index++) {\n+          if (index >= argmax.NumElements()) {\n+            break;\n+          }\n           int64 grad_out_index = argmax_flat(index);\n           if (!include_batch_in_index) {\n             const int64 cur_batch = index / input_size_per_batch;\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/kernels/maxpooling_op.cc
+
+tokens used
+input: 1,256
+cache read: 9,728
+cache write: 0
+output: 149
+reasoning output: 0
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/kernels/maxpooling_op.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0184-47612cd69a2f",
+  "timeout": 120000
+}
+warning: in the working copy of 'tensorflow/core/kernels/maxpooling_op.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/kernels/maxpooling_op.cc b/tensorflow/core/kernels/maxpooling_op.cc
+index 5652addd00..f1193f0ef4 100644
+--- a/tensorflow/core/kernels/maxpooling_op.cc
++++ b/tensorflow/core/kernels/maxpooling_op.cc
+@@ -984,6 +984,9 @@ struct LaunchMaxPoolingGradWithArgmax<CPUDevice, T> {
+         const int input_start = start * input_size_per_batch;
+         const int input_end = limit * input_size_per_batch;
+         for (int64 index = input_start; index < input_end; index++) {
++          if (index >= argmax.NumElements()) {
++            break;
++          }
+           int64 grad_out_index = argmax_flat(index);
+           if (!include_batch_in_index) {
+             const int64 cur_batch = index / input_size_per_batch;
+
+tokens used
+input: 409
+cache read: 10,752
+cache write: 0
+output: 76
+reasoning output: 0
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Locate equivalent MaxPoolGradWithArgmax CPU code in target TensorFlow 2.1.4",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate the adapted hunk against target base",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply source change and inspect final diff",
+      "status": "completed",
+      "priority": "high"
+    }
+  ]
+}
+[
+  {
+    "content": "Locate equivalent MaxPoolGradWithArgmax CPU code in target TensorFlow 2.1.4",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate the adapted hunk against target base",
+    "status": "completed",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply source change and inspect final diff",
+    "status": "completed",
+    "priority": "high"
+  }
+]
+
+tokens used
+input: 726
+cache read: 10,752
+cache write: 0
+output: 88
+reasoning output: 0
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/kernels/maxpooling_op.cc b/tensorflow/core/kernels/maxpooling_op.cc
+    index 5652addd00..f1193f0ef4 100644
+    --- a/tensorflow/core/kernels/maxpooling_op.cc
+    +++ b/tensorflow/core/kernels/maxpooling_op.cc
+    @@ -984,6 +984,9 @@ struct LaunchMaxPoolingGradWithArgmax<CPUDevice, T> {
+             const int input_start = start * input_size_per_batch;
+             const int input_end = limit * input_size_per_batch;
+             for (int64 index = input_start; index < input_end; index++) {
+    +          if (index >= argmax.NumElements()) {
+    +            break;
+    +          }
+               int64 grad_out_index = argmax_flat(index);
+               if (!include_batch_in_index) {
+                 const int64 cur_batch = index / input_size_per_batch;
+  notes: >
+    Backported the MaxPoolGradWithArgmax CPU bounds guard to stop reading argmax past its NumElements.
+```
+
+tokens used
+input: 936
+cache read: 10,752
+cache write: 0
+output: 255
+reasoning output: 0

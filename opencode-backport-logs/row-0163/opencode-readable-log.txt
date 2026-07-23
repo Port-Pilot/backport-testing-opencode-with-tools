@@ -1,0 +1,252 @@
+I’ll inspect the target-side `EncodePngOp` implementation and compare only against the supplied new-version hunk, then apply the minimal equivalent guard in place.
+
+tool: viewcode
+{
+  "ref": "bf171d8341da2cfe1b2500b6b0bbbaa9bacc63db",
+  "path": "tensorflow/core/kernels/image/encode_png_op.cc",
+  "startline": 1,
+  "endline": 120
+}
+This file doesn't exist in this commit.
+
+tool: locate_symbol
+{
+  "ref": "bf171d8341da2cfe1b2500b6b0bbbaa9bacc63db",
+  "symbol": "EncodePngOp"
+}
+tensorflow/core/kernels/encode_png_op.cc:32
+tensorflow/core/kernels/encode_png_op.cc:34
+tensorflow/core/kernels/encode_png_op.cc:100
+
+tokens used
+input: 3,703
+cache read: 4,608
+cache write: 0
+output: 165
+reasoning output: 0
+
+In TensorFlow 2.1.4 the equivalent file is `tensorflow/core/kernels/encode_png_op.cc`, not under `kernels/image`; I’m checking that implementation before editing.
+
+tool: git_history
+{
+  "filepath": "tensorflow/core/kernels/encode_png_op.cc",
+  "start_line": 30,
+  "end_line": 80,
+  "start_commit": "bf171d8341da2cfe1b2500b6b0bbbaa9bacc63db",
+  "end_commit": "26eb323554ffccd173e8a79a8c05c15b685ae4d1"
+}
+Failed to get git history: Cmd('git') failed due to: exit code(128)
+  cmdline: git log --oneline -L 30,80:tensorflow/core/kernels/encode_png_op.cc bf171d8341da2cfe1b2500b6b0bbbaa9bacc63db..26eb323554ffccd173e8a79a8c05c15b685ae4d1
+  stderr: 'fatal: There is no path tensorflow/core/kernels/encode_png_op.cc in the commit'
+
+tool: viewcode
+{
+  "ref": "bf171d8341da2cfe1b2500b6b0bbbaa9bacc63db",
+  "path": "tensorflow/core/kernels/encode_png_op.cc",
+  "startline": 1,
+  "endline": 130
+}
+This file only has 103 lines. Here are lines 1 through 103.
+
+/* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+==============================================================================*/
+
+// See docs in ../ops/image_ops.cc
+
+#include <memory>
+#include "tensorflow/core/framework/bounds_check.h"
+#include "tensorflow/core/framework/op_kernel.h"
+#include "tensorflow/core/framework/register_types.h"
+#include "tensorflow/core/framework/tensor.h"
+#include "tensorflow/core/framework/tensor_shape.h"
+#include "tensorflow/core/framework/types.h"
+#include "tensorflow/core/lib/core/status.h"
+#include "tensorflow/core/lib/png/png_io.h"
+#include "tensorflow/core/platform/logging.h"
+
+namespace tensorflow {
+
+// Encode an image to a PNG stream
+class EncodePngOp : public OpKernel {
+ public:
+  explicit EncodePngOp(OpKernelConstruction* context) : OpKernel(context) {
+    OP_REQUIRES_OK(context, context->GetAttr("compression", &compression_));
+    OP_REQUIRES(context, -1 <= compression_ && compression_ <= 9,
+                errors::InvalidArgument("compression should be in [-1,9], got ",
+                                        compression_));
+
+    DataType dt = context->input_type(0);
+    OP_REQUIRES(context, dt == DataType::DT_UINT8 || dt == DataType::DT_UINT16,
+                errors::InvalidArgument(
+                    "image must have type uint8 or uint16, got ", dt));
+
+    if (dt == DataType::DT_UINT8) {
+      desired_channel_bits_ = 8;
+    } else {
+      desired_channel_bits_ = 16;
+    }
+  }
+
+  void Compute(OpKernelContext* context) override {
+    const Tensor& image = context->input(0);
+    OP_REQUIRES(context, image.dims() == 3,
+                errors::InvalidArgument("image must be 3-dimensional",
+                                        image.shape().DebugString()));
+    OP_REQUIRES(
+        context,
+        FastBoundsCheck(image.NumElements(), std::numeric_limits<int32>::max()),
+        errors::InvalidArgument("image cannot have >= int32 max elements"));
+    const int32 height = static_cast<int32>(image.dim_size(0));
+    const int32 width = static_cast<int32>(image.dim_size(1));
+    const int32 channels = static_cast<int32>(image.dim_size(2));
+
+    // In some cases, we pass width*channels*2 to png.
+    const int32 max_row_width = std::numeric_limits<int32>::max() / 2;
+
+    OP_REQUIRES(context, FastBoundsCheck(width * channels, max_row_width),
+                errors::InvalidArgument("image too wide to encode"));
+
+    OP_REQUIRES(context, channels >= 1 && channels <= 4,
+                errors::InvalidArgument(
+                    "image must have 1, 2, 3, or 4 channels, got ", channels));
+
+    // Encode image to png string
+    Tensor* output = nullptr;
+    OP_REQUIRES_OK(context,
+                   context->allocate_output(0, TensorShape({}), &output));
+    if (desired_channel_bits_ == 8) {
+      OP_REQUIRES(context,
+                  png::WriteImageToBuffer(
+                      image.flat<uint8>().data(), width, height,
+                      width * channels, channels, desired_channel_bits_,
+                      compression_, &output->scalar<tstring>()(), nullptr),
+                  errors::Internal("PNG encoding failed"));
+    } else {
+      OP_REQUIRES(context,
+                  png::WriteImageToBuffer(
+                      image.flat<uint16>().data(), width, height,
+                      width * channels * 2, channels, desired_channel_bits_,
+                      compression_, &output->scalar<tstring>()(), nullptr),
+                  errors::Internal("PNG encoding failed"));
+    }
+  }
+
+ private:
+  int compression_;
+  int desired_channel_bits_;
+};
+REGISTER_KERNEL_BUILDER(Name("EncodePng").Device(DEVICE_CPU), EncodePngOp);
+
+}  // namespace tensorflow
+
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tokens used
+input: 8,540
+cache read: 0
+cache write: 0
+output: 214
+reasoning output: 8
+
+The target code has the same shape around the input rank and element-count bounds checks, so the backport is a direct insertion of the non-empty image guard before the existing `FastBoundsCheck`.
+
+tool: validate
+{
+  "ref": "bf171d8341da2cfe1b2500b6b0bbbaa9bacc63db",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/encode_png_op.cc b/tensorflow/core/kernels/encode_png_op.cc\n--- a/tensorflow/core/kernels/encode_png_op.cc\n+++ b/tensorflow/core/kernels/encode_png_op.cc\n@@ -49,6 +49,8 @@ class EncodePngOp : public OpKernel {\n     OP_REQUIRES(context, image.dims() == 3,\n                 errors::InvalidArgument(\"image must be 3-dimensional\",\n                                         image.shape().DebugString()));\n+    OP_REQUIRES(context, image.NumElements() > 0,\n+                errors::Internal(\"Invalid image provided.\"));\n     OP_REQUIRES(\n         context,\n         FastBoundsCheck(image.NumElements(), std::numeric_limits<int32>::max()),\n"
+}
+Patch applied successfully
+
+tokens used
+input: 2,169
+cache read: 7,680
+cache write: 0
+output: 272
+reasoning output: 30
+
+The hunk validates against the target base; I’m applying that exact minimal change now.
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/kernels/encode_png_op.cc\n@@\n     OP_REQUIRES(context, image.dims() == 3,\n                 errors::InvalidArgument(\"image must be 3-dimensional\",\n                                         image.shape().DebugString()));\n+    OP_REQUIRES(context, image.NumElements() > 0,\n+                errors::Internal(\"Invalid image provided.\"));\n     OP_REQUIRES(\n         context,\n         FastBoundsCheck(image.NumElements(), std::numeric_limits<int32>::max()),\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/kernels/encode_png_op.cc
+
+tokens used
+input: 436
+cache read: 9,728
+cache write: 0
+output: 166
+reasoning output: 0
+
+I’ll inspect the resulting diff to confirm only the intended source change is present.
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/kernels/encode_png_op.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0163-bf171d8341da",
+  "timeout": 120000
+}
+warning: in the working copy of 'tensorflow/core/kernels/encode_png_op.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/kernels/encode_png_op.cc b/tensorflow/core/kernels/encode_png_op.cc
+index 8dbe1d377d..09bcdbe5e3 100644
+--- a/tensorflow/core/kernels/encode_png_op.cc
++++ b/tensorflow/core/kernels/encode_png_op.cc
+@@ -54,6 +54,8 @@ class EncodePngOp : public OpKernel {
+     OP_REQUIRES(context, image.dims() == 3,
+                 errors::InvalidArgument("image must be 3-dimensional",
+                                         image.shape().DebugString()));
++    OP_REQUIRES(context, image.NumElements() > 0,
++                errors::Internal("Invalid image provided."));
+     OP_REQUIRES(
+         context,
+         FastBoundsCheck(image.NumElements(), std::numeric_limits<int32>::max()),
+
+tokens used
+input: 630
+cache read: 9,728
+cache write: 0
+output: 100
+reasoning output: 13
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/kernels/encode_png_op.cc b/tensorflow/core/kernels/encode_png_op.cc
+    index 8dbe1d377d..09bcdbe5e3 100644
+    --- a/tensorflow/core/kernels/encode_png_op.cc
+    +++ b/tensorflow/core/kernels/encode_png_op.cc
+    @@ -54,6 +54,8 @@ class EncodePngOp : public OpKernel {
+         OP_REQUIRES(context, image.dims() == 3,
+                     errors::InvalidArgument("image must be 3-dimensional",
+                                             image.shape().DebugString()));
+    +    OP_REQUIRES(context, image.NumElements() > 0,
+    +                errors::Internal("Invalid image provided."));
+         OP_REQUIRES(
+             context,
+             FastBoundsCheck(image.NumElements(), std::numeric_limits<int32>::max()),
+  notes: >
+    Added the non-empty image validation guard to EncodePngOp in the TensorFlow 2.1.4 target location.
+```
+
+tokens used
+input: 3,018
+cache read: 7,680
+cache write: 0
+output: 243
+reasoning output: 0

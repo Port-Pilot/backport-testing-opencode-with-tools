@@ -1,0 +1,2152 @@
+I’ll map the supplied hunks onto the checked-out target code, then apply only the equivalent overflow-safe TensorShape construction and test change. I’ll avoid the known backport commit and use hunk validation where context may differ.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target locations for crop_and_resize kernel and image op test",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Validate and apply minimal backport hunks",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "content": "Review final diff and report YAML result",
+      "status": "pending",
+      "priority": "high"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target locations for crop_and_resize kernel and image op test",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Validate and apply minimal backport hunks",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "content": "Review final diff and report YAML result",
+    "status": "pending",
+    "priority": "high"
+  }
+]
+
+tokens used
+input: 4,346
+cache read: 4,608
+cache write: 0
+output: 134
+reasoning output: 0
+
+tool: viewcode
+{
+  "ref": "dca1d9748e8e90af76700fa8e10e6d37a927e3c1",
+  "path": "tensorflow/core/kernels/image/crop_and_resize_op.cc",
+  "startline": 390,
+  "endline": 450
+}
+Here are lines 390 through 450.
+
+    OP_REQUIRES_ASYNC(context, image_size.dims() == 1,
+                      errors::InvalidArgument("image_size must be 1-D",
+                                              image_size.shape().DebugString()),
+                      done);
+    OP_REQUIRES_ASYNC(context, image_size.dim_size(0) == 4,
+                      errors::InvalidArgument("image_size must have 4 elements",
+                                              image_size.shape().DebugString()),
+                      done);
+    auto image_size_vec = image_size.vec<int32>();
+    const int batch_size = internal::SubtleMustCopy(image_size_vec(0));
+    const int image_height = internal::SubtleMustCopy(image_size_vec(1));
+    const int image_width = internal::SubtleMustCopy(image_size_vec(2));
+    const int depth = internal::SubtleMustCopy(image_size_vec(3));
+    OP_REQUIRES_ASYNC(
+        context, image_height > 0 && image_width > 0,
+        errors::InvalidArgument("image dimensions must be positive"), done);
+    OP_REQUIRES_ASYNC(
+        context, grads.dim_size(3) == depth,
+        errors::InvalidArgument("image_size and grads are incompatible"), done);
+
+    // Allocate output tensor.
+    Tensor* output = nullptr;
+    OP_REQUIRES_OK_ASYNC(
+        context,
+        context->allocate_output(
+            0, TensorShape({batch_size, image_height, image_width, depth}),
+            &output),
+        done);
+
+    auto compute_callback = [this, context, output]() {
+      const Tensor& grads = context->input(0);
+      const Tensor& boxes = context->input(1);
+      const Tensor& box_index = context->input(2);
+      const bool status = functor::CropAndResizeBackpropImage<Device, T>()(
+          context, grads.tensor<float, 4>(), boxes.tensor<float, 2>(),
+          box_index.tensor<int32, 1>(), output->tensor<T, 4>(), method_);
+
+      if (!status) {
+        context->SetStatus(errors::Internal(
+            "Failed launch CropAndResizeBackpropImage kernel."));
+      }
+    };
+
+    RunIfBoxIndexIsValid<Device>(context, box_index.tensor<int32, 1>(),
+                                 batch_size, std::move(compute_callback),
+                                 std::move(done));
+  }
+
+ private:
+  string method_;
+};
+
+// Partial specialization of CropAndResizeBackpropImage functor for a CPUDevice.
+namespace functor {
+template <typename T>
+struct CropAndResizeBackpropImage<CPUDevice, T> {
+  bool operator()(const OpKernelContext* context,
+                  typename TTypes<float, 4>::ConstTensor grads,
+                  typename TTypes<float, 2>::ConstTensor boxes,
+                  typename TTypes<int32, 1>::ConstTensor box_index,
+                  typename TTypes<T, 4>::Tensor grads_image,
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: viewcode
+{
+  "ref": "dca1d9748e8e90af76700fa8e10e6d37a927e3c1",
+  "path": "tensorflow/core/kernels/image/crop_and_resize_op.cc",
+  "startline": 140,
+  "endline": 205
+}
+Here are lines 140 through 205.
+
+                      errors::InvalidArgument("input image must be 4-D",
+                                              image.shape().DebugString()),
+                      done);
+    const int batch_size = image.dim_size(0);
+    const int image_height = image.dim_size(1);
+    const int image_width = image.dim_size(2);
+    const int depth = image.dim_size(3);
+    OP_REQUIRES_ASYNC(
+        context, image_height > 0 && image_width > 0,
+        errors::InvalidArgument("image dimensions must be positive"), done);
+    int num_boxes = 0;
+    OP_REQUIRES_OK_ASYNC(
+        context, ParseAndCheckBoxSizes(boxes, box_index, &num_boxes), done);
+
+    OP_REQUIRES_ASYNC(context, crop_size.dims() == 1,
+                      errors::InvalidArgument("crop_size must be 1-D",
+                                              crop_size.shape().DebugString()),
+                      done);
+    OP_REQUIRES_ASYNC(
+        context, crop_size.dim_size(0) == 2,
+        errors::InvalidArgument("crop_size must have two elements",
+                                crop_size.shape().DebugString()),
+        done);
+
+    // Copy and validate crop sizes.
+    auto crop_size_vec = crop_size.vec<int32>();
+    const int crop_height = internal::SubtleMustCopy(crop_size_vec(0));
+    const int crop_width = internal::SubtleMustCopy(crop_size_vec(1));
+    OP_REQUIRES_ASYNC(
+        context, crop_height > 0 && crop_width > 0,
+        errors::InvalidArgument("crop dimensions must be positive"), done);
+
+    // Allocate output tensor.
+    Tensor* output = nullptr;
+    OP_REQUIRES_OK_ASYNC(
+        context,
+        context->allocate_output(
+            0, TensorShape({num_boxes, crop_height, crop_width, depth}),
+            &output),
+        done);
+
+    auto compute_callback = [this, context, output]() {
+      const Tensor& image = context->input(0);
+      const Tensor& boxes = context->input(1);
+      const Tensor& box_index = context->input(2);
+      const bool status = functor::CropAndResize<Device, T>()(
+          context, image.tensor<T, 4>(), boxes.tensor<float, 2>(),
+          box_index.tensor<int32, 1>(), method_, extrapolation_value_,
+          output->tensor<float, 4>());
+
+      if (!status) {
+        context->SetStatus(
+            errors::Internal("Failed launch CropAndResizeKernel."));
+      }
+    };
+
+    RunIfBoxIndexIsValid<Device>(context, box_index.tensor<int32, 1>(),
+                                 batch_size, std::move(compute_callback),
+                                 std::move(done));
+  }
+
+ private:
+  float extrapolation_value_;
+  string method_;
+};
+
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: viewcode
+{
+  "ref": "dca1d9748e8e90af76700fa8e10e6d37a927e3c1",
+  "path": "tensorflow/python/ops/image_ops_test.py",
+  "startline": 6050,
+  "endline": 6095
+}
+This file only has 5857 lines. Showing full file.
+
+# Copyright 2015 The TensorFlow Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+"""Tests for tensorflow.ops.image_ops."""
+
+from __future__ import absolute_import
+from __future__ import division
+from __future__ import print_function
+
+import colorsys
+import functools
+import itertools
+import math
+import os
+import time
+
+from absl.testing import parameterized
+import numpy as np
+from six.moves import xrange  # pylint: disable=redefined-builtin
+
+from tensorflow.core.protobuf import config_pb2
+from tensorflow.python.client import session
+from tensorflow.python.compat import compat
+from tensorflow.python.data.experimental.ops import get_single_element
+from tensorflow.python.data.ops import dataset_ops
+from tensorflow.python.eager import context
+from tensorflow.python.eager import def_function
+from tensorflow.python.framework import constant_op
+from tensorflow.python.framework import dtypes
+from tensorflow.python.framework import errors
+from tensorflow.python.framework import ops
+from tensorflow.python.framework import tensor_shape
+from tensorflow.python.framework import tensor_spec
+from tensorflow.python.framework import test_util
+from tensorflow.python.ops import array_ops
+from tensorflow.python.ops import control_flow_ops
+from tensorflow.python.ops import gen_image_ops
+from tensorflow.python.ops import gradients
+from tensorflow.python.ops import image_ops
+from tensorflow.python.ops import image_ops_impl
+from tensorflow.python.ops import io_ops
+from tensorflow.python.ops import math_ops
+from tensorflow.python.ops import random_ops
+from tensorflow.python.ops import stateless_random_ops
+from tensorflow.python.ops import variables
+from tensorflow.python.platform import googletest
+from tensorflow.python.platform import test
+
+
+class RGBToHSVTest(test_util.TensorFlowTestCase):
+
+  def testBatch(self):
+    # Build an arbitrary RGB image
+    np.random.seed(7)
+    batch_size = 5
+    shape = (batch_size, 2, 7, 3)
+
+    for nptype in [np.float32, np.float64]:
+      inp = np.random.rand(*shape).astype(nptype)
+
+      # Convert to HSV and back, as a batch and individually
+      with self.cached_session(use_gpu=True) as sess:
+        batch0 = constant_op.constant(inp)
+        batch1 = image_ops.rgb_to_hsv(batch0)
+        batch2 = image_ops.hsv_to_rgb(batch1)
+        split0 = array_ops.unstack(batch0)
+        split1 = list(map(image_ops.rgb_to_hsv, split0))
+        split2 = list(map(image_ops.hsv_to_rgb, split1))
+        join1 = array_ops.stack(split1)
+        join2 = array_ops.stack(split2)
+        batch1, batch2, join1, join2 = self.evaluate(
+            [batch1, batch2, join1, join2])
+
+      # Verify that processing batch elements together is the same as separate
+      self.assertAllClose(batch1, join1)
+      self.assertAllClose(batch2, join2)
+      self.assertAllClose(batch2, inp)
+
+  def testRGBToHSVRoundTrip(self):
+    data = [0, 5, 13, 54, 135, 226, 37, 8, 234, 90, 255, 1]
+    for nptype in [np.float32, np.float64]:
+      rgb_np = np.array(data, dtype=nptype).reshape([2, 2, 3]) / 255.
+      with self.cached_session(use_gpu=True):
+        hsv = image_ops.rgb_to_hsv(rgb_np)
+        rgb = image_ops.hsv_to_rgb(hsv)
+        rgb_tf = self.evaluate(rgb)
+      self.assertAllClose(rgb_tf, rgb_np)
+
+
+class RGBToYIQTest(test_util.TensorFlowTestCase):
+
+  @test_util.run_without_tensor_float_32(
+      "Calls rgb_to_yiq and yiq_to_rgb, which use matmul")
+  def testBatch(self):
+    # Build an arbitrary RGB image
+    np.random.seed(7)
+    batch_size = 5
+    shape = (batch_size, 2, 7, 3)
+
+    for nptype in [np.float32, np.float64]:
+      inp = np.random.rand(*shape).astype(nptype)
+
+      # Convert to YIQ and back, as a batch and individually
+      with self.cached_session(use_gpu=True) as sess:
+        batch0 = constant_op.constant(inp)
+        batch1 = image_ops.rgb_to_yiq(batch0)
+        batch2 = image_ops.yiq_to_rgb(batch1)
+        split0 = array_ops.unstack(batch0)
+        split1 = list(map(image_ops.rgb_to_yiq, split0))
+        split2 = list(map(image_ops.yiq_to_rgb, split1))
+        join1 = array_ops.stack(split1)
+        join2 = array_ops.stack(split2)
+        batch1, batch2, join1, join2 = self.evaluate(
+            [batch1, batch2, join1, join2])
+
+      # Verify that processing batch elements together is the same as separate
+      self.assertAllClose(batch1, join1, rtol=1e-4, atol=1e-4)
+      self.assertAllClose(batch2, join2, rtol=1e-4, atol=1e-4)
+      self.assertAllClose(batch2, inp, rtol=1e-4, atol=1e-4)
+
+
+class RGBToYUVTest(test_util.TensorFlowTestCase):
+
+  @test_util.run_without_tensor_float_32(
+      "Calls rgb_to_yuv and yuv_to_rgb, which use matmul")
+  def testBatch(self):
+    # Build an arbitrary RGB image
+    np.random.seed(7)
+    batch_size = 5
+    shape = (batch_size, 2, 7, 3)
+
+    for nptype in [np.float32, np.float64]:
+      inp = np.random.rand(*shape).astype(nptype)
+
+      # Convert to YUV and back, as a batch and individually
+      with self.cached_session(use_gpu=True) as sess:
+        batch0 = constant_op.constant(inp)
+        batch1 = image_ops.rgb_to_yuv(batch0)
+        batch2 = image_ops.yuv_to_rgb(batch1)
+        split0 = array_ops.unstack(batch0)
+        split1 = list(map(image_ops.rgb_to_yuv, split0))
+        split2 = list(map(image_ops.yuv_to_rgb, split1))
+        join1 = array_ops.stack(split1)
+        join2 = array_ops.stack(split2)
+        batch1, batch2, join1, join2 = self.evaluate(
+            [batch1, batch2, join1, join2])
+
+      # Verify that processing batch elements together is the same as separate
+      self.assertAllClose(batch1, join1, rtol=1e-4, atol=1e-4)
+      self.assertAllClose(batch2, join2, rtol=1e-4, atol=1e-4)
+      self.assertAllClose(batch2, inp, rtol=1e-4, atol=1e-4)
+
+
+class GrayscaleToRGBTest(test_util.TensorFlowTestCase):
+
+  def _RGBToGrayscale(self, images):
+    is_batch = True
+    if len(images.shape) == 3:
+      is_batch = False
+      images = np.expand_dims(images, axis=0)
+    out_shape = images.shape[0:3] + (1,)
+    out = np.zeros(shape=out_shape, dtype=np.uint8)
+    for batch in xrange(images.shape[0]):
+      for y in xrange(images.shape[1]):
+        for x in xrange(images.shape[2]):
+          red = images[batch, y, x, 0]
+          green = images[batch, y, x, 1]
+          blue = images[batch, y, x, 2]
+          gray = 0.2989 * red + 0.5870 * green + 0.1140 * blue
+          out[batch, y, x, 0] = int(gray)
+    if not is_batch:
+      out = np.squeeze(out, axis=0)
+    return out
+
+  def _TestRGBToGrayscale(self, x_np):
+    y_np = self._RGBToGrayscale(x_np)
+
+    with self.cached_session(use_gpu=True):
+      x_tf = constant_op.constant(x_np, shape=x_np.shape)
+      y = image_ops.rgb_to_grayscale(x_tf)
+      y_tf = self.evaluate(y)
+      self.assertAllEqual(y_tf, y_np)
+
+  def testBasicRGBToGrayscale(self):
+    # 4-D input with batch dimension.
+    x_np = np.array(
+        [[1, 2, 3], [4, 10, 1]], dtype=np.uint8).reshape([1, 1, 2, 3])
+    self._TestRGBToGrayscale(x_np)
+
+    # 3-D input with no batch dimension.
+    x_np = np.array([[1, 2, 3], [4, 10, 1]], dtype=np.uint8).reshape([1, 2, 3])
+    self._TestRGBToGrayscale(x_np)
+
+  def testBasicGrayscaleToRGB(self):
+    # 4-D input with batch dimension.
+    x_np = np.array([[1, 2]], dtype=np.uint8).reshape([1, 1, 2, 1])
+    y_np = np.array(
+        [[1, 1, 1], [2, 2, 2]], dtype=np.uint8).reshape([1, 1, 2, 3])
+
+    with self.cached_session(use_gpu=True):
+      x_tf = constant_op.constant(x_np, shape=x_np.shape)
+      y = image_ops.grayscale_to_rgb(x_tf)
+      y_tf = self.evaluate(y)
+      self.assertAllEqual(y_tf, y_np)
+
+    # 3-D input with no batch dimension.
+    x_np = np.array([[1, 2]], dtype=np.uint8).reshape([1, 2, 1])
+    y_np = np.array([[1, 1, 1], [2, 2, 2]], dtype=np.uint8).reshape([1, 2, 3])
+
+    with self.cached_session(use_gpu=True):
+      x_tf = constant_op.constant(x_np, shape=x_np.shape)
+      y = image_ops.grayscale_to_rgb(x_tf)
+      y_tf = self.evaluate(y)
+      self.assertAllEqual(y_tf, y_np)
+
+  def testGrayscaleToRGBInputValidation(self):
+    # tests whether the grayscale_to_rgb function raises
+    # an exception if the input images' last dimension is
+    # not of size 1, i.e. the images have shape
+    # [batch size, height, width] or [height, width]
+
+    # tests if an exception is raised if a three dimensional
+    # input is used, i.e. the images have shape [batch size, height, width]
+    with self.cached_session(use_gpu=True):
+      # 3-D input with batch dimension.
+      x_np = np.array([[1, 2]], dtype=np.uint8).reshape([1, 1, 2])
+
+      x_tf = constant_op.constant(x_np, shape=x_np.shape)
+
+      # this is the error message we expect the function to raise
+      err_msg = "Last dimension of a grayscale image should be size 1"
+      with self.assertRaisesRegex(ValueError, err_msg):
+        image_ops.grayscale_to_rgb(x_tf)
+
+    # tests if an exception is raised if a two dimensional
+    # input is used, i.e. the images have shape [height, width]
+    with self.cached_session(use_gpu=True):
+      # 1-D input without batch dimension.
+      x_np = np.array([[1, 2]], dtype=np.uint8).reshape([2])
+
+      x_tf = constant_op.constant(x_np, shape=x_np.shape)
+
+      # this is the error message we expect the function to raise
+      err_msg = "must be at least two-dimensional"
+      with self.assertRaisesRegex(ValueError, err_msg):
+        image_ops.grayscale_to_rgb(x_tf)
+
+  def testShapeInference(self):
+    # Shape function requires placeholders and a graph.
+    with ops.Graph().as_default():
+      # Shape inference works and produces expected output where possible
+      rgb_shape = [7, None, 19, 3]
+      gray_shape = rgb_shape[:-1] + [1]
+      with self.cached_session(use_gpu=True):
+        rgb_tf = array_ops.placeholder(dtypes.uint8, shape=rgb_shape)
+        gray = image_ops.rgb_to_grayscale(rgb_tf)
+        self.assertEqual(gray_shape, gray.get_shape().as_list())
+
+      with self.cached_session(use_gpu=True):
+        gray_tf = array_ops.placeholder(dtypes.uint8, shape=gray_shape)
+        rgb = image_ops.grayscale_to_rgb(gray_tf)
+        self.assertEqual(rgb_shape, rgb.get_shape().as_list())
+
+      # Shape inference does not break for unknown shapes
+      with self.cached_session(use_gpu=True):
+        rgb_tf_unknown = array_ops.placeholder(dtypes.uint8)
+        gray_unknown = image_ops.rgb_to_grayscale(rgb_tf_unknown)
+        self.assertFalse(gray_unknown.get_shape())
+
+      with self.cached_session(use_gpu=True):
+        gray_tf_unknown = array_ops.placeholder(dtypes.uint8)
+        rgb_unknown = image_ops.grayscale_to_rgb(gray_tf_unknown)
+        self.assertFalse(rgb_unknown.get_shape())
+
+
+class AdjustGamma(test_util.TensorFlowTestCase):
+
+  def test_adjust_gamma_less_zero_float32(self):
+    """White image should be returned for gamma equal to zero"""
+    with self.cached_session():
+      x_data = np.random.uniform(0, 1.0, (8, 8))
+      x_np = np.array(x_data, dtype=np.float32)
+
+      x = constant_op.constant(x_np, shape=x_np.shape)
+
+      err_msg = "Gamma should be a non-negative real number"
+      with self.assertRaisesRegex(
+          (ValueError, errors.InvalidArgumentError), err_msg):
+        image_ops.adjust_gamma(x, gamma=-1)
+
+  def test_adjust_gamma_less_zero_uint8(self):
+    """White image should be returned for gamma equal to zero"""
+    with self.cached_session():
+      x_data = np.random.uniform(0, 255, (8, 8))
+      x_np = np.array(x_data, dtype=np.uint8)
+
+      x = constant_op.constant(x_np, shape=x_np.shape)
+
+      err_msg = "Gamma should be a non-negative real number"
+      with self.assertRaisesRegex(
+          (ValueError, errors.InvalidArgumentError), err_msg):
+        image_ops.adjust_gamma(x, gamma=-1)
+
+  def test_adjust_gamma_less_zero_tensor(self):
+    """White image should be returned for gamma equal to zero"""
+    with self.cached_session():
+      x_data = np.random.uniform(0, 1.0, (8, 8))
+      x_np = np.array(x_data, dtype=np.float32)
+
+      x = constant_op.constant(x_np, shape=x_np.shape)
+      y = constant_op.constant(-1.0, dtype=dtypes.float32)
+
+      err_msg = "Gamma should be a non-negative real number"
+      with self.assertRaisesRegex(
+          (ValueError, errors.InvalidArgumentError), err_msg):
+        image = image_ops.adjust_gamma(x, gamma=y)
+        self.evaluate(image)
+
+  def _test_adjust_gamma_uint8(self, gamma):
+    """Verifying the output with expected results for gamma
+
+    correction for uint8 images
+    """
+    with self.cached_session():
+      x_np = np.random.uniform(0, 255, (8, 8)).astype(np.uint8)
+      x = constant_op.constant(x_np, shape=x_np.shape)
+      y = image_ops.adjust_gamma(x, gamma=gamma)
+      y_tf = np.trunc(self.evaluate(y))
+
+      # calculate gamma correction using numpy
+      # firstly, transform uint8 to float representation
+      # then perform correction
+      y_np = np.power(x_np / 255.0, gamma)
+      # convert correct numpy image back to uint8 type
+      y_np = np.trunc(np.clip(y_np * 255.5, 0, 255.0))
+
+      self.assertAllClose(y_tf, y_np, 1e-6)
+
+  def _test_adjust_gamma_float32(self, gamma):
+    """Verifying the output with expected results for gamma
+
+    correction for float32 images
+    """
+    with self.cached_session():
+      x_np = np.random.uniform(0, 1.0, (8, 8))
+      x = constant_op.constant(x_np, shape=x_np.shape)
+      y = image_ops.adjust_gamma(x, gamma=gamma)
+      y_tf = self.evaluate(y)
+
+      y_np = np.clip(np.power(x_np, gamma), 0, 1.0)
+
+      self.assertAllClose(y_tf, y_np, 1e-6)
+
+  def test_adjust_gamma_one_float32(self):
+    """Same image should be returned for gamma equal to one"""
+    self._test_adjust_gamma_float32(1.0)
+
+  def test_adjust_gamma_one_uint8(self):
+    self._test_adjust_gamma_uint8(1.0)
+
+  def test_adjust_gamma_zero_uint8(self):
+    """White image should be returned for gamma equal
+
+    to zero for uint8 images
+    """
+    self._test_adjust_gamma_uint8(gamma=0.0)
+
+  def test_adjust_gamma_less_one_uint8(self):
+    """Verifying the output with expected results for gamma
+
+    correction with gamma equal to half for uint8 images
+    """
+    self._test_adjust_gamma_uint8(gamma=0.5)
+
+  def test_adjust_gamma_greater_one_uint8(self):
+    """Verifying the output with expected results for gamma
+
+    correction for uint8 images
+    """
+    self._test_adjust_gamma_uint8(gamma=1.0)
+
+  def test_adjust_gamma_less_one_float32(self):
+    """Verifying the output with expected results for gamma
+
+    correction with gamma equal to half for float32 images
+    """
+    self._test_adjust_gamma_float32(0.5)
+
+  def test_adjust_gamma_greater_one_float32(self):
+    """Verifying the output with expected results for gamma
+
+    correction with gamma equal to two for float32 images
+    """
+    self._test_adjust_gamma_float32(1.0)
+
+  def test_adjust_gamma_zero_float32(self):
+    """White image should be returned for gamma equal
+
+    to zero for float32 images
+    """
+    self._test_adjust_gamma_float32(0.0)
+
+
+class AdjustHueTest(test_util.TensorFlowTestCase):
+
+  def testAdjustNegativeHue(self):
+    x_shape = [2, 2, 3]
+    x_data = [0, 5, 13, 54, 135, 226, 37, 8, 234, 90, 255, 1]
+    x_np = np.array(x_data, dtype=np.uint8).reshape(x_shape)
+
+    delta = -0.25
+    y_data = [0, 13, 1, 54, 226, 59, 8, 234, 150, 255, 39, 1]
+    y_np = np.array(y_data, dtype=np.uint8).reshape(x_shape)
+
+    with self.cached_session(use_gpu=True):
+      x = constant_op.constant(x_np, shape=x_shape)
+      y = image_ops.adjust_hue(x, delta)
+      y_tf = self.evaluate(y)
+      self.assertAllEqual(y_tf, y_np)
+
+  def testAdjustPositiveHue(self):
+    x_shape = [2, 2, 3]
+    x_data = [0, 5, 13, 54, 135, 226, 37, 8, 234, 90, 255, 1]
+    x_np = np.array(x_data, dtype=np.uint8).reshape(x_shape)
+
+    delta = 0.25
+    y_data = [13, 0, 11, 226, 54, 221, 234, 8, 92, 1, 217, 255]
+    y_np = np.array(y_data, dtype=np.uint8).reshape(x_shape)
+
+    with self.cached_session(use_gpu=True):
+      x = constant_op.constant(x_np, shape=x_shape)
+      y = image_ops.adjust_hue(x, delta)
+      y_tf = self.evaluate(y)
+      self.assertAllEqual(y_tf, y_np)
+
+  def testBatchAdjustHue(self):
+    x_shape = [2, 1, 2, 3]
+    x_data = [0, 5, 13, 54, 135, 226, 37, 8, 234, 90, 255, 1]
+    x_np = np.array(x_data, dtype=np.uint8).reshape(x_shape)
+
+    delta = 0.25
+    y_data = [13, 0, 11, 226, 54, 221, 234, 8, 92, 1, 217, 255]
+    y_np = np.array(y_data, dtype=np.uint8).reshape(x_shape)
+
+    with self.cached_session(use_gpu=True):
+      x = constant_op.constant(x_np, shape=x_shape)
+      y = image_ops.adjust_hue(x, delta)
+      y_tf = self.evaluate(y)
+      self.assertAllEqual(y_tf, y_np)
+
+  def _adjustHueNp(self, x_np, delta_h):
+    self.assertEqual(x_np.shape[-1], 3)
+    x_v = x_np.reshape([-1, 3])
+    y_v = np.ndarray(x_v.shape, dtype=x_v.dtype)
+    channel_count = x_v.shape[0]
+    for i in xrange(channel_count):
+      r = x_v[i][0]
+      g = x_v[i][1]
+      b = x_v[i][2]
+      h, s, v = colorsys.rgb_to_hsv(r, g, b)
+      h += delta_h
+      h = math.fmod(h + 10.0, 1.0)
+      r, g, b = colorsys.hsv_to_rgb(h, s, v)
+      y_v[i][0] = r
+      y_v[i][1] = g
+      y_v[i][2] = b
+    return y_v.reshape(x_np.shape)
+
+  def _adjustHueTf(self, x_np, delta_h):
+    with self.cached_session(use_gpu=True):
+      x = constant_op.constant(x_np)
+      y = image_ops.adjust_hue(x, delta_h)
+      y_tf = self.evaluate(y)
+    return y_tf
+
+  def testAdjustRandomHue(self):
+    x_shapes = [
+        [2, 2, 3],
+        [4, 2, 3],
+        [2, 4, 3],
+        [2, 5, 3],
+        [1000, 1, 3],
+    ]
+    test_styles = [
+        "all_random",
+        "rg_same",
+        "rb_same",
+        "gb_same",
+        "rgb_same",
+    ]
+    for x_shape in x_shapes:
+      for test_style in test_styles:
+        x_np = np.random.rand(*x_shape) * 255.
+        delta_h = np.random.rand() * 2.0 - 1.0
+        if test_style == "all_random":
+          pass
+        elif test_style == "rg_same":
+          x_np[..., 1] = x_np[..., 0]
+        elif test_style == "rb_same":
+          x_np[..., 2] = x_np[..., 0]
+        elif test_style == "gb_same":
+          x_np[..., 2] = x_np[..., 1]
+        elif test_style == "rgb_same":
+          x_np[..., 1] = x_np[..., 0]
+          x_np[..., 2] = x_np[..., 0]
+        else:
+          raise AssertionError("Invalid test style: %s" % (test_style))
+        y_np = self._adjustHueNp(x_np, delta_h)
+        y_tf = self._adjustHueTf(x_np, delta_h)
+        self.assertAllClose(y_tf, y_np, rtol=2e-5, atol=1e-5)
+
+  def testInvalidShapes(self):
+    fused = False
+    if not fused:
+      # The tests are known to pass with the fused adjust_hue. We will enable
+      # them when the fused implementation is the default.
+      return
+    x_np = np.random.rand(2, 3) * 255.
+    delta_h = np.random.rand() * 2.0 - 1.0
+    fused = False
+    with self.assertRaisesRegex(ValueError, "Shape must be at least rank 3"):
+      self._adjustHueTf(x_np, delta_h)
+    x_np = np.random.rand(4, 2, 4) * 255.
+    delta_h = np.random.rand() * 2.0 - 1.0
+    with self.assertRaisesOpError("input must have 3 channels"):
+      self._adjustHueTf(x_np, delta_h)
+
+
+class FlipImageBenchmark(test.Benchmark):
+
+  def _benchmarkFlipLeftRight(self, device, cpu_count):
+    image_shape = [299, 299, 3]
+    warmup_rounds = 100
+    benchmark_rounds = 1000
+    config = config_pb2.ConfigProto()
+    if cpu_count is not None:
+      config.inter_op_parallelism_threads = 1
+      config.intra_op_parallelism_threads = cpu_count
+    with session.Session("", graph=ops.Graph(), config=config) as sess:
+      with ops.device(device):
+        inputs = variables.Variable(
+            random_ops.random_uniform(image_shape, dtype=dtypes.float32) * 255,
+            trainable=False,
+            dtype=dtypes.float32)
+        run_op = image_ops.flip_left_right(inputs)
+        self.evaluate(variables.global_variables_initializer())
+        for i in xrange(warmup_rounds + benchmark_rounds):
+          if i == warmup_rounds:
+            start = time.time()
+          self.evaluate(run_op)
+    end = time.time()
+    step_time = (end - start) / benchmark_rounds
+    tag = device + "_%s" % (cpu_count if cpu_count is not None else "_all")
+    print("benchmarkFlipLeftRight_299_299_3_%s step_time: %.2f us" %
+          (tag, step_time * 1e6))
+    self.report_benchmark(
+        name="benchmarkFlipLeftRight_299_299_3_%s" % (tag),
+        iters=benchmark_rounds,
+        wall_time=step_time)
+
+  def _benchmarkRandomFlipLeftRight(self, device, cpu_count):
+    image_shape = [299, 299, 3]
+    warmup_rounds = 100
+    benchmark_rounds = 1000
+    config = config_pb2.ConfigProto()
+    if cpu_count is not None:
+      config.inter_op_parallelism_threads = 1
+      config.intra_op_parallelism_threads = cpu_count
+    with session.Session("", graph=ops.Graph(), config=config) as sess:
+      with ops.device(device):
+        inputs = variables.Variable(
+            random_ops.random_uniform(image_shape, dtype=dtypes.float32) * 255,
+            trainable=False,
+            dtype=dtypes.float32)
+        run_op = image_ops.random_flip_left_right(inputs)
+        self.evaluate(variables.global_variables_initializer())
+        for i in xrange(warmup_rounds + benchmark_rounds):
+          if i == warmup_rounds:
+            start = time.time()
+          self.evaluate(run_op)
+    end = time.time()
+    step_time = (end - start) / benchmark_rounds
+    tag = device + "_%s" % (cpu_count if cpu_count is not None else "_all")
+    print("benchmarkRandomFlipLeftRight_299_299_3_%s step_time: %.2f us" %
+          (tag, step_time * 1e6))
+    self.report_benchmark(
+        name="benchmarkRandomFlipLeftRight_299_299_3_%s" % (tag),
+        iters=benchmark_rounds,
+        wall_time=step_time)
+
+  def _benchmarkBatchedRandomFlipLeftRight(self, device, cpu_count):
+    image_shape = [16, 299, 299, 3]
+    warmup_rounds = 100
+    benchmark_rounds = 1000
+    config = config_pb2.ConfigProto()
+    if cpu_count is not None:
+      config.inter_op_parallelism_threads = 1
+      config.intra_op_parallelism_threads = cpu_count
+    with session.Session("", graph=ops.Graph(), config=config) as sess:
+      with ops.device(device):
+        inputs = variables.Variable(
+            random_ops.random_uniform(image_shape, dtype=dtypes.float32) * 255,
+            trainable=False,
+            dtype=dtypes.float32)
+        run_op = image_ops.random_flip_left_right(inputs)
+        self.evaluate(variables.global_variables_initializer())
+        for i in xrange(warmup_rounds + benchmark_rounds):
+          if i == warmup_rounds:
+            start = time.time()
+          self.evaluate(run_op)
+    end = time.time()
+    step_time = (end - start) / benchmark_rounds
+    tag = device + "_%s" % (cpu_count if cpu_count is not None else "_all")
+    print("benchmarkBatchedRandomFlipLeftRight_16_299_299_3_%s step_time: "
+          "%.2f us" %
+          (tag, step_time * 1e6))
+    self.report_benchmark(
+        name="benchmarkBatchedRandomFlipLeftRight_16_299_299_3_%s" % (tag),
+        iters=benchmark_rounds,
+        wall_time=step_time)
+
+  def benchmarkFlipLeftRightCpu1(self):
+    self._benchmarkFlipLeftRight("/cpu:0", 1)
+
+  def benchmarkFlipLeftRightCpuAll(self):
+    self._benchmarkFlipLeftRight("/cpu:0", None)
+
+  def benchmarkFlipLeftRightGpu(self):
+    self._benchmarkFlipLeftRight(test.gpu_device_name(), None)
+
+  def benchmarkRandomFlipLeftRightCpu1(self):
+    self._benchmarkRandomFlipLeftRight("/cpu:0", 1)
+
+  def benchmarkRandomFlipLeftRightCpuAll(self):
+    self._benchmarkRandomFlipLeftRight("/cpu:0", None)
+
+  def benchmarkRandomFlipLeftRightGpu(self):
+    self._benchmarkRandomFlipLeftRight(test.gpu_device_name(), None)
+
+  def benchmarkBatchedRandomFlipLeftRightCpu1(self):
+    self._benchmarkBatchedRandomFlipLeftRight("/cpu:0", 1)
+
+  def benchmarkBatchedRandomFlipLeftRightCpuAll(self):
+    self._benchmarkBatchedRandomFlipLeftRight("/cpu:0", None)
+
+  def benchmarkBatchedRandomFlipLeftRightGpu(self):
+    self._benchmarkBatchedRandomFlipLeftRight(test.gpu_device_name(), None)
+
+
+class AdjustHueBenchmark(test.Benchmark):
+
+  def _benchmarkAdjustHue(self, device, cpu_count):
+    image_shape = [299, 299, 3]
+    warmup_rounds = 100
+    benchmark_rounds = 1000
+    config = config_pb2.ConfigProto()
+    if cpu_count is not None:
+      config.inter_op_parallelism_threads = 1
+      config.intra_op_parallelism_threads = cpu_count
+    with self.benchmark_session(config=config, device=device) as sess:
+      inputs = variables.Variable(
+          random_ops.random_uniform(image_shape, dtype=dtypes.float32) * 255,
+          trainable=False,
+          dtype=dtypes.float32)
+      delta = constant_op.constant(0.1, dtype=dtypes.float32)
+      outputs = image_ops.adjust_hue(inputs, delta)
+      run_op = control_flow_ops.group(outputs)
+      self.evaluate(variables.global_variables_initializer())
+      for i in xrange(warmup_rounds + benchmark_rounds):
+        if i == warmup_rounds:
+          start = time.time()
+        self.evaluate(run_op)
+    end = time.time()
+    step_time = (end - start) / benchmark_rounds
+    tag = device + "_%s" % (cpu_count if cpu_count is not None else "_all")
+    print("benchmarkAdjustHue_299_299_3_%s step_time: %.2f us" %
+          (tag, step_time * 1e6))
+    self.report_benchmark(
+        name="benchmarkAdjustHue_299_299_3_%s" % (tag),
+        iters=benchmark_rounds,
+        wall_time=step_time)
+
+  def benchmarkAdjustHueCpu1(self):
+    self._benchmarkAdjustHue("/cpu:0", 1)
+
+  def benchmarkAdjustHueCpuAll(self):
+    self._benchmarkAdjustHue("/cpu:0", None)
+
+  def benchmarkAdjustHueGpu(self):
+    self._benchmarkAdjustHue(test.gpu_device_name(), None)
+
+
+class AdjustSaturationBenchmark(test.Benchmark):
+
+  def _benchmarkAdjustSaturation(self, device, cpu_count):
+    image_shape = [299, 299, 3]
+    warmup_rounds = 100
+    benchmark_rounds = 1000
+    config = config_pb2.ConfigProto()
+    if cpu_count is not None:
+      config.inter_op_parallelism_threads = 1
+      config.intra_op_parallelism_threads = cpu_count
+    with self.benchmark_session(config=config, device=device) as sess:
+      inputs = variables.Variable(
+          random_ops.random_uniform(image_shape, dtype=dtypes.float32) * 255,
+          trainable=False,
+          dtype=dtypes.float32)
+      delta = constant_op.constant(0.1, dtype=dtypes.float32)
+      outputs = image_ops.adjust_saturation(inputs, delta)
+      run_op = control_flow_ops.group(outputs)
+      self.evaluate(variables.global_variables_initializer())
+      for _ in xrange(warmup_rounds):
+        self.evaluate(run_op)
+      start = time.time()
+      for _ in xrange(benchmark_rounds):
+        self.evaluate(run_op)
+    end = time.time()
+    step_time = (end - start) / benchmark_rounds
+    tag = device + "_%s" % (cpu_count if cpu_count is not None else "_all")
+    print("benchmarkAdjustSaturation_299_299_3_%s step_time: %.2f us" %
+          (tag, step_time * 1e6))
+    self.report_benchmark(
+        name="benchmarkAdjustSaturation_299_299_3_%s" % (tag),
+        iters=benchmark_rounds,
+        wall_time=step_time)
+
+  def benchmarkAdjustSaturationCpu1(self):
+    self._benchmarkAdjustSaturation("/cpu:0", 1)
+
+  def benchmarkAdjustSaturationCpuAll(self):
+    self._benchmarkAdjustSaturation("/cpu:0", None)
+
+  def benchmarkAdjustSaturationGpu(self):
+    self._benchmarkAdjustSaturation(test.gpu_device_name(), None)
+
+
+class ResizeBilinearBenchmark(test.Benchmark):
+
+  def _benchmarkResize(self, image_size, num_channels):
+    batch_size = 1
+    num_ops = 1000
+    img = variables.Variable(
+        random_ops.random_normal(
+            [batch_size, image_size[0], image_size[1], num_channels]),
+        name="img")
+
+    deps = []
+    for _ in xrange(num_ops):
+      with ops.control_dependencies(deps):
+        resize_op = image_ops.resize_bilinear(
+            img, [299, 299], align_corners=False)
+        deps = [resize_op]
+      benchmark_op = control_flow_ops.group(*deps)
+
+    with self.benchmark_session() as sess:
+      self.evaluate(variables.global_variables_initializer())
+      results = self.run_op_benchmark(
+          sess,
+          benchmark_op,
+          name=("resize_bilinear_%s_%s_%s" % (image_size[0], image_size[1],
+                                              num_channels)))
+      print("%s   : %.2f ms/img" %
+            (results["name"],
+             1000 * results["wall_time"] / (batch_size * num_ops)))
+
+  def benchmarkSimilar3Channel(self):
+    self._benchmarkResize((183, 229), 3)
+
+  def benchmarkScaleUp3Channel(self):
+    self._benchmarkResize((141, 186), 3)
+
+  def benchmarkScaleDown3Channel(self):
+    self._benchmarkResize((749, 603), 3)
+
+  def benchmarkSimilar1Channel(self):
+    self._benchmarkResize((183, 229), 1)
+
+  def benchmarkScaleUp1Channel(self):
+    self._benchmarkResize((141, 186), 1)
+
+  def benchmarkScaleDown1Channel(self):
+    self._benchmarkResize((749, 603), 1)
+
+
+class ResizeBicubicBenchmark(test.Benchmark):
+
+  def _benchmarkResize(self, image_size, num_channels):
+    batch_size = 1
+    num_ops = 1000
+    img = variables.Variable(
+        random_ops.random_normal(
+            [batch_size, image_size[0], image_size[1], num_channels]),
+        name="img")
+
+    deps = []
+    for _ in xrange(num_ops):
+      with ops.control_dependencies(deps):
+        resize_op = image_ops.resize_bicubic(
+            img, [299, 299], align_corners=False)
+        deps = [resize_op]
+      benchmark_op = control_flow_ops.group(*deps)
+
+    with self.benchmark_session() as sess:
+      self.evaluate(variables.global_variables_initializer())
+      results = self.run_op_benchmark(
+          sess,
+          benchmark_op,
+          min_iters=20,
+          name=("resize_bicubic_%s_%s_%s" % (image_size[0], image_size[1],
+                                             num_channels)))
+      print("%s   : %.2f ms/img" %
+            (results["name"],
+             1000 * results["wall_time"] / (batch_size * num_ops)))
+
+  def benchmarkSimilar3Channel(self):
+    self._benchmarkResize((183, 229), 3)
+
+  def benchmarkScaleUp3Channel(self):
+    self._benchmarkResize((141, 186), 3)
+
+  def benchmarkScaleDown3Channel(self):
+    self._benchmarkResize((749, 603), 3)
+
+  def benchmarkSimilar1Channel(self):
+    self._benchmarkResize((183, 229), 1)
+
+  def benchmarkScaleUp1Channel(self):
+    self._benchmarkResize((141, 186), 1)
+
+  def benchmarkScaleDown1Channel(self):
+    self._benchmarkResize((749, 603), 1)
+
+  def benchmarkSimilar4Channel(self):
+    self._benchmarkResize((183, 229), 4)
+
+  def benchmarkScaleUp4Channel(self):
+    self._benchmarkResize((141, 186), 4)
+
+  def benchmarkScaleDown4Channel(self):
+    self._benchmarkResize((749, 603), 4)
+
+
+class ResizeAreaBenchmark(test.Benchmark):
+
+  def _benchmarkResize(self, image_size, num_channels):
+    batch_size = 1
+    num_ops = 1000
+    img = variables.Variable(
+        random_ops.random_normal(
+            [batch_size, image_size[0], image_size[1], num_channels]),
+        name="img")
+
+    deps = []
+    for _ in xrange(num_ops):
+      with ops.control_dependencies(deps):
+        resize_op = image_ops.resize_area(img, [299, 299], align_corners=False)
+        deps = [resize_op]
+      benchmark_op = control_flow_ops.group(*deps)
+
+    with self.benchmark_session() as sess:
+      self.evaluate(variables.global_variables_initializer())
+      results = self.run_op_benchmark(
+          sess,
+          benchmark_op,
+          name=("resize_area_%s_%s_%s" % (image_size[0], image_size[1],
+                                          num_channels)))
+      print("%s   : %.2f ms/img" %
+            (results["name"],
+             1000 * results["wall_time"] / (batch_size * num_ops)))
+
+  def benchmarkSimilar3Channel(self):
+    self._benchmarkResize((183, 229), 3)
+
+  def benchmarkScaleUp3Channel(self):
+    self._benchmarkResize((141, 186), 3)
+
+  def benchmarkScaleDown3Channel(self):
+    self._benchmarkResize((749, 603), 3)
+
+  def benchmarkSimilar1Channel(self):
+    self._benchmarkResize((183, 229), 1)
+
+  def benchmarkScaleUp1Channel(self):
+    self._benchmarkResize((141, 186), 1)
+
+  def benchmarkScaleDown1Channel(self):
+    self._benchmarkResize((749, 603), 1)
+
+
+class AdjustSaturationTest(test_util.TensorFlowTestCase):
+
+  def testHalfSaturation(self):
+    x_shape = [2, 2, 3]
+    x_data = [0, 5, 13, 54, 135, 226, 37, 8, 234, 90, 255, 1]
+    x_np = np.array(x_data, dtype=np.uint8).reshape(x_shape)
+
+    saturation_factor = 0.5
+    y_data = [6, 9, 13, 140, 180, 226, 135, 121, 234, 172, 255, 128]
+    y_np = np.array(y_data, dtype=np.uint8).reshape(x_shape)
+
+    with self.cached_session(use_gpu=True):
+      x = constant_op.constant(x_np, shape=x_shape)
+      y = image_ops.adjust_saturation(x, saturation_factor)
+      y_tf = self.evaluate(y)
+      self.assertAllEqual(y_tf, y_np)
+
+  def testTwiceSaturation(self):
+    x_shape = [2, 2, 3]
+    x_data = [0, 5, 13, 54, 135, 226, 37, 8, 234, 90, 255, 1]
+    x_np = np.array(x_data, dtype=np.uint8).reshape(x_shape)
+
+    saturation_factor = 2.0
+    y_data = [0, 5, 13, 0, 106, 226, 30, 0, 234, 89, 255, 0]
+    y_np = np.array(y_data, dtype=np.uint8).reshape(x_shape)
+
+    with self.cached_session(use_gpu=True):
+      x = constant_op.constant(x_np, shape=x_shape)
+      y = image_ops.adjust_saturation(x, saturation_factor)
+      y_tf = self.evaluate(y)
+      self.assertAllEqual(y_tf, y_np)
+
+  def testBatchSaturation(self):
+    x_shape = [2, 1, 2, 3]
+    x_data = [0, 5, 13, 54, 135, 226, 37, 8, 234, 90, 255, 1]
+    x_np = np.array(x_data, dtype=np.uint8).reshape(x_shape)
+
+    saturation_factor = 0.5
+    y_data = [6, 9, 13, 140, 180, 226, 135, 121, 234, 172, 255, 128]
+    y_np = np.array(y_data, dtype=np.uint8).reshape(x_shape)
+
+    with self.cached_session(use_gpu=True):
+      x = constant_op.constant(x_np, shape=x_shape)
+      y = image_ops.adjust_saturation(x, saturation_factor)
+      y_tf = self.evaluate(y)
+      self.assertAllEqual(y_tf, y_np)
+
+  def _adjustSaturationNp(self, x_np, scale):
+    self.assertEqual(x_np.shape[-1], 3)
+    x_v = x_np.reshape([-1, 3])
+    y_v = np.ndarray(x_v.shape, dtype=x_v.dtype)
+    channel_count = x_v.shape[0]
+    for i in xrange(channel_count):
+      r = x_v[i][0]
+      g = x_v[i][1]
+      b = x_v[i][2]
+      h, s, v = colorsys.rgb_to_hsv(r, g, b)
+      s *= scale
+      s = min(1.0, max(0.0, s))
+      r, g, b = colorsys.hsv_to_rgb(h, s, v)
+      y_v[i][0] = r
+      y_v[i][1] = g
+      y_v[i][2] = b
+    return y_v.reshape(x_np.shape)
+
+  def testAdjustRandomSaturation(self):
+    x_shapes = [
+        [2, 2, 3],
+        [4, 2, 3],
+        [2, 4, 3],
+        [2, 5, 3],
+        [1000, 1, 3],
+    ]
+    test_styles = [
+        "all_random",
+        "rg_same",
+        "rb_same",
+        "gb_same",
+        "rgb_same",
+    ]
+    with self.cached_session(use_gpu=True):
+      for x_shape in x_shapes:
+        for test_style in test_styles:
+          x_np = np.random.rand(*x_shape) * 255.
+          scale = np.random.rand()
+          if test_style == "all_random":
+            pass
+          elif test_style == "rg_same":
+            x_np[..., 1] = x_np[..., 0]
+          elif test_style == "rb_same":
+            x_np[..., 2] = x_np[..., 0]
+          elif test_style == "gb_same":
+            x_np[..., 2] = x_np[..., 1]
+          elif test_style == "rgb_same":
+            x_np[..., 1] = x_np[..., 0]
+            x_np[..., 2] = x_np[..., 0]
+          else:
+            raise AssertionError("Invalid test style: %s" % (test_style))
+          y_baseline = self._adjustSaturationNp(x_np, scale)
+          y_fused = self.evaluate(image_ops.adjust_saturation(x_np, scale))
+          self.assertAllClose(y_fused, y_baseline, rtol=2e-5, atol=1e-5)
+
+
+class FlipTransposeRotateTest(test_util.TensorFlowTestCase,
+                              parameterized.TestCase):
+
+  def testInvolutionLeftRight(self):
+    x_np = np.array([[1, 2, 3], [1, 2, 3]], dtype=np.uint8).reshape([2, 3, 1])
+    with self.cached_session(use_gpu=True):
+      x_tf = constant_op.constant(x_np, shape=x_np.shape)
+      y = image_ops.flip_left_right(image_ops.flip_left_right(x_tf))
+      y_tf = self.evaluate(y)
+      self.assertAllEqual(y_tf, x_np)
+
+  def testInvolutionLeftRightWithBatch(self):
+    x_np = np.array(
+        [[[1, 2, 3], [1, 2, 3]], [[1, 2, 3], [1, 2, 3]]],
+        dtype=np.uint8).reshape([2, 2, 3, 1])
+    with self.cached_session(use_gpu=True):
+      x_tf = constant_op.constant(x_np, shape=x_np.shape)
+      y = image_ops.flip_left_right(image_ops.flip_left_right(x_tf))
+      y_tf = self.evaluate(y)
+      self.assertAllEqual(y_tf, x_np)
+
+  def testLeftRight(self):
+    x_np = np.array([[1, 2, 3], [1, 2, 3]], dtype=np.uint8).reshape([2, 3, 1])
+    y_np = np.array([[3, 2, 1], [3, 2, 1]], dtype=np.uint8).reshape([2, 3, 1])
+
+    with self.cached_session(use_gpu=True):
+      x_tf = constant_op.constant(x_np, shape=x_np.shape)
+      y = image_ops.flip_left_right(x_tf)
+      y_tf = self.evaluate(y)
+      self.assertAllEqual(y_tf, y_np)
+
+  def testLeftRightWithBatch(self):
+    x_np = np.array(
+        [[[1, 2, 3], [1, 2, 3]], [[1, 2, 3], [1, 2, 3]]],
+        dtype=np.uint8).reshape([2, 2, 3, 1])
+    y_np = np.array(
+        [[[3, 2, 1], [3, 2, 1]], [[3, 2, 1], [3, 2, 1]]],
+        dtype=np.uint8).reshape([2, 2, 3, 1])
+
+    with self.cached_session(use_gpu=True):
+      x_tf = constant_op.constant(x_np, shape=x_np.shape)
+      y = image_ops.flip_left_right(x_tf)
+      y_tf = self.evaluate(y)
+      self.assertAllEqual(y_tf, y_np)
+
+  def testRandomFlipLeftRightStateful(self):
+    # Test random flip with single seed (stateful).
+    with ops.Graph().as_default():
+      x_np = np.array([[1, 2, 3], [1, 2, 3]], dtype=np.uint8).reshape([2, 3, 1])
+      y_np = np.array([[3, 2, 1], [3, 2, 1]], dtype=np.uint8).reshape([2, 3, 1])
+      seed = 42
+
+      with self.cached_session(use_gpu=True):
+        x_tf = constant_op.constant(x_np, shape=x_np.shape)
+        y = image_ops.random_flip_left_right(x_tf, seed=seed)
+        self.assertTrue(y.op.name.startswith("random_flip_left_right"))
+
+        count_flipped = 0
+        count_unflipped = 0
+        for _ in range(100):
+          y_tf = self.evaluate(y)
+          if y_tf[0][0] == 1:
+            self.assertAllEqual(y_tf, x_np)
+            count_unflipped += 1
+          else:
+            self.assertAllEqual(y_tf, y_np)
+            count_flipped += 1
+
+        # 100 trials
+        # Mean: 50
+        # Std Dev: ~5
+        # Six Sigma: 50 - (5 * 6) = 20
+        self.assertGreaterEqual(count_flipped, 20)
+        self.assertGreaterEqual(count_unflipped, 20)
+
+  def testRandomFlipLeftRight(self):
+    x_np = np.array([[1, 2, 3], [1, 2, 3]], dtype=np.uint8).reshape([2, 3, 1])
+    y_np = np.array([[3, 2, 1], [3, 2, 1]], dtype=np.uint8).reshape([2, 3, 1])
+
+    with self.cached_session(use_gpu=True):
+      x_tf = constant_op.constant(x_np, shape=x_np.shape)
+      count_flipped = 0
+      count_unflipped = 0
+      for seed in range(100):
+        y_tf = self.evaluate(image_ops.random_flip_left_right(x_tf, seed=seed))
+        if y_tf[0][0] == 1:
+          self.assertAllEqual(y_tf, x_np)
+          count_unflipped += 1
+        else:
+          self.assertAllEqual(y_tf, y_np)
+          count_flipped += 1
+
+      self.assertEqual(count_flipped, 45)
+      self.assertEqual(count_unflipped, 55)
+
+  # TODO(b/162345082): stateless random op generates different random number
+  # with xla_gpu. Update tests such that there is a single ground truth result
+  # to test against.
+  @parameterized.named_parameters(
+      ("_RandomFlipLeftRight", image_ops.stateless_random_flip_left_right),
+      ("_RandomFlipUpDown", image_ops.stateless_random_flip_up_down),
+  )
+  def testRandomFlipStateless(self, func):
+    with test_util.use_gpu():
+      x_np = np.array([[1, 2, 3], [4, 5, 6]], dtype=np.uint8).reshape([2, 3, 1])
+      y_np = np.array([[3, 2, 1], [6, 5, 4]], dtype=np.uint8).reshape([2, 3, 1])
+      if "RandomFlipUpDown" in self.id():
+        y_np = np.array(
+            [[4, 5, 6], [1, 2, 3]], dtype=np.uint8).reshape([2, 3, 1])
+
+      x_tf = constant_op.constant(x_np, shape=x_np.shape)
+
+      iterations = 2
+      flip_counts = [None for _ in range(iterations)]
+      flip_sequences = ["" for _ in range(iterations)]
+      test_seed = (1, 2)
+      split_seeds = stateless_random_ops.split(test_seed, 10)
+      seeds_list = self.evaluate(split_seeds)
+      for i in range(iterations):
+        count_flipped = 0
+        count_unflipped = 0
+        flip_seq = ""
+        for seed in seeds_list:
+          y_tf = func(x_tf, seed=seed)
+          y_tf_eval = self.evaluate(y_tf)
+          if y_tf_eval[0][0] == 1:
+            self.assertAllEqual(y_tf_eval, x_np)
+            count_unflipped += 1
+            flip_seq += "U"
+          else:
+            self.assertAllEqual(y_tf_eval, y_np)
+            count_flipped += 1
+            flip_seq += "F"
+
+        flip_counts[i] = (count_flipped, count_unflipped)
+        flip_sequences[i] = flip_seq
+
+      # Verify that results are deterministic.
+      for i in range(1, iterations):
+        self.assertAllEqual(flip_counts[0], flip_counts[i])
+        self.assertAllEqual(flip_sequences[0], flip_sequences[i])
+
+  # TODO(b/162345082): stateless random op generates different random number
+  # with xla_gpu. Update tests such that there is a single ground truth result
+  # to test against.
+  @parameterized.named_parameters(
+      ("_RandomFlipLeftRight", image_ops.stateless_random_flip_left_right),
+      ("_RandomFlipUpDown", image_ops.stateless_random_flip_up_down)
+  )
+  def testRandomFlipStatelessWithBatch(self, func):
+    with test_util.use_gpu():
+      batch_size = 16
+
+      # create single item of test data
+      x_np_raw = np.array(
+          [[1, 2, 3], [4, 5, 6]], dtype=np.uint8).reshape([1, 2, 3, 1])
+      y_np_raw = np.array(
+          [[3, 2, 1], [6, 5, 4]], dtype=np.uint8).reshape([1, 2, 3, 1])
+      if "RandomFlipUpDown" in self.id():
+        y_np_raw = np.array(
+            [[4, 5, 6], [1, 2, 3]], dtype=np.uint8).reshape([1, 2, 3, 1])
+
+      # create batched test data
+      x_np = np.vstack([x_np_raw for _ in range(batch_size)])
+      y_np = np.vstack([y_np_raw for _ in range(batch_size)])
+
+      x_tf = constant_op.constant(x_np, shape=x_np.shape)
+
+      iterations = 2
+      flip_counts = [None for _ in range(iterations)]
+      flip_sequences = ["" for _ in range(iterations)]
+      test_seed = (1, 2)
+      split_seeds = stateless_random_ops.split(test_seed, 10)
+      seeds_list = self.evaluate(split_seeds)
+      for i in range(iterations):
+        count_flipped = 0
+        count_unflipped = 0
+        flip_seq = ""
+        for seed in seeds_list:
+          y_tf = func(x_tf, seed=seed)
+          y_tf_eval = self.evaluate(y_tf)
+          for j in range(batch_size):
+            if y_tf_eval[j][0][0] == 1:
+              self.assertAllEqual(y_tf_eval[j], x_np[j])
+              count_unflipped += 1
+              flip_seq += "U"
+            else:
+              self.assertAllEqual(y_tf_eval[j], y_np[j])
+              count_flipped += 1
+              flip_seq += "F"
+
+        flip_counts[i] = (count_flipped, count_unflipped)
+        flip_sequences[i] = flip_seq
+
+      for i in range(1, iterations):
+        self.assertAllEqual(flip_counts[0], flip_counts[i])
+        self.assertAllEqual(flip_sequences[0], flip_sequences[i])
+
+  def testRandomFlipLeftRightWithBatch(self):
+    batch_size = 16
+    seed = 42
+
+    # create single item of test data
+    x_np_raw = np.array(
+        [[1, 2, 3], [1, 2, 3]], dtype=np.uint8
+    ).reshape([1, 2, 3, 1])
+    y_np_raw = np.array(
+        [[3, 2, 1], [3, 2, 1]], dtype=np.uint8
+    ).reshape([1, 2, 3, 1])
+
+    # create batched test data
+    x_np = np.vstack([x_np_raw for _ in range(batch_size)])
+    y_np = np.vstack([y_np_raw for _ in range(batch_size)])
+
+    with self.cached_session(use_gpu=True):
+      x_tf = constant_op.constant(x_np, shape=x_np.shape)
+      count_flipped = 0
+      count_unflipped = 0
+      for seed in range(100):
+        y_tf = self.evaluate(image_ops.random_flip_left_right(x_tf, seed=seed))
+
+        # check every element of the batch
+        for i in range(batch_size):
+          if y_tf[i][0][0] == 1:
+            self.assertAllEqual(y_tf[i], x_np[i])
+            count_unflipped += 1
+          else:
+            self.assertAllEqual(y_tf[i], y_np[i])
+            count_flipped += 1
+
+      self.assertEqual(count_flipped, 772)
+      self.assertEqual(count_unflipped, 828)
+
+  def testInvolutionUpDown(self):
+    x_np = np.array([[1, 2, 3], [4, 5, 6]], dtype=np.uint8).reshape([2, 3, 1])
+
+    with self.cached_session(use_gpu=True):
+      x_tf = constant_op.constant(x_np, shape=x_np.shape)
+      y = image_ops.flip_up_down(image_ops.flip_up_down(x_tf))
+      y_tf = self.evaluate(y)
+      self.assertAllEqual(y_tf, x_np)
+
+  def testInvolutionUpDownWithBatch(self):
+    x_np = np.array(
+        [[[1, 2, 3], [4, 5, 6]], [[7, 8, 9], [10, 11, 12]]],
+        dtype=np.uint8).reshape([2, 2, 3, 1])
+
+    with self.cached_session(use_gpu=True):
+      x_tf = constant_op.constant(x_np, shape=x_np.shape)
+      y = image_ops.flip_up_down(image_ops.flip_up_down(x_tf))
+      y_tf = self.evaluate(y)
+      self.assertAllEqual(y_tf, x_np)
+
+  def testUpDown(self):
+    x_np = np.array([[1, 2, 3], [4, 5, 6]], dtype=np.uint8).reshape([2, 3, 1])
+    y_np = np.array([[4, 5, 6], [1, 2, 3]], dtype=np.uint8).reshape([2, 3, 1])
+
+    with self.cached_session(use_gpu=True):
+      x_tf = constant_op.constant(x_np, shape=x_np.shape)
+      y = image_ops.flip_up_down(x_tf)
+      y_tf = self.evaluate(y)
+      self.assertAllEqual(y_tf, y_np)
+
+  def testUpDownWithBatch(self):
+    x_np = np.array(
+        [[[1, 2, 3], [4, 5, 6]], [[7, 8, 9], [10, 11, 12]]],
+        dtype=np.uint8).reshape([2, 2, 3, 1])
+    y_np = np.array(
+        [[[4, 5, 6], [1, 2, 3]], [[10, 11, 12], [7, 8, 9]]],
+        dtype=np.uint8).reshape([2, 2, 3, 1])
+
+    with self.cached_session(use_gpu=True):
+      x_tf = constant_op.constant(x_np, shape=x_np.shape)
+      y = image_ops.flip_up_down(x_tf)
+      y_tf = self.evaluate(y)
+      self.assertAllEqual(y_tf, y_np)
+
+  def testRandomFlipUpDownStateful(self):
+    # Test random flip with single seed (stateful).
+    with ops.Graph().as_default():
+      x_np = np.array([[1, 2, 3], [4, 5, 6]], dtype=np.uint8).reshape([2, 3, 1])
+      y_np = np.array([[4, 5, 6], [1, 2, 3]], dtype=np.uint8).reshape([2, 3, 1])
+      seed = 42
+
+      with self.cached_session(use_gpu=True):
+        x_tf = constant_op.constant(x_np, shape=x_np.shape)
+        y = image_ops.random_flip_up_down(x_tf, seed=seed)
+        self.assertTrue(y.op.name.startswith("random_flip_up_down"))
+        count_flipped = 0
+        count_unflipped = 0
+        for _ in range(100):
+          y_tf = self.evaluate(y)
+          if y_tf[0][0] == 1:
+            self.assertAllEqual(y_tf, x_np)
+            count_unflipped += 1
+          else:
+            self.assertAllEqual(y_tf, y_np)
+            count_flipped += 1
+
+        # 100 trials
+        # Mean: 50
+        # Std Dev: ~5
+        # Six Sigma: 50 - (5 * 6) = 20
+        self.assertGreaterEqual(count_flipped, 20)
+        self.assertGreaterEqual(count_unflipped, 20)
+
+  def testRandomFlipUpDown(self):
+    x_np = np.array([[1, 2, 3], [4, 5, 6]], dtype=np.uint8).reshape([2, 3, 1])
+    y_np = np.array([[4, 5, 6], [1, 2, 3]], dtype=np.uint8).reshape([2, 3, 1])
+
+    with self.cached_session(use_gpu=True):
+      x_tf = constant_op.constant(x_np, shape=x_np.shape)
+      count_flipped = 0
+      count_unflipped = 0
+      for seed in range(100):
+        y_tf = self.evaluate(image_ops.random_flip_up_down(x_tf, seed=seed))
+        if y_tf[0][0] == 1:
+          self.assertAllEqual(y_tf, x_np)
+          count_unflipped += 1
+        else:
+          self.assertAllEqual(y_tf, y_np)
+          count_flipped += 1
+
+      self.assertEqual(count_flipped, 45)
+      self.assertEqual(count_unflipped, 55)
+
+  def testRandomFlipUpDownWithBatch(self):
+    batch_size = 16
+    seed = 42
+
+    # create single item of test data
+    x_np_raw = np.array(
+        [[1, 2, 3], [4, 5, 6]], dtype=np.uint8
+    ).reshape([1, 2, 3, 1])
+    y_np_raw = np.array(
+        [[4, 5, 6], [1, 2, 3]], dtype=np.uint8
+    ).reshape([1, 2, 3, 1])
+
+    # create batched test data
+    x_np = np.vstack([x_np_raw for _ in range(batch_size)])
+    y_np = np.vstack([y_np_raw for _ in range(batch_size)])
+
+    with self.cached_session(use_gpu=True):
+      x_tf = constant_op.constant(x_np, shape=x_np.shape)
+      count_flipped = 0
+      count_unflipped = 0
+      for seed in range(100):
+        y_tf = self.evaluate(image_ops.random_flip_up_down(x_tf, seed=seed))
+
+        # check every element of the batch
+        for i in range(batch_size):
+          if y_tf[i][0][0] == 1:
+            self.assertAllEqual(y_tf[i], x_np[i])
+            count_unflipped += 1
+          else:
+            self.assertAllEqual(y_tf[i], y_np[i])
+            count_flipped += 1
+
+      self.assertEqual(count_flipped, 772)
+      self.assertEqual(count_unflipped, 828)
+
+  def testInvolutionTranspose(self):
+    x_np = np.array([[1, 2, 3], [4, 5, 6]], dtype=np.uint8).reshape([2, 3, 1])
+
+    with self.cached_session(use_gpu=True):
+      x_tf = constant_op.constant(x_np, shape=x_np.shape)
+      y = image_ops.transpose(image_ops.transpose(x_tf))
+      y_tf = self.evaluate(y)
+      self.assertAllEqual(y_tf, x_np)
+
+  def testInvolutionTransposeWithBatch(self):
+    x_np = np.array(
+        [[[1, 2, 3], [4, 5, 6]], [[7, 8, 9], [10, 11, 12]]],
+        dtype=np.uint8).reshape([2, 2, 3, 1])
+
+
+...187677 bytes truncated...
+
+The tool call succeeded but the output was truncated. Full output saved to: C:\Users\Akindu Himan\.local\share\opencode\tool-output\tool_f81bd09a5001zfn6VOjWLAyuGh
+Use the Task tool to have explore agent process this file with Grep and Read (with offset/limit). Do NOT read the full file yourself - delegate to save context.
+
+tokens used
+input: 499
+cache read: 8,704
+cache write: 0
+output: 211
+reasoning output: 0
+
+The kernel code matches the supplied patch directly. The test file is shorter than the source patch context, so I’m locating the target equivalent test method before editing.
+
+tool: grep
+{
+  "pattern": "crop_and_resize_v2",
+  "path": "tensorflow/python/ops/image_ops_test.py"
+}
+Found 3 matches
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0093-dca1d9748e8e\tensorflow\python\ops\image_ops_impl.py:
+  Line 4497: def crop_and_resize_v2(image,
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0093-dca1d9748e8e\tensorflow\python\ops\image_ops_test.py:
+  Line 5763:       op = image_ops_impl.crop_and_resize_v2(
+
+  Line 5773:         op = image_ops_impl.crop_and_resize_v2(
+
+tool: grep
+{
+  "pattern": "def testImageCropAndResize",
+  "path": "tensorflow/python/ops/image_ops_test.py"
+}
+Found 1 matches
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0093-dca1d9748e8e\tensorflow\python\ops\image_ops_test.py:
+  Line 5761:   def testImageCropAndResize(self):
+
+tool: grep
+{
+  "pattern": "class .*Image.*Test|ImageCrop",
+  "path": "tensorflow/python/ops/image_ops_test.py"
+}
+Found 12 matches
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0093-dca1d9748e8e\tensorflow\python\ops\image_ops_test.py:
+  Line 1645: class PerImageWhiteningTest(test_util.TensorFlowTestCase):
+
+  Line 2596: class ResizeImagesV2Test(test_util.TensorFlowTestCase, parameterized.TestCase):
+
+  Line 3161: class ResizeImagesTest(test_util.TensorFlowTestCase,
+
+  Line 3690: class ResizeImageWithPadV1Test(test_util.TensorFlowTestCase):
+
+  Line 3810: class ResizeImageWithPadV2Test(test_util.TensorFlowTestCase):
+
+  Line 3928: class ResizeImageWithCropOrPadTest(test_util.TensorFlowTestCase):
+
+  Line 4548: class ConvertImageTest(test_util.TensorFlowTestCase):
+
+  Line 5076: class VerifyCompatibleImageShapesTest(test_util.TensorFlowTestCase):
+
+  Line 5484: class ImageGradientsTest(test_util.TensorFlowTestCase):
+
+  Line 5569: class DecodeImageTest(test_util.TensorFlowTestCase, parameterized.TestCase):
+
+  Line 5761:   def testImageCropAndResize(self):
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0093-dca1d9748e8e\tensorflow\python\ops\parallel_for\control_flow_ops_test.py:
+  Line 350: class ImageTest(PForTestCase):
+
+tokens used
+input: 16,179
+cache read: 8,704
+cache write: 0
+output: 152
+reasoning output: 12
+
+tool: read
+{
+  "filePath": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0093-dca1d9748e8e\\tensorflow\\python\\ops\\image_ops_test.py",
+  "offset": 5740,
+  "limit": 80
+}
+<path>C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0093-dca1d9748e8e\tensorflow\python\ops\image_ops_test.py</path>
+<type>file</type>
+<content>
+5740: 
+5741:           # Test `expand_animations=False` case.
+5742:           image0 = image_ops.decode_image(
+5743:               gif0, dtype=dtypes.float32, expand_animations=False)
+5744:           # image_ops.decode_png() handles GIFs and returns 3D tensors
+5745:           animation = image_ops.decode_gif(gif0)
+5746:           first_frame = array_ops.gather(animation, 0)
+5747:           image1 = image_ops.convert_image_dtype(first_frame, dtypes.float32)
+5748:           image0, image1 = self.evaluate([image0, image1])
+5749:           self.assertLen(image0.shape, 3)
+5750:           self.assertAllEqual(list(image0.shape), [40, 20, 3])
+5751:           self.assertAllEqual(image0, image1)
+5752: 
+5753:           # Test `expand_animations=True` case.
+5754:           image2 = image_ops.decode_image(gif0, dtype=dtypes.float32)
+5755:           image3 = image_ops.convert_image_dtype(animation, dtypes.float32)
+5756:           image2, image3 = self.evaluate([image2, image3])
+5757:           self.assertLen(image2.shape, 4)
+5758:           self.assertAllEqual(list(image2.shape), [12, 40, 20, 3])
+5759:           self.assertAllEqual(image2, image3)
+5760: 
+5761:   def testImageCropAndResize(self):
+5762:     if test_util.is_gpu_available():
+5763:       op = image_ops_impl.crop_and_resize_v2(
+5764:           image=array_ops.zeros((2, 1, 1, 1)),
+5765:           boxes=[[1.0e+40, 0, 0, 0]],
+5766:           box_indices=[1],
+5767:           crop_size=[1, 1])
+5768:       self.evaluate(op)
+5769:     else:
+5770:       message = "Boxes contains at least one element that is not finite"
+5771:       with self.assertRaisesRegex((errors.InvalidArgumentError, ValueError),
+5772:                                   message):
+5773:         op = image_ops_impl.crop_and_resize_v2(
+5774:             image=array_ops.zeros((2, 1, 1, 1)),
+5775:             boxes=[[1.0e+40, 0, 0, 0]],
+5776:             box_indices=[1],
+5777:             crop_size=[1, 1])
+5778:         self.evaluate(op)
+5779: 
+5780:   @parameterized.named_parameters(
+5781:       ("_jpeg", "JPEG", "jpeg_merge_test1.jpg"),
+5782:       ("_png", "PNG", "lena_rgba.png"),
+5783:       ("_gif", "GIF", "scan.gif"),
+5784:   )
+5785:   def testWrongOpBmp(self, img_format, filename):
+5786:     base_folder = "tensorflow/core/lib"
+5787:     base_path = os.path.join(base_folder, img_format.lower(), "testdata")
+5788:     err_msg = "Trying to decode " + img_format + " format using DecodeBmp op"
+5789:     with self.assertRaisesRegex(
+5790:         (ValueError, errors.InvalidArgumentError), err_msg):
+5791:       img_bytes = io_ops.read_file(os.path.join(base_path, filename))
+5792:       img = image_ops.decode_bmp(img_bytes)
+5793:       self.evaluate(img)
+5794: 
+5795:   @parameterized.named_parameters(
+5796:       ("_jpeg", image_ops.decode_jpeg, "DecodeJpeg"),
+5797:       ("_png", image_ops.decode_png, "DecodePng"),
+5798:       ("_gif", image_ops.decode_gif, "DecodeGif"),
+5799:   )
+5800:   def testWrongOp(self, decode_op, op_used):
+5801:     base = "tensorflow/core/lib/bmp/testdata"
+5802:     bmp0 = io_ops.read_file(os.path.join(base, "rgba_small.bmp"))
+5803:     err_msg = ("Trying to decode BMP format using a wrong op. Use `decode_bmp` "
+5804:                "or `decode_image` instead. Op used: ") + op_used
+5805:     with self.assertRaisesRegex(
+5806:         (ValueError, errors.InvalidArgumentError), err_msg):
+5807:       img = decode_op(bmp0)
+5808:       self.evaluate(img)
+5809: 
+5810:   @parameterized.named_parameters(
+5811:       ("_png", "PNG", "lena_rgba.png"),
+5812:       ("_gif", "GIF", "scan.gif"),
+5813:       ("_bmp", "BMP", "rgba_small.bmp"),
+5814:   )
+5815:   def testWrongOpJpeg(self, img_format, filename):
+5816:     base_folder = "tensorflow/core/lib"
+5817:     base_path = os.path.join(base_folder, img_format.lower(), "testdata")
+5818:     err_msg = ("DecodeAndCropJpeg operation can run on JPEG only, but "
+5819:                "detected ") + img_format
+
+(Showing lines 5740-5819 of 5856. Use offset=5820 to continue.)
+</content>
+
+tokens used
+input: 1,598
+cache read: 24,064
+cache write: 0
+output: 76
+reasoning output: 0
+
+I found the target test method at the end of `image_ops_test.py`; the added regression test belongs immediately after it, matching the source patch placement. I’m applying the safe dimension-addition changes now.
+
+tool: validate
+{
+  "ref": "dca1d9748e8e90af76700fa8e10e6d37a927e3c1",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/image/crop_and_resize_op.cc b/tensorflow/core/kernels/image/crop_and_resize_op.cc\n--- a/tensorflow/core/kernels/image/crop_and_resize_op.cc\n+++ b/tensorflow/core/kernels/image/crop_and_resize_op.cc\n@@ -166,17 +166,18 @@ class CropAndResizeOp : public AsyncOpKernel {\n     OP_REQUIRES_ASYNC(\n         context, crop_height > 0 && crop_width > 0,\n         errors::InvalidArgument(\"crop dimensions must be positive\"), done);\n \n+    TensorShape shape;\n+    OP_REQUIRES_OK_ASYNC(context, shape.AddDimWithStatus(num_boxes), done);\n+    OP_REQUIRES_OK_ASYNC(context, shape.AddDimWithStatus(crop_height), done);\n+    OP_REQUIRES_OK_ASYNC(context, shape.AddDimWithStatus(crop_width), done);\n+    OP_REQUIRES_OK_ASYNC(context, shape.AddDimWithStatus(depth), done);\n     // Allocate output tensor.\n     Tensor* output = nullptr;\n-    OP_REQUIRES_OK_ASYNC(\n-        context,\n-        context->allocate_output(\n-            0, TensorShape({num_boxes, crop_height, crop_width, depth}),\n-            &output),\n-        done);\n+    OP_REQUIRES_OK_ASYNC(context, context->allocate_output(0, shape, &output),\n+                         done);\n \n     auto compute_callback = [this, context, output]() {\n       const Tensor& image = context->input(0);\n       const Tensor& boxes = context->input(1);\n@@ -403,17 +404,18 @@ class CropAndResizeGradImageOp : public AsyncOpKernel {\n     OP_REQUIRES_ASYNC(\n         context, grads.dim_size(3) == depth,\n         errors::InvalidArgument(\"image_size and grads are incompatible\"), done);\n \n+    TensorShape shape;\n+    OP_REQUIRES_OK_ASYNC(context, shape.AddDimWithStatus(batch_size), done);\n+    OP_REQUIRES_OK_ASYNC(context, shape.AddDimWithStatus(image_height), done);\n+    OP_REQUIRES_OK_ASYNC(context, shape.AddDimWithStatus(image_width), done);\n+    OP_REQUIRES_OK_ASYNC(context, shape.AddDimWithStatus(depth), done);\n     // Allocate output tensor.\n     Tensor* output = nullptr;\n-    OP_REQUIRES_OK_ASYNC(\n-        context,\n-        context->allocate_output(\n-            0, TensorShape({batch_size, image_height, image_width, depth}),\n-            &output),\n-        done);\n+    OP_REQUIRES_OK_ASYNC(context, context->allocate_output(0, shape, &output),\n+                         done);\n \n     auto compute_callback = [this, context, output]() {\n       const Tensor& grads = context->input(0);\n       const Tensor& boxes = context->input(1);\n"
+}
+This patch does not apply to the target TensorFlow ref.
+Git apply output:
+error: corrupt patch at line 28
+Touched files:
+- tensorflow/core/kernels/image/crop_and_resize_op.cc
+Fix the patch context against the older TensorFlow version, then run validate again in hunk mode.
+
+tokens used
+input: 1,894
+cache read: 25,088
+cache write: 0
+output: 774
+reasoning output: 28
+
+The validation patch wrapper had formatting issues, not a code mismatch; the target snippets are exact. I’m applying the edits directly with minimal context.
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/kernels/image/crop_and_resize_op.cc\n@@\n     OP_REQUIRES_ASYNC(\n         context, crop_height > 0 && crop_width > 0,\n         errors::InvalidArgument(\"crop dimensions must be positive\"), done);\n \n+    TensorShape shape;\n+    OP_REQUIRES_OK_ASYNC(context, shape.AddDimWithStatus(num_boxes), done);\n+    OP_REQUIRES_OK_ASYNC(context, shape.AddDimWithStatus(crop_height), done);\n+    OP_REQUIRES_OK_ASYNC(context, shape.AddDimWithStatus(crop_width), done);\n+    OP_REQUIRES_OK_ASYNC(context, shape.AddDimWithStatus(depth), done);\n     // Allocate output tensor.\n     Tensor* output = nullptr;\n-    OP_REQUIRES_OK_ASYNC(\n-        context,\n-        context->allocate_output(\n-            0, TensorShape({num_boxes, crop_height, crop_width, depth}),\n-            &output),\n-        done);\n+    OP_REQUIRES_OK_ASYNC(context, context->allocate_output(0, shape, &output),\n+                         done);\n@@\n     OP_REQUIRES_ASYNC(\n         context, grads.dim_size(3) == depth,\n         errors::InvalidArgument(\"image_size and grads are incompatible\"), done);\n \n+    TensorShape shape;\n+    OP_REQUIRES_OK_ASYNC(context, shape.AddDimWithStatus(batch_size), done);\n+    OP_REQUIRES_OK_ASYNC(context, shape.AddDimWithStatus(image_height), done);\n+    OP_REQUIRES_OK_ASYNC(context, shape.AddDimWithStatus(image_width), done);\n+    OP_REQUIRES_OK_ASYNC(context, shape.AddDimWithStatus(depth), done);\n     // Allocate output tensor.\n     Tensor* output = nullptr;\n-    OP_REQUIRES_OK_ASYNC(\n-        context,\n-        context->allocate_output(\n-            0, TensorShape({batch_size, image_height, image_width, depth}),\n-            &output),\n-        done);\n+    OP_REQUIRES_OK_ASYNC(context, context->allocate_output(0, shape, &output),\n+                         done);\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/kernels/image/crop_and_resize_op.cc
+
+tokens used
+input: 1,743
+cache read: 26,112
+cache write: 0
+output: 563
+reasoning output: 28
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/python/ops/image_ops_test.py\n@@\n   def testImageCropAndResize(self):\n     if test_util.is_gpu_available():\n       op = image_ops_impl.crop_and_resize_v2(\n           image=array_ops.zeros((2, 1, 1, 1)),\n@@\n             crop_size=[1, 1])\n         self.evaluate(op)\n \n+  def testImageCropAndResizeWithInvalidInput(self):\n+    with self.session():\n+      with self.assertRaises((errors.InternalError, ValueError)):\n+        op = image_ops_impl.crop_and_resize_v2(\n+            image=np.ones((1, 1, 1, 1)),\n+            boxes=np.ones((11, 4)),\n+            box_indices=np.ones((11)),\n+            crop_size=[2065374891, 1145309325])\n+        self.evaluate(op)\n+\n   @parameterized.named_parameters(\n       (\"_jpeg\", \"JPEG\", \"jpeg_merge_test1.jpg\"),\n       (\"_png\", \"PNG\", \"lena_rgba.png\"),\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/python/ops/image_ops_test.py
+
+tokens used
+input: 1,340
+cache read: 27,136
+cache write: 0
+output: 285
+reasoning output: 0
+
+The source and regression test changes are applied. I’m checking the resulting diff and a syntax-level sanity check rather than running an expensive TensorFlow build.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target locations for crop_and_resize kernel and image op test",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate and apply minimal backport hunks",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Review final diff and report YAML result",
+      "status": "in_progress",
+      "priority": "high"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target locations for crop_and_resize kernel and image op test",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate and apply minimal backport hunks",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Review final diff and report YAML result",
+    "status": "in_progress",
+    "priority": "high"
+  }
+]
+
+tokens used
+input: 628
+cache read: 28,160
+cache write: 0
+output: 118
+reasoning output: 0
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/kernels/image/crop_and_resize_op.cc tensorflow/python/ops/image_ops_test.py",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0093-dca1d9748e8e"
+}
+warning: in the working copy of 'tensorflow/core/kernels/image/crop_and_resize_op.cc', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'tensorflow/python/ops/image_ops_test.py', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/kernels/image/crop_and_resize_op.cc b/tensorflow/core/kernels/image/crop_and_resize_op.cc
+index 4efc4ae884..65f972e173 100644
+--- a/tensorflow/core/kernels/image/crop_and_resize_op.cc
++++ b/tensorflow/core/kernels/image/crop_and_resize_op.cc
+@@ -169,14 +169,15 @@ class CropAndResizeOp : public AsyncOpKernel {
+         context, crop_height > 0 && crop_width > 0,
+         errors::InvalidArgument("crop dimensions must be positive"), done);
+ 
++    TensorShape shape;
++    OP_REQUIRES_OK_ASYNC(context, shape.AddDimWithStatus(num_boxes), done);
++    OP_REQUIRES_OK_ASYNC(context, shape.AddDimWithStatus(crop_height), done);
++    OP_REQUIRES_OK_ASYNC(context, shape.AddDimWithStatus(crop_width), done);
++    OP_REQUIRES_OK_ASYNC(context, shape.AddDimWithStatus(depth), done);
+     // Allocate output tensor.
+     Tensor* output = nullptr;
+-    OP_REQUIRES_OK_ASYNC(
+-        context,
+-        context->allocate_output(
+-            0, TensorShape({num_boxes, crop_height, crop_width, depth}),
+-            &output),
+-        done);
++    OP_REQUIRES_OK_ASYNC(context, context->allocate_output(0, shape, &output),
++                         done);
+ 
+     auto compute_callback = [this, context, output]() {
+       const Tensor& image = context->input(0);
+@@ -407,14 +408,15 @@ class CropAndResizeGradImageOp : public AsyncOpKernel {
+         context, grads.dim_size(3) == depth,
+         errors::InvalidArgument("image_size and grads are incompatible"), done);
+ 
++    TensorShape shape;
++    OP_REQUIRES_OK_ASYNC(context, shape.AddDimWithStatus(batch_size), done);
++    OP_REQUIRES_OK_ASYNC(context, shape.AddDimWithStatus(image_height), done);
++    OP_REQUIRES_OK_ASYNC(context, shape.AddDimWithStatus(image_width), done);
++    OP_REQUIRES_OK_ASYNC(context, shape.AddDimWithStatus(depth), done);
+     // Allocate output tensor.
+     Tensor* output = nullptr;
+-    OP_REQUIRES_OK_ASYNC(
+-        context,
+-        context->allocate_output(
+-            0, TensorShape({batch_size, image_height, image_width, depth}),
+-            &output),
+-        done);
++    OP_REQUIRES_OK_ASYNC(context, context->allocate_output(0, shape, &output),
++                         done);
+ 
+     auto compute_callback = [this, context, output]() {
+       const Tensor& grads = context->input(0);
+diff --git a/tensorflow/python/ops/image_ops_test.py b/tensorflow/python/ops/image_ops_test.py
+index 7f361a489a..ef3a4153d5 100644
+--- a/tensorflow/python/ops/image_ops_test.py
++++ b/tensorflow/python/ops/image_ops_test.py
+@@ -5777,6 +5777,16 @@ class DecodeImageTest(test_util.TensorFlowTestCase, parameterized.TestCase):
+             crop_size=[1, 1])
+         self.evaluate(op)
+ 
++  def testImageCropAndResizeWithInvalidInput(self):
++    with self.session():
++      with self.assertRaises((errors.InternalError, ValueError)):
++        op = image_ops_impl.crop_and_resize_v2(
++            image=np.ones((1, 1, 1, 1)),
++            boxes=np.ones((11, 4)),
++            box_indices=np.ones((11)),
++            crop_size=[2065374891, 1145309325])
++        self.evaluate(op)
++
+   @parameterized.named_parameters(
+       ("_jpeg", "JPEG", "jpeg_merge_test1.jpg"),
+       ("_png", "PNG", "lena_rgba.png"),
+
+tool: grep
+{
+  "pattern": "AddDimWithStatus",
+  "path": "tensorflow/core",
+  "include": "*.cc"
+}
+Found 8 matches
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0093-dca1d9748e8e\tensorflow\core\kernels\image\crop_and_resize_op.cc:
+  Line 173:     OP_REQUIRES_OK_ASYNC(context, shape.AddDimWithStatus(num_boxes), done);
+
+  Line 174:     OP_REQUIRES_OK_ASYNC(context, shape.AddDimWithStatus(crop_height), done);
+
+  Line 175:     OP_REQUIRES_OK_ASYNC(context, shape.AddDimWithStatus(crop_width), done);
+
+  Line 176:     OP_REQUIRES_OK_ASYNC(context, shape.AddDimWithStatus(depth), done);
+
+  Line 412:     OP_REQUIRES_OK_ASYNC(context, shape.AddDimWithStatus(batch_size), done);
+
+  Line 413:     OP_REQUIRES_OK_ASYNC(context, shape.AddDimWithStatus(image_height), done);
+
+  Line 414:     OP_REQUIRES_OK_ASYNC(context, shape.AddDimWithStatus(image_width), done);
+
+  Line 415:     OP_REQUIRES_OK_ASYNC(context, shape.AddDimWithStatus(depth), done);
+
+tokens used
+input: 861
+cache read: 28,160
+cache write: 0
+output: 125
+reasoning output: 0
+
+tool: grep
+{
+  "pattern": "Status AddDimWithStatus|AddDimWithStatus",
+  "path": "tensorflow",
+  "include": "*.h"
+}
+Found 4 matches
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0093-dca1d9748e8e\tensorflow\core\util\image_resizer_state.h:
+  Line 141:     OP_REQUIRES_OK(context, shape.AddDimWithStatus(batch_size));
+
+  Line 143:     OP_REQUIRES_OK(context, shape.AddDimWithStatus(out_height));
+
+  Line 144:     OP_REQUIRES_OK(context, shape.AddDimWithStatus(out_width));
+
+  Line 145:     OP_REQUIRES_OK(context, shape.AddDimWithStatus(channels));
+
+tokens used
+input: 2,184
+cache read: 28,160
+cache write: 0
+output: 38
+reasoning output: 20
+
+tool: grep
+{
+  "pattern": "AddDimWithStatus",
+  "path": "tensorflow/core/framework"
+}
+No files found
+
+tokens used
+input: 350
+cache read: 30,208
+cache write: 0
+output: 29
+reasoning output: 23
+
+`AddDimWithStatus` is already used elsewhere in this target tree (`image_resizer_state.h`), so the API is available in this release. No full build was run per constraints.
+
+tool: bash
+{
+  "command": "git diff --check -- tensorflow/core/kernels/image/crop_and_resize_op.cc tensorflow/python/ops/image_ops_test.py",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0093-dca1d9748e8e",
+  "timeout": 120000
+}
+warning: in the working copy of 'tensorflow/core/kernels/image/crop_and_resize_op.cc', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'tensorflow/python/ops/image_ops_test.py', LF will be replaced by CRLF the next time Git touches it
+
+tokens used
+input: 416
+cache read: 30,208
+cache write: 0
+output: 137
+reasoning output: 33
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target locations for crop_and_resize kernel and image op test",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate and apply minimal backport hunks",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Review final diff and report YAML result",
+      "status": "completed",
+      "priority": "high"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target locations for crop_and_resize kernel and image op test",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate and apply minimal backport hunks",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Review final diff and report YAML result",
+    "status": "completed",
+    "priority": "high"
+  }
+]
+
+tokens used
+input: 662
+cache read: 30,208
+cache write: 0
+output: 82
+reasoning output: 20
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/kernels/image/crop_and_resize_op.cc b/tensorflow/core/kernels/image/crop_and_resize_op.cc
+    index 4efc4ae884..65f972e173 100644
+    --- a/tensorflow/core/kernels/image/crop_and_resize_op.cc
+    +++ b/tensorflow/core/kernels/image/crop_and_resize_op.cc
+    @@ -169,14 +169,15 @@ class CropAndResizeOp : public AsyncOpKernel {
+             context, crop_height > 0 && crop_width > 0,
+             errors::InvalidArgument("crop dimensions must be positive"), done);
+     
+    +    TensorShape shape;
+    +    OP_REQUIRES_OK_ASYNC(context, shape.AddDimWithStatus(num_boxes), done);
+    +    OP_REQUIRES_OK_ASYNC(context, shape.AddDimWithStatus(crop_height), done);
+    +    OP_REQUIRES_OK_ASYNC(context, shape.AddDimWithStatus(crop_width), done);
+    +    OP_REQUIRES_OK_ASYNC(context, shape.AddDimWithStatus(depth), done);
+         // Allocate output tensor.
+         Tensor* output = nullptr;
+    -    OP_REQUIRES_OK_ASYNC(
+    -        context,
+    -        context->allocate_output(
+    -            0, TensorShape({num_boxes, crop_height, crop_width, depth}),
+    -            &output),
+    -        done);
+    +    OP_REQUIRES_OK_ASYNC(context, context->allocate_output(0, shape, &output),
+    +                         done);
+     
+         auto compute_callback = [this, context, output]() {
+           const Tensor& image = context->input(0);
+    @@ -407,14 +408,15 @@ class CropAndResizeGradImageOp : public AsyncOpKernel {
+             context, grads.dim_size(3) == depth,
+             errors::InvalidArgument("image_size and grads are incompatible"), done);
+     
+    +    TensorShape shape;
+    +    OP_REQUIRES_OK_ASYNC(context, shape.AddDimWithStatus(batch_size), done);
+    +    OP_REQUIRES_OK_ASYNC(context, shape.AddDimWithStatus(image_height), done);
+    +    OP_REQUIRES_OK_ASYNC(context, shape.AddDimWithStatus(image_width), done);
+    +    OP_REQUIRES_OK_ASYNC(context, shape.AddDimWithStatus(depth), done);
+         // Allocate output tensor.
+         Tensor* output = nullptr;
+    -    OP_REQUIRES_OK_ASYNC(
+    -        context,
+    -        context->allocate_output(
+    -            0, TensorShape({batch_size, image_height, image_width, depth}),
+    -            &output),
+    -        done);
+    +    OP_REQUIRES_OK_ASYNC(context, context->allocate_output(0, shape, &output),
+    +                         done);
+     
+         auto compute_callback = [this, context, output]() {
+           const Tensor& grads = context->input(0);
+    diff --git a/tensorflow/python/ops/image_ops_test.py b/tensorflow/python/ops/image_ops_test.py
+    index 7f361a489a..ef3a4153d5 100644
+    --- a/tensorflow/python/ops/image_ops_test.py
+    +++ b/tensorflow/python/ops/image_ops_test.py
+    @@ -5777,6 +5777,16 @@ class DecodeImageTest(test_util.TensorFlowTestCase, parameterized.TestCase):
+                 crop_size=[1, 1])
+             self.evaluate(op)
+     
+    +  def testImageCropAndResizeWithInvalidInput(self):
+    +    with self.session():
+    +      with self.assertRaises((errors.InternalError, ValueError)):
+    +        op = image_ops_impl.crop_and_resize_v2(
+    +            image=np.ones((1, 1, 1, 1)),
+    +            boxes=np.ones((11, 4)),
+    +            box_indices=np.ones((11)),
+    +            crop_size=[2065374891, 1145309325])
+    +        self.evaluate(op)
+    +
+       @parameterized.named_parameters(
+           ("_jpeg", "JPEG", "jpeg_merge_test1.jpg"),
+           ("_png", "PNG", "lena_rgba.png"),
+  notes: >
+    Backported the overflow-safe TensorShape construction for CropAndResize outputs and added the invalid-input regression test; git diff --check passed.
+```
+
+tokens used
+input: 878
+cache read: 30,208
+cache write: 0
+output: 954
+reasoning output: 0

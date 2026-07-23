@@ -1,0 +1,361 @@
+I’ll locate the older `DrawBoundingBoxesOp` implementation, compare the surrounding validation logic against the provided new-version hunk, then apply the minimal equivalent check in place.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target DrawBoundingBoxesOp context",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Validate and apply minimal backport hunk",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "content": "Review final diff and report YAML",
+      "status": "pending",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target DrawBoundingBoxesOp context",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Validate and apply minimal backport hunk",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "content": "Review final diff and report YAML",
+    "status": "pending",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 3,753
+cache read: 4,608
+cache write: 0
+output: 117
+reasoning output: 0
+
+tool: viewcode
+{
+  "ref": "47612cd69a2fdd76156360ca9102816e156f7e5c",
+  "path": "tensorflow/core/kernels/image/draw_bounding_box_op.cc",
+  "startline": 1,
+  "endline": 140
+}
+This file doesn't exist in this commit.
+
+tool: locate_symbol
+{
+  "ref": "47612cd69a2fdd76156360ca9102816e156f7e5c",
+  "symbol": "DrawBoundingBoxesOp"
+}
+tensorflow/core/kernels/draw_bounding_box_op.cc:53
+tensorflow/core/kernels/draw_bounding_box_op.cc:55
+tensorflow/core/kernels/draw_bounding_box_op.cc:231
+tensorflow/core/kernels/draw_bounding_box_op.cc:234
+
+tokens used
+input: 907
+cache read: 7,680
+cache write: 0
+output: 123
+reasoning output: 0
+
+The image kernel lives at the older pre-`image/` path in TensorFlow 2.1.4, so I’m checking that file’s local validation shape before editing.
+
+tool: viewcode
+{
+  "ref": "47612cd69a2fdd76156360ca9102816e156f7e5c",
+  "path": "tensorflow/core/kernels/draw_bounding_box_op.cc",
+  "startline": 40,
+  "endline": 120
+}
+Here are lines 40 through 120.
+
+  color_table.emplace_back(std::vector<float>({0, 1, 1, 1}));    // 8: aqua
+  color_table.emplace_back(std::vector<float>({1, 0, 1, 1}));    // 9: fuchsia
+
+  if (depth == 1) {
+    for (int64 i = 0; i < color_table.size(); i++) {
+      color_table[i][0] = 1;
+    }
+  }
+  return color_table;
+}
+}  // namespace
+
+template <class T>
+class DrawBoundingBoxesOp : public OpKernel {
+ public:
+  explicit DrawBoundingBoxesOp(OpKernelConstruction* context)
+      : OpKernel(context) {}
+
+  void Compute(OpKernelContext* context) override {
+    const Tensor& images = context->input(0);
+    const Tensor& boxes = context->input(1);
+    const int64 depth = images.dim_size(3);
+
+    OP_REQUIRES(context, images.dims() == 4,
+                errors::InvalidArgument("The rank of the images should be 4"));
+    OP_REQUIRES(
+        context, boxes.dims() == 3,
+        errors::InvalidArgument("The rank of the boxes tensor should be 3"));
+    OP_REQUIRES(context, images.dim_size(0) == boxes.dim_size(0),
+                errors::InvalidArgument("The batch sizes should be the same"));
+
+    OP_REQUIRES(
+        context, depth == 4 || depth == 1 || depth == 3,
+        errors::InvalidArgument("Channel depth should be either 1 (GRY), "
+                                "3 (RGB), or 4 (RGBA)"));
+
+    const int64 batch_size = images.dim_size(0);
+    const int64 height = images.dim_size(1);
+    const int64 width = images.dim_size(2);
+    std::vector<std::vector<float>> color_table;
+    if (context->num_inputs() == 3) {
+      const Tensor& colors_tensor = context->input(2);
+      OP_REQUIRES(context, colors_tensor.shape().dims() == 2,
+                  errors::InvalidArgument("colors must be a 2-D matrix",
+                                          colors_tensor.shape().DebugString()));
+      OP_REQUIRES(context, colors_tensor.shape().dim_size(1) >= depth,
+                  errors::InvalidArgument("colors must have equal or more ",
+                                          "channels than the image provided: ",
+                                          colors_tensor.shape().DebugString()));
+      if (colors_tensor.NumElements() != 0) {
+        color_table.clear();
+
+        auto colors = colors_tensor.matrix<float>();
+        for (int64 i = 0; i < colors.dimension(0); i++) {
+          std::vector<float> color_value(4);
+          for (int64 j = 0; j < 4; j++) {
+            color_value[j] = colors(i, j);
+          }
+          color_table.emplace_back(color_value);
+        }
+      }
+    }
+    if (color_table.empty()) {
+      color_table = DefaultColorTable(depth);
+    }
+    Tensor* output;
+    OP_REQUIRES_OK(
+        context,
+        context->allocate_output(
+            0, TensorShape({batch_size, height, width, depth}), &output));
+
+    output->tensor<T, 4>() = images.tensor<T, 4>();
+    auto canvas = output->tensor<T, 4>();
+
+    for (int64 b = 0; b < batch_size; ++b) {
+      const int64 num_boxes = boxes.dim_size(1);
+      const auto tboxes = boxes.tensor<T, 3>();
+      for (int64 bb = 0; bb < num_boxes; ++bb) {
+        int64 color_index = bb % color_table.size();
+        const int64 min_box_row =
+            static_cast<float>(tboxes(b, bb, 0)) * (height - 1);
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tokens used
+input: 1,114
+cache read: 7,680
+cache write: 0
+output: 109
+reasoning output: 9
+
+I found the equivalent code in `tensorflow/core/kernels/draw_bounding_box_op.cc`; the missing guard is directly after the channel-depth validation, matching the newer fix intent.
+
+tool: validate
+{
+  "ref": "47612cd69a2fdd76156360ca9102816e156f7e5c",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/draw_bounding_box_op.cc b/tensorflow/core/kernels/draw_bounding_box_op.cc\n--- a/tensorflow/core/kernels/draw_bounding_box_op.cc\n+++ b/tensorflow/core/kernels/draw_bounding_box_op.cc\n@@ -72,6 +72,12 @@ class DrawBoundingBoxesOp : public OpKernel {\n         errors::InvalidArgument(\"Channel depth should be either 1 (GRY), \"\n                                 \"3 (RGB), or 4 (RGBA)\"));\n \n+    OP_REQUIRES(\n+        context, boxes.dim_size(2) == 4,\n+        errors::InvalidArgument(\n+            \"The size of the third dimension of the box must be 4. Received: \",\n+            boxes.dim_size(2)));\n+\n     const int64 batch_size = images.dim_size(0);\n     const int64 height = images.dim_size(1);\n     const int64 width = images.dim_size(2);\n"
+}
+Patch applied successfully
+
+tokens used
+input: 1,065
+cache read: 8,704
+cache write: 0
+output: 320
+reasoning output: 104
+
+The hunk applies cleanly against the target base; I’m applying that single source change now.
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/kernels/draw_bounding_box_op.cc\n@@\n     OP_REQUIRES(\n         context, depth == 4 || depth == 1 || depth == 3,\n         errors::InvalidArgument(\"Channel depth should be either 1 (GRY), \"\n                                 \"3 (RGB), or 4 (RGBA)\"));\n \n+    OP_REQUIRES(\n+        context, boxes.dim_size(2) == 4,\n+        errors::InvalidArgument(\n+            \"The size of the third dimension of the box must be 4. Received: \",\n+            boxes.dim_size(2)));\n+\n     const int64 batch_size = images.dim_size(0);\n     const int64 height = images.dim_size(1);\n     const int64 width = images.dim_size(2);\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/kernels/draw_bounding_box_op.cc
+
+tokens used
+input: 1,502
+cache read: 8,704
+cache write: 0
+output: 241
+reasoning output: 0
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target DrawBoundingBoxesOp context",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate and apply minimal backport hunk",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Review final diff and report YAML",
+      "status": "in_progress",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target DrawBoundingBoxesOp context",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate and apply minimal backport hunk",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Review final diff and report YAML",
+    "status": "in_progress",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 749
+cache read: 9,728
+cache write: 0
+output: 75
+reasoning output: 0
+
+I’m reviewing the resulting diff to confirm only the intended TensorFlow kernel change is present.
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/kernels/draw_bounding_box_op.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0185-47612cd69a2f"
+}
+warning: in the working copy of 'tensorflow/core/kernels/draw_bounding_box_op.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/kernels/draw_bounding_box_op.cc b/tensorflow/core/kernels/draw_bounding_box_op.cc
+index 73db76333f..926ea368a5 100644
+--- a/tensorflow/core/kernels/draw_bounding_box_op.cc
++++ b/tensorflow/core/kernels/draw_bounding_box_op.cc
+@@ -73,6 +73,12 @@ class DrawBoundingBoxesOp : public OpKernel {
+         errors::InvalidArgument("Channel depth should be either 1 (GRY), "
+                                 "3 (RGB), or 4 (RGBA)"));
+ 
++    OP_REQUIRES(
++        context, boxes.dim_size(2) == 4,
++        errors::InvalidArgument(
++            "The size of the third dimension of the box must be 4. Received: ",
++            boxes.dim_size(2)));
++
+     const int64 batch_size = images.dim_size(0);
+     const int64 height = images.dim_size(1);
+     const int64 width = images.dim_size(2);
+
+tokens used
+input: 933
+cache read: 9,728
+cache write: 0
+output: 98
+reasoning output: 0
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target DrawBoundingBoxesOp context",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate and apply minimal backport hunk",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Review final diff and report YAML",
+      "status": "completed",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target DrawBoundingBoxesOp context",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate and apply minimal backport hunk",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Review final diff and report YAML",
+    "status": "completed",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 1,303
+cache read: 9,728
+cache write: 0
+output: 76
+reasoning output: 15
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/kernels/draw_bounding_box_op.cc b/tensorflow/core/kernels/draw_bounding_box_op.cc
+    index 73db76333f..926ea368a5 100644
+    --- a/tensorflow/core/kernels/draw_bounding_box_op.cc
+    +++ b/tensorflow/core/kernels/draw_bounding_box_op.cc
+    @@ -73,6 +73,12 @@ class DrawBoundingBoxesOp : public OpKernel {
+             errors::InvalidArgument("Channel depth should be either 1 (GRY), "
+                                     "3 (RGB), or 4 (RGBA)"));
+     
+    +    OP_REQUIRES(
+    +        context, boxes.dim_size(2) == 4,
+    +        errors::InvalidArgument(
+    +            "The size of the third dimension of the box must be 4. Received: ",
+    +            boxes.dim_size(2)));
+    +
+         const int64 batch_size = images.dim_size(0);
+         const int64 height = images.dim_size(1);
+         const int64 width = images.dim_size(2);
+  notes: >
+    Added the missing validation that bounding boxes have a third dimension of size 4 in the TensorFlow 2.1.4 kernel path.
+```
+
+tokens used
+input: 478
+cache read: 10,752
+cache write: 0
+output: 293
+reasoning output: 0

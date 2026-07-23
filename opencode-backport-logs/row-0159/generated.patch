@@ -1,0 +1,48 @@
+diff --git a/tensorflow/python/lib/core/py_seq_tensor.cc b/tensorflow/python/lib/core/py_seq_tensor.cc
+index 640260cb55..99d8398f85 100644
+--- a/tensorflow/python/lib/core/py_seq_tensor.cc
++++ b/tensorflow/python/lib/core/py_seq_tensor.cc
+@@ -441,27 +441,16 @@ DEFINE_HELPER(ConvertDouble, double, DT_DOUBLE, ConvertOneFloat<double>);
+ DEFINE_HELPER(ConvertFloat, float, DT_FLOAT, ConvertOneFloat<float>);
+ 
+ const char* ConvertOneNumpyHalf(PyObject* v, Eigen::half* out) {
+-  // NOTE(nareshmodi): Is there a way to convert to C double without the
+-  // intermediate Python double? This will help with ConvertOneFloat as well.
+-  Safe_PyObjectPtr as_float = make_safe(PyNumber_Float(v));
+-  double v_double = PyFloat_AS_DOUBLE(as_float.get());
+-  *out = Eigen::half(v_double);
+-
+-  return nullptr;
++  return ConvertOneFloat<Eigen::half>(v, out);
+ }
+ DEFINE_HELPER(ConvertNumpyHalf, Eigen::half, DT_HALF, ConvertOneNumpyHalf);
+ 
+-<<<<<<< HEAD
+ // String support
+ 
+ const char* ConvertOneString(PyObject* v, string* out) {
+   if (PyBytes_Check(v)) {
+     out->assign(PyBytes_AS_STRING(v), PyBytes_GET_SIZE(v));
+     return nullptr;
+-=======
+-  static const char* ConvertScalar(PyObject* v, Eigen::half* out) {
+-    return ConvertOneFloat<Eigen::half>(v, out);
+->>>>>>> c6170fb37c... Fix segfault when attempting to convert string to float16.
+   }
+   if (PyUnicode_Check(v)) {
+ #if PY_MAJOR_VERSION >= 3
+@@ -549,13 +538,9 @@ Status PySeqToTensor(PyObject* obj, DataType dtype, Tensor* ret) {
+       break;
+ 
+     case DT_HALF:
+-<<<<<<< HEAD
+-      RETURN_STRING_AS_STATUS(ConvertNumpyHalf(obj, shape, ret));
+-=======
+-      if (NumpyHalfConverter::Convert(obj, &shape, ret) == nullptr)
++      if (ConvertNumpyHalf(obj, shape, ret) == nullptr)
+         return Status::OK();
+       break;
+->>>>>>> c6170fb37c... Fix segfault when attempting to convert string to float16.
+ 
+     case DT_INT64:
+       if (ConvertInt64(obj, shape, ret) == nullptr) return Status::OK();

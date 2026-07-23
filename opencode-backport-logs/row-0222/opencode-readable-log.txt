@@ -1,0 +1,370 @@
+I’ll inspect the two affected target files at the provided base ref, then apply only the equivalent null checks if the surrounding code matches TensorFlow 2.3.4 APIs.
+
+tool: viewcode
+{
+  "ref": "0a3a3a33f5fe8630e85234f33276e3dbe4d7da46",
+  "path": "tensorflow/lite/kernels/kernel_util.cc",
+  "startline": 90,
+  "endline": 140
+}
+Here are lines 90 through 140.
+
+                                          filter_scale /
+                                          static_cast<double>(output_scale);
+    int32_t significand;
+    int channel_shift;
+    QuantizeMultiplier(effective_output_scale, &significand, &channel_shift);
+    per_channel_multiplier[i] = significand;
+    per_channel_shift[i] = channel_shift;
+  }
+
+  // Populate scalar quantization parameters.
+  // This check on legacy quantization parameters is kept only for backward
+  // compatibility.
+  if (input->type == kTfLiteUInt8) {
+    // Check bias scale == input scale * filter scale.
+    double real_multiplier = 0.0;
+    TF_LITE_ENSURE_STATUS(GetQuantizedConvolutionMultipler(
+        context, input, filter, bias, output, &real_multiplier));
+    int exponent;
+
+    // Populate quantization parameters with multiplier and shift.
+    QuantizeMultiplier(real_multiplier, multiplier, &exponent);
+    *shift = -exponent;
+  }
+  if (input->type == kTfLiteInt8 || input->type == kTfLiteUInt8 ||
+      input->type == kTfLiteInt16) {
+    TF_LITE_ENSURE_STATUS(CalculateActivationRangeQuantized(
+        context, activation, output, output_activation_min,
+        output_activation_max));
+  }
+  return kTfLiteOk;
+}
+
+TfLiteStatus GetQuantizedConvolutionMultipler(TfLiteContext* context,
+                                              const TfLiteTensor* input,
+                                              const TfLiteTensor* filter,
+                                              const TfLiteTensor* bias,
+                                              TfLiteTensor* output,
+                                              double* multiplier) {
+  const double input_product_scale = static_cast<double>(input->params.scale) *
+                                     static_cast<double>(filter->params.scale);
+  // TODO(ahentz): The following conditions must be guaranteed by the training
+  // pipeline.
+  if (bias) {
+    const double bias_scale = static_cast<double>(bias->params.scale);
+    // Here we're making sure the input_product_scale & bias_scale are about the
+    // same. Since we have:
+    // (output - output_zp) * output_scale =
+    // input_product_scale * input_product + bias * bias_scale ---- (0)
+    //
+    // (0) equals:
+    // (input_product + bias) * input_product_scale ----- (1)
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: viewcode
+{
+  "ref": "0a3a3a33f5fe8630e85234f33276e3dbe4d7da46",
+  "path": "tensorflow/lite/kernels/svdf.cc",
+  "startline": 270,
+  "endline": 325
+}
+Here are lines 270 through 325.
+
+  const TfLiteTensor* weights_time =
+      GetInput(context, node, kWeightsTimeTensor);
+  const TfLiteTensor* bias = GetOptionalInputTensor(context, node, kBiasTensor);
+
+  TfLiteTensor* scratch = GetTemporary(context, node, /*index=*/0);
+
+  TfLiteTensor* state = GetVariableInput(context, node, kStateTensor);
+  TfLiteTensor* output = GetOutput(context, node, kOutputTensor);
+
+  switch (weights_feature->type) {
+    case kTfLiteFloat32: {
+      reference_ops::EvalFloatSVDF(context, node, input, weights_feature,
+                                   weights_time, bias, params, scratch, state,
+                                   output);
+      return kTfLiteOk;
+      break;
+    }
+    case kTfLiteUInt8:
+    case kTfLiteInt8: {
+      if (input->type == kTfLiteFloat32) {
+        TfLiteTensor* input_quantized =
+            GetTemporary(context, node, /*index=*/1);
+        TfLiteTensor* scaling_factors =
+            GetTemporary(context, node, /*index=*/2);
+        TfLiteTensor* float_weights_time =
+            GetTemporary(context, node, /*index=*/3);
+        TfLiteTensor* zero_points = GetTemporary(context, node, /*index=*/4);
+        TfLiteTensor* row_sums = GetTemporary(context, node, /*index=*/5);
+        // Dequantize weights time.
+        // TODO(alanchiao): this dequantization initialization only needs to
+        // happen once per model and should theoretically be placed in either
+        // Init or Prepare. However, TFLite doesn't allocate float_weights_time
+        // until the Eval function.
+        // TODO(alanchiao): refactor logic out into dequantize function.
+        if (!op_data->float_weights_time_initialized) {
+          const float dequantization_scale = weights_time->params.scale;
+          const int8_t* weights_time_ptr = GetTensorData<int8_t>(weights_time);
+          float* float_weights_time_ptr =
+              GetTensorData<float>(float_weights_time);
+          for (int i = 0; i < NumElements(float_weights_time); ++i) {
+            float_weights_time_ptr[i] =
+                weights_time_ptr[i] * dequantization_scale;
+          }
+          op_data->float_weights_time_initialized = true;
+        }
+
+        reference_ops::EvalHybridSVDF(
+            context, node, input, weights_feature, float_weights_time, bias,
+            params, scratch, scaling_factors, input_quantized, state, output,
+            zero_points, row_sums, &op_data->compute_row_sums);
+        return kTfLiteOk;
+      } else {
+        auto* input_params = reinterpret_cast<TfLiteAffineQuantization*>(
+            input->quantization.params);
+        auto* output_params = reinterpret_cast<TfLiteAffineQuantization*>(
+            output->quantization.params);
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tokens used
+input: 3,895
+cache read: 4,608
+cache write: 0
+output: 186
+reasoning output: 0
+
+The SVDF location exists but uses older unsafe accessors. I need the exact older `GetVariableInput` body before editing because the first view landed earlier than the function.
+
+tool: grep
+{
+  "pattern": "TfLiteTensor\\* GetVariableInput",
+  "path": "tensorflow/lite/kernels",
+  "include": "kernel_util.cc"
+}
+No files found
+
+tool: locate_symbol
+{
+  "ref": "0a3a3a33f5fe8630e85234f33276e3dbe4d7da46",
+  "symbol": "GetVariableInput"
+}
+tensorflow/lite/kernels/kernel_util.h:42
+tensorflow/lite/tools/optimize/calibration/builtin_logging_ops/lstm.cc:548
+tensorflow/lite/tools/optimize/calibration/builtin_logging_ops/lstm.cc:551
+tensorflow/lite/kernels/bidirectional_sequence_lstm.cc:505
+tensorflow/lite/kernels/bidirectional_sequence_lstm.cc:508
+tensorflow/lite/kernels/bidirectional_sequence_lstm.cc:571
+tensorflow/lite/kernels/bidirectional_sequence_lstm.cc:574
+tensorflow/lite/kernels/bidirectional_sequence_lstm.cc:900
+tensorflow/lite/kernels/bidirectional_sequence_lstm.cc:903
+tensorflow/lite/kernels/bidirectional_sequence_lstm.cc:949
+tensorflow/lite/kernels/bidirectional_sequence_lstm.cc:952
+tensorflow/lite/kernels/bidirectional_sequence_rnn.cc:702
+tensorflow/lite/kernels/bidirectional_sequence_rnn.cc:705
+tensorflow/lite/kernels/lstm.cc:72
+tensorflow/lite/kernels/lstm.cc:138
+tensorflow/lite/kernels/lstm.cc:421
+tensorflow/lite/kernels/lstm.cc:423
+tensorflow/lite/kernels/lstm.cc:1028
+tensorflow/lite/kernels/lstm.cc:1203
+tensorflow/lite/kernels/lstm.cc:1205
+
+tokens used
+input: 2,177
+cache read: 7,680
+cache write: 0
+output: 146
+reasoning output: 11
+
+`GetVariableInput` is declared/defined differently in 2.3.4, so I’m checking the header to place the shared null guard at the actual target implementation.
+
+tool: viewcode
+{
+  "ref": "0a3a3a33f5fe8630e85234f33276e3dbe4d7da46",
+  "path": "tensorflow/lite/kernels/kernel_util.h",
+  "startline": 1,
+  "endline": 70
+}
+Here are lines 1 through 70.
+
+/* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+==============================================================================*/
+#ifndef TENSORFLOW_LITE_KERNELS_KERNEL_UTIL_H_
+#define TENSORFLOW_LITE_KERNELS_KERNEL_UTIL_H_
+
+#include <stdint.h>
+
+#include <limits>
+
+#include "tensorflow/lite/c/builtin_op_data.h"
+#include "tensorflow/lite/c/common.h"
+
+namespace tflite {
+
+inline int NumDimensions(const TfLiteTensor* t) { return t->dims->size; }
+inline int SizeOfDimension(const TfLiteTensor* t, int dim) {
+  return t->dims->data[dim];
+}
+inline const TfLiteTensor* GetInput(const TfLiteContext* context,
+                                    const TfLiteNode* node, int index) {
+  const int tensor_index = node->inputs->data[index];
+  if (tensor_index < 0) {
+    return nullptr;
+  }
+  return &context->tensors[tensor_index];
+}
+// Note: You must check if result is not null:
+// TfLiteTensor* my_tensor = GetVariableInput(context, node, kMyTensorIdx);
+// TF_LITE_ENSURE(context, my_tensor != nullptr);
+inline TfLiteTensor* GetVariableInput(TfLiteContext* context,
+                                      const TfLiteNode* node, int index) {
+  const int tensor_index = node->inputs->data[index];
+  if (tensor_index < 0) {
+    return nullptr;
+  }
+  TfLiteTensor* tensor = &context->tensors[tensor_index];
+  return (tensor->is_variable) ? tensor : nullptr;
+}
+inline TfLiteTensor* GetOutput(TfLiteContext* context, const TfLiteNode* node,
+                               int index) {
+  const int tensor_index = node->outputs->data[index];
+  if (tensor_index < 0) {
+    return nullptr;
+  }
+  return &context->tensors[tensor_index];
+}
+inline TfLiteTensor* GetTemporary(TfLiteContext* context,
+                                  const TfLiteNode* node, int index) {
+  const int tensor_index = node->temporaries->data[index];
+  if (tensor_index < 0) {
+    return nullptr;
+  }
+  return &context->tensors[tensor_index];
+}
+
+inline const TfLiteTensor* GetIntermediates(TfLiteContext* context,
+                                            const TfLiteNode* node, int index) {
+  const int tensor_index = node->intermediates->data[index];
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: grep
+{
+  "pattern": "GetMutableInput\\(context, node, index\\)|GetVariableInput\\(",
+  "path": "tensorflow/lite/kernels",
+  "include": "*.h"
+}
+Found 2 matches
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0222-0a3a3a33f5fe\tensorflow\lite\kernels\kernel_util.h:
+  Line 40: // TfLiteTensor* my_tensor = GetVariableInput(context, node, kMyTensorIdx);
+
+  Line 42: inline TfLiteTensor* GetVariableInput(TfLiteContext* context,
+
+tokens used
+input: 588
+cache read: 9,728
+cache write: 0
+output: 168
+reasoning output: 20
+
+In 2.3.4, `GetVariableInput` is an inline header helper that already returns `nullptr` before dereferencing when the input tensor index is negative, so the source `kernel_util.cc` null guard has no direct missing equivalent. The SVDF caller still needs the explicit `TF_LITE_ENSURE` before using `state`.
+
+tool: validate
+{
+  "ref": "0a3a3a33f5fe8630e85234f33276e3dbe4d7da46",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/lite/kernels/svdf.cc b/tensorflow/lite/kernels/svdf.cc\n--- a/tensorflow/lite/kernels/svdf.cc\n+++ b/tensorflow/lite/kernels/svdf.cc\n@@ -274,6 +274,7 @@ TfLiteStatus Eval(TfLiteContext* context, TfLiteNode* node) {\n   TfLiteTensor* scratch = GetTemporary(context, node, /*index=*/0);\n \n   TfLiteTensor* state = GetVariableInput(context, node, kStateTensor);\n+  TF_LITE_ENSURE(context, state != nullptr);\n   TfLiteTensor* output = GetOutput(context, node, kOutputTensor);\n \n   switch (weights_feature->type) {\n"
+}
+Patch applied successfully
+
+tokens used
+input: 6,663
+cache read: 4,608
+cache write: 0
+output: 302
+reasoning output: 179
+
+The SVDF hunk applies cleanly against the target base. I’m applying that minimal source change now.
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/lite/kernels/svdf.cc\n@@\n   TfLiteTensor* scratch = GetTemporary(context, node, /*index=*/0);\n \n   TfLiteTensor* state = GetVariableInput(context, node, kStateTensor);\n+  TF_LITE_ENSURE(context, state != nullptr);\n   TfLiteTensor* output = GetOutput(context, node, kOutputTensor);\n \n   switch (weights_feature->type) {\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/lite/kernels/svdf.cc
+
+tokens used
+input: 1,013
+cache read: 10,752
+cache write: 0
+output: 156
+reasoning output: 0
+
+I’ll inspect the resulting diff to ensure only the intended backport change is present.
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/lite/kernels/svdf.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0222-0a3a3a33f5fe"
+}
+warning: in the working copy of 'tensorflow/lite/kernels/svdf.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/lite/kernels/svdf.cc b/tensorflow/lite/kernels/svdf.cc
+index 267f07951f..ef546072d5 100644
+--- a/tensorflow/lite/kernels/svdf.cc
++++ b/tensorflow/lite/kernels/svdf.cc
+@@ -274,6 +274,7 @@ TfLiteStatus Eval(TfLiteContext* context, TfLiteNode* node) {
+   TfLiteTensor* scratch = GetTemporary(context, node, /*index=*/0);
+ 
+   TfLiteTensor* state = GetVariableInput(context, node, kStateTensor);
++  TF_LITE_ENSURE(context, state != nullptr);
+   TfLiteTensor* output = GetOutput(context, node, kOutputTensor);
+ 
+   switch (weights_feature->type) {
+
+tokens used
+input: 1,197
+cache read: 10,752
+cache write: 0
+output: 100
+reasoning output: 14
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/lite/kernels/svdf.cc b/tensorflow/lite/kernels/svdf.cc
+    index 267f07951f..ef546072d5 100644
+    --- a/tensorflow/lite/kernels/svdf.cc
+    +++ b/tensorflow/lite/kernels/svdf.cc
+    @@ -274,6 +274,7 @@ TfLiteStatus Eval(TfLiteContext* context, TfLiteNode* node) {
+       TfLiteTensor* scratch = GetTemporary(context, node, /*index=*/0);
+     
+       TfLiteTensor* state = GetVariableInput(context, node, kStateTensor);
+    +  TF_LITE_ENSURE(context, state != nullptr);
+       TfLiteTensor* output = GetOutput(context, node, kOutputTensor);
+     
+       switch (weights_feature->type) {
+  notes: >
+    Added the SVDF state null check; the kernel_util.cc change has no missing equivalent in 2.3.4 because GetVariableInput is inline in kernel_util.h and already returns nullptr before dereferencing negative input indices.
+```
+
+tokens used
+input: 509
+cache read: 11,776
+cache write: 0
+output: 259
+reasoning output: 48

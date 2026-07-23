@@ -1,0 +1,248 @@
+I’ll locate the equivalent `SymbolicShapeRefiner::SetUnknownShape` implementation in the target checkout, verify the surrounding context against the supplied newer hunk, then apply the minimal bounds check.
+
+tool: grep
+{
+  "pattern": "SetUnknownShape",
+  "path": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0241-b2b3444b71ea",
+  "include": "graph_properties.cc"
+}
+Found 3 matches
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0241-b2b3444b71ea\tensorflow\core\grappler\costs\graph_properties.cc:
+  Line 798:         TF_RETURN_IF_ERROR(SetUnknownShape(function_node, i));
+
+  Line 1126:   Status SetUnknownShape(const NodeDef* node, int output_port) {
+
+  Line 1924:         status.Update(SetUnknownShape(&node, output_port));
+
+tool: locate_symbol
+{
+  "ref": "b2b3444b71ea99685edafa7731fb7ba57939f437",
+  "symbol": "SymbolicShapeRefiner"
+}
+tensorflow/core/grappler/costs/graph_properties.cc:637
+tensorflow/core/grappler/costs/graph_properties.h:72
+tensorflow/core/grappler/costs/graph_properties.cc:639
+tensorflow/core/grappler/costs/graph_properties.cc:786
+tensorflow/core/grappler/costs/graph_properties.cc:1006
+tensorflow/core/grappler/costs/graph_properties.cc:2126
+tensorflow/core/grappler/costs/graph_properties.cc:2175
+tensorflow/core/grappler/costs/graph_properties.cc:2223
+tensorflow/core/grappler/costs/graph_properties.cc:2247
+tensorflow/core/grappler/costs/graph_properties.cc:2300
+tensorflow/core/grappler/costs/graph_properties.cc:2328
+tensorflow/core/grappler/costs/graph_properties.cc:2357
+tensorflow/core/grappler/costs/graph_properties.cc:2409
+tensorflow/core/grappler/costs/graph_properties.cc:2458
+tensorflow/core/grappler/costs/graph_properties.cc:2592
+tensorflow/core/grappler/costs/graph_properties.h:164
+tensorflow/core/grappler/costs/graph_properties.h:174
+tensorflow/core/grappler/costs/graph_properties.h:178
+tensorflow/core/grappler/costs/graph_properties.h:183
+tensorflow/core/grappler/costs/graph_properties.h:186
+
+tokens used
+input: 3,737
+cache read: 4,608
+cache write: 0
+output: 173
+reasoning output: 0
+
+The target file has the same method and nearby call sites, so this looks like a direct small backport. I’m reading the method context before editing.
+
+tool: read
+{
+  "filePath": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0241-b2b3444b71ea\\tensorflow\\core\\grappler\\costs\\graph_properties.cc",
+  "offset": 1115,
+  "limit": 35
+}
+<path>C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0241-b2b3444b71ea\tensorflow\core\grappler\costs\graph_properties.cc</path>
+<type>file</type>
+<content>
+1115:               kThresholdToSkipConstTensorInstantiation &&
+1116:           const_values[dst_input].FromProto(*tensor_proto)) {
+1117:         input_tensors[dst_input] = &const_values[dst_input];
+1118:       }
+1119:     }
+1120:     ic->set_input_tensors(input_tensors);
+1121: 
+1122:     // Update the shapes of the outputs.
+1123:     return InferShapes(*node, ctx);
+1124:   }
+1125: 
+1126:   Status SetUnknownShape(const NodeDef* node, int output_port) {
+1127:     shape_inference::ShapeHandle shape =
+1128:         GetUnknownOutputShape(node, output_port);
+1129:     InferenceContext* ctx = GetContext(node);
+1130:     if (ctx == nullptr) {
+1131:       return errors::InvalidArgument("Missing context");
+1132:     }
+1133:     ctx->set_output(output_port, shape);
+1134:     return Status::OK();
+1135:   }
+1136: 
+1137:   struct ShapeId {
+1138:     const NodeDef* node;
+1139:     int port_id;
+1140:     bool operator==(const ShapeId& other) const {
+1141:       return node == other.node && port_id == other.port_id;
+1142:     }
+1143:   };
+1144:   struct HashShapeId {
+1145:     std::size_t operator()(const ShapeId& shp) const {
+1146:       return std::hash<const NodeDef*>{}(shp.node) + shp.port_id;
+1147:     }
+1148:   };
+1149: 
+
+(Showing lines 1115-1149 of 2847. Use offset=1150 to continue.)
+</content>
+
+tool: viewcode
+{
+  "ref": "b2b3444b71ea99685edafa7731fb7ba57939f437",
+  "path": "tensorflow/core/grappler/costs/graph_properties.cc",
+  "startline": 1115,
+  "endline": 1145
+}
+Here are lines 1115 through 1145.
+
+              kThresholdToSkipConstTensorInstantiation &&
+          const_values[dst_input].FromProto(*tensor_proto)) {
+        input_tensors[dst_input] = &const_values[dst_input];
+      }
+    }
+    ic->set_input_tensors(input_tensors);
+
+    // Update the shapes of the outputs.
+    return InferShapes(*node, ctx);
+  }
+
+  Status SetUnknownShape(const NodeDef* node, int output_port) {
+    shape_inference::ShapeHandle shape =
+        GetUnknownOutputShape(node, output_port);
+    InferenceContext* ctx = GetContext(node);
+    if (ctx == nullptr) {
+      return errors::InvalidArgument("Missing context");
+    }
+    ctx->set_output(output_port, shape);
+    return Status::OK();
+  }
+
+  struct ShapeId {
+    const NodeDef* node;
+    int port_id;
+    bool operator==(const ShapeId& other) const {
+      return node == other.node && port_id == other.port_id;
+    }
+  };
+  struct HashShapeId {
+    std::size_t operator()(const ShapeId& shp) const {
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tokens used
+input: 1,289
+cache read: 7,680
+cache write: 0
+output: 194
+reasoning output: 0
+
+I found the vulnerable call path: `ctx->set_output(output_port, shape)` is reached without validating `output_port`. I’m applying the newer release’s exact guard adapted to the target’s identical context.
+
+tool: validate
+{
+  "ref": "b2b3444b71ea99685edafa7731fb7ba57939f437",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/grappler/costs/graph_properties.cc b/tensorflow/core/grappler/costs/graph_properties.cc\n--- a/tensorflow/core/grappler/costs/graph_properties.cc\n+++ b/tensorflow/core/grappler/costs/graph_properties.cc\n@@ -1127,7 +1127,12 @@\n         GetUnknownOutputShape(node, output_port);\n     InferenceContext* ctx = GetContext(node);\n     if (ctx == nullptr) {\n-      return errors::InvalidArgument(\"Missing context\");\n+      return errors::InvalidArgument(\"SetUnknownShape: Missing context\");\n+    }\n+    if (output_port < 0 || output_port >= ctx->num_outputs()) {\n+      return errors::InvalidArgument(\n+          \"SetUnknownShape: output_port must be in [0, \", ctx->num_outputs(),\n+          \") but was \", output_port);\n     }\n     ctx->set_output(output_port, shape);\n     return Status::OK();\n"
+}
+Patch applied successfully
+
+tokens used
+input: 1,193
+cache read: 8,704
+cache write: 0
+output: 333
+reasoning output: 14
+
+The hunk applies cleanly to the target base. I’m making the source edit now.
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/grappler/costs/graph_properties.cc\n@@\n     shape_inference::ShapeHandle shape =\n         GetUnknownOutputShape(node, output_port);\n     InferenceContext* ctx = GetContext(node);\n     if (ctx == nullptr) {\n-      return errors::InvalidArgument(\"Missing context\");\n+      return errors::InvalidArgument(\"SetUnknownShape: Missing context\");\n+    }\n+    if (output_port < 0 || output_port >= ctx->num_outputs()) {\n+      return errors::InvalidArgument(\n+          \"SetUnknownShape: output_port must be in [0, \", ctx->num_outputs(),\n+          \") but was \", output_port);\n     }\n     ctx->set_output(output_port, shape);\n     return Status::OK();\n   }\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/grappler/costs/graph_properties.cc
+
+tokens used
+input: 529
+cache read: 9,728
+cache write: 0
+output: 240
+reasoning output: 0
+
+The source change is applied. I’m checking the resulting diff to ensure only the intended file and hunk changed.
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/grappler/costs/graph_properties.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0241-b2b3444b71ea",
+  "timeout": 120000
+}
+warning: in the working copy of 'tensorflow/core/grappler/costs/graph_properties.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/grappler/costs/graph_properties.cc b/tensorflow/core/grappler/costs/graph_properties.cc
+index 644efe3326..441a7524bb 100644
+--- a/tensorflow/core/grappler/costs/graph_properties.cc
++++ b/tensorflow/core/grappler/costs/graph_properties.cc
+@@ -1128,7 +1128,12 @@ class SymbolicShapeRefiner {
+         GetUnknownOutputShape(node, output_port);
+     InferenceContext* ctx = GetContext(node);
+     if (ctx == nullptr) {
+-      return errors::InvalidArgument("Missing context");
++      return errors::InvalidArgument("SetUnknownShape: Missing context");
++    }
++    if (output_port < 0 || output_port >= ctx->num_outputs()) {
++      return errors::InvalidArgument(
++          "SetUnknownShape: output_port must be in [0, ", ctx->num_outputs(),
++          ") but was ", output_port);
+     }
+     ctx->set_output(output_port, shape);
+     return Status::OK();
+
+tokens used
+input: 800
+cache read: 9,728
+cache write: 0
+output: 111
+reasoning output: 14
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/grappler/costs/graph_properties.cc b/tensorflow/core/grappler/costs/graph_properties.cc
+    index 644efe3326..441a7524bb 100644
+    --- a/tensorflow/core/grappler/costs/graph_properties.cc
+    +++ b/tensorflow/core/grappler/costs/graph_properties.cc
+    @@ -1128,7 +1128,12 @@ class SymbolicShapeRefiner {
+             GetUnknownOutputShape(node, output_port);
+         InferenceContext* ctx = GetContext(node);
+         if (ctx == nullptr) {
+    -      return errors::InvalidArgument("Missing context");
+    +      return errors::InvalidArgument("SetUnknownShape: Missing context");
+    +    }
+    +    if (output_port < 0 || output_port >= ctx->num_outputs()) {
+    +      return errors::InvalidArgument(
+    +          "SetUnknownShape: output_port must be in [0, ", ctx->num_outputs(),
+    +          ") but was ", output_port);
+         }
+         ctx->set_output(output_port, shape);
+         return Status::OK();
+  notes: >
+    Added the missing output_port bounds check in SymbolicShapeRefiner::SetUnknownShape and validated the hunk against the target base.
+```
+
+tokens used
+input: 1,207
+cache read: 9,728
+cache write: 0
+output: 304
+reasoning output: 17

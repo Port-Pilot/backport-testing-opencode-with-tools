@@ -1,0 +1,549 @@
+I’ll inspect the target-side implementation around `FusedBatchNormOpBase` and compare it directly to the provided hunk, without using the held-out backport commit. Then I’ll apply the minimal equivalent change and validate the hunk against the target base.
+
+tool: viewcode
+{
+  "ref": "29d65b195ed6a645720150c880bb55880b5e99a3",
+  "path": "tensorflow/core/kernels/fused_batch_norm_op.cc",
+  "startline": 1240,
+  "endline": 1335
+}
+Here are lines 1240 through 1335.
+
+  }
+};
+
+template <typename Device, typename T, typename U>
+class FusedBatchNormOpV3 : public FusedBatchNormOpBase<Device, T, U> {
+ public:
+  explicit FusedBatchNormOpV3(OpKernelConstruction* context)
+      : FusedBatchNormOpBase<Device, T, U>(context) {}
+
+  void Compute(OpKernelContext* context) override {
+    FusedBatchNormOpBase<Device, T, U>::ComputeWithReservedSpace(context, true);
+  }
+};
+
+template <typename Device, typename T, typename U>
+class FusedBatchNormOpEx : public FusedBatchNormOpBase<Device, T, U> {
+  static constexpr bool kWithSideInputAndActivation = true;
+
+ public:
+  explicit FusedBatchNormOpEx(OpKernelConstruction* context)
+      : FusedBatchNormOpBase<Device, T, U>(context,
+                                           kWithSideInputAndActivation) {}
+
+  void Compute(OpKernelContext* context) override {
+    FusedBatchNormOpBase<Device, T, U>::ComputeWithReservedSpace(context, true);
+  }
+};
+
+template <typename Device, typename T, typename U>
+class FusedBatchNormGradOpBase : public OpKernel {
+ protected:
+  explicit FusedBatchNormGradOpBase(OpKernelConstruction* context)
+      : OpKernel(context) {
+    float epsilon;
+    OP_REQUIRES_OK(context, context->GetAttr("epsilon", &epsilon));
+    epsilon_ = U(epsilon);
+    string tensor_format;
+    OP_REQUIRES_OK(context, context->GetAttr("data_format", &tensor_format));
+    OP_REQUIRES(context, FormatFromString(tensor_format, &tensor_format_),
+                errors::InvalidArgument("Invalid data format"));
+    OP_REQUIRES_OK(context, context->GetAttr("is_training", &is_training_));
+  }
+
+  virtual void ComputeWithReservedSpace(OpKernelContext* context,
+                                        bool use_reserved_space) {
+    const Tensor& y_backprop = context->input(0);
+    const Tensor& x = context->input(1);
+    const Tensor& scale = context->input(2);
+    // When is_training=True, batch mean and variance/inverted variance are
+    // saved in the forward pass to be reused here. When is_training=False,
+    // population mean and variance need to be forwarded here to compute the
+    // gradients.
+    const Tensor& saved_mean_or_pop_mean = context->input(3);
+    // The Eigen implementation saves variance in the forward pass, while cuDNN
+    // saves inverted variance.
+    const Tensor& saved_maybe_inv_var_or_pop_var = context->input(4);
+
+    OP_REQUIRES(context, y_backprop.dims() == 4,
+                errors::InvalidArgument("input must be 4-dimensional",
+                                        y_backprop.shape().DebugString()));
+    OP_REQUIRES(context, x.dims() == 4,
+                errors::InvalidArgument("input must be 4-dimensional",
+                                        x.shape().DebugString()));
+    OP_REQUIRES(context, scale.dims() == 1,
+                errors::InvalidArgument("scale must be 1-dimensional",
+                                        scale.shape().DebugString()));
+    OP_REQUIRES(
+        context, saved_mean_or_pop_mean.dims() == 1,
+        errors::InvalidArgument("saved mean must be 1-dimensional",
+                                saved_mean_or_pop_mean.shape().DebugString()));
+    OP_REQUIRES(context, saved_maybe_inv_var_or_pop_var.dims() == 1,
+                errors::InvalidArgument(
+                    "saved variance must be 1-dimensional",
+                    saved_maybe_inv_var_or_pop_var.shape().DebugString()));
+
+    Tensor* x_backprop = nullptr;
+    OP_REQUIRES_OK(context,
+                   context->allocate_output(0, x.shape(), &x_backprop));
+
+    const TensorShape& scale_offset_shape = scale.shape();
+    Tensor* scale_backprop = nullptr;
+    OP_REQUIRES_OK(context, context->allocate_output(1, scale_offset_shape,
+                                                     &scale_backprop));
+    Tensor* offset_backprop = nullptr;
+    OP_REQUIRES_OK(context, context->allocate_output(2, scale_offset_shape,
+                                                     &offset_backprop));
+    // Two placeholders for estimated_mean and estimated_variance, which are
+    // used for inference and thus not needed here for gradient computation.
+    // They are filled with zeros so as to avoid NaN outputs.
+    Tensor* placeholder_1 = nullptr;
+    OP_REQUIRES_OK(
+        context, context->allocate_output(3, TensorShape({}), &placeholder_1));
+    functor::SetZeroFunctor<Device, float> f;
+    f(context->eigen_device<Device>(), placeholder_1->flat<U>());
+    Tensor* placeholder_2 = nullptr;
+    OP_REQUIRES_OK(
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: locate_symbol
+{
+  "ref": "29d65b195ed6a645720150c880bb55880b5e99a3",
+  "symbol": "FusedBatchNormOpBase"
+}
+tensorflow/core/kernels/fused_batch_norm_op.cc:1075
+tensorflow/core/kernels/fused_batch_norm_op.cc:1079
+tensorflow/core/kernels/fused_batch_norm_op.cc:1232
+tensorflow/core/kernels/fused_batch_norm_op.cc:1235
+tensorflow/core/kernels/fused_batch_norm_op.cc:1238
+tensorflow/core/kernels/fused_batch_norm_op.cc:1244
+tensorflow/core/kernels/fused_batch_norm_op.cc:1247
+tensorflow/core/kernels/fused_batch_norm_op.cc:1250
+tensorflow/core/kernels/fused_batch_norm_op.cc:1255
+tensorflow/core/kernels/fused_batch_norm_op.cc:1260
+tensorflow/core/kernels/fused_batch_norm_op.cc:1264
+
+tokens used
+input: 4,074
+cache read: 4,608
+cache write: 0
+output: 185
+reasoning output: 0
+
+tool: viewcode
+{
+  "ref": "29d65b195ed6a645720150c880bb55880b5e99a3",
+  "path": "tensorflow/core/kernels/fused_batch_norm_op.cc",
+  "startline": 1070,
+  "endline": 1235
+}
+Here are lines 1070 through 1235.
+
+
+#endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+}  // namespace functor
+
+template <typename Device, typename T, typename U>
+class FusedBatchNormOpBase : public OpKernel {
+  using FbnActivationMode = functor::FusedBatchNormActivationMode;
+
+ protected:
+  explicit FusedBatchNormOpBase(OpKernelConstruction* context,
+                                bool is_batch_norm_ex = false)
+      : OpKernel(context), empty_side_input_(DataTypeToEnum<T>::value, {0}) {
+    float epsilon;
+    OP_REQUIRES_OK(context, context->GetAttr("epsilon", &epsilon));
+    epsilon_ = U(epsilon);
+    string tensor_format;
+    OP_REQUIRES_OK(context, context->GetAttr("data_format", &tensor_format));
+    OP_REQUIRES(context, FormatFromString(tensor_format, &tensor_format_),
+                errors::InvalidArgument("Invalid data format"));
+    OP_REQUIRES_OK(context, context->GetAttr("is_training", &is_training_));
+
+    if (!is_batch_norm_ex) {
+      has_side_input_ = false;
+      activation_mode_ = FbnActivationMode::kIdentity;
+    } else {
+      OP_REQUIRES_OK(context, ParseActivationMode(context, &activation_mode_));
+
+      int num_side_inputs;
+      OP_REQUIRES_OK(context,
+                     context->GetAttr("num_side_inputs", &num_side_inputs));
+      OP_REQUIRES(context, num_side_inputs >= 0 && num_side_inputs <= 1,
+                  errors::InvalidArgument(
+                      "FusedBatchNorm accepts at most one side input."));
+      has_side_input_ = (num_side_inputs == 1);
+      if (has_side_input_ && is_training_) {
+        OP_REQUIRES(
+            context, activation_mode_ != FbnActivationMode::kIdentity,
+            errors::InvalidArgument("Identity activation is not supported with "
+                                    "non-empty side input"));
+      }
+    }
+
+    if (activation_mode_ != FbnActivationMode::kIdentity && is_training_) {
+      // NOTE(ezhulenev): Following requirements are coming from implementation
+      // details of cudnnBatchNormalizationForwardTrainingEx used in training
+      // mode. In inference mode we call custom CUDA kernel that supports all
+      // data formats and data types.
+      OP_REQUIRES(context, DataTypeToEnum<T>::value == DT_HALF,
+                  errors::InvalidArgument("FusedBatchNorm with activation "
+                                          "supports only DT_HALF data type."));
+      OP_REQUIRES(context, tensor_format_ == FORMAT_NHWC,
+                  errors::InvalidArgument("FusedBatchNorm with activation "
+                                          "supports only NHWC tensor format."));
+      OP_REQUIRES(context, functor::BatchnormSpatialPersistentEnabled(),
+                  errors::InvalidArgument(
+                      "FusedBatchNorm with activation must run with cuDNN "
+                      "spatial persistence mode enabled."));
+    }
+  }
+
+  // If use_reserved_space is true, we need to handle the 5th output (a reserved
+  // space) and a new cudnn batch norm will be called if the version > 7.4.2.
+  // If use_reserved_space is false, we don't have 5th output.
+  virtual void ComputeWithReservedSpace(OpKernelContext* context,
+                                        bool use_reserved_space) {
+    const Tensor& x = context->input(0);
+    const Tensor& scale = context->input(1);
+    const Tensor& offset = context->input(2);
+    const Tensor& estimated_mean = context->input(3);
+    const Tensor& estimated_variance = context->input(4);
+    const Tensor& side_input =
+        has_side_input_ ? context->input(5) : empty_side_input_;
+
+    OP_REQUIRES(context, x.dims() == 4,
+                errors::InvalidArgument("input must be 4-dimensional",
+                                        x.shape().DebugString()));
+    OP_REQUIRES(context, scale.dims() == 1,
+                errors::InvalidArgument("scale must be 1-dimensional",
+                                        scale.shape().DebugString()));
+    OP_REQUIRES(context, offset.dims() == 1,
+                errors::InvalidArgument("offset must be 1-dimensional",
+                                        offset.shape().DebugString()));
+    OP_REQUIRES(context, estimated_mean.dims() == 1,
+                errors::InvalidArgument("estimated_mean must be 1-dimensional",
+                                        estimated_mean.shape().DebugString()));
+    OP_REQUIRES(
+        context, estimated_variance.dims() == 1,
+        errors::InvalidArgument("estimated_variance must be 1-dimensional",
+                                estimated_variance.shape().DebugString()));
+    if (has_side_input_) {
+      OP_REQUIRES(context, side_input.shape() == x.shape(),
+                  errors::InvalidArgument(
+                      "side_input shape must be equal to input shape: ",
+                      side_input.shape().DebugString(),
+                      " != ", x.shape().DebugString()));
+    }
+
+    if (activation_mode_ != FbnActivationMode::kIdentity) {
+      // NOTE(ezhulenev): This requirement is coming from implementation
+      // details of cudnnBatchNormalizationForwardTrainingEx.
+      OP_REQUIRES(
+          context, !is_training_ || x.dim_size(3) % 4 == 0,
+          errors::InvalidArgument("FusedBatchNorm with activation requires "
+                                  "channel dimension to be a multiple of 4."));
+    }
+
+    if (is_training_) {
+      OP_REQUIRES(
+          context, estimated_mean.dim_size(0) == 0,
+          errors::InvalidArgument("estimated_mean must be empty for training",
+                                  estimated_mean.shape().DebugString()));
+      OP_REQUIRES(context, estimated_variance.dim_size(0) == 0,
+                  errors::InvalidArgument(
+                      "estimated_variance must be empty for training",
+                      estimated_variance.shape().DebugString()));
+    }
+
+    Tensor* y = nullptr;
+    OP_REQUIRES_OK(context, context->forward_input_or_allocate_output(
+                                {0}, 0, x.shape(), &y));
+    Tensor* batch_mean = nullptr;
+    OP_REQUIRES_OK(context,
+                   context->allocate_output(1, scale.shape(), &batch_mean));
+    Tensor* batch_var = nullptr;
+    OP_REQUIRES_OK(context,
+                   context->allocate_output(2, scale.shape(), &batch_var));
+    Tensor* saved_mean = nullptr;
+    OP_REQUIRES_OK(context,
+                   context->allocate_output(3, scale.shape(), &saved_mean));
+    Tensor* saved_maybe_inv_var = nullptr;
+    OP_REQUIRES_OK(context, context->allocate_output(4, scale.shape(),
+                                                     &saved_maybe_inv_var));
+
+    if (!use_reserved_space) {
+      functor::FusedBatchNorm<Device, T, U>()(
+          context, x, scale, offset, estimated_mean, estimated_variance,
+          side_input, epsilon_, activation_mode_, y, batch_mean, batch_var,
+          saved_mean, saved_maybe_inv_var, tensor_format_, nullptr, nullptr,
+          is_training_);
+    } else {
+      functor::CudnnBatchNormAllocatorInOutput<U> reserve_space_allocator(
+          context, 5);
+      functor::CudnnBatchNormAllocatorInTemp<uint8> workspace_allocator(
+          context);
+      functor::FusedBatchNorm<Device, T, U>()(
+          context, x, scale, offset, estimated_mean, estimated_variance,
+          side_input, epsilon_, activation_mode_, y, batch_mean, batch_var,
+          saved_mean, saved_maybe_inv_var, tensor_format_,
+          &reserve_space_allocator, &workspace_allocator, is_training_);
+    }
+  }
+
+ private:
+  U epsilon_;
+  TensorFormat tensor_format_;
+  bool is_training_;
+  bool has_side_input_;
+  FbnActivationMode activation_mode_;
+  Tensor empty_side_input_;
+};
+
+template <typename Device, typename T, typename U>
+class FusedBatchNormOp : public FusedBatchNormOpBase<Device, T, U> {
+ public:
+  explicit FusedBatchNormOp(OpKernelConstruction* context)
+      : FusedBatchNormOpBase<Device, T, U>(context) {}
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: git_show
+{
+  "ref": "6972f9dfe325636b3db4e0bc517ee22a159365c0",
+  "context": "const auto num_channels = GetTensorDim(x, tensor_format_, 'C');"
+}
+commit 6972f9dfe325636b3db4e0bc517ee22a159365c0
+Author: Mihai Maruseac <mihaimaruseac@google.com>
+Date:   Thu May 6 17:45:51 2021 -0700
+
+    Add missing valuidation to FusedBatchNorm.
+    
+    PiperOrigin-RevId: 372460336
+    Change-Id: Ic8c4e4de67c58a741bd87f2e182bed07247d1126
+
+ tensorflow/core/kernels/fused_batch_norm_op.cc | 28 +++++++++++++++++++++++++-
+ 1 file changed, 27 insertions(+), 1 deletion(-)
+This commit shows that there is a high probability that this code is new, so the corresponding code segment cannot be found in the old version.
+You can call `viewcode` and `locate_symbol` to further check the results step by step. For newly introduced code, we consider that this hunk `need not ported`.
+
+tokens used
+input: 2,394
+cache read: 7,680
+cache write: 0
+output: 137
+reasoning output: 16
+
+The target has the same vulnerable forward path and the same activation channel check, so the source hunk ports directly with a small context adjustment at the existing `ComputeWithReservedSpace` location.
+
+tool: validate
+{
+  "ref": "29d65b195ed6a645720150c880bb55880b5e99a3",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/fused_batch_norm_op.cc b/tensorflow/core/kernels/fused_batch_norm_op.cc\n--- a/tensorflow/core/kernels/fused_batch_norm_op.cc\n+++ b/tensorflow/core/kernels/fused_batch_norm_op.cc\n@@ -1155,6 +1155,32 @@ class FusedBatchNormOpBase : public OpKernel {\n         context, estimated_variance.dims() == 1,\n         errors::InvalidArgument(\"estimated_variance must be 1-dimensional\",\n                                 estimated_variance.shape().DebugString()));\n+\n+    const auto num_channels = GetTensorDim(x, tensor_format_, 'C');\n+    OP_REQUIRES(\n+        context, scale.NumElements() == num_channels,\n+        errors::InvalidArgument(\"scale must have the same number of elements \"\n+                                \"as the channels of x, got \",\n+                                scale.NumElements(), \" and \", num_channels));\n+    OP_REQUIRES(\n+        context, offset.NumElements() == num_channels,\n+        errors::InvalidArgument(\"offset must have the same number of elements \"\n+                                \"as the channels of x, got \",\n+                                offset.NumElements(), \" and \", num_channels));\n+    if (estimated_mean.NumElements() != 0) {\n+      OP_REQUIRES(context, estimated_mean.NumElements() == num_channels,\n+                  errors::InvalidArgument(\n+                      \"mean must be empty or have the same number of \"\n+                      \"elements as the channels of x, got \",\n+                      estimated_mean.NumElements(), \" and \", num_channels));\n+    }\n+    if (estimated_variance.NumElements() != 0) {\n+      OP_REQUIRES(context, estimated_variance.NumElements() == num_channels,\n+                  errors::InvalidArgument(\n+                      \"variance must be empty or have the same number of \"\n+                      \"elements as the channels of x, got \",\n+                      estimated_variance.NumElements(), \" and \", num_channels));\n+    }\n+\n     if (has_side_input_) {\n       OP_REQUIRES(context, side_input.shape() == x.shape(),\n                   errors::InvalidArgument(\n@@ -1169,7 +1195,7 @@ class FusedBatchNormOpBase : public OpKernel {\n       // details of cudnnBatchNormalizationForwardTrainingEx.\n       OP_REQUIRES(\n-          context, !is_training_ || x.dim_size(3) % 4 == 0,\n+          context, !is_training_ || num_channels % 4 == 0,\n           errors::InvalidArgument(\"FusedBatchNorm with activation requires \"\n                                   \"channel dimension to be a multiple of 4.\"));\n     }\n"
+}
+This patch does not apply to the target TensorFlow ref.
+Git apply output:
+error: corrupt patch at line 38
+Touched files:
+- tensorflow/core/kernels/fused_batch_norm_op.cc
+Fix the patch context against the older TensorFlow version, then run validate again in hunk mode.
+
+tokens used
+input: 2,473
+cache read: 9,728
+cache write: 0
+output: 720
+reasoning output: 19
+
+tool: validate
+{
+  "ref": "29d65b195ed6a645720150c880bb55880b5e99a3",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/fused_batch_norm_op.cc b/tensorflow/core/kernels/fused_batch_norm_op.cc\n--- a/tensorflow/core/kernels/fused_batch_norm_op.cc\n+++ b/tensorflow/core/kernels/fused_batch_norm_op.cc\n@@ -1152,6 +1152,32 @@ class FusedBatchNormOpBase : public OpKernel {\n     OP_REQUIRES(\n         context, estimated_variance.dims() == 1,\n         errors::InvalidArgument(\"estimated_variance must be 1-dimensional\",\n                                 estimated_variance.shape().DebugString()));\n+\n+    const auto num_channels = GetTensorDim(x, tensor_format_, 'C');\n+    OP_REQUIRES(\n+        context, scale.NumElements() == num_channels,\n+        errors::InvalidArgument(\"scale must have the same number of elements \"\n+                                \"as the channels of x, got \",\n+                                scale.NumElements(), \" and \", num_channels));\n+    OP_REQUIRES(\n+        context, offset.NumElements() == num_channels,\n+        errors::InvalidArgument(\"offset must have the same number of elements \"\n+                                \"as the channels of x, got \",\n+                                offset.NumElements(), \" and \", num_channels));\n+    if (estimated_mean.NumElements() != 0) {\n+      OP_REQUIRES(context, estimated_mean.NumElements() == num_channels,\n+                  errors::InvalidArgument(\n+                      \"mean must be empty or have the same number of \"\n+                      \"elements as the channels of x, got \",\n+                      estimated_mean.NumElements(), \" and \", num_channels));\n+    }\n+    if (estimated_variance.NumElements() != 0) {\n+      OP_REQUIRES(context, estimated_variance.NumElements() == num_channels,\n+                  errors::InvalidArgument(\n+                      \"variance must be empty or have the same number of \"\n+                      \"elements as the channels of x, got \",\n+                      estimated_variance.NumElements(), \" and \", num_channels));\n+    }\n+\n     if (has_side_input_) {\n       OP_REQUIRES(context, side_input.shape() == x.shape(),\n                   errors::InvalidArgument(\n@@ -1168,7 +1194,7 @@ class FusedBatchNormOpBase : public OpKernel {\n       // NOTE(ezhulenev): This requirement is coming from implementation\n       // details of cudnnBatchNormalizationForwardTrainingEx.\n       OP_REQUIRES(\n-          context, !is_training_ || x.dim_size(3) % 4 == 0,\n+          context, !is_training_ || num_channels % 4 == 0,\n           errors::InvalidArgument(\"FusedBatchNorm with activation requires \"\n                                   \"channel dimension to be a multiple of 4.\"));\n     }\n"
+}
+This patch does not apply to the target TensorFlow ref.
+Git apply output:
+error: corrupt patch at line 39
+Touched files:
+- tensorflow/core/kernels/fused_batch_norm_op.cc
+Fix the patch context against the older TensorFlow version, then run validate again in hunk mode.
+
+tokens used
+input: 1,234
+cache read: 11,776
+cache write: 0
+output: 698
+reasoning output: 40
+
+The first validation attempt failed because my hand-written hunk header counts were off, not because the code location differed. I’m applying the direct source edit now and will validate the resulting diff shape afterward.
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/kernels/fused_batch_norm_op.cc\n@@\n     OP_REQUIRES(\n         context, estimated_variance.dims() == 1,\n         errors::InvalidArgument(\"estimated_variance must be 1-dimensional\",\n                                 estimated_variance.shape().DebugString()));\n+\n+    const auto num_channels = GetTensorDim(x, tensor_format_, 'C');\n+    OP_REQUIRES(\n+        context, scale.NumElements() == num_channels,\n+        errors::InvalidArgument(\"scale must have the same number of elements \"\n+                                \"as the channels of x, got \",\n+                                scale.NumElements(), \" and \", num_channels));\n+    OP_REQUIRES(\n+        context, offset.NumElements() == num_channels,\n+        errors::InvalidArgument(\"offset must have the same number of elements \"\n+                                \"as the channels of x, got \",\n+                                offset.NumElements(), \" and \", num_channels));\n+    if (estimated_mean.NumElements() != 0) {\n+      OP_REQUIRES(context, estimated_mean.NumElements() == num_channels,\n+                  errors::InvalidArgument(\n+                      \"mean must be empty or have the same number of \"\n+                      \"elements as the channels of x, got \",\n+                      estimated_mean.NumElements(), \" and \", num_channels));\n+    }\n+    if (estimated_variance.NumElements() != 0) {\n+      OP_REQUIRES(context, estimated_variance.NumElements() == num_channels,\n+                  errors::InvalidArgument(\n+                      \"variance must be empty or have the same number of \"\n+                      \"elements as the channels of x, got \",\n+                      estimated_variance.NumElements(), \" and \", num_channels));\n+    }\n+\n     if (has_side_input_) {\n       OP_REQUIRES(context, side_input.shape() == x.shape(),\n                   errors::InvalidArgument(\n@@\n       // NOTE(ezhulenev): This requirement is coming from implementation\n       // details of cudnnBatchNormalizationForwardTrainingEx.\n       OP_REQUIRES(\n-          context, !is_training_ || x.dim_size(3) % 4 == 0,\n+          context, !is_training_ || num_channels % 4 == 0,\n           errors::InvalidArgument(\"FusedBatchNorm with activation requires \"\n                                   \"channel dimension to be a multiple of 4.\"));\n     }\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/kernels/fused_batch_norm_op.cc
+
+tokens used
+input: 1,018
+cache read: 12,800
+cache write: 0
+output: 635
+reasoning output: 147
+
+The source change is in place. I’m checking the exact resulting diff and validating it in hunk mode against the requested base ref.
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/kernels/fused_batch_norm_op.cc"
+}
+warning: in the working copy of 'tensorflow/core/kernels/fused_batch_norm_op.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/kernels/fused_batch_norm_op.cc b/tensorflow/core/kernels/fused_batch_norm_op.cc
+index a4843ed527..44bdfa69d2 100644
+--- a/tensorflow/core/kernels/fused_batch_norm_op.cc
++++ b/tensorflow/core/kernels/fused_batch_norm_op.cc
+@@ -1156,6 +1156,33 @@ class FusedBatchNormOpBase : public OpKernel {
+         context, estimated_variance.dims() == 1,
+         errors::InvalidArgument("estimated_variance must be 1-dimensional",
+                                 estimated_variance.shape().DebugString()));
++
++    const auto num_channels = GetTensorDim(x, tensor_format_, 'C');
++    OP_REQUIRES(
++        context, scale.NumElements() == num_channels,
++        errors::InvalidArgument("scale must have the same number of elements "
++                                "as the channels of x, got ",
++                                scale.NumElements(), " and ", num_channels));
++    OP_REQUIRES(
++        context, offset.NumElements() == num_channels,
++        errors::InvalidArgument("offset must have the same number of elements "
++                                "as the channels of x, got ",
++                                offset.NumElements(), " and ", num_channels));
++    if (estimated_mean.NumElements() != 0) {
++      OP_REQUIRES(context, estimated_mean.NumElements() == num_channels,
++                  errors::InvalidArgument(
++                      "mean must be empty or have the same number of "
++                      "elements as the channels of x, got ",
++                      estimated_mean.NumElements(), " and ", num_channels));
++    }
++    if (estimated_variance.NumElements() != 0) {
++      OP_REQUIRES(context, estimated_variance.NumElements() == num_channels,
++                  errors::InvalidArgument(
++                      "variance must be empty or have the same number of "
++                      "elements as the channels of x, got ",
++                      estimated_variance.NumElements(), " and ", num_channels));
++    }
++
+     if (has_side_input_) {
+       OP_REQUIRES(context, side_input.shape() == x.shape(),
+                   errors::InvalidArgument(
+@@ -1168,7 +1195,7 @@ class FusedBatchNormOpBase : public OpKernel {
+       // NOTE(ezhulenev): This requirement is coming from implementation
+       // details of cudnnBatchNormalizationForwardTrainingEx.
+       OP_REQUIRES(
+-          context, !is_training_ || x.dim_size(3) % 4 == 0,
++          context, !is_training_ || num_channels % 4 == 0,
+           errors::InvalidArgument("FusedBatchNorm with activation requires "
+                                   "channel dimension to be a multiple of 4."));
+     }
+
+tool: validate
+{
+  "ref": "29d65b195ed6a645720150c880bb55880b5e99a3",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/fused_batch_norm_op.cc b/tensorflow/core/kernels/fused_batch_norm_op.cc\nindex 9add49c38a1..baed6c3b638 100644\n--- a/tensorflow/core/kernels/fused_batch_norm_op.cc\n+++ b/tensorflow/core/kernels/fused_batch_norm_op.cc\n@@ -1152,6 +1152,32 @@ class FusedBatchNormOpBase : public OpKernel {\n     OP_REQUIRES(\n         context, estimated_variance.dims() == 1,\n         errors::InvalidArgument(\"estimated_variance must be 1-dimensional\",\n                                 estimated_variance.shape().DebugString()));\n+\n+    const auto num_channels = GetTensorDim(x, tensor_format_, 'C');\n+    OP_REQUIRES(\n+        context, scale.NumElements() == num_channels,\n+        errors::InvalidArgument(\"scale must have the same number of elements \"\n+                                \"as the channels of x, got \",\n+                                scale.NumElements(), \" and \", num_channels));\n+    OP_REQUIRES(\n+        context, offset.NumElements() == num_channels,\n+        errors::InvalidArgument(\"offset must have the same number of elements \"\n+                                \"as the channels of x, got \",\n+                                offset.NumElements(), \" and \", num_channels));\n+    if (estimated_mean.NumElements() != 0) {\n+      OP_REQUIRES(context, estimated_mean.NumElements() == num_channels,\n+                  errors::InvalidArgument(\n+                      \"mean must be empty or have the same number of \"\n+                      \"elements as the channels of x, got \",\n+                      estimated_mean.NumElements(), \" and \", num_channels));\n+    }\n+    if (estimated_variance.NumElements() != 0) {\n+      OP_REQUIRES(context, estimated_variance.NumElements() == num_channels,\n+                  errors::InvalidArgument(\n+                      \"variance must be empty or have the same number of \"\n+                      \"elements as the channels of x, got \",\n+                      estimated_variance.NumElements(), \" and \", num_channels));\n+    }\n+\n     if (has_side_input_) {\n       OP_REQUIRES(context, side_input.shape() == x.shape(),\n                   errors::InvalidArgument(\n@@ -1168,7 +1194,7 @@ class FusedBatchNormOpBase : public OpKernel {\n       // NOTE(ezhulenev): This requirement is coming from implementation\n       // details of cudnnBatchNormalizationForwardTrainingEx.\n       OP_REQUIRES(\n-          context, !is_training_ || x.dim_size(3) % 4 == 0,\n+          context, !is_training_ || num_channels % 4 == 0,\n           errors::InvalidArgument(\"FusedBatchNorm with activation requires \"\n                                   \"channel dimension to be a multiple of 4.\"));\n     }\n"
+}
+This patch does not apply to the target TensorFlow ref.
+Git apply output:
+error: corrupt patch at line 40
+Touched files:
+- tensorflow/core/kernels/fused_batch_norm_op.cc
+Fix the patch context against the older TensorFlow version, then run validate again in hunk mode.
+
+tokens used
+input: 1,829
+cache read: 12,800
+cache write: 0
+output: 795
+reasoning output: 30
+
+The applied diff is valid in the worktree; the second hand-built validation still used the wrong line counts. I’m revalidating with the exact `git diff` output instead of a reconstructed patch.
+
+tool: validate
+{
+  "ref": "29d65b195ed6a645720150c880bb55880b5e99a3",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/fused_batch_norm_op.cc b/tensorflow/core/kernels/fused_batch_norm_op.cc\nindex a4843ed527..44bdfa69d2 100644\n--- a/tensorflow/core/kernels/fused_batch_norm_op.cc\n+++ b/tensorflow/core/kernels/fused_batch_norm_op.cc\n@@ -1156,6 +1156,33 @@ class FusedBatchNormOpBase : public OpKernel {\n         context, estimated_variance.dims() == 1,\n         errors::InvalidArgument(\"estimated_variance must be 1-dimensional\",\n                                 estimated_variance.shape().DebugString()));\n+\n+    const auto num_channels = GetTensorDim(x, tensor_format_, 'C');\n+    OP_REQUIRES(\n+        context, scale.NumElements() == num_channels,\n+        errors::InvalidArgument(\"scale must have the same number of elements \"\n+                                \"as the channels of x, got \",\n+                                scale.NumElements(), \" and \", num_channels));\n+    OP_REQUIRES(\n+        context, offset.NumElements() == num_channels,\n+        errors::InvalidArgument(\"offset must have the same number of elements \"\n+                                \"as the channels of x, got \",\n+                                offset.NumElements(), \" and \", num_channels));\n+    if (estimated_mean.NumElements() != 0) {\n+      OP_REQUIRES(context, estimated_mean.NumElements() == num_channels,\n+                  errors::InvalidArgument(\n+                      \"mean must be empty or have the same number of \"\n+                      \"elements as the channels of x, got \",\n+                      estimated_mean.NumElements(), \" and \", num_channels));\n+    }\n+    if (estimated_variance.NumElements() != 0) {\n+      OP_REQUIRES(context, estimated_variance.NumElements() == num_channels,\n+                  errors::InvalidArgument(\n+                      \"variance must be empty or have the same number of \"\n+                      \"elements as the channels of x, got \",\n+                      estimated_variance.NumElements(), \" and \", num_channels));\n+    }\n+\n     if (has_side_input_) {\n       OP_REQUIRES(context, side_input.shape() == x.shape(),\n                   errors::InvalidArgument(\n@@ -1168,7 +1195,7 @@ class FusedBatchNormOpBase : public OpKernel {\n       // NOTE(ezhulenev): This requirement is coming from implementation\n       // details of cudnnBatchNormalizationForwardTrainingEx.\n       OP_REQUIRES(\n-          context, !is_training_ || x.dim_size(3) % 4 == 0,\n+          context, !is_training_ || num_channels % 4 == 0,\n           errors::InvalidArgument(\"FusedBatchNorm with activation requires \"\n                                   \"channel dimension to be a multiple of 4.\"));\n     }\n"
+}
+Patch applied successfully
+
+tokens used
+input: 2,334
+cache read: 13,824
+cache write: 0
+output: 756
+reasoning output: 134
+
+Applied the FusedBatchNorm input channel validation backport in `tensorflow/core/kernels/fused_batch_norm_op.cc`. Hunk validation against `29d65b195ed6a645720150c880bb55880b5e99a3` succeeded.
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/kernels/fused_batch_norm_op.cc b/tensorflow/core/kernels/fused_batch_norm_op.cc
+    index a4843ed527..44bdfa69d2 100644
+    --- a/tensorflow/core/kernels/fused_batch_norm_op.cc
+    +++ b/tensorflow/core/kernels/fused_batch_norm_op.cc
+    @@ -1156,6 +1156,33 @@ class FusedBatchNormOpBase : public OpKernel {
+             context, estimated_variance.dims() == 1,
+             errors::InvalidArgument("estimated_variance must be 1-dimensional",
+                                     estimated_variance.shape().DebugString()));
+    +
+    +    const auto num_channels = GetTensorDim(x, tensor_format_, 'C');
+    +    OP_REQUIRES(
+    +        context, scale.NumElements() == num_channels,
+    +        errors::InvalidArgument("scale must have the same number of elements "
+    +                                "as the channels of x, got ",
+    +                                scale.NumElements(), " and ", num_channels));
+    +    OP_REQUIRES(
+    +        context, offset.NumElements() == num_channels,
+    +        errors::InvalidArgument("offset must have the same number of elements "
+    +                                "as the channels of x, got ",
+    +                                offset.NumElements(), " and ", num_channels));
+    +    if (estimated_mean.NumElements() != 0) {
+    +      OP_REQUIRES(context, estimated_mean.NumElements() == num_channels,
+    +                  errors::InvalidArgument(
+    +                      "mean must be empty or have the same number of "
+    +                      "elements as the channels of x, got ",
+    +                      estimated_mean.NumElements(), " and ", num_channels));
+    +    }
+    +    if (estimated_variance.NumElements() != 0) {
+    +      OP_REQUIRES(context, estimated_variance.NumElements() == num_channels,
+    +                  errors::InvalidArgument(
+    +                      "variance must be empty or have the same number of "
+    +                      "elements as the channels of x, got ",
+    +                      estimated_variance.NumElements(), " and ", num_channels));
+    +    }
+    +
+         if (has_side_input_) {
+           OP_REQUIRES(context, side_input.shape() == x.shape(),
+                       errors::InvalidArgument(
+    @@ -1168,7 +1195,7 @@ class FusedBatchNormOpBase : public OpKernel {
+           // NOTE(ezhulenev): This requirement is coming from implementation
+           // details of cudnnBatchNormalizationForwardTrainingEx.
+           OP_REQUIRES(
+    -          context, !is_training_ || x.dim_size(3) % 4 == 0,
+    +          context, !is_training_ || num_channels % 4 == 0,
+               errors::InvalidArgument("FusedBatchNorm with activation requires "
+                                       "channel dimension to be a multiple of 4."));
+         }
+  notes: >
+    Added missing scale, offset, mean, and variance channel-count validation and reused the computed channel count for the activation multiple-of-4 check.
+```
+
+tokens used
+input: 1,189
+cache read: 15,872
+cache write: 0
+output: 738
+reasoning output: 24

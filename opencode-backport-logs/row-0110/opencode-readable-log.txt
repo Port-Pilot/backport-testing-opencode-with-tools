@@ -1,0 +1,703 @@
+I’ll map the supplied hunks onto the checked-out target source first, then apply only the matching minimal changes and validate uncertain hunks before editing.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target locations for decode_padded_raw_op.cc and parsing_ops.py",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Validate and apply minimal backport hunks",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "content": "Review resulting diff and report YAML",
+      "status": "pending",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target locations for decode_padded_raw_op.cc and parsing_ops.py",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Validate and apply minimal backport hunks",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "content": "Review resulting diff and report YAML",
+    "status": "pending",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 4,989
+cache read: 4,608
+cache write: 0
+output: 119
+reasoning output: 0
+
+tool: viewcode
+{
+  "ref": "deda90e7fb7a47032fb3084542b67389481c833a",
+  "path": "tensorflow/python/ops/parsing_ops.py",
+  "startline": 840,
+  "endline": 950
+}
+Here are lines 840 through 950.
+
+  `FixedLenSequenceFeature([k])` (for `int k >= 1`) yields a 2-D matrix `Tensor`
+  of static shape `[None, k]` and dynamic shape `[T, k]`.
+
+  Each `SparseTensor` corresponding to `sequence_features` represents a ragged
+  vector.  Its indices are `[time, index]`, where `time` is the `FeatureList`
+  entry and `index` is the value's index in the list of values associated with
+  that time.
+
+  `FixedLenFeature` entries with a `default_value` and `FixedLenSequenceFeature`
+  entries with `allow_missing=True` are optional; otherwise, we will fail if
+  that `Feature` or `FeatureList` is missing from any example in `serialized`.
+
+  `example_name` may contain a descriptive name for the corresponding serialized
+  proto. This may be useful for debugging purposes, but it has no effect on the
+  output. If not `None`, `example_name` must be a scalar.
+
+  Note that the batch version of this function, `tf.parse_sequence_example`,
+  is written for better memory efficiency and will be faster on large
+  `SequenceExample`s.
+
+  Args:
+    serialized: A scalar (0-D Tensor) of type string, a single binary
+      serialized `SequenceExample` proto.
+    context_features: A `dict` mapping feature keys to `FixedLenFeature` or
+      `VarLenFeature` or `RaggedFeature` values. These features are associated
+      with a `SequenceExample` as a whole.
+    sequence_features: A `dict` mapping feature keys to
+      `FixedLenSequenceFeature` or `VarLenFeature` or `RaggedFeature` values.
+      These features are associated with data within the `FeatureList` section
+      of the `SequenceExample` proto.
+    example_name: A scalar (0-D Tensor) of strings (optional), the name of
+      the serialized proto.
+    name: A name for this operation (optional).
+
+  Returns:
+    A tuple of two `dict`s, each mapping keys to `Tensor`s and `SparseTensor`s
+    and `RaggedTensor`s.
+
+    * The first dict contains the context key/values.
+    * The second dict contains the feature_list key/values.
+
+  Raises:
+    ValueError: if any feature is invalid.
+  """
+  # pylint: enable=line-too-long
+  if not (context_features or sequence_features):
+    raise ValueError("Missing features.")
+  context_params = _ParseOpParams.from_features(
+      context_features, [VarLenFeature, FixedLenFeature, RaggedFeature])
+  feature_list_params = _ParseOpParams.from_features(
+      sequence_features,
+      [VarLenFeature, FixedLenSequenceFeature, RaggedFeature])
+
+  with ops.name_scope(name, "ParseSingleSequenceExample",
+                      [serialized, example_name]):
+    context_output, feature_list_output = (
+        _parse_single_sequence_example_raw(serialized, context_params,
+                                           feature_list_params, example_name,
+                                           name))
+
+    if context_params.ragged_keys:
+      context_output = _construct_tensors_for_composite_features(
+          context_features, context_output)
+    if feature_list_params.ragged_keys:
+      feature_list_output = _construct_tensors_for_composite_features(
+          sequence_features, feature_list_output)
+
+    return context_output, feature_list_output
+
+
+def _parse_single_sequence_example_raw(serialized,
+                                       context,
+                                       feature_list,
+                                       debug_name,
+                                       name=None):
+  """Parses a single `SequenceExample` proto.
+
+  Args:
+    serialized: A scalar (0-D Tensor) of type string, a single binary serialized
+      `SequenceExample` proto.
+    context: A `ParseOpParams` containing the parameters for the parse op for
+      the context features.
+    feature_list: A `ParseOpParams` containing the parameters for the parse op
+      for the feature_list features.
+    debug_name: A scalar (0-D Tensor) of strings (optional), the name of the
+      serialized proto.
+    name: A name for this operation (optional).
+
+  Returns:
+    A tuple of two `dict`s, each mapping keys to `Tensor`s and `SparseTensor`s.
+    The first dict contains the context key/values.
+    The second dict contains the feature_list key/values.
+
+  Raises:
+    TypeError: if feature_list.dense_defaults is not either None or a dict.
+  """
+  has_ragged = context.ragged_keys or feature_list.ragged_keys
+  if compat.forward_compatible(2019, 10, 26) or has_ragged:
+    with ops.name_scope(name, "ParseSingleExample", [serialized, debug_name]):
+      serialized = ops.convert_to_tensor(serialized, name="serialized")
+      serialized = _assert_scalar(serialized, "serialized")
+    return _parse_sequence_example_raw(serialized, debug_name, context,
+                                       feature_list, name)[:2]
+
+  if context.num_features + feature_list.num_features == 0:
+    raise ValueError("Must provide at least one feature key")
+  with ops.name_scope(name, "ParseSingleSequenceExample", [serialized]):
+    debug_name = "" if debug_name is None else debug_name
+
+    # Internal
+    feature_list_dense_missing_assumed_empty = []
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: viewcode
+{
+  "ref": "deda90e7fb7a47032fb3084542b67389481c833a",
+  "path": "tensorflow/core/kernels/decode_padded_raw_op.cc",
+  "startline": 1,
+  "endline": 150
+}
+This file only has 140 lines. Here are lines 1 through 140.
+
+/* Copyright 2019 The TensorFlow Authors. All Rights Reserved.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+==============================================================================*/
+
+#include <algorithm>
+#include <cmath>
+
+#include "tensorflow/core/framework/common_shape_fns.h"
+#include "tensorflow/core/framework/op.h"
+#include "tensorflow/core/framework/op_kernel.h"
+#include "tensorflow/core/framework/shape_inference.h"
+
+namespace tensorflow {
+
+template <typename T>
+class DecodePaddedRawOp : public OpKernel {
+ public:
+  explicit DecodePaddedRawOp(OpKernelConstruction* context)
+      : OpKernel(context) {
+    OP_REQUIRES_OK(context, context->GetAttr("out_type", &out_type_));
+
+    const bool host_is_little_endian = port::kLittleEndian;
+    bool data_is_little_endian;
+    OP_REQUIRES_OK(context,
+                   context->GetAttr("little_endian", &data_is_little_endian));
+    convert_data_endianness_ = host_is_little_endian != data_is_little_endian;
+  }
+
+  void Compute(OpKernelContext* context) override {
+    const auto& input = context->input(0);
+    auto flat_in = input.flat<tstring>();
+
+    int fixed_length;
+    const auto& length_input = context->input(1);
+    OP_REQUIRES(context, TensorShapeUtils::IsScalar(length_input.shape()),
+                errors::InvalidArgument("k must be scalar, got shape ",
+                                        length_input.shape().DebugString()));
+    fixed_length = length_input.scalar<int32>()();
+
+    OP_REQUIRES(
+        context, fixed_length % sizeof(T) == 0,
+        errors::InvalidArgument(
+            "fixed_length (", fixed_length,
+            ") must be a multiple of the size of out_type (", sizeof(T), ")"));
+
+    OP_REQUIRES(context, fixed_length > 0,
+                errors::InvalidArgument("fixed_length (", fixed_length,
+                                        ") must be greater than zero."));
+
+    int width = fixed_length / sizeof(T);
+
+    TensorShape out_shape = input.shape();
+    out_shape.AddDim(width);
+    Tensor* output_tensor = nullptr;
+    OP_REQUIRES_OK(
+        context, context->allocate_output("output", out_shape, &output_tensor));
+
+    if (flat_in.size() == 0) {  // Empty input
+      return;
+    }
+
+    auto out = output_tensor->flat_inner_dims<T>();
+    T* out_data = out.data();
+
+    // Forcibly clear memory - we're going to copy variable length strings in,
+    // and need to ensure that if we don't write to byte N when we copy, that
+    // we're not getting random data.
+    memset(out_data, 0, fixed_length * flat_in.size());
+
+    // If the data is already in the host's byte order, or if the width of the
+    // output type is a single byte (meaning the ordering doesn't matter), we
+    // can copy the memory directly.
+    if (!convert_data_endianness_ || sizeof(T) == 1) {
+      for (int64 i = 0; i < flat_in.size(); ++i) {
+        const T* in_data = reinterpret_cast<const T*>(flat_in(i).data());
+
+        if (flat_in(i).size() > fixed_length) {
+          memcpy(out_data, in_data, fixed_length);
+        } else {
+          memcpy(out_data, in_data, flat_in(i).size());
+        }
+        out_data += fixed_length;
+      }
+    } else {
+      // Otherwise, the data is not in the host's byte order, and rather than a
+      // direct copy, we need to reverse the byte ordering of each element.
+      for (int64 i = 0; i < flat_in.size(); ++i) {
+        const char* in_data_bytes =
+            reinterpret_cast<const char*>(flat_in(i).data());
+        char* out_data_bytes = reinterpret_cast<char*>(out_data);
+        const char* p_in = in_data_bytes;
+        char* p_out = out_data_bytes;
+        for (; p_in < in_data_bytes + fixed_length;
+             p_in += sizeof(T), p_out += sizeof(T)) {
+          std::reverse_copy(p_in, p_in + sizeof(T), p_out);
+        }
+        out_data += fixed_length;
+      }
+    }
+  }
+
+ private:
+  // True if the endianness of the data and the endianness of the host are
+  // different, and the data needs conversion.
+  bool convert_data_endianness_;
+
+  // Data type of the output tensor.
+  DataType out_type_;
+};
+
+#define REGISTER(type)                                           \
+  REGISTER_KERNEL_BUILDER(Name("DecodePaddedRaw")                \
+                              .Device(DEVICE_CPU)                \
+                              .TypeConstraint<type>("out_type"), \
+                          DecodePaddedRawOp<type>)
+
+REGISTER(float);
+REGISTER(double);
+REGISTER(int32);
+REGISTER(uint16);
+REGISTER(uint8);
+REGISTER(int16);
+REGISTER(int8);
+REGISTER(int64);
+
+#undef REGISTER
+
+}  // namespace tensorflow
+
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tokens used
+input: 1,128
+cache read: 8,704
+cache write: 0
+output: 133
+reasoning output: 0
+
+The kernel file matches the vulnerable implementation directly. The Python doc hunk is not at the expected line range in this checkout, so I’m locating `decode_raw` before deciding whether that documentation hunk applies.
+
+tool: grep
+{
+  "pattern": "There is currently a bug in `fixed_length`",
+  "path": "tensorflow/python/ops",
+  "include": "*.py"
+}
+No files found
+
+tool: grep
+{
+  "pattern": "def decode_raw\\(",
+  "path": "tensorflow/python/ops",
+  "include": "*.py"
+}
+Found 1 matches
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0110-deda90e7fb7a\tensorflow\python\ops\parsing_ops.py:
+  Line 1002: def decode_raw(input_bytes,
+
+tokens used
+input: 12,319
+cache read: 0
+cache write: 0
+output: 135
+reasoning output: 18
+
+The target doc already lacks the removed “bug” note, so I’m checking the exact target doc text to avoid introducing unrelated documentation churn.
+
+tool: viewcode
+{
+  "ref": "deda90e7fb7a47032fb3084542b67389481c833a",
+  "path": "tensorflow/python/ops/parsing_ops.py",
+  "startline": 1002,
+  "endline": 1085
+}
+Here are lines 1002 through 1085.
+
+def decode_raw(input_bytes,
+               out_type,
+               little_endian=True,
+               fixed_length=None,
+               name=None):
+  """Convert raw byte strings into tensors.
+
+  Args:
+    input_bytes:
+      Each element of the input Tensor is converted to an array of bytes.
+    out_type:
+      `DType` of the output. Acceptable types are `half`, `float`, `double`,
+      `int32`, `uint16`, `uint8`, `int16`, `int8`, `int64`.
+    little_endian:
+      Whether the `input_bytes` data is in little-endian format. Data will be
+      converted into host byte order if necessary.
+    fixed_length:
+      If set, the first `fixed_length` bytes of each element will be converted.
+      Data will be zero-padded or truncated to the specified length.
+
+      `fixed_length` must be a multiple of the size of `out_type`.
+      `fixed_length` must be specified if the elements of `input_bytes` are of
+      variable length.
+    name: A name for the operation (optional).
+
+  Returns:
+    A `Tensor` object storing the decoded bytes.
+
+  """
+  if fixed_length is not None:
+    return gen_parsing_ops.decode_padded_raw(
+        input_bytes,
+        fixed_length=fixed_length,
+        out_type=out_type,
+        little_endian=little_endian,
+        name=name)
+  else:
+    return gen_parsing_ops.decode_raw(
+        input_bytes, out_type, little_endian=little_endian, name=name)
+
+
+@tf_export(v1=["decode_raw", "io.decode_raw"])
+@deprecation.deprecated_args(None,
+                             "bytes is deprecated, use input_bytes instead",
+                             "bytes")
+def decode_raw_v1(
+    input_bytes=None,
+    out_type=None,
+    little_endian=True,
+    name=None,
+    bytes=None  # pylint: disable=redefined-builtin
+):
+  """Convert raw byte strings into tensors.
+
+  Args:
+    input_bytes:
+      Each element of the input Tensor is converted to an array of bytes.
+    out_type:
+      `DType` of the output. Acceptable types are `half`, `float`, `double`,
+      `int32`, `uint16`, `uint8`, `int16`, `int8`, `int64`.
+    little_endian:
+      Whether the `input_bytes` data is in little-endian format. Data will be
+      converted into host byte order if necessary.
+    name: A name for the operation (optional).
+    bytes: Deprecated parameter. Use `input_bytes` instead.
+
+  Returns:
+    A `Tensor` object storing the decoded bytes.
+  """
+  input_bytes = deprecation.deprecated_argument_lookup("input_bytes",
+                                                       input_bytes, "bytes",
+                                                       bytes)
+
+  # out_type is a required positional argument in the original API, and had to
+  # be changed to a keyword argument in order to facilitate the transition from
+  # the reserved named `bytes` to `input_bytes`. Ensure it's still set.
+  if out_type is None:
+    raise ValueError(
+        "decode_raw_v1() missing 1 positional argument: 'out_type'")
+
+  return gen_parsing_ops.decode_raw(
+      input_bytes, out_type, little_endian=little_endian, name=name)
+
+
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tokens used
+input: 787
+cache read: 11,776
+cache write: 0
+output: 96
+reasoning output: 0
+
+The source backport is the kernel pointer arithmetic fix. I’m validating that hunk against the target base, then I’ll apply it locally.
+
+tool: validate
+{
+  "ref": "deda90e7fb7a47032fb3084542b67389481c833a",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/decode_padded_raw_op.cc b/tensorflow/core/kernels/decode_padded_raw_op.cc\n--- a/tensorflow/core/kernels/decode_padded_raw_op.cc\n+++ b/tensorflow/core/kernels/decode_padded_raw_op.cc\n@@ -19,6 +19,7 @@ limitations under the License.\n #include \"tensorflow/core/framework/common_shape_fns.h\"\n #include \"tensorflow/core/framework/op.h\"\n #include \"tensorflow/core/framework/op_kernel.h\"\n+#include \"tensorflow/core/framework/op_requires.h\"\n #include \"tensorflow/core/framework/shape_inference.h\"\n \n namespace tensorflow {\n@@ -83,14 +84,13 @@ class DecodePaddedRawOp : public OpKernel {\n     // can copy the memory directly.\n     if (!convert_data_endianness_ || sizeof(T) == 1) {\n       for (int64 i = 0; i < flat_in.size(); ++i) {\n-        const T* in_data = reinterpret_cast<const T*>(flat_in(i).data());\n-\n-        if (flat_in(i).size() > fixed_length) {\n-          memcpy(out_data, in_data, fixed_length);\n-        } else {\n-          memcpy(out_data, in_data, flat_in(i).size());\n-        }\n-        out_data += fixed_length;\n+        const auto to_copy =\n+            std::min(flat_in(i).size(), static_cast<size_t>(fixed_length));\n+        memcpy(out_data, flat_in(i).data(), to_copy);\n+        // Note: increase out_data by width since it's already of type T* so\n+        // each shift amount is implicitly multiplied by sizeof(T) according to\n+        // pointer arithmetic rules.\n+        out_data += width;\n       }\n     } else {\n       // Otherwise, the data is not in the host's byte order, and rather than a\n@@ -105,7 +105,10 @@ class DecodePaddedRawOp : public OpKernel {\n              p_in += sizeof(T), p_out += sizeof(T)) {\n           std::reverse_copy(p_in, p_in + sizeof(T), p_out);\n         }\n-        out_data += fixed_length;\n+        // Note: increase out_data by width since it's already of type T* so\n+        // each shift amount is implicitly multiplied by sizeof(T) according to\n+        // pointer arithmetic rules.\n+        out_data += width;\n       }\n     }\n   }\n"
+}
+Patch applied successfully
+
+tokens used
+input: 1,625
+cache read: 11,776
+cache write: 0
+output: 638
+reasoning output: 181
+
+The validated kernel hunk applies cleanly. I’m applying that change; the Python documentation hunk has no equivalent text in this target checkout and will be left out.
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/kernels/decode_padded_raw_op.cc\n@@\n #include \"tensorflow/core/framework/common_shape_fns.h\"\n #include \"tensorflow/core/framework/op.h\"\n #include \"tensorflow/core/framework/op_kernel.h\"\n+#include \"tensorflow/core/framework/op_requires.h\"\n #include \"tensorflow/core/framework/shape_inference.h\"\n@@\n     // can copy the memory directly.\n     if (!convert_data_endianness_ || sizeof(T) == 1) {\n       for (int64 i = 0; i < flat_in.size(); ++i) {\n-        const T* in_data = reinterpret_cast<const T*>(flat_in(i).data());\n-\n-        if (flat_in(i).size() > fixed_length) {\n-          memcpy(out_data, in_data, fixed_length);\n-        } else {\n-          memcpy(out_data, in_data, flat_in(i).size());\n-        }\n-        out_data += fixed_length;\n+        const auto to_copy =\n+            std::min(flat_in(i).size(), static_cast<size_t>(fixed_length));\n+        memcpy(out_data, flat_in(i).data(), to_copy);\n+        // Note: increase out_data by width since it's already of type T* so\n+        // each shift amount is implicitly multiplied by sizeof(T) according to\n+        // pointer arithmetic rules.\n+        out_data += width;\n       }\n     } else {\n@@\n              p_in += sizeof(T), p_out += sizeof(T)) {\n           std::reverse_copy(p_in, p_in + sizeof(T), p_out);\n         }\n-        out_data += fixed_length;\n+        // Note: increase out_data by width since it's already of type T* so\n+        // each shift amount is implicitly multiplied by sizeof(T) according to\n+        // pointer arithmetic rules.\n+        out_data += width;\n       }\n     }\n   }\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/kernels/decode_padded_raw_op.cc
+
+tokens used
+input: 1,433
+cache read: 12,800
+cache write: 0
+output: 496
+reasoning output: 0
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target locations for decode_padded_raw_op.cc and parsing_ops.py",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate and apply minimal backport hunks",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Review resulting diff and report YAML",
+      "status": "in_progress",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target locations for decode_padded_raw_op.cc and parsing_ops.py",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate and apply minimal backport hunks",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Review resulting diff and report YAML",
+    "status": "in_progress",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 935
+cache read: 13,824
+cache write: 0
+output: 82
+reasoning output: 0
+
+I’m reviewing the resulting diff now to ensure only the intended kernel changes are present.
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/kernels/decode_padded_raw_op.cc tensorflow/python/ops/parsing_ops.py",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0110-deda90e7fb7a"
+}
+warning: in the working copy of 'tensorflow/core/kernels/decode_padded_raw_op.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/kernels/decode_padded_raw_op.cc b/tensorflow/core/kernels/decode_padded_raw_op.cc
+index 12e8ec6aff..d3e830c06f 100644
+--- a/tensorflow/core/kernels/decode_padded_raw_op.cc
++++ b/tensorflow/core/kernels/decode_padded_raw_op.cc
+@@ -19,6 +19,7 @@ limitations under the License.
+ #include "tensorflow/core/framework/common_shape_fns.h"
+ #include "tensorflow/core/framework/op.h"
+ #include "tensorflow/core/framework/op_kernel.h"
++#include "tensorflow/core/framework/op_requires.h"
+ #include "tensorflow/core/framework/shape_inference.h"
+ 
+ namespace tensorflow {
+@@ -83,14 +84,13 @@ class DecodePaddedRawOp : public OpKernel {
+     // can copy the memory directly.
+     if (!convert_data_endianness_ || sizeof(T) == 1) {
+       for (int64 i = 0; i < flat_in.size(); ++i) {
+-        const T* in_data = reinterpret_cast<const T*>(flat_in(i).data());
+-
+-        if (flat_in(i).size() > fixed_length) {
+-          memcpy(out_data, in_data, fixed_length);
+-        } else {
+-          memcpy(out_data, in_data, flat_in(i).size());
+-        }
+-        out_data += fixed_length;
++        const auto to_copy =
++            std::min(flat_in(i).size(), static_cast<size_t>(fixed_length));
++        memcpy(out_data, flat_in(i).data(), to_copy);
++        // Note: increase out_data by width since it's already of type T* so
++        // each shift amount is implicitly multiplied by sizeof(T) according to
++        // pointer arithmetic rules.
++        out_data += width;
+       }
+     } else {
+       // Otherwise, the data is not in the host's byte order, and rather than a
+@@ -105,7 +105,10 @@ class DecodePaddedRawOp : public OpKernel {
+              p_in += sizeof(T), p_out += sizeof(T)) {
+           std::reverse_copy(p_in, p_in + sizeof(T), p_out);
+         }
+-        out_data += fixed_length;
++        // Note: increase out_data by width since it's already of type T* so
++        // each shift amount is implicitly multiplied by sizeof(T) according to
++        // pointer arithmetic rules.
++        out_data += width;
+       }
+     }
+   }
+
+tokens used
+input: 5,229
+cache read: 9,728
+cache write: 0
+output: 105
+reasoning output: 0
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target locations for decode_padded_raw_op.cc and parsing_ops.py",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate and apply minimal backport hunks",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Review resulting diff and report YAML",
+      "status": "completed",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target locations for decode_padded_raw_op.cc and parsing_ops.py",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate and apply minimal backport hunks",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Review resulting diff and report YAML",
+    "status": "completed",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 793
+cache read: 14,848
+cache write: 0
+output: 83
+reasoning output: 22
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/kernels/decode_padded_raw_op.cc b/tensorflow/core/kernels/decode_padded_raw_op.cc
+    index 12e8ec6aff..d3e830c06f 100644
+    --- a/tensorflow/core/kernels/decode_padded_raw_op.cc
+    +++ b/tensorflow/core/kernels/decode_padded_raw_op.cc
+    @@ -19,6 +19,7 @@ limitations under the License.
+     #include "tensorflow/core/framework/common_shape_fns.h"
+     #include "tensorflow/core/framework/op.h"
+     #include "tensorflow/core/framework/op_kernel.h"
+    +#include "tensorflow/core/framework/op_requires.h"
+     #include "tensorflow/core/framework/shape_inference.h"
+     
+     namespace tensorflow {
+    @@ -83,14 +84,13 @@ class DecodePaddedRawOp : public OpKernel {
+         // can copy the memory directly.
+         if (!convert_data_endianness_ || sizeof(T) == 1) {
+           for (int64 i = 0; i < flat_in.size(); ++i) {
+    -        const T* in_data = reinterpret_cast<const T*>(flat_in(i).data());
+    -
+    -        if (flat_in(i).size() > fixed_length) {
+    -          memcpy(out_data, in_data, fixed_length);
+    -        } else {
+    -          memcpy(out_data, in_data, flat_in(i).size());
+    -        }
+    -        out_data += fixed_length;
+    +        const auto to_copy =
+    +            std::min(flat_in(i).size(), static_cast<size_t>(fixed_length));
+    +        memcpy(out_data, flat_in(i).data(), to_copy);
+    +        // Note: increase out_data by width since it's already of type T* so
+    +        // each shift amount is implicitly multiplied by sizeof(T) according to
+    +        // pointer arithmetic rules.
+    +        out_data += width;
+           }
+         } else {
+           // Otherwise, the data is not in the host's byte order, and rather than a
+    @@ -105,7 +105,10 @@ class DecodePaddedRawOp : public OpKernel {
+                  p_in += sizeof(T), p_out += sizeof(T)) {
+               std::reverse_copy(p_in, p_in + sizeof(T), p_out);
+             }
+    -        out_data += fixed_length;
+    +        // Note: increase out_data by width since it's already of type T* so
+    +        // each shift amount is implicitly multiplied by sizeof(T) according to
+    +        // pointer arithmetic rules.
+    +        out_data += width;
+           }
+         }
+       }
+  notes: >
+    Backported the DecodePaddedRaw pointer arithmetic and bounded memcpy fix; the parsing_ops.py documentation hunk had no equivalent target text to update.
+```
+
+tokens used
+input: 1,013
+cache read: 14,848
+cache write: 0
+output: 624
+reasoning output: 0

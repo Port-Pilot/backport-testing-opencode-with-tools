@@ -1,0 +1,265 @@
+I’ll inspect the target-side implementation around `BinaryBroadcastFiveFold`, confirm the exact equivalent hunk, validate it against the target base, then apply only that minimal guard change.
+
+tool: viewcode
+{
+  "ref": "0a3a3a33f5fe8630e85234f33276e3dbe4d7da46",
+  "path": "tensorflow/lite/kernels/internal/optimized/optimized_ops.h",
+  "startline": 235,
+  "endline": 295
+}
+Here are lines 235 through 295.
+
+                 right_shift_dup);
+
+  return result;
+}
+#endif
+
+template <typename ElementwiseF, typename ScalarBroadcastF, typename T>
+inline void BinaryBroadcastFiveFold(const ArithmeticParams& unswitched_params,
+                                    const RuntimeShape& unswitched_input1_shape,
+                                    const T* unswitched_input1_data,
+                                    const RuntimeShape& unswitched_input2_shape,
+                                    const T* unswitched_input2_data,
+                                    const RuntimeShape& output_shape,
+                                    T* output_data, ElementwiseF elementwise_f,
+                                    ScalarBroadcastF scalar_broadcast_f) {
+  ArithmeticParams switched_params = unswitched_params;
+  switched_params.input1_offset = unswitched_params.input2_offset;
+  switched_params.input1_multiplier = unswitched_params.input2_multiplier;
+  switched_params.input1_shift = unswitched_params.input2_shift;
+  switched_params.input2_offset = unswitched_params.input1_offset;
+  switched_params.input2_multiplier = unswitched_params.input1_multiplier;
+  switched_params.input2_shift = unswitched_params.input1_shift;
+
+  const bool use_unswitched =
+      unswitched_params.broadcast_category ==
+      tflite::BroadcastableOpCategory::kFirstInputBroadcastsFast;
+
+  const ArithmeticParams& params =
+      use_unswitched ? unswitched_params : switched_params;
+  const T* input1_data =
+      use_unswitched ? unswitched_input1_data : unswitched_input2_data;
+  const T* input2_data =
+      use_unswitched ? unswitched_input2_data : unswitched_input1_data;
+
+  // Fivefold nested loops. The second input resets its position for each
+  // iteration of the second loop. The first input resets its position at the
+  // beginning of the fourth loop. The innermost loop is an elementwise add of
+  // sections of the arrays.
+  T* output_data_ptr = output_data;
+  const T* input1_data_ptr = input1_data;
+  const T* input2_data_reset = input2_data;
+  // In the fivefold pattern, y0, y2 and y4 are not broadcast, and so shared
+  // between input shapes. y3 for input 1 is always broadcast, and so the
+  // dimension there is 1, whereas optionally y1 might be broadcast for
+  // input 2. Put another way, input1.shape.FlatSize = y0 * y1 * y2 * y4,
+  // input2.shape.FlatSize = y0 * y2 * y3 * y4.
+  int y0 = params.broadcast_shape[0];
+  int y1 = params.broadcast_shape[1];
+  int y2 = params.broadcast_shape[2];
+  int y3 = params.broadcast_shape[3];
+  int y4 = params.broadcast_shape[4];
+  if (y4 > 1) {
+    // General fivefold pattern, with y4 > 1 so there is a non-broadcast inner
+    // dimension.
+    for (int i0 = 0; i0 < y0; ++i0) {
+      const T* input2_data_ptr = nullptr;
+      for (int i1 = 0; i1 < y1; ++i1) {
+        input2_data_ptr = input2_data_reset;
+        for (int i2 = 0; i2 < y2; ++i2) {
+          for (int i3 = 0; i3 < y3; ++i3) {
+            elementwise_f(y4, params, input1_data_ptr, input2_data_ptr,
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: locate_symbol
+{
+  "ref": "0a3a3a33f5fe8630e85234f33276e3dbe4d7da46",
+  "symbol": "BinaryBroadcastFiveFold"
+}
+tensorflow/lite/kernels/internal/optimized/integer_ops/add.h:297
+tensorflow/lite/kernels/internal/optimized/integer_ops/mul.h:258
+tensorflow/lite/kernels/internal/optimized/optimized_ops.h:242
+tensorflow/lite/kernels/internal/optimized/optimized_ops.h:2207
+tensorflow/lite/kernels/internal/optimized/optimized_ops.h:2605
+tensorflow/lite/kernels/internal/optimized/optimized_ops.h:8124
+tensorflow/lite/kernels/internal/optimized/optimized_ops.h:8143
+
+tokens used
+input: 3,737
+cache read: 4,608
+cache write: 0
+output: 176
+reasoning output: 0
+
+The target file contains the same fivefold broadcast helper and the vulnerable branch shape is present, so the newer fix should backport as a one-line condition change in the same file.
+
+tool: viewcode
+{
+  "ref": "0a3a3a33f5fe8630e85234f33276e3dbe4d7da46",
+  "path": "tensorflow/lite/kernels/internal/optimized/optimized_ops.h",
+  "startline": 295,
+  "endline": 355
+}
+Here are lines 295 through 355.
+
+            elementwise_f(y4, params, input1_data_ptr, input2_data_ptr,
+                          output_data_ptr);
+            input2_data_ptr += y4;
+            output_data_ptr += y4;
+          }
+          // We have broadcast y4 of input1 data y3 times, and now move on.
+          input1_data_ptr += y4;
+        }
+      }
+      // We have broadcast y2*y3*y4 of input2 data y1 times, and now move on.
+      input2_data_reset = input2_data_ptr;
+    }
+  } else {
+    // Special case of y4 == 1, in which the innermost loop is a single
+    // element and can be combined with the next (y3) as an inner broadcast.
+    //
+    // Note that this handles the case of pure scalar broadcast when
+    // y0 == y1 == y2 == 1. With low overhead it handles cases such as scalar
+    // broadcast with batch (as y2 > 1).
+    //
+    // NOTE The process is the same as the above general case except
+    // simplified for y4 == 1 and the loop over y3 is contained within the
+    // AddScalarBroadcast function.
+    for (int i0 = 0; i0 < y0; ++i0) {
+      const T* input2_data_ptr = nullptr;
+      for (int i1 = 0; i1 < y1; ++i1) {
+        input2_data_ptr = input2_data_reset;
+        for (int i2 = 0; i2 < y2; ++i2) {
+          scalar_broadcast_f(y3, params, *input1_data_ptr, input2_data_ptr,
+                             output_data_ptr);
+          input2_data_ptr += y3;
+          output_data_ptr += y3;
+          input1_data_ptr += 1;
+        }
+      }
+      input2_data_reset = input2_data_ptr;
+    }
+  }
+}
+
+#ifdef TFLITE_SOFTMAX_USE_UINT16_LUT
+
+// Looks up each element of <indices> in <table>, returns them in a vector.
+inline uint8x16_t aarch64_lookup_vector(const uint8x16x4_t table[4],
+                                        uint8x16_t indices) {
+  // Look up in 1st quarter of the table: top 2 bits of indices == 00
+  uint8x16_t output1 = vqtbl4q_u8(table[0], indices);
+  // Look up in 2nd quarter of the table: top 2 bits of indices == 01
+  uint8x16_t output2 =
+      vqtbl4q_u8(table[1], veorq_u8(indices, vdupq_n_u8(0x40)));
+  // Look up in 3rd quarter of the table: top 2 bits of indices == 10
+  uint8x16_t output3 =
+      vqtbl4q_u8(table[2], veorq_u8(indices, vdupq_n_u8(0x80)));
+  // Look up in 4th quarter of the table: top 2 bits of indices == 11
+  uint8x16_t output4 =
+      vqtbl4q_u8(table[3], veorq_u8(indices, vdupq_n_u8(0xc0)));
+
+  // Combine result of the 4 lookups.
+  return vorrq_u8(vorrq_u8(output1, output2), vorrq_u8(output3, output4));
+}
+
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tokens used
+input: 1,759
+cache read: 7,680
+cache write: 0
+output: 112
+reasoning output: 0
+
+I’m validating the exact one-line hunk before editing, since the target context matches but the task asks to use hunk validation where appropriate.
+
+tool: validate
+{
+  "ref": "0a3a3a33f5fe8630e85234f33276e3dbe4d7da46",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/lite/kernels/internal/optimized/optimized_ops.h b/tensorflow/lite/kernels/internal/optimized/optimized_ops.h\n--- a/tensorflow/lite/kernels/internal/optimized/optimized_ops.h\n+++ b/tensorflow/lite/kernels/internal/optimized/optimized_ops.h\n@@ -306,7 +306,7 @@ inline void BinaryBroadcastFiveFold(const ArithmeticParams& unswitched_params,\n       // We have broadcast y2*y3*y4 of input2 data y1 times, and now move on.\n       input2_data_reset = input2_data_ptr;\n     }\n-  } else {\n+  } else if (input1_data_ptr != nullptr) {\n     // Special case of y4 == 1, in which the innermost loop is a single\n     // element and can be combined with the next (y3) as an inner broadcast.\n     //\n"
+}
+Patch applied successfully
+
+tokens used
+input: 1,641
+cache read: 8,704
+cache write: 0
+output: 290
+reasoning output: 11
+
+The hunk applies cleanly. I’m applying the minimal source edit now.
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/lite/kernels/internal/optimized/optimized_ops.h\n@@\n-  } else {\n+  } else if (input1_data_ptr != nullptr) {\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/lite/kernels/internal/optimized/optimized_ops.h
+
+tokens used
+input: 931
+cache read: 9,728
+cache write: 0
+output: 89
+reasoning output: 0
+
+The source change is applied. I’m checking the resulting diff to ensure only the intended line changed.
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/lite/kernels/internal/optimized/optimized_ops.h",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0097-0a3a3a33f5fe",
+  "timeout": 120000
+}
+warning: in the working copy of 'tensorflow/lite/kernels/internal/optimized/optimized_ops.h', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/lite/kernels/internal/optimized/optimized_ops.h b/tensorflow/lite/kernels/internal/optimized/optimized_ops.h
+index 528eea3d69..964bd840d6 100644
+--- a/tensorflow/lite/kernels/internal/optimized/optimized_ops.h
++++ b/tensorflow/lite/kernels/internal/optimized/optimized_ops.h
+@@ -304,7 +304,7 @@ inline void BinaryBroadcastFiveFold(const ArithmeticParams& unswitched_params,
+       // We have broadcast y2*y3*y4 of input2 data y1 times, and now move on.
+       input2_data_reset = input2_data_ptr;
+     }
+-  } else {
++  } else if (input1_data_ptr != nullptr) {
+     // Special case of y4 == 1, in which the innermost loop is a single
+     // element and can be combined with the next (y3) as an inner broadcast.
+     //
+
+tokens used
+input: 1,051
+cache read: 9,728
+cache write: 0
+output: 111
+reasoning output: 14
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/lite/kernels/internal/optimized/optimized_ops.h b/tensorflow/lite/kernels/internal/optimized/optimized_ops.h
+    index 528eea3d69..964bd840d6 100644
+    --- a/tensorflow/lite/kernels/internal/optimized/optimized_ops.h
+    +++ b/tensorflow/lite/kernels/internal/optimized/optimized_ops.h
+    @@ -304,7 +304,7 @@ inline void BinaryBroadcastFiveFold(const ArithmeticParams& unswitched_params,
+           // We have broadcast y2*y3*y4 of input2 data y1 times, and now move on.
+           input2_data_reset = input2_data_ptr;
+         }
+    -  } else {
+    +  } else if (input1_data_ptr != nullptr) {
+         // Special case of y4 == 1, in which the innermost loop is a single
+         // element and can be combined with the next (y3) as an inner broadcast.
+         //
+  notes: >
+    Applied the null-pointer guard to the y4 == 1 BinaryBroadcastFiveFold branch and validated the hunk against the target base.
+```
+
+tokens used
+input: 1,432
+cache read: 9,728
+cache write: 0
+output: 271
+reasoning output: 0

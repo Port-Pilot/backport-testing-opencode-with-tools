@@ -1,0 +1,216 @@
+I’ll locate the target `CTCLossOp` implementation at the provided base, confirm the surrounding code matches the supplied source patch, then apply the minimal validation guard and verify the hunk applies.
+
+tool: viewcode
+{
+  "ref": "47612cd69a2fdd76156360ca9102816e156f7e5c",
+  "path": "tensorflow/core/kernels/ctc_loss_op.cc",
+  "startline": 90,
+  "endline": 130
+}
+Here are lines 90 through 130.
+
+
+    OP_REQUIRES(ctx, batch_size != 0,
+                errors::InvalidArgument("batch_size must not be 0"));
+
+    // Figure out the maximum label length to use as sparse tensor dimension.
+    auto labels_indices_t = labels_indices->matrix<int64>();
+    int64 max_label_len = 0;
+    for (int i = 0; i < labels_indices->dim_size(0); i++) {
+      max_label_len = std::max(max_label_len, labels_indices_t(i, 1) + 1);
+    }
+
+    TensorShape labels_shape({batch_size, max_label_len});
+    std::vector<int64> order{0, 1};
+    sparse::SparseTensor labels_sp;
+    OP_REQUIRES_OK(
+        ctx, sparse::SparseTensor::Create(*labels_indices, *labels_values,
+                                          labels_shape, order, &labels_sp));
+
+    Status labels_sp_valid = labels_sp.IndicesValid();
+    OP_REQUIRES(ctx, labels_sp_valid.ok(),
+                errors::InvalidArgument("label SparseTensor is not valid: ",
+                                        labels_sp_valid.error_message()));
+
+    typename ctc::CTCLossCalculator<T>::LabelSequences labels_t(batch_size);
+    for (const auto& g : labels_sp.group({0})) {  // iterate by batch
+      const int64 batch_indices = g.group()[0];
+      OP_REQUIRES(ctx, FastBoundsCheck(batch_indices, batch_size),
+                  errors::InvalidArgument("labels batch index must be between ",
+                                          0, " and ", batch_size,
+                                          " but saw: ", batch_indices));
+
+      auto values = g.values<int32>();
+      std::vector<int>* b_values = &labels_t[batch_indices];
+      b_values->resize(values.size());
+      for (int i = 0; i < values.size(); ++i) (*b_values)[i] = values(i);
+    }
+
+    OP_REQUIRES(ctx, static_cast<size_t>(batch_size) == labels_t.size(),
+                errors::InvalidArgument("len(labels) != batch_size.  ",
+                                        "len(labels):  ", labels_t.size(),
+                                        " batch_size: ", batch_size));
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tokens used
+input: 3,686
+cache read: 4,608
+cache write: 0
+output: 109
+reasoning output: 0
+
+The first view started after the input shape extraction, so I’m checking the earlier portion of the same function before editing.
+
+tool: viewcode
+{
+  "ref": "47612cd69a2fdd76156360ca9102816e156f7e5c",
+  "path": "tensorflow/core/kernels/ctc_loss_op.cc",
+  "startline": 55,
+  "endline": 100
+}
+Here are lines 55 through 100.
+
+    OP_REQUIRES_OK(ctx, ctx->input("labels_indices", &labels_indices));
+    OP_REQUIRES_OK(ctx, ctx->input("labels_values", &labels_values));
+    OP_REQUIRES_OK(ctx, ctx->input("sequence_length", &seq_len));
+
+    OP_REQUIRES(ctx, inputs->shape().dims() == 3,
+                errors::InvalidArgument("inputs is not a 3-Tensor"));
+    OP_REQUIRES(ctx, TensorShapeUtils::IsVector(seq_len->shape()),
+                errors::InvalidArgument("sequence_length is not a vector"));
+    OP_REQUIRES(ctx, TensorShapeUtils::IsMatrix(labels_indices->shape()),
+                errors::InvalidArgument("labels_indices is not a matrix"));
+    OP_REQUIRES(ctx, TensorShapeUtils::IsVector(labels_values->shape()),
+                errors::InvalidArgument("labels_values is not a vector"));
+
+    const TensorShape& inputs_shape = inputs->shape();
+    const int64 max_time = inputs_shape.dim_size(0);
+    const int64 batch_size = inputs_shape.dim_size(1);
+    const int64 num_classes_raw = inputs_shape.dim_size(2);
+    OP_REQUIRES(
+        ctx, FastBoundsCheck(num_classes_raw, std::numeric_limits<int>::max()),
+        errors::InvalidArgument("num_classes cannot exceed max int"));
+    const int num_classes = static_cast<const int>(num_classes_raw);
+
+    OP_REQUIRES(
+        ctx, batch_size == seq_len->dim_size(0),
+        errors::InvalidArgument("len(sequence_length) != batch_size.  ",
+                                "len(sequence_length):  ", seq_len->dim_size(0),
+                                " batch_size: ", batch_size));
+    auto seq_len_t = seq_len->vec<int32>();
+
+    OP_REQUIRES(ctx, labels_indices->dim_size(0) == labels_values->dim_size(0),
+                errors::InvalidArgument(
+                    "labels_indices and labels_values must contain the "
+                    "same number of rows, but saw shapes: ",
+                    labels_indices->shape().DebugString(), " vs. ",
+                    labels_values->shape().DebugString()));
+
+    OP_REQUIRES(ctx, batch_size != 0,
+                errors::InvalidArgument("batch_size must not be 0"));
+
+    // Figure out the maximum label length to use as sparse tensor dimension.
+    auto labels_indices_t = labels_indices->matrix<int64>();
+    int64 max_label_len = 0;
+    for (int i = 0; i < labels_indices->dim_size(0); i++) {
+      max_label_len = std::max(max_label_len, labels_indices_t(i, 1) + 1);
+    }
+
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tokens used
+input: 1,213
+cache read: 7,680
+cache write: 0
+output: 95
+reasoning output: 8
+
+The target code has the same shape extraction sequence as the supplied patch. I’m adding only the missing `max_time != 0` `InvalidArgument` guard immediately after `max_time` is read.
+
+tool: validate
+{
+  "ref": "47612cd69a2fdd76156360ca9102816e156f7e5c",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/ctc_loss_op.cc b/tensorflow/core/kernels/ctc_loss_op.cc\n--- a/tensorflow/core/kernels/ctc_loss_op.cc\n+++ b/tensorflow/core/kernels/ctc_loss_op.cc\n@@ -68,6 +68,9 @@\n \n     const TensorShape& inputs_shape = inputs->shape();\n     const int64 max_time = inputs_shape.dim_size(0);\n+    OP_REQUIRES(ctx, max_time != 0,\n+                errors::InvalidArgument(\n+                    \"Max time or first dimension of input cannot be 0.\"));\n     const int64 batch_size = inputs_shape.dim_size(1);\n     const int64 num_classes_raw = inputs_shape.dim_size(2);\n     OP_REQUIRES(\n"
+}
+Patch applied successfully
+
+tokens used
+input: 893
+cache read: 8,704
+cache write: 0
+output: 278
+reasoning output: 14
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/kernels/ctc_loss_op.cc\n@@\n     const TensorShape& inputs_shape = inputs->shape();\n     const int64 max_time = inputs_shape.dim_size(0);\n+    OP_REQUIRES(ctx, max_time != 0,\n+                errors::InvalidArgument(\n+                    \"Max time or first dimension of input cannot be 0.\"));\n     const int64 batch_size = inputs_shape.dim_size(1);\n     const int64 num_classes_raw = inputs_shape.dim_size(2);\n     OP_REQUIRES(\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/kernels/ctc_loss_op.cc
+
+tokens used
+input: 1,198
+cache read: 8,704
+cache write: 0
+output: 151
+reasoning output: 0
+
+The hunk validated cleanly against the target base and has been applied locally. I’m checking the resulting diff now.
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/kernels/ctc_loss_op.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0111-47612cd69a2f"
+}
+warning: in the working copy of 'tensorflow/core/kernels/ctc_loss_op.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/kernels/ctc_loss_op.cc b/tensorflow/core/kernels/ctc_loss_op.cc
+index 995d28a158..9debca0140 100644
+--- a/tensorflow/core/kernels/ctc_loss_op.cc
++++ b/tensorflow/core/kernels/ctc_loss_op.cc
+@@ -67,6 +67,9 @@ class CTCLossOp : public OpKernel {
+ 
+     const TensorShape& inputs_shape = inputs->shape();
+     const int64 max_time = inputs_shape.dim_size(0);
++    OP_REQUIRES(ctx, max_time != 0,
++                errors::InvalidArgument(
++                    "Max time or first dimension of input cannot be 0."));
+     const int64 batch_size = inputs_shape.dim_size(1);
+     const int64 num_classes_raw = inputs_shape.dim_size(2);
+     OP_REQUIRES(
+
+tokens used
+input: 354
+cache read: 9,728
+cache write: 0
+output: 103
+reasoning output: 0
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/kernels/ctc_loss_op.cc b/tensorflow/core/kernels/ctc_loss_op.cc
+    index 995d28a158..9debca0140 100644
+    --- a/tensorflow/core/kernels/ctc_loss_op.cc
+    +++ b/tensorflow/core/kernels/ctc_loss_op.cc
+    @@ -67,6 +67,9 @@ class CTCLossOp : public OpKernel {
+     
+         const TensorShape& inputs_shape = inputs->shape();
+         const int64 max_time = inputs_shape.dim_size(0);
+    +    OP_REQUIRES(ctx, max_time != 0,
+    +                errors::InvalidArgument(
+    +                    "Max time or first dimension of input cannot be 0."));
+         const int64 batch_size = inputs_shape.dim_size(1);
+         const int64 num_classes_raw = inputs_shape.dim_size(2);
+         OP_REQUIRES(
+  notes: >
+    Added the missing CTCLoss max_time zero-dimension validation guard and validated the hunk against the target base.
+```
+
+tokens used
+input: 696
+cache read: 9,728
+cache write: 0
+output: 253
+reasoning output: 0

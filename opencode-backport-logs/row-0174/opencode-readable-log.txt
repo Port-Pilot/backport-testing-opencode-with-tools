@@ -1,0 +1,213 @@
+I’ll locate the equivalent `SparseMatMulOp` code in the 2.1.4 checkout, compare the surrounding target context to the provided 2.6 hunk, then apply the smallest matching guard.
+
+tool: viewcode
+{
+  "ref": "7a5dd0aa176dbf81742f84b44aeb0948fa2d8f20",
+  "path": "tensorflow/core/kernels/sparse_matmul_op.cc",
+  "startline": 980,
+  "endline": 1065
+}
+Here are lines 980 through 1065.
+
+                errors::InvalidArgument(
+                    "Matrix size incompatible: a: ", a.shape().DebugString(),
+                    ", b: ", b.shape().DebugString()));
+    Tensor* output = nullptr;
+    OP_REQUIRES_OK(ctx, ctx->allocate_output(0, TensorShape({m, n}), &output));
+
+    if (k == 0) {
+      // If the inner dimension k in the matrix multiplication is zero, we fill
+      // the output with zeros.
+      functor::SetZeroFunctor<CPUDevice, float> f;
+      f(ctx->eigen_device<CPUDevice>(), output->flat<float>());
+      return;
+    }
+
+    auto out = output->matrix<float>();
+
+    std::unique_ptr<Tensor> a_float;
+    std::unique_ptr<Tensor> b_float;
+    if (!a_is_sparse_ && !b_is_sparse_) {
+      auto left = &a;
+      auto right = &b;
+      // TODO(agarwal): multi-thread the conversions from bfloat16 to float.
+      if (std::is_same<TL, bfloat16>::value) {
+        a_float.reset(new Tensor(DT_FLOAT, a.shape()));
+        BFloat16ToFloat(a.flat<bfloat16>().data(),
+                        a_float->flat<float>().data(), a.NumElements());
+        left = a_float.get();
+      }
+      if (std::is_same<TR, bfloat16>::value) {
+        b_float.reset(new Tensor(DT_FLOAT, b.shape()));
+        BFloat16ToFloat(b.flat<bfloat16>().data(),
+                        b_float->flat<float>().data(), b.NumElements());
+        right = b_float.get();
+      }
+      Eigen::array<Eigen::IndexPair<Eigen::DenseIndex>, 1> dim_pair;
+      dim_pair[0].first = transpose_a_ ? 0 : 1;
+      dim_pair[0].second = transpose_b_ ? 1 : 0;
+
+      out.device(ctx->template eigen_device<CPUDevice>()) =
+          left->matrix<float>().contract(right->matrix<float>(), dim_pair);
+      return;
+    }
+
+    auto left = &a;
+    auto right = &b;
+    bool transpose_output = false;
+    bool transpose_a = transpose_a_;
+    bool transpose_b = transpose_b_;
+    if (!a_is_sparse_) {
+      // Swap the order of multiplications using the identity:
+      // A * B = (B' *  A')'.
+      std::swap(left, right);
+      std::swap(transpose_a, transpose_b);
+      transpose_a = !transpose_a;
+      transpose_b = !transpose_b;
+      transpose_output = !transpose_output;
+    }
+
+    std::unique_ptr<Tensor> right_tr;
+    if (transpose_b) {
+      // TODO(agarwal): avoid transposing the matrix here and directly handle
+      // transpose in CreateDenseSlices.
+      right_tr.reset(
+          new Tensor(right->dtype(),
+                     TensorShape({right->dim_size(1), right->dim_size(0)})));
+
+      const auto perm = dsizes_10();
+      if (transpose_output) {
+        right_tr->matrix<TL>().device(ctx->template eigen_device<CPUDevice>()) =
+            right->matrix<TL>().shuffle(perm);
+      } else {
+        right_tr->matrix<TR>().device(ctx->template eigen_device<CPUDevice>()) =
+            right->matrix<TR>().shuffle(perm);
+      }
+      right = right_tr.get();
+    }
+
+    if (transpose_output) {
+      DoMatMul<TR, TL>::Compute(&this->cache_tr_, left->matrix<TR>(),
+                                right->matrix<TL>(), transpose_a,
+                                ctx->device()->tensorflow_cpu_worker_threads(),
+                                transpose_output, &out);
+    } else {
+      DoMatMul<TL, TR>::Compute(&this->cache_nt_, left->matrix<TL>(),
+                                right->matrix<TR>(), transpose_a,
+                                ctx->device()->tensorflow_cpu_worker_threads(),
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: locate_symbol
+{
+  "ref": "7a5dd0aa176dbf81742f84b44aeb0948fa2d8f20",
+  "symbol": "SparseMatMulOp"
+}
+tensorflow/compiler/tf2xla/kernels/matmul_op.cc:99
+tensorflow/core/kernels/sparse_matmul_op.cc:954
+tensorflow/compiler/tf2xla/kernels/matmul_op.cc:101
+tensorflow/core/kernels/sparse_matmul_op.cc:959
+tensorflow/compiler/tf2xla/kernels/matmul_op.cc:103
+tensorflow/compiler/tf2xla/kernels/matmul_op.cc:106
+tensorflow/core/kernels/sparse_matmul_op.cc:1081
+tensorflow/core/kernels/sparse_matmul_op.cc:1633
+tensorflow/core/kernels/sparse_matmul_op.cc:1640
+
+tokens used
+input: 3,783
+cache read: 4,608
+cache write: 0
+output: 179
+reasoning output: 0
+
+The target has the same transpose path in `tensorflow/core/kernels/sparse_matmul_op.cc`; I’m adding the two zero-dimension checks immediately before allocating the transposed `right` tensor.
+
+tool: validate
+{
+  "ref": "7a5dd0aa176dbf81742f84b44aeb0948fa2d8f20",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/sparse_matmul_op.cc b/tensorflow/core/kernels/sparse_matmul_op.cc\n--- a/tensorflow/core/kernels/sparse_matmul_op.cc\n+++ b/tensorflow/core/kernels/sparse_matmul_op.cc\n@@ -1038,6 +1038,10 @@ class SparseMatMulOp : public OpKernel {\n     if (transpose_b) {\n       // TODO(agarwal): avoid transposing the matrix here and directly handle\n       // transpose in CreateDenseSlices.\n+      OP_REQUIRES(ctx, right->dim_size(0) != 0,\n+                  errors::InvalidArgument(\"b has an entry 0 in it's shape.\"));\n+      OP_REQUIRES(ctx, right->dim_size(1) != 0,\n+                  errors::InvalidArgument(\"b has an entry 0 in it's shape.\"));\n       right_tr.reset(\n           new Tensor(right->dtype(),\n                      TensorShape({right->dim_size(1), right->dim_size(0)})));\n"
+}
+Patch applied successfully
+
+tokens used
+input: 1,905
+cache read: 7,680
+cache write: 0
+output: 331
+reasoning output: 38
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/kernels/sparse_matmul_op.cc\n@@\n     if (transpose_b) {\n       // TODO(agarwal): avoid transposing the matrix here and directly handle\n       // transpose in CreateDenseSlices.\n+      OP_REQUIRES(ctx, right->dim_size(0) != 0,\n+                  errors::InvalidArgument(\"b has an entry 0 in it's shape.\"));\n+      OP_REQUIRES(ctx, right->dim_size(1) != 0,\n+                  errors::InvalidArgument(\"b has an entry 0 in it's shape.\"));\n       right_tr.reset(\n           new Tensor(right->dtype(),\n                      TensorShape({right->dim_size(1), right->dim_size(0)})));\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/kernels/sparse_matmul_op.cc
+
+tokens used
+input: 1,263
+cache read: 8,704
+cache write: 0
+output: 193
+reasoning output: 0
+
+The hunk validates against the target base and has been applied locally. I’ll inspect the resulting diff to confirm only the intended change is present.
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/kernels/sparse_matmul_op.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0174-7a5dd0aa176d",
+  "timeout": 120000
+}
+warning: in the working copy of 'tensorflow/core/kernels/sparse_matmul_op.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/kernels/sparse_matmul_op.cc b/tensorflow/core/kernels/sparse_matmul_op.cc
+index a2ee69cecd..aa9692bd54 100644
+--- a/tensorflow/core/kernels/sparse_matmul_op.cc
++++ b/tensorflow/core/kernels/sparse_matmul_op.cc
+@@ -1039,6 +1039,10 @@ class SparseMatMulOp : public OpKernel {
+     if (transpose_b) {
+       // TODO(agarwal): avoid transposing the matrix here and directly handle
+       // transpose in CreateDenseSlices.
++      OP_REQUIRES(ctx, right->dim_size(0) != 0,
++                  errors::InvalidArgument("b has an entry 0 in it's shape."));
++      OP_REQUIRES(ctx, right->dim_size(1) != 0,
++                  errors::InvalidArgument("b has an entry 0 in it's shape."));
+       right_tr.reset(
+           new Tensor(right->dtype(),
+                      TensorShape({right->dim_size(1), right->dim_size(0)})));
+
+tokens used
+input: 461
+cache read: 9,728
+cache write: 0
+output: 114
+reasoning output: 0
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/kernels/sparse_matmul_op.cc b/tensorflow/core/kernels/sparse_matmul_op.cc
+    index a2ee69cecd..aa9692bd54 100644
+    --- a/tensorflow/core/kernels/sparse_matmul_op.cc
+    +++ b/tensorflow/core/kernels/sparse_matmul_op.cc
+    @@ -1039,6 +1039,10 @@ class SparseMatMulOp : public OpKernel {
+         if (transpose_b) {
+           // TODO(agarwal): avoid transposing the matrix here and directly handle
+           // transpose in CreateDenseSlices.
+    +      OP_REQUIRES(ctx, right->dim_size(0) != 0,
+    +                  errors::InvalidArgument("b has an entry 0 in it's shape."));
+    +      OP_REQUIRES(ctx, right->dim_size(1) != 0,
+    +                  errors::InvalidArgument("b has an entry 0 in it's shape."));
+           right_tr.reset(
+               new Tensor(right->dtype(),
+                          TensorShape({right->dim_size(1), right->dim_size(0)})));
+  notes: >
+    Added the SparseMatMul transpose_b zero-dimension validation checks matching the newer security fix.
+```
+
+tokens used
+input: 5,973
+cache read: 4,608
+cache write: 0
+output: 288
+reasoning output: 0

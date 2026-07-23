@@ -1,0 +1,247 @@
+I’ll inspect the target file around the affected kernels, then validate and apply the minimal equivalent guard in the current checkout.
+
+tool: viewcode
+{
+  "ref": "6c1eb9637e0218d2d04c72c8838e17e72ebd00d5",
+  "path": "tensorflow/core/kernels/searchsorted_op.cc",
+  "startline": 70,
+  "endline": 150
+}
+Here are lines 70 through 150.
+
+                             values(i + b * num_values)) -
+            sorted_inputs_ptr;
+      }
+    }
+
+    return Status::OK();
+  }
+};
+}  // namespace functor
+
+template <typename Device, typename T, typename OutType>
+class UpperBoundOp : public OpKernel {
+ public:
+  explicit UpperBoundOp(OpKernelConstruction* ctx) : OpKernel(ctx) {}
+
+  void Compute(OpKernelContext* ctx) override {
+    const Tensor& sorted_inputs_t = ctx->input(0);
+    const Tensor& values_t = ctx->input(1);
+
+    // must have same batch dim_size for both
+    OP_REQUIRES(ctx, sorted_inputs_t.dim_size(0) == values_t.dim_size(0),
+                Status(error::INVALID_ARGUMENT,
+                       "Leading dim_size of both tensors must match."));
+
+    // this is required because we do indexing in int32 on the GPU
+    OP_REQUIRES(ctx, values_t.NumElements() < std::numeric_limits<int>::max(),
+                Status(error::INVALID_ARGUMENT,
+                       "values tensor size must less than INT_MAX"));
+
+    Tensor* output_t;
+    OP_REQUIRES_OK(ctx, ctx->allocate_output(0, values_t.shape(), &output_t));
+
+    if (output_t->dtype() == DT_INT32) {
+      OP_REQUIRES(ctx,
+                  FastBoundsCheck(sorted_inputs_t.dim_size(1),
+                                  std::numeric_limits<int>::max()),
+                  errors::InvalidArgument("trailing dim_size must less than "
+                                          "INT_MAX for int32 output type, was ",
+                                          sorted_inputs_t.dim_size(1)));
+    }
+
+    auto output = output_t->template flat<OutType>();
+    const auto sorted_inputs = sorted_inputs_t.template flat<T>();
+    const auto values = values_t.template flat<T>();
+    OP_REQUIRES_OK(
+        ctx, functor::UpperBoundFunctor<Device, T, OutType>::Compute(
+                 ctx, sorted_inputs, values, sorted_inputs_t.dim_size(0),
+                 sorted_inputs_t.dim_size(1), values_t.dim_size(1), &output));
+  }
+};
+
+template <typename Device, typename T, typename OutType>
+class LowerBoundOp : public OpKernel {
+ public:
+  explicit LowerBoundOp(OpKernelConstruction* ctx) : OpKernel(ctx) {}
+
+  void Compute(OpKernelContext* ctx) override {
+    const Tensor& sorted_inputs_t = ctx->input(0);
+    const Tensor& values_t = ctx->input(1);
+
+    // must have same batch dim_size for both
+    OP_REQUIRES(ctx, sorted_inputs_t.dim_size(0) == values_t.dim_size(0),
+                Status(error::INVALID_ARGUMENT,
+                       "Leading dim_size of both tensors must match."));
+
+    // this is required because we do indexing in int32 on the GPU
+    OP_REQUIRES(ctx, values_t.NumElements() < std::numeric_limits<int>::max(),
+                Status(error::INVALID_ARGUMENT,
+                       "values tensor size must less than INT_MAX"));
+
+    Tensor* output_t;
+    OP_REQUIRES_OK(ctx, ctx->allocate_output(0, values_t.shape(), &output_t));
+
+    if (output_t->dtype() == DT_INT32) {
+      OP_REQUIRES(ctx,
+                  FastBoundsCheck(sorted_inputs_t.dim_size(1),
+                                  std::numeric_limits<int>::max()),
+                  errors::InvalidArgument("trailing dim_size must less than "
+                                          "INT_MAX for int32 output type, was ",
+                                          sorted_inputs_t.dim_size(1)));
+    }
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: locate_symbol
+{
+  "ref": "6c1eb9637e0218d2d04c72c8838e17e72ebd00d5",
+  "symbol": "UpperBoundOp"
+}
+tensorflow/compiler/tf2xla/kernels/lower_upper_bound_ops.cc:99
+tensorflow/core/kernels/searchsorted_op.cc:81
+tensorflow/compiler/tf2xla/kernels/lower_upper_bound_ops.cc:101
+tensorflow/core/kernels/searchsorted_op.cc:83
+tensorflow/compiler/tf2xla/kernels/lower_upper_bound_ops.cc:113
+tensorflow/core/kernels/searchsorted_op.cc:167
+tensorflow/core/kernels/searchsorted_op.cc:177
+tensorflow/core/kernels/searchsorted_op.cc:189
+tensorflow/core/kernels/searchsorted_op.cc:199
+
+tool: locate_symbol
+{
+  "ref": "6c1eb9637e0218d2d04c72c8838e17e72ebd00d5",
+  "symbol": "LowerBoundOp"
+}
+tensorflow/compiler/tf2xla/kernels/lower_upper_bound_ops.cc:83
+tensorflow/core/kernels/searchsorted_op.cc:122
+tensorflow/compiler/tf2xla/kernels/lower_upper_bound_ops.cc:85
+tensorflow/core/kernels/searchsorted_op.cc:124
+tensorflow/compiler/tf2xla/kernels/lower_upper_bound_ops.cc:97
+tensorflow/core/kernels/searchsorted_op.cc:211
+tensorflow/core/kernels/searchsorted_op.cc:221
+tensorflow/core/kernels/searchsorted_op.cc:233
+tensorflow/core/kernels/searchsorted_op.cc:243
+
+tokens used
+input: 3,884
+cache read: 4,608
+cache write: 0
+output: 206
+reasoning output: 0
+
+The target implementation matches the patched source context in `tensorflow/core/kernels/searchsorted_op.cc`, so the backport is the same two precondition checks before the existing batch dimension access.
+
+tool: validate
+{
+  "ref": "6c1eb9637e0218d2d04c72c8838e17e72ebd00d5",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/searchsorted_op.cc b/tensorflow/core/kernels/searchsorted_op.cc\n--- a/tensorflow/core/kernels/searchsorted_op.cc\n+++ b/tensorflow/core/kernels/searchsorted_op.cc\n@@ -86,6 +86,10 @@ class UpperBoundOp : public OpKernel {\n     const Tensor& sorted_inputs_t = ctx->input(0);\n     const Tensor& values_t = ctx->input(1);\n \n+    // inputs must be at least a matrix\n+    OP_REQUIRES(\n+        ctx, sorted_inputs_t.shape().dims() >= 2,\n+        errors::InvalidArgument(\"sorted input argument must be a matrix\"));\n     // must have same batch dim_size for both\n     OP_REQUIRES(ctx, sorted_inputs_t.dim_size(0) == values_t.dim_size(0),\n                 Status(error::INVALID_ARGUMENT,\n@@ -127,6 +131,10 @@ class LowerBoundOp : public OpKernel {\n     const Tensor& sorted_inputs_t = ctx->input(0);\n     const Tensor& values_t = ctx->input(1);\n \n+    // inputs must be at least a matrix\n+    OP_REQUIRES(\n+        ctx, sorted_inputs_t.shape().dims() >= 2,\n+        errors::InvalidArgument(\"sorted input argument must be a matrix\"));\n     // must have same batch dim_size for both\n     OP_REQUIRES(ctx, sorted_inputs_t.dim_size(0) == values_t.dim_size(0),\n                 Status(error::INVALID_ARGUMENT,\n"
+}
+Patch applied successfully
+
+tokens used
+input: 2,047
+cache read: 7,680
+cache write: 0
+output: 445
+reasoning output: 43
+
+Validation confirmed the hunk applies cleanly to the target base. I’m applying that exact minimal source change now.
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/kernels/searchsorted_op.cc\n@@\n     const Tensor& sorted_inputs_t = ctx->input(0);\n     const Tensor& values_t = ctx->input(1);\n \n+    // inputs must be at least a matrix\n+    OP_REQUIRES(\n+        ctx, sorted_inputs_t.shape().dims() >= 2,\n+        errors::InvalidArgument(\"sorted input argument must be a matrix\"));\n     // must have same batch dim_size for both\n     OP_REQUIRES(ctx, sorted_inputs_t.dim_size(0) == values_t.dim_size(0),\n                 Status(error::INVALID_ARGUMENT,\n@@\n     const Tensor& sorted_inputs_t = ctx->input(0);\n     const Tensor& values_t = ctx->input(1);\n \n+    // inputs must be at least a matrix\n+    OP_REQUIRES(\n+        ctx, sorted_inputs_t.shape().dims() >= 2,\n+        errors::InvalidArgument(\"sorted input argument must be a matrix\"));\n     // must have same batch dim_size for both\n     OP_REQUIRES(ctx, sorted_inputs_t.dim_size(0) == values_t.dim_size(0),\n                 Status(error::INVALID_ARGUMENT,\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/kernels/searchsorted_op.cc
+
+tokens used
+input: 1,524
+cache read: 8,704
+cache write: 0
+output: 330
+reasoning output: 0
+
+The source file is updated. I’m checking the final diff to ensure only the intended TensorFlow kernel change is present.
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/kernels/searchsorted_op.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0101-6c1eb9637e02",
+  "timeout": 120000
+}
+warning: in the working copy of 'tensorflow/core/kernels/searchsorted_op.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/kernels/searchsorted_op.cc b/tensorflow/core/kernels/searchsorted_op.cc
+index 01e221dc47..5f075a6a54 100644
+--- a/tensorflow/core/kernels/searchsorted_op.cc
++++ b/tensorflow/core/kernels/searchsorted_op.cc
+@@ -86,6 +86,10 @@ class UpperBoundOp : public OpKernel {
+     const Tensor& sorted_inputs_t = ctx->input(0);
+     const Tensor& values_t = ctx->input(1);
+ 
++    // inputs must be at least a matrix
++    OP_REQUIRES(
++        ctx, sorted_inputs_t.shape().dims() >= 2,
++        errors::InvalidArgument("sorted input argument must be a matrix"));
+     // must have same batch dim_size for both
+     OP_REQUIRES(ctx, sorted_inputs_t.dim_size(0) == values_t.dim_size(0),
+                 Status(error::INVALID_ARGUMENT,
+@@ -127,6 +131,10 @@ class LowerBoundOp : public OpKernel {
+     const Tensor& sorted_inputs_t = ctx->input(0);
+     const Tensor& values_t = ctx->input(1);
+ 
++    // inputs must be at least a matrix
++    OP_REQUIRES(
++        ctx, sorted_inputs_t.shape().dims() >= 2,
++        errors::InvalidArgument("sorted input argument must be a matrix"));
+     // must have same batch dim_size for both
+     OP_REQUIRES(ctx, sorted_inputs_t.dim_size(0) == values_t.dim_size(0),
+                 Status(error::INVALID_ARGUMENT,
+
+tokens used
+input: 857
+cache read: 9,728
+cache write: 0
+output: 109
+reasoning output: 14
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/kernels/searchsorted_op.cc b/tensorflow/core/kernels/searchsorted_op.cc
+    index 01e221dc47..5f075a6a54 100644
+    --- a/tensorflow/core/kernels/searchsorted_op.cc
+    +++ b/tensorflow/core/kernels/searchsorted_op.cc
+    @@ -86,6 +86,10 @@ class UpperBoundOp : public OpKernel {
+         const Tensor& sorted_inputs_t = ctx->input(0);
+         const Tensor& values_t = ctx->input(1);
+     
+    +    // inputs must be at least a matrix
+    +    OP_REQUIRES(
+    +        ctx, sorted_inputs_t.shape().dims() >= 2,
+    +        errors::InvalidArgument("sorted input argument must be a matrix"));
+         // must have same batch dim_size for both
+         OP_REQUIRES(ctx, sorted_inputs_t.dim_size(0) == values_t.dim_size(0),
+                     Status(error::INVALID_ARGUMENT,
+    @@ -127,6 +131,10 @@ class LowerBoundOp : public OpKernel {
+         const Tensor& sorted_inputs_t = ctx->input(0);
+         const Tensor& values_t = ctx->input(1);
+     
+    +    // inputs must be at least a matrix
+    +    OP_REQUIRES(
+    +        ctx, sorted_inputs_t.shape().dims() >= 2,
+    +        errors::InvalidArgument("sorted input argument must be a matrix"));
+         // must have same batch dim_size for both
+         OP_REQUIRES(ctx, sorted_inputs_t.dim_size(0) == values_t.dim_size(0),
+                     Status(error::INVALID_ARGUMENT,
+  notes: >
+    Added rank validation for sorted_inputs in UpperBoundOp and LowerBoundOp to prevent dim_size(1) access on non-matrix inputs; hunk validation applied cleanly.
+```
+
+tokens used
+input: 1,365
+cache read: 9,728
+cache write: 0
+output: 421
+reasoning output: 20

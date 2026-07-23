@@ -1,0 +1,595 @@
+I’ll locate the older `DequantizeOp` implementation, compare the relevant context against the provided newer patch, then apply the minimal equivalent guard in the target checkout.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target DequantizeOp context",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Validate equivalent hunk against target base",
+      "status": "pending",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply minimal backport change",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "content": "Inspect final diff",
+      "status": "pending",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target DequantizeOp context",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Validate equivalent hunk against target base",
+    "status": "pending",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply minimal backport change",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "content": "Inspect final diff",
+    "status": "pending",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 3,792
+cache read: 4,608
+cache write: 0
+output: 128
+reasoning output: 0
+
+tool: viewcode
+{
+  "ref": "47612cd69a2fdd76156360ca9102816e156f7e5c",
+  "path": "tensorflow/core/kernels/dequantize_op.cc",
+  "startline": 1,
+  "endline": 170
+}
+Here are lines 1 through 170.
+
+/* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+==============================================================================*/
+
+// See docs in ../ops/math_ops.cc.
+
+#define EIGEN_USE_THREADS
+
+#include "tensorflow/core/framework/op.h"
+#include "tensorflow/core/framework/op_kernel.h"
+#include "tensorflow/core/framework/type_traits.h"
+#include "tensorflow/core/framework/types.h"
+#include "tensorflow/core/kernels/meta_support.h"
+#include "tensorflow/core/kernels/quantization_utils.h"
+#include "tensorflow/core/lib/core/errors.h"
+
+namespace {
+enum {
+  QUANTIZE_MODE_MIN_COMBINED,
+  QUANTIZE_MODE_MIN_FIRST,
+  QUANTIZE_MODE_SCALED,
+};
+}  // namespace
+
+namespace tensorflow {
+
+typedef Eigen::ThreadPoolDevice CPUDevice;
+
+template <typename Device, typename T>
+class DequantizeOp : public OpKernel {
+ public:
+  explicit DequantizeOp(OpKernelConstruction* ctx) : OpKernel(ctx) {
+    string mode_string;
+    OP_REQUIRES_OK(ctx, ctx->GetAttr("mode", &mode_string));
+    OP_REQUIRES(ctx,
+                (mode_string == "MIN_COMBINED" || mode_string == "MIN_FIRST" ||
+                 mode_string == "SCALED"),
+                errors::InvalidArgument("Mode string must be 'MIN_COMBINED',"
+                                        " 'MIN_FIRST', or 'SCALED', is '" +
+                                        mode_string + "'"));
+    if (mode_string == "MIN_COMBINED") {
+      mode_ = QUANTIZE_MODE_MIN_COMBINED;
+    } else if (mode_string == "MIN_FIRST") {
+      mode_ = QUANTIZE_MODE_MIN_FIRST;
+    } else if (mode_string == "SCALED") {
+      mode_ = QUANTIZE_MODE_SCALED;
+    }
+    OP_REQUIRES_OK(ctx, ctx->GetAttr("narrow_range", &narrow_range_));
+    OP_REQUIRES_OK(ctx, ctx->GetAttr("axis", &axis_));
+  }
+
+  void Compute(OpKernelContext* ctx) override {
+    const Tensor& input = ctx->input(0);
+    const Tensor& input_min_tensor = ctx->input(1);
+    const Tensor& input_max_tensor = ctx->input(2);
+
+    int num_slices = 1;
+    if (axis_ > -1) {
+      num_slices = input.dim_size(axis_);
+    }
+
+    Tensor* output = nullptr;
+    OP_REQUIRES_OK(ctx, ctx->allocate_output(0, input.shape(), &output));
+    if (num_slices == 1) {
+      const float min_range = input_min_tensor.flat<float>()(0);
+      const float max_range = input_max_tensor.flat<float>()(0);
+      DequantizeTensor(ctx, input, min_range, max_range, output);
+      return;
+    }
+
+    OP_REQUIRES(ctx, mode_ != QUANTIZE_MODE_MIN_FIRST,
+                errors::Unimplemented("MIN_FIRST mode is not implemented for "
+                                      "Dequantize with axis != -1."));
+
+    int64 pre_dim = 1, post_dim = 1;
+    for (int i = 0; i < axis_; ++i) {
+      pre_dim *= output->dim_size(i);
+    }
+    for (int i = axis_ + 1; i < output->dims(); ++i) {
+      post_dim *= output->dim_size(i);
+    }
+    auto input_tensor =
+        input.template bit_casted_shaped<T, 3>({pre_dim, num_slices, post_dim});
+    auto output_tensor = output->flat_inner_outer_dims<float, 3>(axis_ - 1);
+    auto min_ranges = input_min_tensor.vec<float>();
+    auto max_ranges = input_max_tensor.vec<float>();
+    for (int i = 0; i < num_slices; ++i) {
+      DequantizeSlice(ctx->eigen_device<Device>(), ctx,
+                      input_tensor.template chip<1>(i), min_ranges(i),
+                      max_ranges(i), output_tensor.template chip<1>(i));
+    }
+  }
+
+  void DequantizeTensor(OpKernelContext* ctx, const Tensor& input,
+                        const float min_range, const float max_range,
+                        Tensor* output) {
+    const float half_range =
+        !std::is_signed<T>::value
+            ? 0.0f
+            : (static_cast<float>(std::numeric_limits<T>::max()) -
+               std::numeric_limits<T>::min() + 1) /
+                  2.0f;
+
+    if (mode_ == QUANTIZE_MODE_MIN_COMBINED) {
+      const float scale_factor =
+          (max_range - min_range) /
+          (static_cast<float>(std::numeric_limits<T>::max()) -
+           std::numeric_limits<T>::min());
+
+      const auto& input_tensor = input.flat<T>();
+      output->flat<float>() =
+          ((input_tensor.template cast<float>() + half_range) * scale_factor) +
+          min_range;
+
+    } else if (mode_ == QUANTIZE_MODE_MIN_FIRST) {
+      if (meta::IsSupportedAndEnabled() && std::is_same<T, quint8>()) {
+        auto input_ui8_array = input.flat<quint8>();
+        meta::Dequantize(ctx, input_ui8_array.data(), input_ui8_array.size(),
+                         min_range, max_range, output->flat<float>().data());
+      } else {
+        QuantizedTensorToFloatInPlaceUsingEigen<T>(
+            ctx->template eigen_device<Device>(), input, min_range, max_range,
+            output);
+      }
+    } else if (mode_ == QUANTIZE_MODE_SCALED) {
+      const int min_output_value =
+          std::numeric_limits<T>::min() + (narrow_range_ ? 1 : 0);
+      const float scale_factor =
+          std::numeric_limits<T>::min() == 0
+              ? (max_range / std::numeric_limits<T>::max())
+              : std::max(min_range / min_output_value,
+                         max_range / std::numeric_limits<T>::max());
+      const auto& input_tensor = input.flat<T>();
+      output->flat<float>() =
+          input_tensor.template cast<int>().template cast<float>() *
+          scale_factor;
+    }
+  }
+
+  template <typename ConstVec, typename Vec>
+  void DequantizeSlice(const Device& d, OpKernelContext* ctx,
+                       const ConstVec& input, float min_range, float max_range,
+                       Vec output) {
+    // TODO(pauldonnelly): Factor out the similar calculations in quantize,
+    //   dequantize and quantize_and_dequantize ops.
+    const float half_range =
+        !std::is_signed<T>::value
+            ? 0.0f
+            : (static_cast<float>(std::numeric_limits<T>::max()) -
+               std::numeric_limits<T>::min() + 1) /
+                  2.0f;
+
+    if (mode_ == QUANTIZE_MODE_MIN_COMBINED) {
+      const float scale_factor =
+          (max_range - min_range) /
+          (static_cast<float>(std::numeric_limits<T>::max()) -
+           std::numeric_limits<T>::min());
+
+      output.device(d) =
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: locate_symbol
+{
+  "ref": "47612cd69a2fdd76156360ca9102816e156f7e5c",
+  "symbol": "DequantizeOp"
+}
+tensorflow/core/kernels/dequantize_op.cc:41
+tensorflow/core/kernels/dequantize_op.cc:43
+tensorflow/compiler/mlir/lite/quantization/quantization_driver.cc:442
+tensorflow/compiler/mlir/lite/quantization/quantization_driver.cc:636
+tensorflow/compiler/mlir/lite/transforms/optimize.cc:299
+tensorflow/compiler/mlir/lite/transforms/post_quantize.cc:135
+tensorflow/compiler/mlir/lite/transforms/post_quantize.cc:136
+tensorflow/compiler/mlir/lite/transforms/prepare_quantize.cc:149
+tensorflow/compiler/mlir/lite/transforms/prepare_quantize.cc:183
+tensorflow/compiler/mlir/lite/transforms/prepare_tf.cc:150
+tensorflow/compiler/mlir/lite/transforms/quantize.cc:49
+tensorflow/core/kernels/dequantize_op.cc:193
+tensorflow/core/kernels/dequantize_op.cc:196
+tensorflow/core/kernels/dequantize_op.cc:199
+tensorflow/core/kernels/dequantize_op.cc:202
+tensorflow/core/kernels/dequantize_op.cc:206
+
+tokens used
+input: 982
+cache read: 7,680
+cache write: 0
+output: 120
+reasoning output: 0
+
+The target implementation has the same vulnerable shape: `num_slices` is derived from `axis_`, then `input_min_tensor.vec<float>()` and `input_max_tensor.vec<float>()` are indexed per slice without checking their lengths. I’m adding the same element-count validation before output allocation.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target DequantizeOp context",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate equivalent hunk against target base",
+      "status": "in_progress",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply minimal backport change",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "content": "Inspect final diff",
+      "status": "pending",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target DequantizeOp context",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate equivalent hunk against target base",
+    "status": "in_progress",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply minimal backport change",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "content": "Inspect final diff",
+    "status": "pending",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 6,062
+cache read: 4,608
+cache write: 0
+output: 156
+reasoning output: 11
+
+tool: validate
+{
+  "ref": "47612cd69a2fdd76156360ca9102816e156f7e5c",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/dequantize_op.cc b/tensorflow/core/kernels/dequantize_op.cc\n--- a/tensorflow/core/kernels/dequantize_op.cc\n+++ b/tensorflow/core/kernels/dequantize_op.cc\n@@ -66,6 +66,18 @@ class DequantizeOp : public OpKernel {\n     if (axis_ > -1) {\n       num_slices = input.dim_size(axis_);\n     }\n+    OP_REQUIRES(ctx, input_min_tensor.NumElements() == num_slices,\n+                errors::InvalidArgument(\n+                    \"input_min_tensor must have as many elements as input on \"\n+                    \"the dequantization axis (\",\n+                    axis_, \"), got \", input_min_tensor.NumElements(),\n+                    \", expected \", num_slices));\n+    OP_REQUIRES(ctx, input_max_tensor.NumElements() == num_slices,\n+                errors::InvalidArgument(\n+                    \"input_max_tensor must have as many elements as input on \"\n+                    \"the dequantization axis (\",\n+                    axis_, \"), got \", input_max_tensor.NumElements(),\n+                    \", expected \", num_slices));\n \n     Tensor* output = nullptr;\n     OP_REQUIRES_OK(ctx, ctx->allocate_output(0, input.shape(), &output));\n"
+}
+Patch applied successfully
+
+tokens used
+input: 1,243
+cache read: 9,728
+cache write: 0
+output: 354
+reasoning output: 0
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target DequantizeOp context",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate equivalent hunk against target base",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply minimal backport change",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Inspect final diff",
+      "status": "pending",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target DequantizeOp context",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate equivalent hunk against target base",
+    "status": "completed",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply minimal backport change",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Inspect final diff",
+    "status": "pending",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 586
+cache read: 10,752
+cache write: 0
+output: 87
+reasoning output: 0
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/kernels/dequantize_op.cc\n@@\n     if (axis_ > -1) {\n       num_slices = input.dim_size(axis_);\n     }\n+    OP_REQUIRES(ctx, input_min_tensor.NumElements() == num_slices,\n+                errors::InvalidArgument(\n+                    \"input_min_tensor must have as many elements as input on \"\n+                    \"the dequantization axis (\",\n+                    axis_, \"), got \", input_min_tensor.NumElements(),\n+                    \", expected \", num_slices));\n+    OP_REQUIRES(ctx, input_max_tensor.NumElements() == num_slices,\n+                errors::InvalidArgument(\n+                    \"input_max_tensor must have as many elements as input on \"\n+                    \"the dequantization axis (\",\n+                    axis_, \"), got \", input_max_tensor.NumElements(),\n+                    \", expected \", num_slices));\n \n     Tensor* output = nullptr;\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/kernels/dequantize_op.cc
+
+tokens used
+input: 3,879
+cache read: 7,680
+cache write: 0
+output: 250
+reasoning output: 0
+
+The hunk applies cleanly to the target base and has been applied in the checkout. I’ll inspect the resulting diff now.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target DequantizeOp context",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate equivalent hunk against target base",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply minimal backport change",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Inspect final diff",
+      "status": "in_progress",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target DequantizeOp context",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate equivalent hunk against target base",
+    "status": "completed",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply minimal backport change",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Inspect final diff",
+    "status": "in_progress",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 1,085
+cache read: 10,752
+cache write: 0
+output: 120
+reasoning output: 0
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/kernels/dequantize_op.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0187-47612cd69a2f",
+  "timeout": 120000
+}
+warning: in the working copy of 'tensorflow/core/kernels/dequantize_op.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/kernels/dequantize_op.cc b/tensorflow/core/kernels/dequantize_op.cc
+index 481909e842..b9d786ac7c 100644
+--- a/tensorflow/core/kernels/dequantize_op.cc
++++ b/tensorflow/core/kernels/dequantize_op.cc
+@@ -69,6 +69,18 @@ class DequantizeOp : public OpKernel {
+     if (axis_ > -1) {
+       num_slices = input.dim_size(axis_);
+     }
++    OP_REQUIRES(ctx, input_min_tensor.NumElements() == num_slices,
++                errors::InvalidArgument(
++                    "input_min_tensor must have as many elements as input on "
++                    "the dequantization axis (",
++                    axis_, "), got ", input_min_tensor.NumElements(),
++                    ", expected ", num_slices));
++    OP_REQUIRES(ctx, input_max_tensor.NumElements() == num_slices,
++                errors::InvalidArgument(
++                    "input_max_tensor must have as many elements as input on "
++                    "the dequantization axis (",
++                    axis_, "), got ", input_max_tensor.NumElements(),
++                    ", expected ", num_slices));
+ 
+     Tensor* output = nullptr;
+     OP_REQUIRES_OK(ctx, ctx->allocate_output(0, input.shape(), &output));
+
+tokens used
+input: 315
+cache read: 11,776
+cache write: 0
+output: 76
+reasoning output: 0
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target DequantizeOp context",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate equivalent hunk against target base",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply minimal backport change",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Inspect final diff",
+      "status": "completed",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target DequantizeOp context",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate equivalent hunk against target base",
+    "status": "completed",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply minimal backport change",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Inspect final diff",
+    "status": "completed",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 725
+cache read: 11,776
+cache write: 0
+output: 86
+reasoning output: 0
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/kernels/dequantize_op.cc b/tensorflow/core/kernels/dequantize_op.cc
+    index 481909e842..b9d786ac7c 100644
+    --- a/tensorflow/core/kernels/dequantize_op.cc
+    +++ b/tensorflow/core/kernels/dequantize_op.cc
+    @@ -69,6 +69,18 @@ class DequantizeOp : public OpKernel {
+         if (axis_ > -1) {
+           num_slices = input.dim_size(axis_);
+         }
+    +    OP_REQUIRES(ctx, input_min_tensor.NumElements() == num_slices,
+    +                errors::InvalidArgument(
+    +                    "input_min_tensor must have as many elements as input on "
+    +                    "the dequantization axis (",
+    +                    axis_, "), got ", input_min_tensor.NumElements(),
+    +                    ", expected ", num_slices));
+    +    OP_REQUIRES(ctx, input_max_tensor.NumElements() == num_slices,
+    +                errors::InvalidArgument(
+    +                    "input_max_tensor must have as many elements as input on "
+    +                    "the dequantization axis (",
+    +                    axis_, "), got ", input_max_tensor.NumElements(),
+    +                    ", expected ", num_slices));
+     
+         Tensor* output = nullptr;
+         OP_REQUIRES_OK(ctx, ctx->allocate_output(0, input.shape(), &output));
+  notes: >
+    Added input_min/input_max element-count validation for per-axis Dequantize to prevent out-of-bounds reads.
+```
+
+tokens used
+input: 1,968
+cache read: 10,752
+cache write: 0
+output: 357
+reasoning output: 0

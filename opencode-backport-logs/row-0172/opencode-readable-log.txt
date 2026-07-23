@@ -1,0 +1,713 @@
+I’ll locate the corresponding inference `FusedBatchNorm` CPU path in the 2.5.0 checkout, verify the context against the supplied newer hunk, then apply only the depth-zero guard.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target FusedBatchNorm CPU inference context",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Validate minimal backport hunk against target base",
+      "status": "pending",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply source change and capture final diff",
+      "status": "pending",
+      "priority": "high"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target FusedBatchNorm CPU inference context",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Validate minimal backport hunk against target base",
+    "status": "pending",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply source change and capture final diff",
+    "status": "pending",
+    "priority": "high"
+  }
+]
+
+tokens used
+input: 3,721
+cache read: 4,608
+cache write: 0
+output: 128
+reasoning output: 0
+
+tool: viewcode
+{
+  "ref": "be9a6316afb4977c2ee049b9286fa77025259b69",
+  "path": "tensorflow/core/kernels/fused_batch_norm_op.cc",
+  "startline": 260,
+  "endline": 315
+}
+Here are lines 260 through 315.
+
+      const int64 in_batch = GetTensorDim(x_input, tensor_format, 'N');
+      const int64 in_rows = GetTensorDim(x_input, tensor_format, 'H');
+      const int64 in_cols = GetTensorDim(x_input, tensor_format, 'W');
+      const int64 in_depths = GetTensorDim(x_input, tensor_format, 'C');
+      OP_REQUIRES_OK(context, context->allocate_temp(
+                                  DataTypeToEnum<T>::value,
+                                  ShapeFromFormat(FORMAT_NHWC, in_batch,
+                                                  in_rows, in_cols, in_depths),
+                                  &transformed_x));
+      OP_REQUIRES_OK(context, context->allocate_temp(
+                                  DataTypeToEnum<T>::value,
+                                  ShapeFromFormat(FORMAT_NHWC, in_batch,
+                                                  in_rows, in_cols, in_depths),
+                                  &transformed_y));
+      // Perform NCHW to NHWC
+      std::vector<int32> perm = {0, 2, 3, 1};
+      OP_REQUIRES_OK(
+          context, ::tensorflow::DoTranspose(context->eigen_device<CPUDevice>(),
+                                             x_input, perm, &transformed_x));
+    } else {
+      transformed_x = x_input;
+      transformed_y = *y_output;
+    }
+    typename TTypes<T, 4>::Tensor x(transformed_x.tensor<T, 4>());
+    typename TTypes<U>::ConstVec scale(scale_input.vec<U>());
+    typename TTypes<U>::ConstVec offset(offset_input.vec<U>());
+    typename TTypes<U>::ConstVec estimated_mean(estimated_mean_input.vec<U>());
+    typename TTypes<U>::ConstVec estimated_variance(
+        estimated_variance_input.vec<U>());
+    typename TTypes<T, 4>::Tensor y(transformed_y.tensor<T, 4>());
+    typename TTypes<U>::Vec batch_mean(batch_mean_output->vec<U>());
+    typename TTypes<U>::Vec batch_variance(batch_var_output->vec<U>());
+
+    const CPUDevice& d = context->eigen_device<CPUDevice>();
+
+    const int depth = x.dimension(3);
+    const int size = x.size();
+    const int rest_size = size / depth;
+    Eigen::DSizes<Eigen::Index, 2> rest_by_depth(rest_size, depth);
+
+#if !defined(EIGEN_HAS_INDEX_LIST)
+    Eigen::DSizes<Eigen::Index, 2> one_by_depth(1, depth);
+    Eigen::array<int, 1> reduce_dims({0});
+    Eigen::array<int, 2> bcast_spec({rest_size, 1});
+#else
+    Eigen::IndexList<Eigen::type2index<1>, Eigen::Index> one_by_depth;
+    one_by_depth.set(1, depth);
+    Eigen::IndexList<Eigen::Index, Eigen::type2index<1>> bcast_spec;
+    bcast_spec.set(0, rest_size);
+#endif
+
+    auto x_rest_by_depth = x.reshape(rest_by_depth).template cast<U>();
+    auto x_centered =
+        x_rest_by_depth -
+        estimated_mean.reshape(one_by_depth).broadcast(bcast_spec);
+    auto scaling_factor = ((estimated_variance + epsilon).rsqrt() * scale)
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: locate_symbol
+{
+  "ref": "be9a6316afb4977c2ee049b9286fa77025259b69",
+  "symbol": "FusedBatchNorm"
+}
+tensorflow/core/grappler/optimizers/remapper.cc:95
+tensorflow/core/kernels/fused_batch_norm_op.cc:85
+tensorflow/core/kernels/fused_batch_norm_op.cc:92
+tensorflow/core/kernels/fused_batch_norm_op.cc:230
+tensorflow/core/kernels/fused_batch_norm_op.cc:758
+tensorflow/compiler/mlir/tosa/g3doc/legalization.md:1966
+tensorflow/core/common_runtime/eager/mkl_eager_op_rewrite.cc:256
+tensorflow/core/common_runtime/mkl_layout_pass.cc:1729
+tensorflow/core/grappler/costs/virtual_scheduler_test.cc:886
+tensorflow/core/grappler/costs/virtual_scheduler_test.cc:2223
+tensorflow/core/grappler/optimizers/auto_mixed_precision_test.cc:518
+tensorflow/core/grappler/optimizers/remapper.cc:97
+tensorflow/core/grappler/optimizers/remapper_test.cc:774
+tensorflow/core/grappler/optimizers/remapper_test.cc:853
+tensorflow/core/kernels/conv_ops_test.cc:684
+tensorflow/core/kernels/conv_ops_test.cc:714
+tensorflow/core/kernels/mkl/mkl_fused_batch_norm_op_test.cc:248
+tensorflow/go/op/wrappers.go:24822
+tensorflow/core/grappler/optimizers/remapper.cc:96
+tensorflow/c/eager/tape.h:668
+
+tokens used
+input: 890
+cache read: 7,680
+cache write: 0
+output: 119
+reasoning output: 0
+
+The target file has the same vulnerable `size / depth` sequence in the CPU inference specialization, so the backport maps directly at the same logical location.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target FusedBatchNorm CPU inference context",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate minimal backport hunk against target base",
+      "status": "in_progress",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply source change and capture final diff",
+      "status": "pending",
+      "priority": "high"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target FusedBatchNorm CPU inference context",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate minimal backport hunk against target base",
+    "status": "in_progress",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply source change and capture final diff",
+    "status": "pending",
+    "priority": "high"
+  }
+]
+
+tokens used
+input: 2,023
+cache read: 7,680
+cache write: 0
+output: 119
+reasoning output: 29
+
+tool: validate
+{
+  "ref": "be9a6316afb4977c2ee049b9286fa77025259b69",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/fused_batch_norm_op.cc b/tensorflow/core/kernels/fused_batch_norm_op.cc\n--- a/tensorflow/core/kernels/fused_batch_norm_op.cc\n+++ b/tensorflow/core/kernels/fused_batch_norm_op.cc\n@@ -292,6 +292,9 @@ struct FusedBatchNorm<CPUDevice, T, U, /* is_training= */ false> {\n \n     const int depth = x.dimension(3);\n+    OP_REQUIRES(\n+        context, depth != 0,\n+        errors::Internal(\"The 4th element in the input shape cannot be 0.\"));\n     const int size = x.size();\n     const int rest_size = size / depth;\n     Eigen::DSizes<Eigen::Index, 2> rest_by_depth(rest_size, depth);\n"
+}
+This patch does not apply to the target TensorFlow ref.
+Git apply output:
+error: corrupt patch at line 13
+Touched files:
+- tensorflow/core/kernels/fused_batch_norm_op.cc
+Fix the patch context against the older TensorFlow version, then run validate again in hunk mode.
+
+tokens used
+input: 1,260
+cache read: 8,704
+cache write: 0
+output: 234
+reasoning output: 0
+
+tool: validate
+{
+  "ref": "be9a6316afb4977c2ee049b9286fa77025259b69",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/fused_batch_norm_op.cc b/tensorflow/core/kernels/fused_batch_norm_op.cc\n--- a/tensorflow/core/kernels/fused_batch_norm_op.cc\n+++ b/tensorflow/core/kernels/fused_batch_norm_op.cc\n@@ -292,7 +292,10 @@ struct FusedBatchNorm<CPUDevice, T, U, /* is_training= */ false> {\n \n     const int depth = x.dimension(3);\n+    OP_REQUIRES(\n+        context, depth != 0,\n+        errors::Internal(\"The 4th element in the input shape cannot be 0.\"));\n     const int size = x.size();\n     const int rest_size = size / depth;\n     Eigen::DSizes<Eigen::Index, 2> rest_by_depth(rest_size, depth);\n \n"
+}
+This patch does not apply to the target TensorFlow ref.
+Git apply output:
+error: corrupt patch at line 14
+Touched files:
+- tensorflow/core/kernels/fused_batch_norm_op.cc
+Fix the patch context against the older TensorFlow version, then run validate again in hunk mode.
+
+tokens used
+input: 540
+cache read: 9,728
+cache write: 0
+output: 238
+reasoning output: 21
+
+tool: validate
+{
+  "ref": "be9a6316afb4977c2ee049b9286fa77025259b69",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/fused_batch_norm_op.cc b/tensorflow/core/kernels/fused_batch_norm_op.cc\n--- a/tensorflow/core/kernels/fused_batch_norm_op.cc\n+++ b/tensorflow/core/kernels/fused_batch_norm_op.cc\n@@ -292,6 +292,9 @@ struct FusedBatchNorm<CPUDevice, T, U, /* is_training= */ false> {\n \n     const int depth = x.dimension(3);\n+    OP_REQUIRES(\n+        context, depth != 0,\n+        errors::Internal(\"The 4th element in the input shape cannot be 0.\"));\n     const int size = x.size();\n     const int rest_size = size / depth;\n     Eigen::DSizes<Eigen::Index, 2> rest_by_depth(rest_size, depth);\n"
+}
+This patch does not apply to the target TensorFlow ref.
+Git apply output:
+error: corrupt patch at line 13
+Touched files:
+- tensorflow/core/kernels/fused_batch_norm_op.cc
+Fix the patch context against the older TensorFlow version, then run validate again in hunk mode.
+
+tokens used
+input: 869
+cache read: 9,728
+cache write: 0
+output: 236
+reasoning output: 86
+
+The first validation attempt exposed a patch formatting issue rather than a code mismatch; I’m tightening the hunk metadata before applying it locally.
+
+tool: validate
+{
+  "ref": "be9a6316afb4977c2ee049b9286fa77025259b69",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/fused_batch_norm_op.cc b/tensorflow/core/kernels/fused_batch_norm_op.cc\nindex 9b917348e2a..e564b19857c 100644\n--- a/tensorflow/core/kernels/fused_batch_norm_op.cc\n+++ b/tensorflow/core/kernels/fused_batch_norm_op.cc\n@@ -292,6 +292,9 @@ struct FusedBatchNorm<CPUDevice, T, U, /* is_training= */ false> {\n \n     const int depth = x.dimension(3);\n+    OP_REQUIRES(\n+        context, depth != 0,\n+        errors::Internal(\"The 4th element in the input shape cannot be 0.\"));\n     const int size = x.size();\n     const int rest_size = size / depth;\n     Eigen::DSizes<Eigen::Index, 2> rest_by_depth(rest_size, depth);\n\n"
+}
+This patch does not apply to the target TensorFlow ref.
+Git apply output:
+error: corrupt patch at line 14
+Touched files:
+- tensorflow/core/kernels/fused_batch_norm_op.cc
+Fix the patch context against the older TensorFlow version, then run validate again in hunk mode.
+
+tokens used
+input: 1,261
+cache read: 9,728
+cache write: 0
+output: 291
+reasoning output: 27
+
+tool: viewcode
+{
+  "ref": "be9a6316afb4977c2ee049b9286fa77025259b69",
+  "path": "tensorflow/core/kernels/fused_batch_norm_op.cc",
+  "startline": 286,
+  "endline": 303
+}
+Here are lines 286 through 303.
+
+    typename TTypes<U>::ConstVec estimated_mean(estimated_mean_input.vec<U>());
+    typename TTypes<U>::ConstVec estimated_variance(
+        estimated_variance_input.vec<U>());
+    typename TTypes<T, 4>::Tensor y(transformed_y.tensor<T, 4>());
+    typename TTypes<U>::Vec batch_mean(batch_mean_output->vec<U>());
+    typename TTypes<U>::Vec batch_variance(batch_var_output->vec<U>());
+
+    const CPUDevice& d = context->eigen_device<CPUDevice>();
+
+    const int depth = x.dimension(3);
+    const int size = x.size();
+    const int rest_size = size / depth;
+    Eigen::DSizes<Eigen::Index, 2> rest_by_depth(rest_size, depth);
+
+#if !defined(EIGEN_HAS_INDEX_LIST)
+    Eigen::DSizes<Eigen::Index, 2> one_by_depth(1, depth);
+    Eigen::array<int, 1> reduce_dims({0});
+    Eigen::array<int, 2> bcast_spec({rest_size, 1});
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tokens used
+input: 625
+cache read: 10,752
+cache write: 0
+output: 63
+reasoning output: 52
+
+tool: validate
+{
+  "ref": "be9a6316afb4977c2ee049b9286fa77025259b69",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/fused_batch_norm_op.cc b/tensorflow/core/kernels/fused_batch_norm_op.cc\n--- a/tensorflow/core/kernels/fused_batch_norm_op.cc\n+++ b/tensorflow/core/kernels/fused_batch_norm_op.cc\n@@ -291,8 +291,11 @@\n     typename TTypes<U>::Vec batch_variance(batch_var_output->vec<U>());\n \n     const CPUDevice& d = context->eigen_device<CPUDevice>();\n \n     const int depth = x.dimension(3);\n+    OP_REQUIRES(\n+        context, depth != 0,\n+        errors::Internal(\"The 4th element in the input shape cannot be 0.\"));\n     const int size = x.size();\n     const int rest_size = size / depth;\n     Eigen::DSizes<Eigen::Index, 2> rest_by_depth(rest_size, depth);\n \n"
+}
+Patch applied successfully
+
+tokens used
+input: 7,153
+cache read: 4,608
+cache write: 0
+output: 257
+reasoning output: 18
+
+The validated hunk applies cleanly to the target base. I’m applying the same minimal guard in the working tree now.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target FusedBatchNorm CPU inference context",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate minimal backport hunk against target base",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply source change and capture final diff",
+      "status": "in_progress",
+      "priority": "high"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target FusedBatchNorm CPU inference context",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate minimal backport hunk against target base",
+    "status": "completed",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply source change and capture final diff",
+    "status": "in_progress",
+    "priority": "high"
+  }
+]
+
+tokens used
+input: 1,297
+cache read: 10,752
+cache write: 0
+output: 111
+reasoning output: 0
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/kernels/fused_batch_norm_op.cc\n@@\n     const CPUDevice& d = context->eigen_device<CPUDevice>();\n \n     const int depth = x.dimension(3);\n+    OP_REQUIRES(\n+        context, depth != 0,\n+        errors::Internal(\"The 4th element in the input shape cannot be 0.\"));\n     const int size = x.size();\n     const int rest_size = size / depth;\n     Eigen::DSizes<Eigen::Index, 2> rest_by_depth(rest_size, depth);\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/kernels/fused_batch_norm_op.cc
+
+tokens used
+input: 497
+cache read: 11,776
+cache write: 0
+output: 158
+reasoning output: 0
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/kernels/fused_batch_norm_op.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0172-be9a6316afb4"
+}
+warning: in the working copy of 'tensorflow/core/kernels/fused_batch_norm_op.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/kernels/fused_batch_norm_op.cc b/tensorflow/core/kernels/fused_batch_norm_op.cc
+index 9b917348e2..bb5c9b7aa9 100644
+--- a/tensorflow/core/kernels/fused_batch_norm_op.cc
++++ b/tensorflow/core/kernels/fused_batch_norm_op.cc
+@@ -156,6 +156,9 @@ struct FusedBatchNorm<CPUDevice, T, U, /* is_training= */ true> {
+     const CPUDevice& d = context->eigen_device<CPUDevice>();
+ 
+     const int depth = x.dimension(3);
++    OP_REQUIRES(
++        context, depth != 0,
++        errors::Internal("The 4th element in the input shape cannot be 0."));
+     const int size = x.size();
+     const int rest_size = size / depth;
+     Eigen::DSizes<Eigen::Index, 2> rest_by_depth(rest_size, depth);
+
+tokens used
+input: 684
+cache read: 11,776
+cache write: 0
+output: 73
+reasoning output: 15
+
+The first local patch matched an earlier identical code block in the training specialization. I’m correcting it so the guard lands only in the inference specialization targeted by the supplied security patch.
+
+tool: read
+{
+  "filePath": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0172-be9a6316afb4\\tensorflow\\core\\kernels\\fused_batch_norm_op.cc",
+  "offset": 145,
+  "limit": 160
+}
+<path>C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0172-be9a6316afb4\tensorflow\core\kernels\fused_batch_norm_op.cc</path>
+<type>file</type>
+<content>
+145:     typename TTypes<T, 4>::Tensor x(transformed_x.tensor<T, 4>());
+146:     typename TTypes<U>::ConstVec scale(scale_input.vec<U>());
+147:     typename TTypes<U>::ConstVec offset(offset_input.vec<U>());
+148:     typename TTypes<U>::ConstVec old_mean(running_mean_input.vec<U>());
+149:     typename TTypes<U>::ConstVec old_variance(running_variance_input.vec<U>());
+150:     typename TTypes<T, 4>::Tensor y(transformed_y.tensor<T, 4>());
+151:     typename TTypes<U>::Vec new_mean(running_mean_output->vec<U>());
+152:     typename TTypes<U>::Vec new_variance(running_var_output->vec<U>());
+153:     typename TTypes<U>::Vec saved_batch_mean(saved_batch_mean_output->vec<U>());
+154:     typename TTypes<U>::Vec saved_batch_var(saved_batch_var_output->vec<U>());
+155: 
+156:     const CPUDevice& d = context->eigen_device<CPUDevice>();
+157: 
+158:     const int depth = x.dimension(3);
+159:     OP_REQUIRES(
+160:         context, depth != 0,
+161:         errors::Internal("The 4th element in the input shape cannot be 0."));
+162:     const int size = x.size();
+163:     const int rest_size = size / depth;
+164:     Eigen::DSizes<Eigen::Index, 2> rest_by_depth(rest_size, depth);
+165: 
+166: #if !defined(EIGEN_HAS_INDEX_LIST)
+167:     Eigen::DSizes<Eigen::Index, 2> one_by_depth(1, depth);
+168:     Eigen::array<int, 1> reduce_dims({0});
+169:     Eigen::array<int, 2> bcast_spec({rest_size, 1});
+170: #else
+171:     Eigen::IndexList<Eigen::type2index<1>, Eigen::Index> one_by_depth;
+172:     one_by_depth.set(1, depth);
+173:     Eigen::IndexList<Eigen::type2index<0>> reduce_dims;
+174:     Eigen::IndexList<Eigen::Index, Eigen::type2index<1>> bcast_spec;
+175:     bcast_spec.set(0, rest_size);
+176: #endif
+177: 
+178:     auto x_rest_by_depth = x.reshape(rest_by_depth).template cast<U>();
+179:     const int rest_size_minus_one = (rest_size > 1) ? (rest_size - 1) : 1;
+180:     U rest_size_inv = static_cast<U>(1.0f / static_cast<U>(rest_size));
+181:     // This adjustment is for Bessel's correction
+182:     U rest_size_adjust =
+183:         static_cast<U>(rest_size) / static_cast<U>(rest_size_minus_one);
+184: 
+185:     Eigen::Tensor<U, 1, Eigen::RowMajor> batch_mean(depth);
+186:     Eigen::Tensor<U, 1, Eigen::RowMajor> batch_variance(depth);
+187: 
+188:     batch_mean.device(d) = (x_rest_by_depth.sum(reduce_dims) * rest_size_inv);
+189:     auto x_centered = x_rest_by_depth -
+190:                       batch_mean.reshape(one_by_depth).broadcast(bcast_spec);
+191: 
+192:     batch_variance.device(d) =
+193:         x_centered.square().sum(reduce_dims) * rest_size_inv;
+194:     auto scaling_factor = ((batch_variance + epsilon).rsqrt() * scale)
+195:                               .eval()
+196:                               .reshape(one_by_depth)
+197:                               .broadcast(bcast_spec);
+198:     auto x_scaled = x_centered * scaling_factor;
+199:     auto x_shifted =
+200:         (x_scaled + offset.reshape(one_by_depth).broadcast(bcast_spec))
+201:             .template cast<T>();
+202: 
+203:     y.reshape(rest_by_depth).device(d) = x_shifted;
+204:     if (exponential_avg_factor == U(1.0)) {
+205:       saved_batch_var.device(d) = batch_variance;
+206:       saved_batch_mean.device(d) = batch_mean;
+207:       new_variance.device(d) = batch_variance * rest_size_adjust;
+208:       new_mean.device(d) = batch_mean;
+209:     } else {
+210:       U one_minus_factor = U(1) - exponential_avg_factor;
+211:       saved_batch_var.device(d) = batch_variance;
+212:       saved_batch_mean.device(d) = batch_mean;
+213:       new_variance.device(d) =
+214:           one_minus_factor * old_variance +
+215:           (exponential_avg_factor * rest_size_adjust) * batch_variance;
+216:       new_mean.device(d) =
+217:           one_minus_factor * old_mean + exponential_avg_factor * batch_mean;
+218:     }
+219: 
+220:     if (tensor_format == FORMAT_NCHW) {
+221:       // Perform NHWC to NCHW
+222:       const std::vector<int32> perm = {0, 3, 1, 2};
+223:       const Status s = ::tensorflow::DoTranspose(
+224:           context->eigen_device<CPUDevice>(), transformed_y, perm, y_output);
+225:       if (!s.ok()) {
+226:         context->SetStatus(errors::InvalidArgument("Transpose failed: ", s));
+227:       }
+228:     }
+229:   }
+230: };
+231: 
+232: template <typename T, typename U>
+233: struct FusedBatchNorm<CPUDevice, T, U, /* is_training= */ false> {
+234:   void operator()(OpKernelContext* context, const Tensor& x_input,
+235:                   const Tensor& scale_input, const Tensor& offset_input,
+236:                   const Tensor& estimated_mean_input,
+237:                   const Tensor& estimated_variance_input,
+238:                   const Tensor* side_input, U epsilon, U exponential_avg_factor,
+239:                   FusedBatchNormActivationMode activation_mode,
+240:                   Tensor* y_output, Tensor* batch_mean_output,
+241:                   Tensor* batch_var_output, Tensor* saved_mean_output,
+242:                   Tensor* saved_var_output, TensorFormat tensor_format,
+243:                   bool use_reserved_space) {
+244:     OP_REQUIRES(context, side_input == nullptr,
+245:                 errors::Internal(
+246:                     "The CPU implementation of FusedBatchNorm does not support "
+247:                     "side input."));
+248:     OP_REQUIRES(context,
+249:                 activation_mode == FusedBatchNormActivationMode::kIdentity,
+250:                 errors::Internal("The CPU implementation of FusedBatchNorm "
+251:                                  "does not support activations."));
+252: 
+253:     if (use_reserved_space) {
+254:       Tensor* dummy_reserve_space = nullptr;
+255:       OP_REQUIRES_OK(context,
+256:                      context->allocate_output(5, {}, &dummy_reserve_space));
+257:       // Initialize the memory, to avoid sanitizer alerts.
+258:       dummy_reserve_space->flat<U>()(0) = U();
+259:     }
+260:     Tensor transformed_x;
+261:     Tensor transformed_y;
+262:     if (tensor_format == FORMAT_NCHW) {
+263:       const int64 in_batch = GetTensorDim(x_input, tensor_format, 'N');
+264:       const int64 in_rows = GetTensorDim(x_input, tensor_format, 'H');
+265:       const int64 in_cols = GetTensorDim(x_input, tensor_format, 'W');
+266:       const int64 in_depths = GetTensorDim(x_input, tensor_format, 'C');
+267:       OP_REQUIRES_OK(context, context->allocate_temp(
+268:                                   DataTypeToEnum<T>::value,
+269:                                   ShapeFromFormat(FORMAT_NHWC, in_batch,
+270:                                                   in_rows, in_cols, in_depths),
+271:                                   &transformed_x));
+272:       OP_REQUIRES_OK(context, context->allocate_temp(
+273:                                   DataTypeToEnum<T>::value,
+274:                                   ShapeFromFormat(FORMAT_NHWC, in_batch,
+275:                                                   in_rows, in_cols, in_depths),
+276:                                   &transformed_y));
+277:       // Perform NCHW to NHWC
+278:       std::vector<int32> perm = {0, 2, 3, 1};
+279:       OP_REQUIRES_OK(
+280:           context, ::tensorflow::DoTranspose(context->eigen_device<CPUDevice>(),
+281:                                              x_input, perm, &transformed_x));
+282:     } else {
+283:       transformed_x = x_input;
+284:       transformed_y = *y_output;
+285:     }
+286:     typename TTypes<T, 4>::Tensor x(transformed_x.tensor<T, 4>());
+287:     typename TTypes<U>::ConstVec scale(scale_input.vec<U>());
+288:     typename TTypes<U>::ConstVec offset(offset_input.vec<U>());
+289:     typename TTypes<U>::ConstVec estimated_mean(estimated_mean_input.vec<U>());
+290:     typename TTypes<U>::ConstVec estimated_variance(
+291:         estimated_variance_input.vec<U>());
+292:     typename TTypes<T, 4>::Tensor y(transformed_y.tensor<T, 4>());
+293:     typename TTypes<U>::Vec batch_mean(batch_mean_output->vec<U>());
+294:     typename TTypes<U>::Vec batch_variance(batch_var_output->vec<U>());
+295: 
+296:     const CPUDevice& d = context->eigen_device<CPUDevice>();
+297: 
+298:     const int depth = x.dimension(3);
+299:     const int size = x.size();
+300:     const int rest_size = size / depth;
+301:     Eigen::DSizes<Eigen::Index, 2> rest_by_depth(rest_size, depth);
+302: 
+303: #if !defined(EIGEN_HAS_INDEX_LIST)
+304:     Eigen::DSizes<Eigen::Index, 2> one_by_depth(1, depth);
+
+(Showing lines 145-304 of 1659. Use offset=305 to continue.)
+</content>
+
+tokens used
+input: 1,030
+cache read: 11,776
+cache write: 0
+output: 120
+reasoning output: 55
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/kernels/fused_batch_norm_op.cc\n@@\n-    const int depth = x.dimension(3);\n-    OP_REQUIRES(\n-        context, depth != 0,\n-        errors::Internal(\"The 4th element in the input shape cannot be 0.\"));\n+    const int depth = x.dimension(3);\n@@\n struct FusedBatchNorm<CPUDevice, T, U, /* is_training= */ false> {\n@@\n-    const int depth = x.dimension(3);\n+    const int depth = x.dimension(3);\n+    OP_REQUIRES(\n+        context, depth != 0,\n+        errors::Internal(\"The 4th element in the input shape cannot be 0.\"));\n     const int size = x.size();\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/kernels/fused_batch_norm_op.cc
+
+tokens used
+input: 3,447
+cache read: 11,776
+cache write: 0
+output: 213
+reasoning output: 15
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/kernels/fused_batch_norm_op.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0172-be9a6316afb4"
+}
+warning: in the working copy of 'tensorflow/core/kernels/fused_batch_norm_op.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/kernels/fused_batch_norm_op.cc b/tensorflow/core/kernels/fused_batch_norm_op.cc
+index 9b917348e2..e564b19857 100644
+--- a/tensorflow/core/kernels/fused_batch_norm_op.cc
++++ b/tensorflow/core/kernels/fused_batch_norm_op.cc
+@@ -293,6 +293,9 @@ struct FusedBatchNorm<CPUDevice, T, U, /* is_training= */ false> {
+     const CPUDevice& d = context->eigen_device<CPUDevice>();
+ 
+     const int depth = x.dimension(3);
++    OP_REQUIRES(
++        context, depth != 0,
++        errors::Internal("The 4th element in the input shape cannot be 0."));
+     const int size = x.size();
+     const int rest_size = size / depth;
+     Eigen::DSizes<Eigen::Index, 2> rest_by_depth(rest_size, depth);
+
+tokens used
+input: 632
+cache read: 14,848
+cache write: 0
+output: 73
+reasoning output: 8
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target FusedBatchNorm CPU inference context",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate minimal backport hunk against target base",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply source change and capture final diff",
+      "status": "completed",
+      "priority": "high"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target FusedBatchNorm CPU inference context",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate minimal backport hunk against target base",
+    "status": "completed",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply source change and capture final diff",
+    "status": "completed",
+    "priority": "high"
+  }
+]
+
+tokens used
+input: 968
+cache read: 14,848
+cache write: 0
+output: 80
+reasoning output: 17
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/kernels/fused_batch_norm_op.cc b/tensorflow/core/kernels/fused_batch_norm_op.cc
+    index 9b917348e2..e564b19857 100644
+    --- a/tensorflow/core/kernels/fused_batch_norm_op.cc
+    +++ b/tensorflow/core/kernels/fused_batch_norm_op.cc
+    @@ -293,6 +293,9 @@ struct FusedBatchNorm<CPUDevice, T, U, /* is_training= */ false> {
+         const CPUDevice& d = context->eigen_device<CPUDevice>();
+     
+         const int depth = x.dimension(3);
+    +    OP_REQUIRES(
+    +        context, depth != 0,
+    +        errors::Internal("The 4th element in the input shape cannot be 0."));
+         const int size = x.size();
+         const int rest_size = size / depth;
+         Eigen::DSizes<Eigen::Index, 2> rest_by_depth(rest_size, depth);
+  notes: >
+    Added the depth-zero guard to the CPU inference FusedBatchNorm path before dividing by depth.
+```
+
+tokens used
+input: 1,177
+cache read: 14,848
+cache write: 0
+output: 265
+reasoning output: 0

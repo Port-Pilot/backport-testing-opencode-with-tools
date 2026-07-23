@@ -1,0 +1,219 @@
+I’ll inspect the target-side function and the source commit context, then apply only the equivalent guard if the surrounding logic matches.
+
+tool: viewcode
+{
+  "ref": "75867f82431f8801f26d651ca567a3ff1b0d39c3",
+  "path": "tensorflow/python/ops/ragged/ragged_factory_ops.py",
+  "startline": 150,
+  "endline": 230
+}
+Here are lines 150 through 230.
+
+def _constant_value(ragged_factory, inner_factory, pylist, dtype, ragged_rank,
+                    inner_shape):
+  """Constructs a constant RaggedTensor or RaggedTensorValue.
+
+  Args:
+    ragged_factory: A factory function with the signature:
+      `ragged_factory(values, row_splits)`
+    inner_factory: A factory function with the signature: `inner_factory(pylist,
+      dtype, shape, name)`
+    pylist: A nested `list`, `tuple` or `np.ndarray`.
+    dtype: Data type for returned value.
+    ragged_rank: Ragged rank for returned value.
+    inner_shape: Inner value shape for returned value.
+
+  Returns:
+    A value returned by `ragged_factory` or `inner_factory`.
+
+  Raises:
+    ValueError: If the scalar values in `pylist` have inconsistent nesting
+      depth; or if ragged_rank or inner_shape are incompatible with `pylist`.
+  """
+  if ragged_tensor.is_ragged(pylist):
+    raise TypeError("pylist may not be a RaggedTensor or RaggedTensorValue.")
+  # np.ndim builds an array, so we short-circuit lists and tuples.
+  if not isinstance(pylist, (list, tuple)) and np.ndim(pylist) == 0:
+    # Scalar value
+    if ragged_rank is not None and ragged_rank != 0:
+      raise ValueError("Invalid pylist=%r: incompatible with ragged_rank=%d" %
+                       (pylist, ragged_rank))
+    if inner_shape is not None and inner_shape:
+      raise ValueError(
+          "Invalid pylist=%r: incompatible with dim(inner_shape)=%d" %
+          (pylist, len(inner_shape)))
+    return inner_factory(pylist, dtype, ())
+
+  if ragged_rank is not None and ragged_rank < 0:
+    raise ValueError(
+        "Invalid ragged_rank=%r: must be nonnegative" % ragged_rank)
+
+  # Find the depth of scalar values in `pylist`.
+  scalar_depth, max_depth = _find_scalar_and_max_depth(pylist)
+  if scalar_depth is not None:
+    if max_depth > scalar_depth:
+      raise ValueError("Invalid pylist=%r: empty list nesting is greater "
+                       "than scalar value nesting" % pylist)
+
+  # If both inner_shape and ragged_rank were specified, then check that
+  # they are compatible with pylist.
+  if inner_shape is not None and ragged_rank is not None:
+    expected_depth = ragged_rank + len(inner_shape) + 1
+    if ((scalar_depth is not None and expected_depth != scalar_depth) or
+        (scalar_depth is None and expected_depth < max_depth)):
+      raise ValueError(
+          "Invalid pylist=%r: incompatible with ragged_rank=%d "
+          "and dim(inner_shape)=%d" % (pylist, ragged_rank, len(inner_shape)))
+
+  # Check if the result is a `Tensor`.
+  if (ragged_rank == 0 or
+      (ragged_rank is None and
+       ((max_depth < 2) or
+        (inner_shape is not None and max_depth - len(inner_shape) < 2)))):
+    return inner_factory(pylist, dtype, inner_shape)
+
+  # Compute default value for inner_shape.
+  if inner_shape is None:
+    if ragged_rank is None:
+      inner_shape = ()
+    else:
+      inner_shape = _default_inner_shape_for_pylist(pylist, ragged_rank)
+
+  # Compute default value for ragged_rank.
+  if ragged_rank is None:
+    if scalar_depth is None:
+      ragged_rank = max(1, max_depth - 1)
+    else:
+      ragged_rank = max(1, scalar_depth - 1 - len(inner_shape))
+
+  # Build the splits for each ragged rank, and concatenate the inner values
+  # into a single list.
+  nested_splits = []
+  values = pylist
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: git_show
+{
+  "ref": "bd4d5583ff9c8df26d47a23e508208844297310e",
+  "context": "def _constant_value(ragged_factory, inner_factory, pylist, dtype, ragged_rank,\n    if max_depth > scalar_depth:\n      raise ValueError(\"Invalid pylist=%r: empty list nesting is greater \"\n                       \"than scalar value nesting\" % pylist)"
+}
+commit bd4d5583ff9c8df26d47a23e508208844297310e
+Author: Mihai Maruseac <mihaimaruseac@google.com>
+Date:   Fri Apr 15 09:11:43 2022 -0700
+
+    Prevent denial of service in `tf.ragged.constant`
+    
+    Fixes #55199
+    
+    PiperOrigin-RevId: 442029525
+
+ tensorflow/python/ops/ragged/ragged_factory_ops.py | 3 +++
+ 1 file changed, 3 insertions(+)
+This commit shows that there is a high probability that this code is new, so the corresponding code segment cannot be found in the old version.
+You can call `viewcode` and `locate_symbol` to further check the results step by step. For newly introduced code, we consider that this hunk `need not ported`.
+
+tool: locate_symbol
+{
+  "ref": "75867f82431f8801f26d651ca567a3ff1b0d39c3",
+  "symbol": "_constant_value"
+}
+tensorflow/python/ops/ragged/ragged_factory_ops.py:86
+tensorflow/python/ops/ragged/ragged_factory_ops.py:146
+tensorflow/python/ops/ragged/ragged_factory_ops.py:150
+
+tokens used
+input: 3,746
+cache read: 4,608
+cache write: 0
+output: 258
+reasoning output: 0
+
+The older target has the same `_constant_value` structure and the vulnerable gap is present after the `max_depth > scalar_depth` check. I’m adding the three-line `ragged_rank` depth guard at that matching location.
+
+tool: validate
+{
+  "ref": "75867f82431f8801f26d651ca567a3ff1b0d39c3",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/python/ops/ragged/ragged_factory_ops.py b/tensorflow/python/ops/ragged/ragged_factory_ops.py\n--- a/tensorflow/python/ops/ragged/ragged_factory_ops.py\n+++ b/tensorflow/python/ops/ragged/ragged_factory_ops.py\n@@ -190,6 +190,9 @@ def _constant_value(ragged_factory, inner_factory, pylist, dtype, ragged_rank,\n     if max_depth > scalar_depth:\n       raise ValueError(\"Invalid pylist=%r: empty list nesting is greater \"\n                        \"than scalar value nesting\" % pylist)\n+    if ragged_rank is not None and max_depth < ragged_rank:\n+      raise ValueError(f\"Invalid pylist={pylist}, max depth smaller than \"\n+                       f\"ragged_rank={ragged_rank}\")\n \n   # If both inner_shape and ragged_rank were specified, then check that\n   # they are compatible with pylist.\n"
+}
+Patch applied successfully
+
+tokens used
+input: 2,083
+cache read: 7,680
+cache write: 0
+output: 330
+reasoning output: 24
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/python/ops/ragged/ragged_factory_ops.py\n@@\n     if max_depth > scalar_depth:\n       raise ValueError(\"Invalid pylist=%r: empty list nesting is greater \"\n                        \"than scalar value nesting\" % pylist)\n+    if ragged_rank is not None and max_depth < ragged_rank:\n+      raise ValueError(f\"Invalid pylist={pylist}, max depth smaller than \"\n+                       f\"ragged_rank={ragged_rank}\")\n \n   # If both inner_shape and ragged_rank were specified, then check that\n   # they are compatible with pylist.\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/python/ops/ragged/ragged_factory_ops.py
+
+tokens used
+input: 1,426
+cache read: 8,704
+cache write: 0
+output: 169
+reasoning output: 0
+
+The hunk validated cleanly against the target base and has been applied. I’m checking the resulting diff now.
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/python/ops/ragged/ragged_factory_ops.py",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0263-75867f82431f"
+}
+warning: in the working copy of 'tensorflow/python/ops/ragged/ragged_factory_ops.py', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/python/ops/ragged/ragged_factory_ops.py b/tensorflow/python/ops/ragged/ragged_factory_ops.py
+index 0296a18504..50f6a4771b 100644
+--- a/tensorflow/python/ops/ragged/ragged_factory_ops.py
++++ b/tensorflow/python/ops/ragged/ragged_factory_ops.py
+@@ -192,6 +192,9 @@ def _constant_value(ragged_factory, inner_factory, pylist, dtype, ragged_rank,
+     if max_depth > scalar_depth:
+       raise ValueError("Invalid pylist=%r: empty list nesting is greater "
+                        "than scalar value nesting" % pylist)
++    if ragged_rank is not None and max_depth < ragged_rank:
++      raise ValueError(f"Invalid pylist={pylist}, max depth smaller than "
++                       f"ragged_rank={ragged_rank}")
+ 
+   # If both inner_shape and ragged_rank were specified, then check that
+   # they are compatible with pylist.
+
+tokens used
+input: 603
+cache read: 9,728
+cache write: 0
+output: 106
+reasoning output: 14
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/python/ops/ragged/ragged_factory_ops.py b/tensorflow/python/ops/ragged/ragged_factory_ops.py
+    index 0296a18504..50f6a4771b 100644
+    --- a/tensorflow/python/ops/ragged/ragged_factory_ops.py
+    +++ b/tensorflow/python/ops/ragged/ragged_factory_ops.py
+    @@ -192,6 +192,9 @@ def _constant_value(ragged_factory, inner_factory, pylist, dtype, ragged_rank,
+         if max_depth > scalar_depth:
+           raise ValueError("Invalid pylist=%r: empty list nesting is greater "
+                            "than scalar value nesting" % pylist)
+    +    if ragged_rank is not None and max_depth < ragged_rank:
+    +      raise ValueError(f"Invalid pylist={pylist}, max depth smaller than "
+    +                       f"ragged_rank={ragged_rank}")
+     
+       # If both inner_shape and ragged_rank were specified, then check that
+       # they are compatible with pylist.
+  notes: >
+    Added the missing max_depth versus ragged_rank validation in tf.ragged.constant construction.
+```
+
+tokens used
+input: 1,003
+cache read: 9,728
+cache write: 0
+output: 286
+reasoning output: 0

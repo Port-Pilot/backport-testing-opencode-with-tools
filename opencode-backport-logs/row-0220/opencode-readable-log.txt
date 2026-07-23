@@ -1,0 +1,544 @@
+I’ll inspect the target-side op registration and the source commit context, then apply the minimal equivalent change in the checked-out TensorFlow 2.3.4 tree.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect newer patch context and target SparseFillEmptyRows registration",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Validate target hunk against base commit",
+      "status": "pending",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply minimal backport in current checkout",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "content": "Capture final diff for report",
+      "status": "pending",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect newer patch context and target SparseFillEmptyRows registration",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Validate target hunk against base commit",
+    "status": "pending",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply minimal backport in current checkout",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "content": "Capture final diff for report",
+    "status": "pending",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 3,814
+cache read: 4,608
+cache write: 0
+output: 136
+reasoning output: 0
+
+tool: viewcode
+{
+  "ref": "c8f65104ec1bced6eeb476919fdc6965a0f2081f",
+  "path": "tensorflow/core/ops/sparse_ops.cc",
+  "startline": 1,
+  "endline": 40
+}
+Here are lines 1 through 40.
+
+/* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+==============================================================================*/
+
+#include "tensorflow/core/framework/common_shape_fns.h"
+#include "tensorflow/core/framework/op.h"
+#include "tensorflow/core/framework/shape_inference.h"
+
+namespace tensorflow {
+
+using shape_inference::DimensionHandle;
+using shape_inference::InferenceContext;
+using shape_inference::ShapeHandle;
+
+namespace {
+
+Status SparseSparseMinOrMaxShapeFn(InferenceContext* c) {
+  ShapeHandle unused;
+  TF_RETURN_IF_ERROR(c->WithRank(c->input(0), 2, &unused));  // a_indices
+  TF_RETURN_IF_ERROR(c->WithRank(c->input(1), 1, &unused));  // a_values
+  TF_RETURN_IF_ERROR(c->WithRank(c->input(2), 1, &unused));  // a_shape
+  TF_RETURN_IF_ERROR(c->WithRank(c->input(3), 2, &unused));  // b_indices
+  TF_RETURN_IF_ERROR(c->WithRank(c->input(4), 1, &unused));  // b_values
+  TF_RETURN_IF_ERROR(c->WithRank(c->input(5), 1, &unused));  // b_shape
+  c->set_output(0, c->Matrix(InferenceContext::kUnknownDim,
+                             InferenceContext::kUnknownDim));
+  c->set_output(1, c->Vector(InferenceContext::kUnknownDim));
+  return Status::OK();
+}
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: git_show
+{
+  "ref": "578e634b4f1c1c684d4b4294f9e5281b2133b3ed",
+  "context": "REGISTER_OP(\"SparseFillEmptyRows\")"
+}
+commit 578e634b4f1c1c684d4b4294f9e5281b2133b3ed
+Author: Mihai Maruseac <mihaimaruseac@google.com>
+Date:   Thu Jul 29 22:24:08 2021 -0700
+
+    Prevent a segfault in shape inference due to bad inputs.
+    
+    PiperOrigin-RevId: 387737970
+    Change-Id: Ibd1cf3dbdce1dd2ab47fd633d5c5a57f7d8fb6e9
+
+ tensorflow/core/ops/sparse_ops.cc | 3 +++
+ 1 file changed, 3 insertions(+)
+This commit shows that there is a high probability that this code is new, so the corresponding code segment cannot be found in the old version.
+You can call `viewcode` and `locate_symbol` to further check the results step by step. For newly introduced code, we consider that this hunk `need not ported`.
+
+tool: viewcode
+{
+  "ref": "c8f65104ec1bced6eeb476919fdc6965a0f2081f",
+  "path": "tensorflow/core/ops/sparse_ops.cc",
+  "startline": 590,
+  "endline": 660
+}
+This file only has 654 lines. Here are lines 590 through 654.
+
+
+      c->set_output(0, c->Matrix(InferenceContext::kUnknownDim,
+                                 InferenceContext::kUnknownDim));
+      c->set_output(1, c->Vector(InferenceContext::kUnknownDim));
+      c->set_output(2, c->Vector(InferenceContext::kUnknownDim));
+      return Status::OK();
+    });
+
+REGISTER_OP("SparseFillEmptyRows")
+    .Input("indices: int64")
+    .Input("values: T")
+    .Input("dense_shape: int64")
+    .Input("default_value: T")
+    .Output("output_indices: int64")
+    .Output("output_values: T")
+    .Output("empty_row_indicator: bool")
+    .Output("reverse_index_map: int64")
+    .Attr("T: type")
+    .SetShapeFn([](InferenceContext* c) {
+      ShapeHandle input_indices = c->input(0);
+      TF_RETURN_IF_ERROR(c->WithRank(input_indices, 2, &input_indices));
+      ShapeHandle input_values = c->input(1);
+      TF_RETURN_IF_ERROR(c->WithRank(input_values, 1, &input_values));
+      ShapeHandle input_shape = c->input(2);
+      TF_RETURN_IF_ERROR(c->WithRank(input_shape, 1, &input_shape));
+      ShapeHandle default_value = c->input(3);
+      TF_RETURN_IF_ERROR(c->WithRank(default_value, 0, &default_value));
+      DimensionHandle N = c->Dim(input_indices, 0);
+      TF_RETURN_IF_ERROR(c->Merge(N, c->Dim(input_values, 0), &N));
+      DimensionHandle unused_dim;
+      TF_RETURN_IF_ERROR(c->Merge(c->Dim(input_indices, 1),
+                                  c->Dim(input_shape, 0), &unused_dim));
+      ShapeHandle output_indices =
+          c->Matrix(InferenceContext::kUnknownDim, c->NumElements(input_shape));
+      ShapeHandle output_values = c->Vector(InferenceContext::kUnknownDim);
+      ShapeHandle constant_input_shape;
+      TF_RETURN_IF_ERROR(c->MakeShapeFromShapeTensor(2, &constant_input_shape));
+      ShapeHandle empty_row_indicator =
+          c->Vector(c->Dim(constant_input_shape, 0));
+      ShapeHandle reverse_index_map = c->Vector(N);
+      c->set_output(0, output_indices);
+      c->set_output(1, output_values);
+      c->set_output(2, empty_row_indicator);
+      c->set_output(3, reverse_index_map);
+      return Status::OK();
+    });
+
+REGISTER_OP("SparseFillEmptyRowsGrad")
+    .Input("reverse_index_map: int64")
+    .Input("grad_values: T")
+    .Output("d_values: T")
+    .Output("d_default_value: T")
+    .Attr("T: type")
+    .SetShapeFn([](InferenceContext* c) {
+      ShapeHandle reverse_index_map = c->input(0);
+      TF_RETURN_IF_ERROR(c->WithRank(reverse_index_map, 1, &reverse_index_map));
+      ShapeHandle grad_values = c->input(1);
+      TF_RETURN_IF_ERROR(c->WithRank(grad_values, 1, &grad_values));
+      c->set_output(0, reverse_index_map);
+      c->set_output(1, c->Scalar());
+      return Status::OK();
+    });
+
+}  // namespace tensorflow
+
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tokens used
+input: 4,092
+cache read: 4,608
+cache write: 0
+output: 187
+reasoning output: 0
+
+The target file has the same `SparseFillEmptyRows` shape function and lacks the new `errors` include, so the backport is a direct two-site insertion.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect newer patch context and target SparseFillEmptyRows registration",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate target hunk against base commit",
+      "status": "in_progress",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply minimal backport in current checkout",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "content": "Capture final diff for report",
+      "status": "pending",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect newer patch context and target SparseFillEmptyRows registration",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate target hunk against base commit",
+    "status": "in_progress",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply minimal backport in current checkout",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "content": "Capture final diff for report",
+    "status": "pending",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 2,653
+cache read: 7,680
+cache write: 0
+output: 138
+reasoning output: 31
+
+tool: validate
+{
+  "ref": "c8f65104ec1bced6eeb476919fdc6965a0f2081f",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/ops/sparse_ops.cc b/tensorflow/core/ops/sparse_ops.cc\n--- a/tensorflow/core/ops/sparse_ops.cc\n+++ b/tensorflow/core/ops/sparse_ops.cc\n@@ -16,6 +16,7 @@ limitations under the License.\n #include \"tensorflow/core/framework/common_shape_fns.h\"\n #include \"tensorflow/core/framework/op.h\"\n #include \"tensorflow/core/framework/shape_inference.h\"\n+#include \"tensorflow/core/platform/errors.h\"\n \n namespace tensorflow {\n \n@@ -619,6 +620,8 @@ REGISTER_OP(\"SparseFillEmptyRows\")\n       DimensionHandle unused_dim;\n       TF_RETURN_IF_ERROR(c->Merge(c->Dim(input_indices, 1),\n                                   c->Dim(input_shape, 0), &unused_dim));\n+      if (c->Value(c->NumElements(input_shape)) == 0)\n+        return errors::InvalidArgument(\"dense_shape must not be empty\");\n       ShapeHandle output_indices =\n           c->Matrix(InferenceContext::kUnknownDim, c->NumElements(input_shape));\n       ShapeHandle output_values = c->Vector(InferenceContext::kUnknownDim);\n"
+}
+Patch applied successfully
+
+tokens used
+input: 916
+cache read: 9,728
+cache write: 0
+output: 318
+reasoning output: 9
+
+The candidate hunk applies cleanly to the target base. I’m applying that validated minimal change now.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect newer patch context and target SparseFillEmptyRows registration",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate target hunk against base commit",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply minimal backport in current checkout",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Capture final diff for report",
+      "status": "pending",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect newer patch context and target SparseFillEmptyRows registration",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate target hunk against base commit",
+    "status": "completed",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply minimal backport in current checkout",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Capture final diff for report",
+    "status": "pending",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 1,256
+cache read: 9,728
+cache write: 0
+output: 123
+reasoning output: 0
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/ops/sparse_ops.cc\n@@\n #include \"tensorflow/core/framework/common_shape_fns.h\"\n #include \"tensorflow/core/framework/op.h\"\n #include \"tensorflow/core/framework/shape_inference.h\"\n+#include \"tensorflow/core/platform/errors.h\"\n@@\n       DimensionHandle unused_dim;\n       TF_RETURN_IF_ERROR(c->Merge(c->Dim(input_indices, 1),\n                                   c->Dim(input_shape, 0), &unused_dim));\n+      if (c->Value(c->NumElements(input_shape)) == 0)\n+        return errors::InvalidArgument(\"dense_shape must not be empty\");\n       ShapeHandle output_indices =\n           c->Matrix(InferenceContext::kUnknownDim, c->NumElements(input_shape));\n       ShapeHandle output_values = c->Vector(InferenceContext::kUnknownDim);\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/ops/sparse_ops.cc
+
+tokens used
+input: 497
+cache read: 10,752
+cache write: 0
+output: 216
+reasoning output: 0
+
+The source file is updated. I’ll verify the resulting diff and ensure only the intended file changed.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect newer patch context and target SparseFillEmptyRows registration",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate target hunk against base commit",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply minimal backport in current checkout",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Capture final diff for report",
+      "status": "in_progress",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect newer patch context and target SparseFillEmptyRows registration",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate target hunk against base commit",
+    "status": "completed",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply minimal backport in current checkout",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Capture final diff for report",
+    "status": "in_progress",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 740
+cache read: 10,752
+cache write: 0
+output: 122
+reasoning output: 0
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/ops/sparse_ops.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0220-c8f65104ec1b"
+}
+warning: in the working copy of 'tensorflow/core/ops/sparse_ops.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/ops/sparse_ops.cc b/tensorflow/core/ops/sparse_ops.cc
+index 906cef1f5e..b1e40e66af 100644
+--- a/tensorflow/core/ops/sparse_ops.cc
++++ b/tensorflow/core/ops/sparse_ops.cc
+@@ -16,6 +16,7 @@ limitations under the License.
+ #include "tensorflow/core/framework/common_shape_fns.h"
+ #include "tensorflow/core/framework/op.h"
+ #include "tensorflow/core/framework/shape_inference.h"
++#include "tensorflow/core/platform/errors.h"
+ 
+ namespace tensorflow {
+ 
+@@ -619,6 +620,8 @@ REGISTER_OP("SparseFillEmptyRows")
+       DimensionHandle unused_dim;
+       TF_RETURN_IF_ERROR(c->Merge(c->Dim(input_indices, 1),
+                                   c->Dim(input_shape, 0), &unused_dim));
++      if (c->Value(c->NumElements(input_shape)) == 0)
++        return errors::InvalidArgument("dense_shape must not be empty");
+       ShapeHandle output_indices =
+           c->Matrix(InferenceContext::kUnknownDim, c->NumElements(input_shape));
+       ShapeHandle output_values = c->Vector(InferenceContext::kUnknownDim);
+
+tool: bash
+{
+  "command": "git status --short",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0220-c8f65104ec1b"
+}
+ M tensorflow/core/ops/sparse_ops.cc
+
+tokens used
+input: 1,004
+cache read: 10,752
+cache write: 0
+output: 145
+reasoning output: 0
+
+Only `tensorflow/core/ops/sparse_ops.cc` is modified, matching the validated security fix.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect newer patch context and target SparseFillEmptyRows registration",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate target hunk against base commit",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply minimal backport in current checkout",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Capture final diff for report",
+      "status": "completed",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect newer patch context and target SparseFillEmptyRows registration",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate target hunk against base commit",
+    "status": "completed",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply minimal backport in current checkout",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Capture final diff for report",
+    "status": "completed",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 1,474
+cache read: 10,752
+cache write: 0
+output: 121
+reasoning output: 0
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/ops/sparse_ops.cc b/tensorflow/core/ops/sparse_ops.cc
+    index 906cef1f5e..b1e40e66af 100644
+    --- a/tensorflow/core/ops/sparse_ops.cc
+    +++ b/tensorflow/core/ops/sparse_ops.cc
+    @@ -16,6 +16,7 @@ limitations under the License.
+     #include "tensorflow/core/framework/common_shape_fns.h"
+     #include "tensorflow/core/framework/op.h"
+     #include "tensorflow/core/framework/shape_inference.h"
+    +#include "tensorflow/core/platform/errors.h"
+     
+     namespace tensorflow {
+     
+    @@ -619,6 +620,8 @@ REGISTER_OP("SparseFillEmptyRows")
+           DimensionHandle unused_dim;
+           TF_RETURN_IF_ERROR(c->Merge(c->Dim(input_indices, 1),
+                                       c->Dim(input_shape, 0), &unused_dim));
+    +      if (c->Value(c->NumElements(input_shape)) == 0)
+    +        return errors::InvalidArgument("dense_shape must not be empty");
+           ShapeHandle output_indices =
+               c->Matrix(InferenceContext::kUnknownDim, c->NumElements(input_shape));
+           ShapeHandle output_values = c->Vector(InferenceContext::kUnknownDim);
+  notes: >
+    Added the SparseFillEmptyRows shape inference guard for empty dense_shape and the required errors include; the hunk was validated against the target base.
+```
+
+tokens used
+input: 712
+cache read: 11,776
+cache write: 0
+output: 334
+reasoning output: 0

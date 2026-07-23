@@ -1,0 +1,221 @@
+I’ll inspect the target-side split kernel context, then validate and apply the minimal guard matching the provided security fix.
+
+tool: viewcode
+{
+  "ref": "07317a88b432c93465822c27786bcf31cd61a102",
+  "path": "tensorflow/lite/kernels/split.cc",
+  "startline": 1,
+  "endline": 110
+}
+Here are lines 1 through 110.
+
+/* Copyright 2018 The TensorFlow Authors. All Rights Reserved.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+==============================================================================*/
+#include <string.h>
+#include <vector>
+#include "tensorflow/lite/c/builtin_op_data.h"
+#include "tensorflow/lite/c/c_api_internal.h"
+#include "tensorflow/lite/kernels/internal/optimized/optimized_ops.h"
+#include "tensorflow/lite/kernels/internal/reference/reference_ops.h"
+#include "tensorflow/lite/kernels/internal/tensor.h"
+#include "tensorflow/lite/kernels/kernel_util.h"
+#include "tensorflow/lite/kernels/op_macros.h"
+
+namespace tflite {
+namespace ops {
+namespace builtin {
+namespace split {
+
+struct OpContext {
+  OpContext(TfLiteContext* context, TfLiteNode* node) {
+    params = reinterpret_cast<TfLiteSplitParams*>(node->builtin_data);
+    axis = GetInput(context, node, 0);
+    input = GetInput(context, node, 1);
+  }
+  TfLiteSplitParams* params;
+  const TfLiteTensor* axis;
+  const TfLiteTensor* input;
+};
+
+TfLiteStatus UseDynamicOutputTensors(TfLiteContext* context, TfLiteNode* node) {
+  for (int i = 0; i < NumOutputs(node); ++i) {
+    SetTensorToDynamic(GetOutput(context, node, i));
+  }
+  return kTfLiteOk;
+}
+
+TfLiteStatus ResizeOutputTensors(TfLiteContext* context, TfLiteNode* node,
+                                 const TfLiteTensor* axis,
+                                 const TfLiteTensor* input, int num_splits) {
+  int axis_value = GetTensorData<int>(axis)[0];
+  if (axis_value < 0) {
+    axis_value += NumDimensions(input);
+  }
+
+  TF_LITE_ENSURE(context, axis_value >= 0);
+  TF_LITE_ENSURE(context, axis_value < NumDimensions(input));
+
+  const int input_size = SizeOfDimension(input, axis_value);
+  TF_LITE_ENSURE_MSG(context, input_size % num_splits == 0,
+                     "Not an even split");
+  const int slice_size = input_size / num_splits;
+
+  for (int i = 0; i < NumOutputs(node); ++i) {
+    TfLiteIntArray* output_dims = TfLiteIntArrayCopy(input->dims);
+    output_dims->data[axis_value] = slice_size;
+    TfLiteTensor* output = GetOutput(context, node, i);
+    TF_LITE_ENSURE_STATUS(context->ResizeTensor(context, output, output_dims));
+  }
+
+  return kTfLiteOk;
+}
+
+TfLiteStatus Prepare(TfLiteContext* context, TfLiteNode* node) {
+  TF_LITE_ENSURE_EQ(context, NumInputs(node), 2);
+
+  OpContext op_context(context, node);
+
+  TF_LITE_ENSURE_EQ(context, NumOutputs(node), op_context.params->num_splits);
+
+  auto input_type = op_context.input->type;
+  TF_LITE_ENSURE(context,
+                 input_type == kTfLiteFloat32 || input_type == kTfLiteUInt8 ||
+                     input_type == kTfLiteInt8 || input_type == kTfLiteInt16 ||
+                     input_type == kTfLiteInt32);
+  for (int i = 0; i < NumOutputs(node); ++i) {
+    GetOutput(context, node, i)->type = input_type;
+  }
+
+  // If we know the contents of the 'axis' tensor, resize all outputs.
+  // Otherwise, wait until Eval().
+  if (IsConstantTensor(op_context.axis)) {
+    return ResizeOutputTensors(context, node, op_context.axis, op_context.input,
+                               op_context.params->num_splits);
+  } else {
+    return UseDynamicOutputTensors(context, node);
+  }
+}
+
+TfLiteStatus Eval(TfLiteContext* context, TfLiteNode* node) {
+  OpContext op_context(context, node);
+
+  // When the 'axis' tensor is non-const we can't resize output tensors in
+  // Prepare(), and we have to do it now.
+  if (!IsConstantTensor(op_context.axis)) {
+    TF_LITE_ENSURE_OK(
+        context,
+        ResizeOutputTensors(context, node, op_context.axis, op_context.input,
+                            op_context.params->num_splits));
+  }
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: locate_symbol
+{
+  "ref": "07317a88b432c93465822c27786bc1cd61a102",
+  "symbol": "ResizeOutputTensors"
+}
+Failed to create temporary worktree for ref 07317a88b432c93465822c27786bc1cd61a102: fatal: invalid reference: 07317a88b432c93465822c27786bc1cd61a102
+
+tokens used
+input: 3,698
+cache read: 4,608
+cache write: 0
+output: 144
+reasoning output: 0
+
+The target file has the same `ResizeOutputTensors` logic and is missing the zero-split guard immediately before the modulo/division. I’m applying the one-line backport there.
+
+tool: validate
+{
+  "ref": "07317a88b432c93465822c27786bcf31cd61a102",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/lite/kernels/split.cc b/tensorflow/lite/kernels/split.cc\n--- a/tensorflow/lite/kernels/split.cc\n+++ b/tensorflow/lite/kernels/split.cc\n@@ -60,6 +60,7 @@ TfLiteStatus ResizeOutputTensors(TfLiteContext* context, TfLiteNode* node,\n   TF_LITE_ENSURE(context, axis_value < NumDimensions(input));\n \n   const int input_size = SizeOfDimension(input, axis_value);\n+  TF_LITE_ENSURE(context, num_splits != 0);\n   TF_LITE_ENSURE_MSG(context, input_size % num_splits == 0,\n                      \"Not an even split\");\n   const int slice_size = input_size / num_splits;\n"
+}
+Patch applied successfully
+
+tokens used
+input: 1,881
+cache read: 7,680
+cache write: 0
+output: 272
+reasoning output: 43
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/lite/kernels/split.cc\n@@\n   TF_LITE_ENSURE(context, axis_value < NumDimensions(input));\n \n   const int input_size = SizeOfDimension(input, axis_value);\n+  TF_LITE_ENSURE(context, num_splits != 0);\n   TF_LITE_ENSURE_MSG(context, input_size % num_splits == 0,\n                      \"Not an even split\");\n   const int slice_size = input_size / num_splits;\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/lite/kernels/split.cc
+
+tokens used
+input: 1,185
+cache read: 8,704
+cache write: 0
+output: 139
+reasoning output: 0
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/lite/kernels/split.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0127-07317a88b432",
+  "timeout": 120000
+}
+warning: in the working copy of 'tensorflow/lite/kernels/split.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/lite/kernels/split.cc b/tensorflow/lite/kernels/split.cc
+index ec3dd54ebf..f258d5b353 100644
+--- a/tensorflow/lite/kernels/split.cc
++++ b/tensorflow/lite/kernels/split.cc
+@@ -57,6 +57,7 @@ TfLiteStatus ResizeOutputTensors(TfLiteContext* context, TfLiteNode* node,
+   TF_LITE_ENSURE(context, axis_value < NumDimensions(input));
+ 
+   const int input_size = SizeOfDimension(input, axis_value);
++  TF_LITE_ENSURE(context, num_splits != 0);
+   TF_LITE_ENSURE_MSG(context, input_size % num_splits == 0,
+                      "Not an even split");
+   const int slice_size = input_size / num_splits;
+
+tokens used
+input: 327
+cache read: 9,728
+cache write: 0
+output: 76
+reasoning output: 14
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/lite/kernels/split.cc b/tensorflow/lite/kernels/split.cc
+    index ec3dd54ebf..f258d5b353 100644
+    --- a/tensorflow/lite/kernels/split.cc
+    +++ b/tensorflow/lite/kernels/split.cc
+    @@ -57,6 +57,7 @@ TfLiteStatus ResizeOutputTensors(TfLiteContext* context, TfLiteNode* node,
+       TF_LITE_ENSURE(context, axis_value < NumDimensions(input));
+     
+       const int input_size = SizeOfDimension(input, axis_value);
+    +  TF_LITE_ENSURE(context, num_splits != 0);
+       TF_LITE_ENSURE_MSG(context, input_size % num_splits == 0,
+                          "Not an even split");
+       const int slice_size = input_size / num_splits;
+  notes: >
+    Added the missing num_splits zero check before modulo/division in TFLite Split output resizing.
+```
+
+tokens used
+input: 647
+cache read: 9,728
+cache write: 0
+output: 241
+reasoning output: 0

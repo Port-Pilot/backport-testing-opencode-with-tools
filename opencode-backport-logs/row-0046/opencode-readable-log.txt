@@ -1,0 +1,161 @@
+I’ll locate the target-side implementation of `DependencyOptimizer::SafeToRemoveIdentity`, confirm the surrounding code matches the source patch intent, then apply the minimal null-check backport and validate the hunk against the specified base.
+
+tool: viewcode
+{
+  "ref": "b2b3444b71ea99685edafa7731fb7ba57939f437",
+  "path": "tensorflow/core/grappler/optimizers/dependency_optimizer.cc",
+  "startline": 60,
+  "endline": 95
+}
+Here are lines 60 through 95.
+
+  if (!IsIdentity(node) && !IsIdentityN(node)) {
+    return true;
+  }
+
+  if (nodes_to_preserve_.find(node.name()) != nodes_to_preserve_.end()) {
+    return false;
+  }
+  if (!fetch_nodes_known_) {
+    // The output values of this node may be needed.
+    return false;
+  }
+
+  if (node.input_size() < 1) {
+    // Node lacks input, is invalid
+    return false;
+  }
+
+  const NodeDef* input = node_map_->GetNode(NodeName(node.input(0)));
+  CHECK(input != nullptr) << "node = " << node.name()
+                          << " input = " << node.input(0);
+  // Don't remove Identity nodes corresponding to Variable reads or following
+  // Recv.
+  if (IsVariable(*input) || IsRecv(*input)) {
+    return false;
+  }
+  for (const auto& consumer : node_map_->GetOutputs(node.name())) {
+    if (node.input_size() > 1 && (IsRetval(*consumer) || IsMerge(*consumer))) {
+      return false;
+    }
+    if (IsSwitch(*input)) {
+      for (const string& consumer_input : consumer->input()) {
+        if (consumer_input == AsControlDependency(node.name())) {
+          return false;
+        }
+      }
+    }
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: locate_symbol
+{
+  "ref": "b2b3444b71ea99685edafa7731fb7ba57939f437",
+  "symbol": "DependencyOptimizer::SafeToRemoveIdentity"
+}
+tensorflow/core/grappler/optimizers/dependency_optimizer.cc:59
+
+tokens used
+input: 3,731
+cache read: 4,608
+cache write: 0
+output: 176
+reasoning output: 0
+
+The target function is present in the same file with the vulnerable `CHECK(input != nullptr)` pattern, so this is a direct one-hunk backport.
+
+tool: validate
+{
+  "ref": "b2b3444b71ea99685edafa7731fb7ba57939f437",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/grappler/optimizers/dependency_optimizer.cc b/tensorflow/core/grappler/optimizers/dependency_optimizer.cc\n--- a/tensorflow/core/grappler/optimizers/dependency_optimizer.cc\n+++ b/tensorflow/core/grappler/optimizers/dependency_optimizer.cc\n@@ -75,8 +75,10 @@ bool DependencyOptimizer::SafeToRemoveIdentity(const NodeDef& node) const {\n   }\n \n   const NodeDef* input = node_map_->GetNode(NodeName(node.input(0)));\n-  CHECK(input != nullptr) << \"node = \" << node.name()\n-                          << \" input = \" << node.input(0);\n+  if (input == nullptr) {\n+    VLOG(1) << \"node = \" << node.name() << \" input = \" << node.input(0);\n+    return false;\n+  }\n   // Don't remove Identity nodes corresponding to Variable reads or following\n   // Recv.\n   if (IsVariable(*input) || IsRecv(*input)) {\n"
+}
+Patch applied successfully
+
+tokens used
+input: 1,184
+cache read: 7,680
+cache write: 0
+output: 320
+reasoning output: 34
+
+The hunk validates cleanly against the target base. I’m applying that exact minimal change in the current checkout.
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/grappler/optimizers/dependency_optimizer.cc\n@@\n   const NodeDef* input = node_map_->GetNode(NodeName(node.input(0)));\n-  CHECK(input != nullptr) << \"node = \" << node.name()\n-                          << \" input = \" << node.input(0);\n+  if (input == nullptr) {\n+    VLOG(1) << \"node = \" << node.name() << \" input = \" << node.input(0);\n+    return false;\n+  }\n   // Don't remove Identity nodes corresponding to Variable reads or following\n   // Recv.\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/grappler/optimizers/dependency_optimizer.cc
+
+tokens used
+input: 527
+cache read: 8,704
+cache write: 0
+output: 194
+reasoning output: 0
+
+The source change is applied. I’m checking the resulting diff only, with no commit or full build.
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/grappler/optimizers/dependency_optimizer.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0046-b2b3444b71ea",
+  "timeout": 120000
+}
+warning: in the working copy of 'tensorflow/core/grappler/optimizers/dependency_optimizer.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/grappler/optimizers/dependency_optimizer.cc b/tensorflow/core/grappler/optimizers/dependency_optimizer.cc
+index 1be7f2692e..0f1bbb729e 100644
+--- a/tensorflow/core/grappler/optimizers/dependency_optimizer.cc
++++ b/tensorflow/core/grappler/optimizers/dependency_optimizer.cc
+@@ -75,8 +75,10 @@ bool DependencyOptimizer::SafeToRemoveIdentity(const NodeDef& node) const {
+   }
+ 
+   const NodeDef* input = node_map_->GetNode(NodeName(node.input(0)));
+-  CHECK(input != nullptr) << "node = " << node.name()
+-                          << " input = " << node.input(0);
++  if (input == nullptr) {
++    VLOG(1) << "node = " << node.name() << " input = " << node.input(0);
++    return false;
++  }
+   // Don't remove Identity nodes corresponding to Variable reads or following
+   // Recv.
+   if (IsVariable(*input) || IsRecv(*input)) {
+
+tokens used
+input: 752
+cache read: 8,704
+cache write: 0
+output: 109
+reasoning output: 14
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/grappler/optimizers/dependency_optimizer.cc b/tensorflow/core/grappler/optimizers/dependency_optimizer.cc
+    index 1be7f2692e..0f1bbb729e 100644
+    --- a/tensorflow/core/grappler/optimizers/dependency_optimizer.cc
+    +++ b/tensorflow/core/grappler/optimizers/dependency_optimizer.cc
+    @@ -75,8 +75,10 @@ bool DependencyOptimizer::SafeToRemoveIdentity(const NodeDef& node) const {
+       }
+     
+       const NodeDef* input = node_map_->GetNode(NodeName(node.input(0)));
+    -  CHECK(input != nullptr) << "node = " << node.name()
+    -                          << " input = " << node.input(0);
+    +  if (input == nullptr) {
+    +    VLOG(1) << "node = " << node.name() << " input = " << node.input(0);
+    +    return false;
+    +  }
+       // Don't remove Identity nodes corresponding to Variable reads or following
+       // Recv.
+       if (IsVariable(*input) || IsRecv(*input)) {
+  notes: >
+    Replaced a fatal CHECK on missing Identity input node with a VLOG and safe false return in DependencyOptimizer::SafeToRemoveIdentity.
+```
+
+tokens used
+input: 1,163
+cache read: 8,704
+cache write: 0
+output: 307
+reasoning output: 0

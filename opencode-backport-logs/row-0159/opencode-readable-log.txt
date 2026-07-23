@@ -1,0 +1,2251 @@
+I’ll inspect the target-side files and symbol locations first, then apply the minimal equivalent patch directly without looking at the known backport commit.
+
+tool: glob
+{
+  "pattern": "tensorflow/python/framework/constant_op_test.py"
+}
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0159-54a06baa1cf1\tensorflow\python\framework\constant_op_test.py
+
+tool: viewcode
+{
+  "ref": "54a06baa1cf13bd7057c5ce372c90f6bbe1cbc57",
+  "path": "tensorflow/python/lib/core/py_seq_tensor.cc",
+  "startline": 1,
+  "endline": 700
+}
+This file only has 651 lines. Here are lines 1 through 651.
+
+/* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+==============================================================================*/
+
+#include "tensorflow/python/lib/core/py_seq_tensor.h"
+
+#include "tensorflow/core/framework/tensor.h"
+#include "tensorflow/core/framework/tensor_shape.h"
+#include "tensorflow/core/framework/types.h"
+#include "tensorflow/core/lib/core/errors.h"
+#include "tensorflow/core/lib/core/stringpiece.h"
+#include "tensorflow/core/lib/strings/str_util.h"
+#include "tensorflow/core/platform/macros.h"
+#include "tensorflow/core/platform/types.h"
+#include "tensorflow/python/lib/core/numpy.h"
+#include "tensorflow/python/lib/core/py_util.h"
+#include "tensorflow/python/lib/core/safe_ptr.h"
+
+namespace tensorflow {
+namespace {
+
+inline bool PyIsInstance(PyObject* obj, PyTypeObject* t) {
+  return PyObject_IsInstance(obj, reinterpret_cast<PyObject*>(t));
+}
+
+inline PyObject* PyType(PyObject* obj) {
+  return reinterpret_cast<PyObject*>(obj->ob_type);
+}
+
+bool IsPyString(PyObject* obj) {
+  return PyBytes_Check(obj) || PyUnicode_Check(obj);
+}
+
+bool IsPyInt(PyObject* obj) {
+#if PY_MAJOR_VERSION >= 3
+  return PyLong_Check(obj) ||
+         PyIsInstance(obj, &PyIntegerArrType_Type);  // NumPy integers
+#else
+  return PyInt_Check(obj) || PyLong_Check(obj) ||
+         PyIsInstance(obj, &PyIntegerArrType_Type);  // NumPy integers
+#endif
+}
+
+bool IsPyDouble(PyObject* obj) {
+  return PyIsInstance(obj, &PyDoubleArrType_Type);  // NumPy double type.
+}
+
+bool IsNumpyHalf(PyObject* obj) {
+  return PyIsInstance(obj, &PyHalfArrType_Type);
+}
+
+bool IsPyFloat(PyObject* obj) {
+  return PyFloat_Check(obj) ||
+         PyIsInstance(obj, &PyFloatingArrType_Type);  // NumPy float types
+}
+
+// If the input is a zero dimensional PyArray return it converted to a scalar.
+// Otherwise return the input and increment its reference count.
+// Users must Py_DECREF the output of this method.
+PyObject* ZeroDimArrayToScalar(PyObject* obj) {
+  if (PyArray_IsZeroDim(obj) && !PyArray_IsScalar(obj, Generic)) {
+    auto pyarray_obj = reinterpret_cast<PyArrayObject*>(obj);
+    obj = PyArray_ToScalar(PyArray_DATA(pyarray_obj), pyarray_obj);
+  } else {
+    Py_INCREF(obj);
+  }
+  return obj;
+}
+
+// Converts Python object `c` that should hold a Python string into a
+// C++ string in *out.  Returns nullptr on success, or a message on error.
+// Defined below, but forward declared here for use in PyRepr.
+const char* ConvertOneString(PyObject* v, string* out);
+
+string PyRepr(PyObject* obj) {
+  if (obj == nullptr) {
+    return "<null>";
+  }
+  Safe_PyObjectPtr repr_obj = make_safe(PyObject_Repr(obj));
+  if (repr_obj) {
+    string repr_str;
+    if (ConvertOneString(repr_obj.get(), &repr_str) == nullptr) {
+      return repr_str;
+    }
+  }
+  return "<error computing repr()>";
+}
+
+bool IsPyDimension(PyObject* obj) {
+  const char* tp_name = obj->ob_type->tp_name;
+  if (strcmp(tp_name, "Dimension") != 0) return false;
+  bool ret = str_util::EndsWith(
+      PyRepr(PyType(obj)),
+      "tensorflow.python.framework.tensor_shape.Dimension'>");
+  return ret;
+}
+
+// Sets *elem to a NEW reference to an element in seq on success.
+// REQUIRES: PySequence_Check(seq) && PySequence_Length(seq) > 0.
+Status SampleElementFromSequence(PyObject* seq, PyObject** elem) {
+  *elem = PySequence_GetItem(seq, 0);
+  if (*elem != nullptr) return Status::OK();
+  // seq may implement the sequence protocol (i.e., implement __getitem__)
+  // but may legitimately not have a 0-th element (__getitem__(self, 0)
+  // raises a KeyError). For example:
+  // seq = pandas.Series([0, 1, 2], index=[2, 4, 6])
+  //
+  // We don't actually care for the element at key 0, any element will do
+  // for inferring the element types. All elements are expected to
+  // have the same type, and this will be validated when converting
+  // to an EagerTensor.
+  PyErr_Clear();
+  Safe_PyObjectPtr iter(PyObject_GetIter(seq));
+  if (PyErr_Occurred()) {
+    return errors::InvalidArgument("Cannot infer dtype of a ",
+                                   Py_TYPE(seq)->tp_name,
+                                   " object: ", PyExceptionFetch());
+  }
+  *elem = PyIter_Next(iter.get());
+  if (PyErr_Occurred()) {
+    return errors::InvalidArgument(
+        "Cannot infer dtype of a ", Py_TYPE(seq)->tp_name,
+        " object, as iter(<object>).next() failed: ", PyExceptionFetch());
+  }
+  if (*elem == nullptr) {
+    return errors::InvalidArgument("Cannot infer dtype of a ",
+                                   Py_TYPE(seq)->tp_name,
+                                   " object since it is an empty sequence");
+  }
+  return Status::OK();
+}
+
+Status InferShapeAndType(PyObject* obj, TensorShape* shape, DataType* dtype) {
+  std::vector<Safe_PyObjectPtr> refs_to_clean;
+  while (true) {
+    // Convert any zero dimensional numpy arrays to scalars first of all.
+    // We also have to make sure a reference to the safe_obj is kept.
+    obj = ZeroDimArrayToScalar(obj);
+    refs_to_clean.push_back(make_safe(obj));
+    // We test strings first, in case a string is considered a sequence.
+    if (IsPyString(obj)) {
+      *dtype = DT_STRING;
+    } else if (PySequence_Check(obj)) {
+      auto length = PySequence_Length(obj);
+      if (length > 0) {
+        shape->AddDim(length);
+        PyObject* elem = nullptr;
+        TF_RETURN_IF_ERROR(SampleElementFromSequence(obj, &elem));
+        obj = elem;
+        refs_to_clean.push_back(make_safe(obj));
+        continue;
+      } else if (length == 0) {
+        shape->AddDim(length);
+        *dtype = DT_INVALID;  // Invalid dtype for empty tensors.
+      } else {
+        // The sequence does not have a valid length (PySequence_Length < 0).
+        if (PyErr_Occurred()) {
+          // PySequence_Length failed and set an exception. Fetch the message
+          // and convert it to a failed status.
+          return errors::InvalidArgument(PyExceptionFetch());
+        } else {
+          // This is almost certainly dead code: PySequence_Length failed but
+          // did not set an exception.
+          return errors::InvalidArgument(
+              "Attempted to convert an invalid sequence to a Tensor.");
+        }
+      }
+    } else if (IsPyDouble(obj)) {
+      *dtype = DT_DOUBLE;
+    } else if (IsNumpyHalf(obj)) {
+      *dtype = DT_HALF;
+    } else if (IsPyFloat(obj)) {
+      *dtype = DT_FLOAT;
+    } else if (PyBool_Check(obj) || PyIsInstance(obj, &PyBoolArrType_Type)) {
+      // Have to test for bool before int, since IsInt(True/False) == true.
+      *dtype = DT_BOOL;
+    } else if (IsPyInt(obj)) {
+      *dtype = DT_INT64;
+    } else if (IsPyDimension(obj)) {
+      *dtype = DT_INT64;
+    } else if (PyComplex_Check(obj) ||
+               PyIsInstance(obj, &PyComplexFloatingArrType_Type)) {  // NumPy
+      *dtype = DT_COMPLEX128;
+    } else {
+      return errors::InvalidArgument("Attempt to convert a value (",
+                                     PyRepr(obj),
+                                     ") with an unsupported type (",
+                                     PyRepr(PyType(obj)), ") to a Tensor.");
+    }
+    return Status::OK();
+  }
+}
+
+// Error messages
+
+const char ErrorConverting[] =
+    "Error while converting Python sequence to Tensor.";
+const char ErrorRectangular[] =
+    "Can't convert non-rectangular Python sequence to Tensor.";
+const char ErrorMixedTypes[] =
+    "Can't convert Python sequence with mixed types to Tensor.";
+const char ErrorOutOfRange[] =
+    "Can't convert Python sequence with out-of-range integer to Tensor.";
+const char ErrorOutOfRangeDouble[] =
+    "Can't convert Python sequence with a value out of range for a "
+    "double-precision float.";
+const char ErrorConvertingUnicodeString[] =
+    "Error converting unicode string while converting Python sequence to "
+    "Tensor.";
+const char ErrorFoundInt64[] =
+    "Can't convert Python sequence with out-of-range integer to int32 Tensor.";
+const char ErrorFoundFloat[] =
+    "Can't convert Python sequence with floating point values to integer "
+    "Tensor.";
+
+// Template for defining a function for recursively convering obj into
+// an array of TYPE using the conversion function CONVERT.
+// Note that these helper functions require shape.dims() >= 1.
+
+#define DEFINE_HELPER(FUNCTION, TYPE, TYPE_ENUM, CONVERT)                 \
+  const char* FUNCTION##Helper(PyObject* obj, const TensorShape& shape,   \
+                               TYPE** buf) {                              \
+    if (TF_PREDICT_FALSE(obj == nullptr)) {                               \
+      return ErrorConverting;                                             \
+    }                                                                     \
+    if (shape.dims() > 1) {                                               \
+      /* Iterate over outer dim, and recursively convert each element. */ \
+      const int64 s = shape.dim_size(0);                                  \
+      Safe_PyObjectPtr seq = make_safe(PySequence_Fast(obj, ""));         \
+      if (TF_PREDICT_FALSE(seq == nullptr)) return ErrorRectangular;      \
+      if (TF_PREDICT_FALSE(s != PySequence_Fast_GET_SIZE(seq.get()))) {   \
+        return ErrorRectangular;                                          \
+      }                                                                   \
+      TensorShape rest = shape;                                           \
+      rest.RemoveDim(0);                                                  \
+      for (int64 i = 0; i < s; ++i) {                                     \
+        const char* error = FUNCTION##Helper(                             \
+            PySequence_Fast_GET_ITEM(seq.get(), i), rest, buf);           \
+        if (TF_PREDICT_FALSE(error != nullptr)) return error;             \
+      }                                                                   \
+    } else {                                                              \
+      Safe_PyObjectPtr seq = make_safe(PySequence_Fast(obj, ""));         \
+      if (TF_PREDICT_FALSE(seq == nullptr)) return ErrorRectangular;      \
+      const int64 s = shape.dim_size(0);                                  \
+      if (TF_PREDICT_FALSE(s != PySequence_Fast_GET_SIZE(seq.get()))) {   \
+        return ErrorRectangular;                                          \
+      }                                                                   \
+      PyObject** l = PySequence_Fast_ITEMS(seq.get());                    \
+      for (int64 i = 0; i < s; ++i) {                                     \
+        auto scalar = ZeroDimArrayToScalar(l[i]);                         \
+        const char* error = CONVERT(scalar, *buf);                        \
+        Py_DECREF(scalar);                                                \
+        if (TF_PREDICT_FALSE(error != nullptr)) return error;             \
+        ++*buf;                                                           \
+      }                                                                   \
+    }                                                                     \
+    return nullptr;                                                       \
+  }                                                                       \
+  const char* FUNCTION(PyObject* obj, const TensorShape& shape,           \
+                       Tensor* dest) {                                    \
+    /* TODO(josh11b): Allocator & attributes? */                            \
+    Tensor result(TYPE_ENUM, shape);                                      \
+    if (shape.dims() == 0) { /* Scalar case */                            \
+      TYPE value;                                                         \
+      auto scalar = ZeroDimArrayToScalar(obj);                            \
+      const char* error = CONVERT(scalar, &value);                        \
+      Py_DECREF(scalar);                                                  \
+      if (error != nullptr) return error;                                 \
+      result.scalar<TYPE>()() = value;                                    \
+    } else {                                                              \
+      TYPE* buf = result.flat<TYPE>().data();                             \
+      const char* error = FUNCTION##Helper(obj, shape, &buf);             \
+      if (error != nullptr) return error;                                 \
+    }                                                                     \
+    *dest = result;                                                       \
+    return nullptr;                                                       \
+  }
+
+// Int support
+
+const char* ConvertOneInt64(PyObject* v, int64* out) {
+#if PY_MAJOR_VERSION < 3
+  if (TF_PREDICT_TRUE(PyInt_Check(v))) {
+    *out = PyInt_AS_LONG(v);
+    return nullptr;
+  }
+#endif
+  if (TF_PREDICT_TRUE(PyLong_Check(v) || IsPyDimension(v))) {
+    int overflow = 0;
+    // Have to use LongLong for 64 bits, since long is 32 bits on Windows.
+    *out = PyLong_AsLongLongAndOverflow(v, &overflow);
+    if (TF_PREDICT_FALSE(overflow)) return ErrorOutOfRange;
+    return nullptr;
+  }
+  if (PyIsInstance(v, &PyIntegerArrType_Type)) {  // NumPy integers
+#if PY_MAJOR_VERSION < 3
+    Safe_PyObjectPtr as_int = make_safe(PyNumber_Int(v));
+#else
+    Safe_PyObjectPtr as_int = make_safe(PyNumber_Long(v));
+#endif
+    return ConvertOneInt64(as_int.get(), out);
+  }
+  if (IsPyFloat(v)) return ErrorFoundFloat;
+  return ErrorMixedTypes;
+}
+
+DEFINE_HELPER(ConvertInt64, int64, DT_INT64, ConvertOneInt64);
+
+const char* ConvertOneUint64(PyObject* v, uint64* out) {
+#if PY_MAJOR_VERSION < 3
+  if (TF_PREDICT_TRUE(PyInt_Check(v))) {
+    *out = PyInt_AsUnsignedLongLongMask(v);
+    return nullptr;
+  }
+#endif
+  if (TF_PREDICT_TRUE(PyLong_Check(v) || IsPyDimension(v))) {
+    *out = PyLong_AsUnsignedLongLong(v);
+    return nullptr;
+  }
+  if (PyIsInstance(v, &PyIntegerArrType_Type)) {  // NumPy integers
+#if PY_MAJOR_VERSION < 3
+    Safe_PyObjectPtr as_int = make_safe(PyNumber_Int(v));
+#else
+    Safe_PyObjectPtr as_int = make_safe(PyNumber_Long(v));
+#endif
+    return ConvertOneUint64(as_int.get(), out);
+  }
+  if (IsPyFloat(v)) return ErrorFoundFloat;
+  return ErrorMixedTypes;
+}
+
+DEFINE_HELPER(ConvertUint64, uint64, DT_UINT64, ConvertOneUint64);
+
+const char* ConvertOneInt32(PyObject* v, int32* out) {
+  int64 i;
+#if PY_MAJOR_VERSION < 3
+  if (TF_PREDICT_TRUE(PyInt_Check(v))) {
+    i = PyInt_AS_LONG(v);
+  } else
+#endif
+      if (PyLong_Check(v) || IsPyDimension(v)) {
+    int overflow = 0;
+    // Have to use LongLong for 64 bits, since long is 32 bits on Windows.
+    i = PyLong_AsLongLongAndOverflow(v, &overflow);
+    if (TF_PREDICT_FALSE(overflow)) return ErrorOutOfRange;
+  } else if (PyIsInstance(v, &PyIntegerArrType_Type)) {  // NumPy integers
+#if PY_MAJOR_VERSION < 3
+    Safe_PyObjectPtr as_int = make_safe(PyNumber_Int(v));
+#else
+    Safe_PyObjectPtr as_int = make_safe(PyNumber_Long(v));
+#endif
+    return ConvertOneInt32(as_int.get(), out);
+  } else if (IsPyFloat(v)) {
+    return ErrorFoundFloat;
+  } else {
+    return ErrorMixedTypes;
+  }
+  *out = static_cast<uint32>(static_cast<uint64>(i));
+  // Check for 32-bit overflow.
+  if (TF_PREDICT_FALSE(i != *out)) return ErrorFoundInt64;
+  return nullptr;
+}
+
+DEFINE_HELPER(ConvertInt32, int32, DT_INT32, ConvertOneInt32);
+
+// Floating-point support
+
+// Returns `true` if `out` overflows when converted from `as_double`.
+template <class T>
+static inline bool CheckForOverflow(double as_double, T* out) {
+  return (sizeof(T) < sizeof(double) && std::isinf(*out) &&
+          std::isfinite(as_double));
+}
+
+// There is no `std::isinf` that takes `Eigen::half` as argument but Eigen
+// provides `Eigen::half_impl::isinf` instead.
+template <>
+inline bool CheckForOverflow<Eigen::half>(double as_double, Eigen::half* out) {
+  return (sizeof(Eigen::half) < sizeof(double) &&
+          Eigen::half_impl::isinf(*out) && std::isfinite(as_double));
+}
+
+template <class T>
+const char* ConvertOneFloat(PyObject* v, T* out) {
+  if (PyErr_Occurred()) {
+    return nullptr;
+  }
+  if (TF_PREDICT_TRUE(PyFloat_Check(v))) {
+    const double as_double = PyFloat_AS_DOUBLE(v);
+    *out = static_cast<T>(as_double);
+    // Check for overflow
+    if (TF_PREDICT_FALSE(CheckForOverflow<T>(as_double, out))) {
+      return ErrorOutOfRangeDouble;
+    }
+    return nullptr;
+  }
+#if PY_MAJOR_VERSION < 3
+  if (PyInt_Check(v)) {
+    *out = static_cast<T>(PyInt_AS_LONG(v));
+    return nullptr;
+  }
+#endif
+  if (PyLong_Check(v)) {
+    *out = static_cast<T>(PyLong_AsDouble(v));
+    if (PyErr_Occurred()) return ErrorOutOfRangeDouble;
+    return nullptr;
+  }
+  if (PyIsInstance(v, &PyFloatingArrType_Type)) {  // NumPy float types
+    Safe_PyObjectPtr as_float = make_safe(PyNumber_Float(v));
+    if (PyErr_Occurred()) {
+      return nullptr;
+    }
+    return ConvertOneFloat<T>(as_float.get(), out);
+  }
+  if (PyIsInstance(v, &PyIntegerArrType_Type)) {  // NumPy integers
+#if PY_MAJOR_VERSION < 3
+    Safe_PyObjectPtr as_int = make_safe(PyNumber_Int(v));
+#else
+    Safe_PyObjectPtr as_int = make_safe(PyNumber_Long(v));
+#endif
+    if (PyErr_Occurred()) {
+      return nullptr;
+    }
+    return ConvertOneFloat<T>(as_int.get(), out);
+  }
+  return ErrorMixedTypes;
+}
+
+DEFINE_HELPER(ConvertDouble, double, DT_DOUBLE, ConvertOneFloat<double>);
+DEFINE_HELPER(ConvertFloat, float, DT_FLOAT, ConvertOneFloat<float>);
+
+const char* ConvertOneNumpyHalf(PyObject* v, Eigen::half* out) {
+  // NOTE(nareshmodi): Is there a way to convert to C double without the
+  // intermediate Python double? This will help with ConvertOneFloat as well.
+  Safe_PyObjectPtr as_float = make_safe(PyNumber_Float(v));
+  double v_double = PyFloat_AS_DOUBLE(as_float.get());
+  *out = Eigen::half(v_double);
+
+  return nullptr;
+}
+DEFINE_HELPER(ConvertNumpyHalf, Eigen::half, DT_HALF, ConvertOneNumpyHalf);
+
+<<<<<<< HEAD
+// String support
+
+const char* ConvertOneString(PyObject* v, string* out) {
+  if (PyBytes_Check(v)) {
+    out->assign(PyBytes_AS_STRING(v), PyBytes_GET_SIZE(v));
+    return nullptr;
+=======
+  static const char* ConvertScalar(PyObject* v, Eigen::half* out) {
+    return ConvertOneFloat<Eigen::half>(v, out);
+>>>>>>> c6170fb37c... Fix segfault when attempting to convert string to float16.
+  }
+  if (PyUnicode_Check(v)) {
+#if PY_MAJOR_VERSION >= 3
+    Py_ssize_t size;
+    const char* str = PyUnicode_AsUTF8AndSize(v, &size);
+    if (str == nullptr) return ErrorConvertingUnicodeString;
+    out->assign(str, size);
+    return nullptr;
+#else
+    PyObject* py_str = PyUnicode_AsUTF8String(v);
+    if (py_str == nullptr) return ErrorConvertingUnicodeString;
+    out->assign(PyBytes_AS_STRING(py_str), PyBytes_GET_SIZE(py_str));
+    Py_DECREF(py_str);
+    return nullptr;
+#endif
+  }
+  return ErrorMixedTypes;
+}
+
+DEFINE_HELPER(ConvertString, string, DT_STRING, ConvertOneString);
+
+// Complex support
+
+const char* ConvertOneComplex(PyObject* v, complex128* out) {
+  if (PyComplex_Check(v)) {
+    *out = complex128(PyComplex_RealAsDouble(v), PyComplex_ImagAsDouble(v));
+    return nullptr;
+  } else if (PyIsInstance(v, &PyComplexFloatingArrType_Type)) {  // NumPy
+    auto as_complex = PyComplex_AsCComplex(v);
+    *out = complex128(as_complex.real, as_complex.imag);
+    return nullptr;
+  }
+  return ErrorMixedTypes;
+}
+
+DEFINE_HELPER(ConvertComplex, complex128, DT_COMPLEX128, ConvertOneComplex);
+
+// Bool support
+
+const char* ConvertOneBool(PyObject* v, bool* out) {
+  if (v == Py_True) {
+    *out = true;
+  } else if (v == Py_False) {
+    *out = false;
+  } else if (PyIsInstance(v, &PyBoolArrType_Type)) {  // NumPy
+    *out = PyObject_IsTrue(v);
+  } else {
+    return ErrorMixedTypes;
+  }
+  return nullptr;
+}
+
+DEFINE_HELPER(ConvertBool, bool, DT_BOOL, ConvertOneBool);
+
+#undef DEFINE_HELPER
+
+}  // namespace
+
+#define RETURN_STRING_AS_STATUS(...)                             \
+  do {                                                           \
+    const char* _error = (__VA_ARGS__);                          \
+    if (TF_PREDICT_TRUE(_error == nullptr)) return Status::OK(); \
+    return errors::InvalidArgument(_error);                      \
+  } while (0)
+
+Status PySeqToTensor(PyObject* obj, DataType dtype, Tensor* ret) {
+  DataType infer_dtype;
+  TensorShape shape;
+  TF_RETURN_IF_ERROR(InferShapeAndType(obj, &shape, &infer_dtype));
+  DataType requested_dtype = DT_INVALID;
+  if (dtype != DT_INVALID) {
+    requested_dtype = dtype;
+  }
+  // NOTE(josh11b): If don't successfully convert to the requested type,
+  // we just try instead to create a tensor of the inferred type and
+  // let the caller convert it to the requested type using a cast
+  // operation.
+  switch (requested_dtype) {
+    case DT_FLOAT:
+      if (ConvertFloat(obj, shape, ret) == nullptr) return Status::OK();
+      break;
+
+    case DT_DOUBLE:
+      if (ConvertDouble(obj, shape, ret) == nullptr) return Status::OK();
+      break;
+
+    case DT_HALF:
+<<<<<<< HEAD
+      RETURN_STRING_AS_STATUS(ConvertNumpyHalf(obj, shape, ret));
+=======
+      if (NumpyHalfConverter::Convert(obj, &shape, ret) == nullptr)
+        return Status::OK();
+      break;
+>>>>>>> c6170fb37c... Fix segfault when attempting to convert string to float16.
+
+    case DT_INT64:
+      if (ConvertInt64(obj, shape, ret) == nullptr) return Status::OK();
+      break;
+
+    case DT_INT32:
+      if (ConvertInt32(obj, shape, ret) == nullptr) return Status::OK();
+      break;
+
+    case DT_UINT64:
+      if (ConvertUint64(obj, shape, ret) == nullptr) return Status::OK();
+      break;
+
+    case DT_COMPLEX128:
+      if (ConvertComplex(obj, shape, ret) == nullptr) return Status::OK();
+      break;
+
+    case DT_STRING:
+      if (ConvertString(obj, shape, ret) == nullptr) return Status::OK();
+      break;
+
+    case DT_BOOL:
+      if (ConvertBool(obj, shape, ret) == nullptr) return Status::OK();
+      break;
+
+    default:
+      break;
+  }
+  switch (infer_dtype) {
+    case DT_FLOAT:
+      // TODO(josh11b): Handle mixed floats and complex numbers?
+      if (requested_dtype == DT_INVALID) {
+        // TensorFlow uses float32s to represent floating point numbers
+        // by default (for space and speed over using doubles).
+        RETURN_STRING_AS_STATUS(ConvertFloat(obj, shape, ret));
+      } else {
+        // We are going to do a cast to the user's requested dtype
+        // after this.  We use doubles for this intermediate result so
+        // we don't lose precision that might be representable in the
+        // final type.
+        RETURN_STRING_AS_STATUS(ConvertDouble(obj, shape, ret));
+      }
+
+    case DT_DOUBLE:
+      RETURN_STRING_AS_STATUS(ConvertDouble(obj, shape, ret));
+
+    case DT_HALF:
+      RETURN_STRING_AS_STATUS(ConvertNumpyHalf(obj, shape, ret));
+
+    case DT_INT64:
+      if (requested_dtype == DT_INVALID) {
+        const char* error = ConvertInt32(obj, shape, ret);
+        if (error == ErrorFoundInt64) {
+          error = ConvertInt64(obj, shape, ret);
+        }
+        if (error == ErrorFoundFloat) {
+          error = ConvertFloat(obj, shape, ret);
+        }
+        // TODO(josh11b): May also want to fall back to using doubles if
+        // error == ErrorOutOfRange?
+        RETURN_STRING_AS_STATUS(error);
+      } else {
+        const char* error = ConvertInt64(obj, shape, ret);
+        if (error == ErrorFoundFloat) {
+          error = ConvertDouble(obj, shape, ret);
+        }
+        RETURN_STRING_AS_STATUS(error);
+      }
+
+    case DT_STRING:
+      RETURN_STRING_AS_STATUS(ConvertString(obj, shape, ret));
+
+    case DT_COMPLEX128:
+      RETURN_STRING_AS_STATUS(ConvertComplex(obj, shape, ret));
+
+    case DT_BOOL:
+      RETURN_STRING_AS_STATUS(ConvertBool(obj, shape, ret));
+
+    case DT_INVALID:  // Only occurs for empty tensors.
+      *ret = Tensor(requested_dtype == DT_INVALID ? DT_FLOAT : requested_dtype,
+                    shape);
+      return Status::OK();
+
+    default:
+      return errors::Unimplemented("Missing Python -> Tensor conversion for ",
+                                   DataTypeString(infer_dtype));
+  }
+
+  return Status::OK();
+}
+
+}  // namespace tensorflow
+
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: viewcode
+{
+  "ref": "54a06baa1cf13bd7057c5ce372c90f6bbe1cbc57",
+  "path": "tensorflow/python/BUILD",
+  "startline": 1800,
+  "endline": 1875
+}
+Here are lines 1800 through 1875.
+
+        ":platform_test",
+        ":tensor_spec",
+        "//third_party/py/numpy",
+    ],
+    main = "framework/tensor_spec_test.py",
+)
+
+tf_py_test(
+    name = "framework_sparse_tensor_test",
+    size = "small",
+    srcs = ["framework/sparse_tensor_test.py"],
+    additional_deps = [
+        ":framework",
+        ":framework_for_generated_wrappers",
+        ":framework_test_lib",
+        ":platform_test",
+        "//tensorflow/core:protos_all_py",
+    ],
+    main = "framework/sparse_tensor_test.py",
+)
+
+tf_py_test(
+    name = "framework_device_spec_test",
+    size = "small",
+    srcs = ["framework/device_spec_test.py"],
+    additional_deps = [
+        ":framework_for_generated_wrappers",
+        ":framework_test_lib",
+        ":platform_test",
+        "//tensorflow/core:protos_all_py",
+    ],
+    main = "framework/device_spec_test.py",
+)
+
+tf_py_test(
+    name = "framework_device_test",
+    size = "small",
+    srcs = ["framework/device_test.py"],
+    additional_deps = [
+        ":framework_for_generated_wrappers",
+        ":framework_test_lib",
+        ":platform_test",
+        "//tensorflow/core:protos_all_py",
+    ],
+    main = "framework/device_test.py",
+)
+
+tf_py_test(
+    name = "framework_random_seed_test",
+    size = "small",
+    srcs = ["framework/random_seed_test.py"],
+    additional_deps = [
+        ":client_testlib",
+        ":framework",
+    ],
+    main = "framework/random_seed_test.py",
+)
+
+tf_py_test(
+    name = "framework_tensor_shape_div_test",
+    size = "small",
+    srcs = ["framework/tensor_shape_div_test.py"],
+    additional_deps = [
+        ":framework_for_generated_wrappers",
+        ":framework_test_lib",
+        ":platform_test",
+        "@six_archive//:six",
+        "//tensorflow/core:protos_all_py",
+    ],
+    main = "framework/tensor_shape_div_test.py",
+)
+
+tf_py_test(
+    name = "framework_tensor_util_test",
+    size = "small",
+    srcs = ["framework/tensor_util_test.py"],
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tokens used
+input: 5,159
+cache read: 4,608
+cache write: 0
+output: 186
+reasoning output: 0
+
+The target file already contains overlapping patch content plus unresolved conflict markers in the displayed base context, so I’m checking the current worktree carefully before editing to avoid preserving a broken merge artifact.
+
+tool: read
+{
+  "filePath": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0159-54a06baa1cf1\\tensorflow\\python\\lib\\core\\py_seq_tensor.cc",
+  "offset": 360,
+  "limit": 280
+}
+<path>C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0159-54a06baa1cf1\tensorflow\python\lib\core\py_seq_tensor.cc</path>
+<type>file</type>
+<content>
+360: #else
+361:     Safe_PyObjectPtr as_int = make_safe(PyNumber_Long(v));
+362: #endif
+363:     return ConvertOneInt32(as_int.get(), out);
+364:   } else if (IsPyFloat(v)) {
+365:     return ErrorFoundFloat;
+366:   } else {
+367:     return ErrorMixedTypes;
+368:   }
+369:   *out = static_cast<uint32>(static_cast<uint64>(i));
+370:   // Check for 32-bit overflow.
+371:   if (TF_PREDICT_FALSE(i != *out)) return ErrorFoundInt64;
+372:   return nullptr;
+373: }
+374: 
+375: DEFINE_HELPER(ConvertInt32, int32, DT_INT32, ConvertOneInt32);
+376: 
+377: // Floating-point support
+378: 
+379: // Returns `true` if `out` overflows when converted from `as_double`.
+380: template <class T>
+381: static inline bool CheckForOverflow(double as_double, T* out) {
+382:   return (sizeof(T) < sizeof(double) && std::isinf(*out) &&
+383:           std::isfinite(as_double));
+384: }
+385: 
+386: // There is no `std::isinf` that takes `Eigen::half` as argument but Eigen
+387: // provides `Eigen::half_impl::isinf` instead.
+388: template <>
+389: inline bool CheckForOverflow<Eigen::half>(double as_double, Eigen::half* out) {
+390:   return (sizeof(Eigen::half) < sizeof(double) &&
+391:           Eigen::half_impl::isinf(*out) && std::isfinite(as_double));
+392: }
+393: 
+394: template <class T>
+395: const char* ConvertOneFloat(PyObject* v, T* out) {
+396:   if (PyErr_Occurred()) {
+397:     return nullptr;
+398:   }
+399:   if (TF_PREDICT_TRUE(PyFloat_Check(v))) {
+400:     const double as_double = PyFloat_AS_DOUBLE(v);
+401:     *out = static_cast<T>(as_double);
+402:     // Check for overflow
+403:     if (TF_PREDICT_FALSE(CheckForOverflow<T>(as_double, out))) {
+404:       return ErrorOutOfRangeDouble;
+405:     }
+406:     return nullptr;
+407:   }
+408: #if PY_MAJOR_VERSION < 3
+409:   if (PyInt_Check(v)) {
+410:     *out = static_cast<T>(PyInt_AS_LONG(v));
+411:     return nullptr;
+412:   }
+413: #endif
+414:   if (PyLong_Check(v)) {
+415:     *out = static_cast<T>(PyLong_AsDouble(v));
+416:     if (PyErr_Occurred()) return ErrorOutOfRangeDouble;
+417:     return nullptr;
+418:   }
+419:   if (PyIsInstance(v, &PyFloatingArrType_Type)) {  // NumPy float types
+420:     Safe_PyObjectPtr as_float = make_safe(PyNumber_Float(v));
+421:     if (PyErr_Occurred()) {
+422:       return nullptr;
+423:     }
+424:     return ConvertOneFloat<T>(as_float.get(), out);
+425:   }
+426:   if (PyIsInstance(v, &PyIntegerArrType_Type)) {  // NumPy integers
+427: #if PY_MAJOR_VERSION < 3
+428:     Safe_PyObjectPtr as_int = make_safe(PyNumber_Int(v));
+429: #else
+430:     Safe_PyObjectPtr as_int = make_safe(PyNumber_Long(v));
+431: #endif
+432:     if (PyErr_Occurred()) {
+433:       return nullptr;
+434:     }
+435:     return ConvertOneFloat<T>(as_int.get(), out);
+436:   }
+437:   return ErrorMixedTypes;
+438: }
+439: 
+440: DEFINE_HELPER(ConvertDouble, double, DT_DOUBLE, ConvertOneFloat<double>);
+441: DEFINE_HELPER(ConvertFloat, float, DT_FLOAT, ConvertOneFloat<float>);
+442: 
+443: const char* ConvertOneNumpyHalf(PyObject* v, Eigen::half* out) {
+444:   // NOTE(nareshmodi): Is there a way to convert to C double without the
+445:   // intermediate Python double? This will help with ConvertOneFloat as well.
+446:   Safe_PyObjectPtr as_float = make_safe(PyNumber_Float(v));
+447:   double v_double = PyFloat_AS_DOUBLE(as_float.get());
+448:   *out = Eigen::half(v_double);
+449: 
+450:   return nullptr;
+451: }
+452: DEFINE_HELPER(ConvertNumpyHalf, Eigen::half, DT_HALF, ConvertOneNumpyHalf);
+453: 
+454: <<<<<<< HEAD
+455: // String support
+456: 
+457: const char* ConvertOneString(PyObject* v, string* out) {
+458:   if (PyBytes_Check(v)) {
+459:     out->assign(PyBytes_AS_STRING(v), PyBytes_GET_SIZE(v));
+460:     return nullptr;
+461: =======
+462:   static const char* ConvertScalar(PyObject* v, Eigen::half* out) {
+463:     return ConvertOneFloat<Eigen::half>(v, out);
+464: >>>>>>> c6170fb37c... Fix segfault when attempting to convert string to float16.
+465:   }
+466:   if (PyUnicode_Check(v)) {
+467: #if PY_MAJOR_VERSION >= 3
+468:     Py_ssize_t size;
+469:     const char* str = PyUnicode_AsUTF8AndSize(v, &size);
+470:     if (str == nullptr) return ErrorConvertingUnicodeString;
+471:     out->assign(str, size);
+472:     return nullptr;
+473: #else
+474:     PyObject* py_str = PyUnicode_AsUTF8String(v);
+475:     if (py_str == nullptr) return ErrorConvertingUnicodeString;
+476:     out->assign(PyBytes_AS_STRING(py_str), PyBytes_GET_SIZE(py_str));
+477:     Py_DECREF(py_str);
+478:     return nullptr;
+479: #endif
+480:   }
+481:   return ErrorMixedTypes;
+482: }
+483: 
+484: DEFINE_HELPER(ConvertString, string, DT_STRING, ConvertOneString);
+485: 
+486: // Complex support
+487: 
+488: const char* ConvertOneComplex(PyObject* v, complex128* out) {
+489:   if (PyComplex_Check(v)) {
+490:     *out = complex128(PyComplex_RealAsDouble(v), PyComplex_ImagAsDouble(v));
+491:     return nullptr;
+492:   } else if (PyIsInstance(v, &PyComplexFloatingArrType_Type)) {  // NumPy
+493:     auto as_complex = PyComplex_AsCComplex(v);
+494:     *out = complex128(as_complex.real, as_complex.imag);
+495:     return nullptr;
+496:   }
+497:   return ErrorMixedTypes;
+498: }
+499: 
+500: DEFINE_HELPER(ConvertComplex, complex128, DT_COMPLEX128, ConvertOneComplex);
+501: 
+502: // Bool support
+503: 
+504: const char* ConvertOneBool(PyObject* v, bool* out) {
+505:   if (v == Py_True) {
+506:     *out = true;
+507:   } else if (v == Py_False) {
+508:     *out = false;
+509:   } else if (PyIsInstance(v, &PyBoolArrType_Type)) {  // NumPy
+510:     *out = PyObject_IsTrue(v);
+511:   } else {
+512:     return ErrorMixedTypes;
+513:   }
+514:   return nullptr;
+515: }
+516: 
+517: DEFINE_HELPER(ConvertBool, bool, DT_BOOL, ConvertOneBool);
+518: 
+519: #undef DEFINE_HELPER
+520: 
+521: }  // namespace
+522: 
+523: #define RETURN_STRING_AS_STATUS(...)                             \
+524:   do {                                                           \
+525:     const char* _error = (__VA_ARGS__);                          \
+526:     if (TF_PREDICT_TRUE(_error == nullptr)) return Status::OK(); \
+527:     return errors::InvalidArgument(_error);                      \
+528:   } while (0)
+529: 
+530: Status PySeqToTensor(PyObject* obj, DataType dtype, Tensor* ret) {
+531:   DataType infer_dtype;
+532:   TensorShape shape;
+533:   TF_RETURN_IF_ERROR(InferShapeAndType(obj, &shape, &infer_dtype));
+534:   DataType requested_dtype = DT_INVALID;
+535:   if (dtype != DT_INVALID) {
+536:     requested_dtype = dtype;
+537:   }
+538:   // NOTE(josh11b): If don't successfully convert to the requested type,
+539:   // we just try instead to create a tensor of the inferred type and
+540:   // let the caller convert it to the requested type using a cast
+541:   // operation.
+542:   switch (requested_dtype) {
+543:     case DT_FLOAT:
+544:       if (ConvertFloat(obj, shape, ret) == nullptr) return Status::OK();
+545:       break;
+546: 
+547:     case DT_DOUBLE:
+548:       if (ConvertDouble(obj, shape, ret) == nullptr) return Status::OK();
+549:       break;
+550: 
+551:     case DT_HALF:
+552: <<<<<<< HEAD
+553:       RETURN_STRING_AS_STATUS(ConvertNumpyHalf(obj, shape, ret));
+554: =======
+555:       if (NumpyHalfConverter::Convert(obj, &shape, ret) == nullptr)
+556:         return Status::OK();
+557:       break;
+558: >>>>>>> c6170fb37c... Fix segfault when attempting to convert string to float16.
+559: 
+560:     case DT_INT64:
+561:       if (ConvertInt64(obj, shape, ret) == nullptr) return Status::OK();
+562:       break;
+563: 
+564:     case DT_INT32:
+565:       if (ConvertInt32(obj, shape, ret) == nullptr) return Status::OK();
+566:       break;
+567: 
+568:     case DT_UINT64:
+569:       if (ConvertUint64(obj, shape, ret) == nullptr) return Status::OK();
+570:       break;
+571: 
+572:     case DT_COMPLEX128:
+573:       if (ConvertComplex(obj, shape, ret) == nullptr) return Status::OK();
+574:       break;
+575: 
+576:     case DT_STRING:
+577:       if (ConvertString(obj, shape, ret) == nullptr) return Status::OK();
+578:       break;
+579: 
+580:     case DT_BOOL:
+581:       if (ConvertBool(obj, shape, ret) == nullptr) return Status::OK();
+582:       break;
+583: 
+584:     default:
+585:       break;
+586:   }
+587:   switch (infer_dtype) {
+588:     case DT_FLOAT:
+589:       // TODO(josh11b): Handle mixed floats and complex numbers?
+590:       if (requested_dtype == DT_INVALID) {
+591:         // TensorFlow uses float32s to represent floating point numbers
+592:         // by default (for space and speed over using doubles).
+593:         RETURN_STRING_AS_STATUS(ConvertFloat(obj, shape, ret));
+594:       } else {
+595:         // We are going to do a cast to the user's requested dtype
+596:         // after this.  We use doubles for this intermediate result so
+597:         // we don't lose precision that might be representable in the
+598:         // final type.
+599:         RETURN_STRING_AS_STATUS(ConvertDouble(obj, shape, ret));
+600:       }
+601: 
+602:     case DT_DOUBLE:
+603:       RETURN_STRING_AS_STATUS(ConvertDouble(obj, shape, ret));
+604: 
+605:     case DT_HALF:
+606:       RETURN_STRING_AS_STATUS(ConvertNumpyHalf(obj, shape, ret));
+607: 
+608:     case DT_INT64:
+609:       if (requested_dtype == DT_INVALID) {
+610:         const char* error = ConvertInt32(obj, shape, ret);
+611:         if (error == ErrorFoundInt64) {
+612:           error = ConvertInt64(obj, shape, ret);
+613:         }
+614:         if (error == ErrorFoundFloat) {
+615:           error = ConvertFloat(obj, shape, ret);
+616:         }
+617:         // TODO(josh11b): May also want to fall back to using doubles if
+618:         // error == ErrorOutOfRange?
+619:         RETURN_STRING_AS_STATUS(error);
+620:       } else {
+621:         const char* error = ConvertInt64(obj, shape, ret);
+622:         if (error == ErrorFoundFloat) {
+623:           error = ConvertDouble(obj, shape, ret);
+624:         }
+625:         RETURN_STRING_AS_STATUS(error);
+626:       }
+627: 
+628:     case DT_STRING:
+629:       RETURN_STRING_AS_STATUS(ConvertString(obj, shape, ret));
+630: 
+631:     case DT_COMPLEX128:
+632:       RETURN_STRING_AS_STATUS(ConvertComplex(obj, shape, ret));
+633: 
+634:     case DT_BOOL:
+635:       RETURN_STRING_AS_STATUS(ConvertBool(obj, shape, ret));
+636: 
+637:     case DT_INVALID:  // Only occurs for empty tensors.
+638:       *ret = Tensor(requested_dtype == DT_INVALID ? DT_FLOAT : requested_dtype,
+639:                     shape);
+
+(Showing lines 360-639 of 650. Use offset=640 to continue.)
+</content>
+
+tool: read
+{
+  "filePath": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0159-54a06baa1cf1\\tensorflow\\python\\framework\\constant_op_test.py",
+  "offset": 1,
+  "limit": 100
+}
+<path>C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0159-54a06baa1cf1\tensorflow\python\framework\constant_op_test.py</path>
+<type>file</type>
+<content>
+1: # Copyright 2020 The TensorFlow Authors. All Rights Reserved.
+2: #
+3: # Licensed under the Apache License, Version 2.0 (the "License");
+4: # you may not use this file except in compliance with the License.
+5: # You may obtain a copy of the License at
+6: #
+7: #     http://www.apache.org/licenses/LICENSE-2.0
+8: #
+9: # Unless required by applicable law or agreed to in writing, software
+10: # distributed under the License is distributed on an "AS IS" BASIS,
+11: # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+12: # See the License for the specific language governing permissions and
+13: # limitations under the License.
+14: # ==============================================================================
+15: """Tests for tensorflow.python.framework.constant_op."""
+16: 
+17: from __future__ import absolute_import
+18: from __future__ import division
+19: from __future__ import print_function
+20: 
+21: from absl.testing import parameterized
+22: 
+23: from tensorflow.python.framework import constant_op
+24: from tensorflow.python.framework import dtypes
+25: from tensorflow.python.framework import ops
+26: from tensorflow.python.platform import test
+27: 
+28: 
+29: class ConstantOpTest(test.TestCase, parameterized.TestCase):
+30: 
+31:   @parameterized.parameters(
+32:       dtypes.bfloat16,
+33:       dtypes.complex128,
+34:       dtypes.complex64,
+35:       dtypes.double,
+36:       dtypes.float16,
+37:       dtypes.float32,
+38:       dtypes.float64,
+39:       dtypes.half,
+40:       dtypes.int16,
+41:       dtypes.int32,
+42:       dtypes.int64,
+43:       dtypes.int8,
+44:       dtypes.qint16,
+45:       dtypes.qint32,
+46:       dtypes.qint8,
+47:       dtypes.quint16,
+48:       dtypes.quint8,
+49:       dtypes.uint16,
+50:       dtypes.uint32,
+51:       dtypes.uint64,
+52:       dtypes.uint8,
+53:   )
+54:   def test_convert_string_to_number(self, dtype):
+55:     with self.assertRaises(TypeError):
+56:       constant_op.constant("hello", dtype)
+57: 
+58: 
+59: if __name__ == "__main__":
+60:   ops.enable_eager_execution()
+61:   test.main()
+
+(End of file - total 61 lines)
+</content>
+
+tool: read
+{
+  "filePath": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0159-54a06baa1cf1\\tensorflow\\python\\BUILD",
+  "offset": 1810,
+  "limit": 80
+}
+<path>C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0159-54a06baa1cf1\tensorflow\python\BUILD</path>
+<type>file</type>
+<content>
+1810:     srcs = ["framework/sparse_tensor_test.py"],
+1811:     additional_deps = [
+1812:         ":framework",
+1813:         ":framework_for_generated_wrappers",
+1814:         ":framework_test_lib",
+1815:         ":platform_test",
+1816:         "//tensorflow/core:protos_all_py",
+1817:     ],
+1818:     main = "framework/sparse_tensor_test.py",
+1819: )
+1820: 
+1821: tf_py_test(
+1822:     name = "framework_device_spec_test",
+1823:     size = "small",
+1824:     srcs = ["framework/device_spec_test.py"],
+1825:     additional_deps = [
+1826:         ":framework_for_generated_wrappers",
+1827:         ":framework_test_lib",
+1828:         ":platform_test",
+1829:         "//tensorflow/core:protos_all_py",
+1830:     ],
+1831:     main = "framework/device_spec_test.py",
+1832: )
+1833: 
+1834: tf_py_test(
+1835:     name = "framework_device_test",
+1836:     size = "small",
+1837:     srcs = ["framework/device_test.py"],
+1838:     additional_deps = [
+1839:         ":framework_for_generated_wrappers",
+1840:         ":framework_test_lib",
+1841:         ":platform_test",
+1842:         "//tensorflow/core:protos_all_py",
+1843:     ],
+1844:     main = "framework/device_test.py",
+1845: )
+1846: 
+1847: tf_py_test(
+1848:     name = "framework_random_seed_test",
+1849:     size = "small",
+1850:     srcs = ["framework/random_seed_test.py"],
+1851:     additional_deps = [
+1852:         ":client_testlib",
+1853:         ":framework",
+1854:     ],
+1855:     main = "framework/random_seed_test.py",
+1856: )
+1857: 
+1858: tf_py_test(
+1859:     name = "framework_tensor_shape_div_test",
+1860:     size = "small",
+1861:     srcs = ["framework/tensor_shape_div_test.py"],
+1862:     additional_deps = [
+1863:         ":framework_for_generated_wrappers",
+1864:         ":framework_test_lib",
+1865:         ":platform_test",
+1866:         "@six_archive//:six",
+1867:         "//tensorflow/core:protos_all_py",
+1868:     ],
+1869:     main = "framework/tensor_shape_div_test.py",
+1870: )
+1871: 
+1872: tf_py_test(
+1873:     name = "framework_tensor_util_test",
+1874:     size = "small",
+1875:     srcs = ["framework/tensor_util_test.py"],
+1876:     additional_deps = [
+1877:         ":array_ops",
+1878:         ":client_testlib",
+1879:         ":framework",
+1880:         ":framework_for_generated_wrappers",
+1881:         ":framework_test_lib",
+1882:         ":math_ops",
+1883:         ":state_ops_gen",
+1884:         "//third_party/py/numpy",
+1885:     ],
+1886:     main = "framework/tensor_util_test.py",
+1887:     tags = ["no_windows"],
+1888: )
+1889: 
+
+(Showing lines 1810-1889 of 6972. Use offset=1890 to continue.)
+</content>
+
+tokens used
+input: 16,317
+cache read: 0
+cache write: 0
+output: 274
+reasoning output: 46
+
+The test file is already present and the BUILD target is still missing; the C++ file needs the conflict markers resolved to the intended safe conversion behavior.
+
+tool: read
+{
+  "filePath": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0159-54a06baa1cf1\\tensorflow\\python\\lib\\core\\py_seq_tensor.cc",
+  "offset": 1,
+  "limit": 40
+}
+<path>C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0159-54a06baa1cf1\tensorflow\python\lib\core\py_seq_tensor.cc</path>
+<type>file</type>
+<content>
+1: /* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
+2: 
+3: Licensed under the Apache License, Version 2.0 (the "License");
+4: you may not use this file except in compliance with the License.
+5: You may obtain a copy of the License at
+6: 
+7:     http://www.apache.org/licenses/LICENSE-2.0
+8: 
+9: Unless required by applicable law or agreed to in writing, software
+10: distributed under the License is distributed on an "AS IS" BASIS,
+11: WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+12: See the License for the specific language governing permissions and
+13: limitations under the License.
+14: ==============================================================================*/
+15: 
+16: #include "tensorflow/python/lib/core/py_seq_tensor.h"
+17: 
+18: #include "tensorflow/core/framework/tensor.h"
+19: #include "tensorflow/core/framework/tensor_shape.h"
+20: #include "tensorflow/core/framework/types.h"
+21: #include "tensorflow/core/lib/core/errors.h"
+22: #include "tensorflow/core/lib/core/stringpiece.h"
+23: #include "tensorflow/core/lib/strings/str_util.h"
+24: #include "tensorflow/core/platform/macros.h"
+25: #include "tensorflow/core/platform/types.h"
+26: #include "tensorflow/python/lib/core/numpy.h"
+27: #include "tensorflow/python/lib/core/py_util.h"
+28: #include "tensorflow/python/lib/core/safe_ptr.h"
+29: 
+30: namespace tensorflow {
+31: namespace {
+32: 
+33: inline bool PyIsInstance(PyObject* obj, PyTypeObject* t) {
+34:   return PyObject_IsInstance(obj, reinterpret_cast<PyObject*>(t));
+35: }
+36: 
+37: inline PyObject* PyType(PyObject* obj) {
+38:   return reinterpret_cast<PyObject*>(obj->ob_type);
+39: }
+40: 
+
+(Showing lines 1-40 of 650. Use offset=41 to continue.)
+</content>
+
+tool: grep
+{
+  "pattern": "<<<<<<<|=======|>>>>>>>",
+  "path": "tensorflow/python/lib/core/py_seq_tensor.cc"
+}
+Found 29 matches
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0159-54a06baa1cf1\tensorflow\python\lib\core\bfloat16.cc:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0159-54a06baa1cf1\tensorflow\python\lib\core\bfloat16.h:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0159-54a06baa1cf1\tensorflow\python\lib\core\bfloat16.i:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0159-54a06baa1cf1\tensorflow\python\lib\core\bfloat16_test.py:
+  Line 14: # ==============================================================================
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0159-54a06baa1cf1\tensorflow\python\lib\core\ndarray_tensor.cc:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0159-54a06baa1cf1\tensorflow\python\lib\core\ndarray_tensor.h:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0159-54a06baa1cf1\tensorflow\python\lib\core\ndarray_tensor_bridge.cc:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0159-54a06baa1cf1\tensorflow\python\lib\core\ndarray_tensor_bridge.h:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0159-54a06baa1cf1\tensorflow\python\lib\core\numpy.cc:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0159-54a06baa1cf1\tensorflow\python\lib\core\numpy.h:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0159-54a06baa1cf1\tensorflow\python\lib\core\py_exception_registry.cc:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0159-54a06baa1cf1\tensorflow\python\lib\core\py_exception_registry.h:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0159-54a06baa1cf1\tensorflow\python\lib\core\py_exception_registry.i:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0159-54a06baa1cf1\tensorflow\python\lib\core\py_func.cc:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0159-54a06baa1cf1\tensorflow\python\lib\core\py_func.h:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0159-54a06baa1cf1\tensorflow\python\lib\core\py_func.i:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0159-54a06baa1cf1\tensorflow\python\lib\core\py_seq_tensor.cc:
+  Line 14: ==============================================================================*/
+
+  Line 454: <<<<<<< HEAD
+
+  Line 461: =======
+
+  Line 464: >>>>>>> c6170fb37c... Fix segfault when attempting to convert string to float16.
+
+  Line 552: <<<<<<< HEAD
+
+  Line 554: =======
+
+  Line 558: >>>>>>> c6170fb37c... Fix segfault when attempting to convert string to float16.
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0159-54a06baa1cf1\tensorflow\python\lib\core\py_seq_tensor.h:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0159-54a06baa1cf1\tensorflow\python\lib\core\py_util.cc:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0159-54a06baa1cf1\tensorflow\python\lib\core\py_util.h:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0159-54a06baa1cf1\tensorflow\python\lib\core\safe_ptr.cc:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0159-54a06baa1cf1\tensorflow\python\lib\core\safe_ptr.h:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0159-54a06baa1cf1\tensorflow\python\lib\core\strings.i:
+  Line 14: ==============================================================================*/
+
+tool: grep
+{
+  "pattern": "framework_constant_op_test|constant_op_test",
+  "path": "tensorflow/python/BUILD"
+}
+Found 6 matches
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0159-54a06baa1cf1\tensorflow\python\BUILD:
+  Line 1410:     name = "framework_constant_op_test",
+
+  Line 1412:     srcs = ["framework/constant_op_test.py"],
+
+  Line 1413:     main = "framework/constant_op_test.py",
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0159-54a06baa1cf1\tensorflow\python\kernel_tests\BUILD:
+  Line 1720:     name = "constant_op_test",
+
+  Line 1722:     srcs = ["constant_op_test.py"],
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0159-54a06baa1cf1\tensorflow\python\kernel_tests\constant_op_eager_test.py:
+  Line 35: # TODO(ashankar): Collapse with tests in constant_op_test.py and use something
+
+tokens used
+input: 5,206
+cache read: 15,872
+cache write: 0
+output: 189
+reasoning output: 32
+
+I found the BUILD test target already added at a different location. I’m going to resolve only the C++ conflict markers and adapt the half-conversion hunk to this older helper-based implementation.
+
+tool: read
+{
+  "filePath": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0159-54a06baa1cf1\\tensorflow\\python\\BUILD",
+  "offset": 1390,
+  "limit": 45
+}
+<path>C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0159-54a06baa1cf1\tensorflow\python\BUILD</path>
+<type>file</type>
+<content>
+1390:     ],
+1391: )
+1392: 
+1393: py_library(
+1394:     name = "client_testlib",
+1395:     srcs = ["platform/test.py"],
+1396:     srcs_version = "PY2AND3",
+1397:     deps = [
+1398:         ":client",
+1399:         ":cond_v2",
+1400:         ":framework_test_lib",
+1401:         ":gradient_checker",
+1402:         ":gradient_checker_v2",
+1403:         ":platform_test",
+1404:         ":util",
+1405:         ":while_v2",
+1406:     ],
+1407: )
+1408: 
+1409: tf_py_test(
+1410:     name = "framework_constant_op_test",
+1411:     size = "small",
+1412:     srcs = ["framework/constant_op_test.py"],
+1413:     main = "framework/constant_op_test.py",
+1414:     python_version = "PY3",
+1415:     deps = [
+1416:         ":constant_op",
+1417:     ],
+1418: )
+1419: 
+1420: tf_py_test(
+1421:     name = "framework_registry_test",
+1422:     size = "small",
+1423:     srcs = ["framework/registry_test.py"],
+1424:     additional_deps = [
+1425:         ":framework_for_generated_wrappers",
+1426:         "@absl_py//absl/testing:parameterized",
+1427:         "//tensorflow/python:client_testlib",
+1428:     ],
+1429:     main = "framework/registry_test.py",
+1430: )
+1431: 
+1432: tf_py_test(
+1433:     name = "framework_errors_test",
+1434:     size = "small",
+
+(Showing lines 1390-1434 of 6972. Use offset=1435 to continue.)
+</content>
+
+tool: viewcode
+{
+  "ref": "54a06baa1cf13bd7057c5ce372c90f6bbe1cbc57",
+  "path": "tensorflow/python/lib/core/py_seq_tensor.cc",
+  "startline": 390,
+  "endline": 620
+}
+Here are lines 390 through 620.
+
+  return (sizeof(Eigen::half) < sizeof(double) &&
+          Eigen::half_impl::isinf(*out) && std::isfinite(as_double));
+}
+
+template <class T>
+const char* ConvertOneFloat(PyObject* v, T* out) {
+  if (PyErr_Occurred()) {
+    return nullptr;
+  }
+  if (TF_PREDICT_TRUE(PyFloat_Check(v))) {
+    const double as_double = PyFloat_AS_DOUBLE(v);
+    *out = static_cast<T>(as_double);
+    // Check for overflow
+    if (TF_PREDICT_FALSE(CheckForOverflow<T>(as_double, out))) {
+      return ErrorOutOfRangeDouble;
+    }
+    return nullptr;
+  }
+#if PY_MAJOR_VERSION < 3
+  if (PyInt_Check(v)) {
+    *out = static_cast<T>(PyInt_AS_LONG(v));
+    return nullptr;
+  }
+#endif
+  if (PyLong_Check(v)) {
+    *out = static_cast<T>(PyLong_AsDouble(v));
+    if (PyErr_Occurred()) return ErrorOutOfRangeDouble;
+    return nullptr;
+  }
+  if (PyIsInstance(v, &PyFloatingArrType_Type)) {  // NumPy float types
+    Safe_PyObjectPtr as_float = make_safe(PyNumber_Float(v));
+    if (PyErr_Occurred()) {
+      return nullptr;
+    }
+    return ConvertOneFloat<T>(as_float.get(), out);
+  }
+  if (PyIsInstance(v, &PyIntegerArrType_Type)) {  // NumPy integers
+#if PY_MAJOR_VERSION < 3
+    Safe_PyObjectPtr as_int = make_safe(PyNumber_Int(v));
+#else
+    Safe_PyObjectPtr as_int = make_safe(PyNumber_Long(v));
+#endif
+    if (PyErr_Occurred()) {
+      return nullptr;
+    }
+    return ConvertOneFloat<T>(as_int.get(), out);
+  }
+  return ErrorMixedTypes;
+}
+
+DEFINE_HELPER(ConvertDouble, double, DT_DOUBLE, ConvertOneFloat<double>);
+DEFINE_HELPER(ConvertFloat, float, DT_FLOAT, ConvertOneFloat<float>);
+
+const char* ConvertOneNumpyHalf(PyObject* v, Eigen::half* out) {
+  // NOTE(nareshmodi): Is there a way to convert to C double without the
+  // intermediate Python double? This will help with ConvertOneFloat as well.
+  Safe_PyObjectPtr as_float = make_safe(PyNumber_Float(v));
+  double v_double = PyFloat_AS_DOUBLE(as_float.get());
+  *out = Eigen::half(v_double);
+
+  return nullptr;
+}
+DEFINE_HELPER(ConvertNumpyHalf, Eigen::half, DT_HALF, ConvertOneNumpyHalf);
+
+<<<<<<< HEAD
+// String support
+
+const char* ConvertOneString(PyObject* v, string* out) {
+  if (PyBytes_Check(v)) {
+    out->assign(PyBytes_AS_STRING(v), PyBytes_GET_SIZE(v));
+    return nullptr;
+=======
+  static const char* ConvertScalar(PyObject* v, Eigen::half* out) {
+    return ConvertOneFloat<Eigen::half>(v, out);
+>>>>>>> c6170fb37c... Fix segfault when attempting to convert string to float16.
+  }
+  if (PyUnicode_Check(v)) {
+#if PY_MAJOR_VERSION >= 3
+    Py_ssize_t size;
+    const char* str = PyUnicode_AsUTF8AndSize(v, &size);
+    if (str == nullptr) return ErrorConvertingUnicodeString;
+    out->assign(str, size);
+    return nullptr;
+#else
+    PyObject* py_str = PyUnicode_AsUTF8String(v);
+    if (py_str == nullptr) return ErrorConvertingUnicodeString;
+    out->assign(PyBytes_AS_STRING(py_str), PyBytes_GET_SIZE(py_str));
+    Py_DECREF(py_str);
+    return nullptr;
+#endif
+  }
+  return ErrorMixedTypes;
+}
+
+DEFINE_HELPER(ConvertString, string, DT_STRING, ConvertOneString);
+
+// Complex support
+
+const char* ConvertOneComplex(PyObject* v, complex128* out) {
+  if (PyComplex_Check(v)) {
+    *out = complex128(PyComplex_RealAsDouble(v), PyComplex_ImagAsDouble(v));
+    return nullptr;
+  } else if (PyIsInstance(v, &PyComplexFloatingArrType_Type)) {  // NumPy
+    auto as_complex = PyComplex_AsCComplex(v);
+    *out = complex128(as_complex.real, as_complex.imag);
+    return nullptr;
+  }
+  return ErrorMixedTypes;
+}
+
+DEFINE_HELPER(ConvertComplex, complex128, DT_COMPLEX128, ConvertOneComplex);
+
+// Bool support
+
+const char* ConvertOneBool(PyObject* v, bool* out) {
+  if (v == Py_True) {
+    *out = true;
+  } else if (v == Py_False) {
+    *out = false;
+  } else if (PyIsInstance(v, &PyBoolArrType_Type)) {  // NumPy
+    *out = PyObject_IsTrue(v);
+  } else {
+    return ErrorMixedTypes;
+  }
+  return nullptr;
+}
+
+DEFINE_HELPER(ConvertBool, bool, DT_BOOL, ConvertOneBool);
+
+#undef DEFINE_HELPER
+
+}  // namespace
+
+#define RETURN_STRING_AS_STATUS(...)                             \
+  do {                                                           \
+    const char* _error = (__VA_ARGS__);                          \
+    if (TF_PREDICT_TRUE(_error == nullptr)) return Status::OK(); \
+    return errors::InvalidArgument(_error);                      \
+  } while (0)
+
+Status PySeqToTensor(PyObject* obj, DataType dtype, Tensor* ret) {
+  DataType infer_dtype;
+  TensorShape shape;
+  TF_RETURN_IF_ERROR(InferShapeAndType(obj, &shape, &infer_dtype));
+  DataType requested_dtype = DT_INVALID;
+  if (dtype != DT_INVALID) {
+    requested_dtype = dtype;
+  }
+  // NOTE(josh11b): If don't successfully convert to the requested type,
+  // we just try instead to create a tensor of the inferred type and
+  // let the caller convert it to the requested type using a cast
+  // operation.
+  switch (requested_dtype) {
+    case DT_FLOAT:
+      if (ConvertFloat(obj, shape, ret) == nullptr) return Status::OK();
+      break;
+
+    case DT_DOUBLE:
+      if (ConvertDouble(obj, shape, ret) == nullptr) return Status::OK();
+      break;
+
+    case DT_HALF:
+<<<<<<< HEAD
+      RETURN_STRING_AS_STATUS(ConvertNumpyHalf(obj, shape, ret));
+=======
+      if (NumpyHalfConverter::Convert(obj, &shape, ret) == nullptr)
+        return Status::OK();
+      break;
+>>>>>>> c6170fb37c... Fix segfault when attempting to convert string to float16.
+
+    case DT_INT64:
+      if (ConvertInt64(obj, shape, ret) == nullptr) return Status::OK();
+      break;
+
+    case DT_INT32:
+      if (ConvertInt32(obj, shape, ret) == nullptr) return Status::OK();
+      break;
+
+    case DT_UINT64:
+      if (ConvertUint64(obj, shape, ret) == nullptr) return Status::OK();
+      break;
+
+    case DT_COMPLEX128:
+      if (ConvertComplex(obj, shape, ret) == nullptr) return Status::OK();
+      break;
+
+    case DT_STRING:
+      if (ConvertString(obj, shape, ret) == nullptr) return Status::OK();
+      break;
+
+    case DT_BOOL:
+      if (ConvertBool(obj, shape, ret) == nullptr) return Status::OK();
+      break;
+
+    default:
+      break;
+  }
+  switch (infer_dtype) {
+    case DT_FLOAT:
+      // TODO(josh11b): Handle mixed floats and complex numbers?
+      if (requested_dtype == DT_INVALID) {
+        // TensorFlow uses float32s to represent floating point numbers
+        // by default (for space and speed over using doubles).
+        RETURN_STRING_AS_STATUS(ConvertFloat(obj, shape, ret));
+      } else {
+        // We are going to do a cast to the user's requested dtype
+        // after this.  We use doubles for this intermediate result so
+        // we don't lose precision that might be representable in the
+        // final type.
+        RETURN_STRING_AS_STATUS(ConvertDouble(obj, shape, ret));
+      }
+
+    case DT_DOUBLE:
+      RETURN_STRING_AS_STATUS(ConvertDouble(obj, shape, ret));
+
+    case DT_HALF:
+      RETURN_STRING_AS_STATUS(ConvertNumpyHalf(obj, shape, ret));
+
+    case DT_INT64:
+      if (requested_dtype == DT_INVALID) {
+        const char* error = ConvertInt32(obj, shape, ret);
+        if (error == ErrorFoundInt64) {
+          error = ConvertInt64(obj, shape, ret);
+        }
+        if (error == ErrorFoundFloat) {
+          error = ConvertFloat(obj, shape, ret);
+        }
+        // TODO(josh11b): May also want to fall back to using doubles if
+        // error == ErrorOutOfRange?
+        RETURN_STRING_AS_STATUS(error);
+      } else {
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tokens used
+input: 2,624
+cache read: 20,992
+cache write: 0
+output: 191
+reasoning output: 433
+
+I’m editing `py_seq_tensor.cc` now to remove the stale half-conversion path that dereferenced a failed `PyNumber_Float` result and to keep requested `DT_HALF` fallback behavior consistent with the source fix.
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/python/lib/core/py_seq_tensor.cc\n@@\n const char* ConvertOneNumpyHalf(PyObject* v, Eigen::half* out) {\n-  // NOTE(nareshmodi): Is there a way to convert to C double without the\n-  // intermediate Python double? This will help with ConvertOneFloat as well.\n-  Safe_PyObjectPtr as_float = make_safe(PyNumber_Float(v));\n-  double v_double = PyFloat_AS_DOUBLE(as_float.get());\n-  *out = Eigen::half(v_double);\n-\n-  return nullptr;\n+  return ConvertOneFloat<Eigen::half>(v, out);\n }\n DEFINE_HELPER(ConvertNumpyHalf, Eigen::half, DT_HALF, ConvertOneNumpyHalf);\n \n-<<<<<<< HEAD\n // String support\n \n const char* ConvertOneString(PyObject* v, string* out) {\n   if (PyBytes_Check(v)) {\n     out->assign(PyBytes_AS_STRING(v), PyBytes_GET_SIZE(v));\n     return nullptr;\n-=======\n-  static const char* ConvertScalar(PyObject* v, Eigen::half* out) {\n-    return ConvertOneFloat<Eigen::half>(v, out);\n->>>>>>> c6170fb37c... Fix segfault when attempting to convert string to float16.\n   }\n@@\n \n     case DT_HALF:\n-<<<<<<< HEAD\n-      RETURN_STRING_AS_STATUS(ConvertNumpyHalf(obj, shape, ret));\n-=======\n-      if (NumpyHalfConverter::Convert(obj, &shape, ret) == nullptr)\n+      if (ConvertNumpyHalf(obj, shape, ret) == nullptr)\n         return Status::OK();\n       break;\n->>>>>>> c6170fb37c... Fix segfault when attempting to convert string to float16.\n \n     case DT_INT64:\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/python/lib/core/py_seq_tensor.cc
+
+tokens used
+input: 3,614
+cache read: 23,040
+cache write: 0
+output: 503
+reasoning output: 50
+
+tool: grep
+{
+  "pattern": "<<<<<<<|=======|>>>>>>>|NumpyHalfConverter",
+  "path": "tensorflow/python/lib/core/py_seq_tensor.cc"
+}
+Found 23 matches
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0159-54a06baa1cf1\tensorflow\python\lib\core\bfloat16.h:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0159-54a06baa1cf1\tensorflow\python\lib\core\bfloat16.cc:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0159-54a06baa1cf1\tensorflow\python\lib\core\ndarray_tensor.h:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0159-54a06baa1cf1\tensorflow\python\lib\core\ndarray_tensor.cc:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0159-54a06baa1cf1\tensorflow\python\lib\core\bfloat16_test.py:
+  Line 14: # ==============================================================================
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0159-54a06baa1cf1\tensorflow\python\lib\core\py_exception_registry.i:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0159-54a06baa1cf1\tensorflow\python\lib\core\numpy.cc:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0159-54a06baa1cf1\tensorflow\python\lib\core\ndarray_tensor_bridge.h:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0159-54a06baa1cf1\tensorflow\python\lib\core\numpy.h:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0159-54a06baa1cf1\tensorflow\python\lib\core\bfloat16.i:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0159-54a06baa1cf1\tensorflow\python\lib\core\ndarray_tensor_bridge.cc:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0159-54a06baa1cf1\tensorflow\python\lib\core\py_func.cc:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0159-54a06baa1cf1\tensorflow\python\lib\core\py_func.h:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0159-54a06baa1cf1\tensorflow\python\lib\core\py_exception_registry.cc:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0159-54a06baa1cf1\tensorflow\python\lib\core\py_func.i:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0159-54a06baa1cf1\tensorflow\python\lib\core\py_seq_tensor.cc:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0159-54a06baa1cf1\tensorflow\python\lib\core\py_seq_tensor.h:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0159-54a06baa1cf1\tensorflow\python\lib\core\py_exception_registry.h:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0159-54a06baa1cf1\tensorflow\python\lib\core\py_util.cc:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0159-54a06baa1cf1\tensorflow\python\lib\core\py_util.h:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0159-54a06baa1cf1\tensorflow\python\lib\core\safe_ptr.cc:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0159-54a06baa1cf1\tensorflow\python\lib\core\safe_ptr.h:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0159-54a06baa1cf1\tensorflow\python\lib\core\strings.i:
+  Line 14: ==============================================================================*/
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/python/lib/core/py_seq_tensor.cc tensorflow/python/BUILD tensorflow/python/framework/constant_op_test.py",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0159-54a06baa1cf1",
+  "timeout": 120000
+}
+warning: in the working copy of 'tensorflow/python/lib/core/py_seq_tensor.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/python/lib/core/py_seq_tensor.cc b/tensorflow/python/lib/core/py_seq_tensor.cc
+index 640260cb55..99d8398f85 100644
+--- a/tensorflow/python/lib/core/py_seq_tensor.cc
++++ b/tensorflow/python/lib/core/py_seq_tensor.cc
+@@ -441,27 +441,16 @@ DEFINE_HELPER(ConvertDouble, double, DT_DOUBLE, ConvertOneFloat<double>);
+ DEFINE_HELPER(ConvertFloat, float, DT_FLOAT, ConvertOneFloat<float>);
+ 
+ const char* ConvertOneNumpyHalf(PyObject* v, Eigen::half* out) {
+-  // NOTE(nareshmodi): Is there a way to convert to C double without the
+-  // intermediate Python double? This will help with ConvertOneFloat as well.
+-  Safe_PyObjectPtr as_float = make_safe(PyNumber_Float(v));
+-  double v_double = PyFloat_AS_DOUBLE(as_float.get());
+-  *out = Eigen::half(v_double);
+-
+-  return nullptr;
++  return ConvertOneFloat<Eigen::half>(v, out);
+ }
+ DEFINE_HELPER(ConvertNumpyHalf, Eigen::half, DT_HALF, ConvertOneNumpyHalf);
+ 
+-<<<<<<< HEAD
+ // String support
+ 
+ const char* ConvertOneString(PyObject* v, string* out) {
+   if (PyBytes_Check(v)) {
+     out->assign(PyBytes_AS_STRING(v), PyBytes_GET_SIZE(v));
+     return nullptr;
+-=======
+-  static const char* ConvertScalar(PyObject* v, Eigen::half* out) {
+-    return ConvertOneFloat<Eigen::half>(v, out);
+->>>>>>> c6170fb37c... Fix segfault when attempting to convert string to float16.
+   }
+   if (PyUnicode_Check(v)) {
+ #if PY_MAJOR_VERSION >= 3
+@@ -549,13 +538,9 @@ Status PySeqToTensor(PyObject* obj, DataType dtype, Tensor* ret) {
+       break;
+ 
+     case DT_HALF:
+-<<<<<<< HEAD
+-      RETURN_STRING_AS_STATUS(ConvertNumpyHalf(obj, shape, ret));
+-=======
+-      if (NumpyHalfConverter::Convert(obj, &shape, ret) == nullptr)
++      if (ConvertNumpyHalf(obj, shape, ret) == nullptr)
+         return Status::OK();
+       break;
+->>>>>>> c6170fb37c... Fix segfault when attempting to convert string to float16.
+ 
+     case DT_INT64:
+       if (ConvertInt64(obj, shape, ret) == nullptr) return Status::OK();
+
+tool: bash
+{
+  "command": "git status --short",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0159-54a06baa1cf1",
+  "timeout": 120000
+}
+ M tensorflow/python/lib/core/py_seq_tensor.cc
+
+tokens used
+input: 1,123
+cache read: 26,112
+cache write: 0
+output: 205
+reasoning output: 32
+
+tool: grep
+{
+  "pattern": "^(<<<<<<<|=======|>>>>>>>)",
+  "path": "tensorflow/python/lib/core/py_seq_tensor.cc"
+}
+Found 22 matches
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0159-54a06baa1cf1\tensorflow\python\lib\core\safe_ptr.h:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0159-54a06baa1cf1\tensorflow\python\lib\core\py_util.cc:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0159-54a06baa1cf1\tensorflow\python\lib\core\py_func.h:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0159-54a06baa1cf1\tensorflow\python\lib\core\numpy.cc:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0159-54a06baa1cf1\tensorflow\python\lib\core\safe_ptr.cc:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0159-54a06baa1cf1\tensorflow\python\lib\core\py_func.i:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0159-54a06baa1cf1\tensorflow\python\lib\core\py_func.cc:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0159-54a06baa1cf1\tensorflow\python\lib\core\numpy.h:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0159-54a06baa1cf1\tensorflow\python\lib\core\py_exception_registry.h:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0159-54a06baa1cf1\tensorflow\python\lib\core\py_exception_registry.cc:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0159-54a06baa1cf1\tensorflow\python\lib\core\py_seq_tensor.h:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0159-54a06baa1cf1\tensorflow\python\lib\core\ndarray_tensor_bridge.h:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0159-54a06baa1cf1\tensorflow\python\lib\core\py_util.h:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0159-54a06baa1cf1\tensorflow\python\lib\core\ndarray_tensor.h:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0159-54a06baa1cf1\tensorflow\python\lib\core\py_exception_registry.i:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0159-54a06baa1cf1\tensorflow\python\lib\core\strings.i:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0159-54a06baa1cf1\tensorflow\python\lib\core\ndarray_tensor_bridge.cc:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0159-54a06baa1cf1\tensorflow\python\lib\core\bfloat16.h:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0159-54a06baa1cf1\tensorflow\python\lib\core\bfloat16.cc:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0159-54a06baa1cf1\tensorflow\python\lib\core\ndarray_tensor.cc:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0159-54a06baa1cf1\tensorflow\python\lib\core\bfloat16.i:
+  Line 14: ==============================================================================*/
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0159-54a06baa1cf1\tensorflow\python\lib\core\py_seq_tensor.cc:
+  Line 14: ==============================================================================*/
+
+tokens used
+input: 2,395
+cache read: 27,136
+cache write: 0
+output: 39
+reasoning output: 223
+
+The initial conflict-marker search also matched TensorFlow license separator lines; I’m verifying with an anchored ripgrep and then will do a lightweight compile-style sanity check through diff validation only.
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/python/lib/core/py_seq_tensor.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0159-54a06baa1cf1",
+  "timeout": 120000
+}
+warning: in the working copy of 'tensorflow/python/lib/core/py_seq_tensor.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/python/lib/core/py_seq_tensor.cc b/tensorflow/python/lib/core/py_seq_tensor.cc
+index 640260cb55..99d8398f85 100644
+--- a/tensorflow/python/lib/core/py_seq_tensor.cc
++++ b/tensorflow/python/lib/core/py_seq_tensor.cc
+@@ -441,27 +441,16 @@ DEFINE_HELPER(ConvertDouble, double, DT_DOUBLE, ConvertOneFloat<double>);
+ DEFINE_HELPER(ConvertFloat, float, DT_FLOAT, ConvertOneFloat<float>);
+ 
+ const char* ConvertOneNumpyHalf(PyObject* v, Eigen::half* out) {
+-  // NOTE(nareshmodi): Is there a way to convert to C double without the
+-  // intermediate Python double? This will help with ConvertOneFloat as well.
+-  Safe_PyObjectPtr as_float = make_safe(PyNumber_Float(v));
+-  double v_double = PyFloat_AS_DOUBLE(as_float.get());
+-  *out = Eigen::half(v_double);
+-
+-  return nullptr;
++  return ConvertOneFloat<Eigen::half>(v, out);
+ }
+ DEFINE_HELPER(ConvertNumpyHalf, Eigen::half, DT_HALF, ConvertOneNumpyHalf);
+ 
+-<<<<<<< HEAD
+ // String support
+ 
+ const char* ConvertOneString(PyObject* v, string* out) {
+   if (PyBytes_Check(v)) {
+     out->assign(PyBytes_AS_STRING(v), PyBytes_GET_SIZE(v));
+     return nullptr;
+-=======
+-  static const char* ConvertScalar(PyObject* v, Eigen::half* out) {
+-    return ConvertOneFloat<Eigen::half>(v, out);
+->>>>>>> c6170fb37c... Fix segfault when attempting to convert string to float16.
+   }
+   if (PyUnicode_Check(v)) {
+ #if PY_MAJOR_VERSION >= 3
+@@ -549,13 +538,9 @@ Status PySeqToTensor(PyObject* obj, DataType dtype, Tensor* ret) {
+       break;
+ 
+     case DT_HALF:
+-<<<<<<< HEAD
+-      RETURN_STRING_AS_STATUS(ConvertNumpyHalf(obj, shape, ret));
+-=======
+-      if (NumpyHalfConverter::Convert(obj, &shape, ret) == nullptr)
++      if (ConvertNumpyHalf(obj, shape, ret) == nullptr)
+         return Status::OK();
+       break;
+->>>>>>> c6170fb37c... Fix segfault when attempting to convert string to float16.
+ 
+     case DT_INT64:
+       if (ConvertInt64(obj, shape, ret) == nullptr) return Status::OK();
+
+tool: bash
+{
+  "command": "rg -n \"^(<<<<<<<|=======$|>>>>>>>)\" \"tensorflow/python/lib/core/py_seq_tensor.cc\"",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0159-54a06baa1cf1",
+  "timeout": 120000
+}
+rg : The term 'rg' is not recognized as the name of a cmdlet, function, script file, or operable program. Check the 
+spelling of the name, or if a path was included, verify that the path is correct and try again.
+At line:1 char:1
++ rg -n "^(<<<<<<<|=======$|>>>>>>>)" "tensorflow/python/lib/core/py_se ...
++ ~~
+    + CategoryInfo          : ObjectNotFound: (rg:String) [], CommandNotFoundException
+    + FullyQualifiedErrorId : CommandNotFoundException
+
+tokens used
+input: 1,995
+cache read: 29,184
+cache write: 0
+output: 222
+reasoning output: 22
+
+`rg` is not installed in this workspace, so I’m using Git diff and the dedicated validation tool rather than full builds.
+
+tool: validate
+{
+  "ref": "54a06baa1cf13bd7057c5ce372c90f6bbe1cbc57",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/python/lib/core/py_seq_tensor.cc b/tensorflow/python/lib/core/py_seq_tensor.cc\nindex 640260cb55..99d8398f85 100644\n--- a/tensorflow/python/lib/core/py_seq_tensor.cc\n+++ b/tensorflow/python/lib/core/py_seq_tensor.cc\n@@ -441,27 +441,16 @@ DEFINE_HELPER(ConvertDouble, double, DT_DOUBLE, ConvertOneFloat<double>);\n DEFINE_HELPER(ConvertFloat, float, DT_FLOAT, ConvertOneFloat<float>);\n \n const char* ConvertOneNumpyHalf(PyObject* v, Eigen::half* out) {\n-  // NOTE(nareshmodi): Is there a way to convert to C double without the\n-  // intermediate Python double? This will help with ConvertOneFloat as well.\n-  Safe_PyObjectPtr as_float = make_safe(PyNumber_Float(v));\n-  double v_double = PyFloat_AS_DOUBLE(as_float.get());\n-  *out = Eigen::half(v_double);\n-\n-  return nullptr;\n+  return ConvertOneFloat<Eigen::half>(v, out);\n }\n DEFINE_HELPER(ConvertNumpyHalf, Eigen::half, DT_HALF, ConvertOneNumpyHalf);\n \n-<<<<<<< HEAD\n // String support\n \n const char* ConvertOneString(PyObject* v, string* out) {\n   if (PyBytes_Check(v)) {\n     out->assign(PyBytes_AS_STRING(v), PyBytes_GET_SIZE(v));\n     return nullptr;\n-=======\n-  static const char* ConvertScalar(PyObject* v, Eigen::half* out) {\n-    return ConvertOneFloat<Eigen::half>(v, out);\n->>>>>>> c6170fb37c... Fix segfault when attempting to convert string to float16.\n   }\n   if (PyUnicode_Check(v)) {\n #if PY_MAJOR_VERSION >= 3\n@@ -549,13 +538,9 @@ Status PySeqToTensor(PyObject* obj, DataType dtype, Tensor* ret) {\n       break;\n \n     case DT_HALF:\n-<<<<<<< HEAD\n-      RETURN_STRING_AS_STATUS(ConvertNumpyHalf(obj, shape, ret));\n-=======\n-      if (NumpyHalfConverter::Convert(obj, &shape, ret) == nullptr)\n+      if (ConvertNumpyHalf(obj, shape, ret) == nullptr)\n         return Status::OK();\n       break;\n->>>>>>> c6170fb37c... Fix segfault when attempting to convert string to float16.\n \n     case DT_INT64:\n       if (ConvertInt64(obj, shape, ret) == nullptr) return Status::OK();\n"
+}
+Patch applied successfully
+
+tokens used
+input: 1,938
+cache read: 30,208
+cache write: 0
+output: 680
+reasoning output: 143
+
+tool: bash
+{
+  "command": "git grep -n \"<<<<<<<\\|>>>>>>>\" -- \"tensorflow/python/lib/core/py_seq_tensor.cc\"",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0159-54a06baa1cf1",
+  "timeout": 120000
+}
+(no output)
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/python/lib/core/py_seq_tensor.cc tensorflow/python/BUILD tensorflow/python/framework/constant_op_test.py",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0159-54a06baa1cf1",
+  "timeout": 120000
+}
+warning: in the working copy of 'tensorflow/python/lib/core/py_seq_tensor.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/python/lib/core/py_seq_tensor.cc b/tensorflow/python/lib/core/py_seq_tensor.cc
+index 640260cb55..99d8398f85 100644
+--- a/tensorflow/python/lib/core/py_seq_tensor.cc
++++ b/tensorflow/python/lib/core/py_seq_tensor.cc
+@@ -441,27 +441,16 @@ DEFINE_HELPER(ConvertDouble, double, DT_DOUBLE, ConvertOneFloat<double>);
+ DEFINE_HELPER(ConvertFloat, float, DT_FLOAT, ConvertOneFloat<float>);
+ 
+ const char* ConvertOneNumpyHalf(PyObject* v, Eigen::half* out) {
+-  // NOTE(nareshmodi): Is there a way to convert to C double without the
+-  // intermediate Python double? This will help with ConvertOneFloat as well.
+-  Safe_PyObjectPtr as_float = make_safe(PyNumber_Float(v));
+-  double v_double = PyFloat_AS_DOUBLE(as_float.get());
+-  *out = Eigen::half(v_double);
+-
+-  return nullptr;
++  return ConvertOneFloat<Eigen::half>(v, out);
+ }
+ DEFINE_HELPER(ConvertNumpyHalf, Eigen::half, DT_HALF, ConvertOneNumpyHalf);
+ 
+-<<<<<<< HEAD
+ // String support
+ 
+ const char* ConvertOneString(PyObject* v, string* out) {
+   if (PyBytes_Check(v)) {
+     out->assign(PyBytes_AS_STRING(v), PyBytes_GET_SIZE(v));
+     return nullptr;
+-=======
+-  static const char* ConvertScalar(PyObject* v, Eigen::half* out) {
+-    return ConvertOneFloat<Eigen::half>(v, out);
+->>>>>>> c6170fb37c... Fix segfault when attempting to convert string to float16.
+   }
+   if (PyUnicode_Check(v)) {
+ #if PY_MAJOR_VERSION >= 3
+@@ -549,13 +538,9 @@ Status PySeqToTensor(PyObject* obj, DataType dtype, Tensor* ret) {
+       break;
+ 
+     case DT_HALF:
+-<<<<<<< HEAD
+-      RETURN_STRING_AS_STATUS(ConvertNumpyHalf(obj, shape, ret));
+-=======
+-      if (NumpyHalfConverter::Convert(obj, &shape, ret) == nullptr)
++      if (ConvertNumpyHalf(obj, shape, ret) == nullptr)
+         return Status::OK();
+       break;
+->>>>>>> c6170fb37c... Fix segfault when attempting to convert string to float16.
+ 
+     case DT_INT64:
+       if (ConvertInt64(obj, shape, ret) == nullptr) return Status::OK();
+
+tokens used
+input: 1,750
+cache read: 31,232
+cache write: 0
+output: 188
+reasoning output: 43
+
+Applied the backport and validated the C++ hunk against `54a06baa1cf13bd7057c5ce372c90f6bbe1cbc57` in hunk mode.
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/python/lib/core/py_seq_tensor.cc b/tensorflow/python/lib/core/py_seq_tensor.cc
+    index 640260cb55..99d8398f85 100644
+    --- a/tensorflow/python/lib/core/py_seq_tensor.cc
+    +++ b/tensorflow/python/lib/core/py_seq_tensor.cc
+    @@ -441,27 +441,16 @@ DEFINE_HELPER(ConvertDouble, double, DT_DOUBLE, ConvertOneFloat<double>);
+     DEFINE_HELPER(ConvertFloat, float, DT_FLOAT, ConvertOneFloat<float>);
+     
+     const char* ConvertOneNumpyHalf(PyObject* v, Eigen::half* out) {
+    -  // NOTE(nareshmodi): Is there a way to convert to C double without the
+    -  // intermediate Python double? This will help with ConvertOneFloat as well.
+    -  Safe_PyObjectPtr as_float = make_safe(PyNumber_Float(v));
+    -  double v_double = PyFloat_AS_DOUBLE(as_float.get());
+    -  *out = Eigen::half(v_double);
+    -
+    -  return nullptr;
+    +  return ConvertOneFloat<Eigen::half>(v, out);
+     }
+     DEFINE_HELPER(ConvertNumpyHalf, Eigen::half, DT_HALF, ConvertOneNumpyHalf);
+     
+    -<<<<<<< HEAD
+     // String support
+     
+     const char* ConvertOneString(PyObject* v, string* out) {
+       if (PyBytes_Check(v)) {
+         out->assign(PyBytes_AS_STRING(v), PyBytes_GET_SIZE(v));
+         return nullptr;
+    -=======
+    -  static const char* ConvertScalar(PyObject* v, Eigen::half* out) {
+    -    return ConvertOneFloat<Eigen::half>(v, out);
+    ->>>>>>> c6170fb37c... Fix segfault when attempting to convert string to float16.
+       }
+       if (PyUnicode_Check(v)) {
+     #if PY_MAJOR_VERSION >= 3
+    @@ -549,13 +538,9 @@ Status PySeqToTensor(PyObject* obj, DataType dtype, Tensor* ret) {
+           break;
+     
+         case DT_HALF:
+    -<<<<<<< HEAD
+    -      RETURN_STRING_AS_STATUS(ConvertNumpyHalf(obj, shape, ret));
+    -=======
+    -      if (NumpyHalfConverter::Convert(obj, &shape, ret) == nullptr)
+    +      if (ConvertNumpyHalf(obj, shape, ret) == nullptr)
+             return Status::OK();
+           break;
+    ->>>>>>> c6170fb37c... Fix segfault when attempting to convert string to float16.
+     
+         case DT_INT64:
+           if (ConvertInt64(obj, shape, ret) == nullptr) return Status::OK();
+  notes: >
+    Backported the eager-mode string-to-float16 crash fix by routing half conversion through the checked float converter and preserving fallback behavior; the BUILD target and regression test were already present in this checkout.
+```
+
+tokens used
+input: 1,561
+cache read: 32,256
+cache write: 0
+output: 691
+reasoning output: 79

@@ -1,0 +1,617 @@
+I’ll locate the older `ResourceGatherOp` implementation and compare the exact surrounding checks against the provided newer patch before making the minimal insertion.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target ResourceGatherOp context",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Validate equivalent hunk against target base",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "content": "Apply minimal backport change",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "content": "Review resulting diff",
+      "status": "pending",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target ResourceGatherOp context",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Validate equivalent hunk against target base",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "content": "Apply minimal backport change",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "content": "Review resulting diff",
+    "status": "pending",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 3,745
+cache read: 4,608
+cache write: 0
+output: 121
+reasoning output: 0
+
+tool: grep
+{
+  "pattern": "class ResourceGatherOp",
+  "path": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0203-6a2b0f3d4add",
+  "include": "resource_variable_ops.cc"
+}
+Found 1 matches
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0203-6a2b0f3d4add\tensorflow\core\kernels\resource_variable_ops.cc:
+  Line 625: class ResourceGatherOp : public OpKernel {
+
+tool: locate_symbol
+{
+  "ref": "6a2b0f3d4addeef2f7b00f690ec705064e1dd946",
+  "symbol": "ResourceGatherOp"
+}
+tensorflow/compiler/tf2xla/kernels/variable_ops.cc:124
+tensorflow/core/kernels/resource_variable_ops.cc:625
+tensorflow/compiler/tf2xla/kernels/variable_ops.cc:126
+tensorflow/core/kernels/resource_variable_ops.cc:627
+tensorflow/compiler/tf2xla/kernels/variable_ops.cc:145
+tensorflow/core/kernels/resource_variable_ops.cc:749
+tensorflow/core/kernels/resource_variable_ops.cc:776
+tensorflow/core/kernels/resource_variable_ops.cc:783
+
+tokens used
+input: 927
+cache read: 7,680
+cache write: 0
+output: 133
+reasoning output: 0
+
+tool: read
+{
+  "filePath": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0203-6a2b0f3d4add\\tensorflow\\core\\kernels\\resource_variable_ops.cc",
+  "offset": 625,
+  "limit": 90
+}
+<path>C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0203-6a2b0f3d4add\tensorflow\core\kernels\resource_variable_ops.cc</path>
+<type>file</type>
+<content>
+625: class ResourceGatherOp : public OpKernel {
+626:  public:
+627:   explicit ResourceGatherOp(OpKernelConstruction* c) : OpKernel(c) {
+628:     OP_REQUIRES_OK(c, c->GetAttr("batch_dims", &batch_dims_));
+629:   }
+630: 
+631:   void Compute(OpKernelContext* c) override {
+632:     core::RefCountPtr<Var> v;
+633:     OP_REQUIRES_OK(c, LookupResource(c, HandleFromInput(c, 0), &v));
+634:     OP_REQUIRES_OK(c, EnsureSparseVariableAccess<Device, T>(c, v.get()));
+635:     // NOTE: We hold the lock for the whole gather operation instead
+636:     // of increasing the reference count of v->tensor() to avoid a
+637:     // situation where a write to the same variable will see a
+638:     // reference count greater than one and make a copy of the
+639:     // (potentially very large) tensor buffer.
+640:     tf_shared_lock ml(*v->mu());
+641:     const Tensor& params = *v->tensor();
+642:     const Tensor& indices = c->input(1);
+643:     OP_REQUIRES(
+644:         c, TensorShapeUtils::IsVectorOrHigher(params.shape()),
+645:         errors::InvalidArgument("params must be at least 1 dimensional"));
+646: 
+647:     // Check that we have enough index space
+648:     const int64 N = indices.NumElements();
+649:     OP_REQUIRES(
+650:         c, params.dim_size(0) <= std::numeric_limits<Index>::max(),
+651:         errors::InvalidArgument("params.shape[0] too large for ",
+652:                                 DataTypeString(DataTypeToEnum<Index>::v()),
+653:                                 " indexing: ", params.dim_size(0), " > ",
+654:                                 std::numeric_limits<Index>::max()));
+655: 
+656:     // The result shape is params.shape[:batch_dims] +
+657:     // indices.shape[batch_dims:] + params.shape[batch_dims+1:].
+658:     TensorShape result_shape;
+659:     for (int i = 0; i < batch_dims_; ++i) {
+660:       result_shape.AddDim(params.dim_size(i));
+661:     }
+662:     for (int i = batch_dims_; i < indices.dims(); ++i) {
+663:       result_shape.AddDim(indices.dim_size(i));
+664:     }
+665:     for (int i = batch_dims_ + 1; i < params.dims(); ++i) {
+666:       result_shape.AddDim(params.dim_size(i));
+667:     }
+668: 
+669:     Tensor* out = nullptr;
+670:     Tensor tmp;
+671:     if (params.dtype() == DT_VARIANT) {
+672:       tmp = Tensor(DT_VARIANT, result_shape);
+673:       c->set_output(0, tmp);
+674:       out = &tmp;
+675:     } else {
+676:       OP_REQUIRES_OK(c, c->allocate_output(0, result_shape, &out));
+677:     }
+678: 
+679:     if (N > 0) {
+680:       Tensor tmp_indices;
+681: 
+682:       // Points to the original or updated (if batch_dims is set) indices.
+683:       const Tensor* op_indices = &indices;
+684:       if (batch_dims_ > 0) {
+685:         OP_REQUIRES_OK(c, c->allocate_temp(indices.dtype(), indices.shape(),
+686:                                            &tmp_indices));
+687:         functor::DenseUpdate<Device, Index, ASSIGN> copy_functor;
+688:         copy_functor(c->eigen_device<Device>(), tmp_indices.flat<Index>(),
+689:                      indices.flat<Index>());
+690: 
+691:         AddBatchOffsets(&tmp_indices, params);
+692:         op_indices = &tmp_indices;
+693:       }
+694: 
+695:       int64 gather_dim_size = 1;
+696:       for (int idx = 0; idx <= batch_dims_; ++idx) {
+697:         gather_dim_size *= params.dim_size(idx);
+698:       }
+699:       int64 inner_size = 1;
+700:       for (int i = batch_dims_ + 1; i < params.dims(); ++i) {
+701:         inner_size *= params.dim_size(i);
+702:       }
+703:       auto params_flat = params.shaped<T, 3>({1, gather_dim_size, inner_size});
+704:       const auto indices_flat = op_indices->flat<Index>();
+705:       auto out_flat = out->shaped<T, 3>({1, N, out->NumElements() / N});
+706: 
+707:       functor::GatherFunctor<Device, T, Index> functor;
+708:       int64 bad_i = functor(c, params_flat, indices_flat, out_flat);
+709: 
+710:       OP_REQUIRES(
+711:           c, bad_i < 0,
+712:           errors::InvalidArgument(
+713:               "indices", SliceDebugString(indices.shape(), bad_i), " = ",
+714:               indices_flat(bad_i), " is not in [0, ", params.dim_size(0), ")"));
+
+(Showing lines 625-714 of 1073. Use offset=715 to continue.)
+</content>
+
+tool: viewcode
+{
+  "ref": "6a2b0f3d4addeef2f7b00f690ec705064e1dd946",
+  "path": "tensorflow/core/kernels/resource_variable_ops.cc",
+  "startline": 625,
+  "endline": 710
+}
+Here are lines 625 through 710.
+
+class ResourceGatherOp : public OpKernel {
+ public:
+  explicit ResourceGatherOp(OpKernelConstruction* c) : OpKernel(c) {
+    OP_REQUIRES_OK(c, c->GetAttr("batch_dims", &batch_dims_));
+  }
+
+  void Compute(OpKernelContext* c) override {
+    core::RefCountPtr<Var> v;
+    OP_REQUIRES_OK(c, LookupResource(c, HandleFromInput(c, 0), &v));
+    OP_REQUIRES_OK(c, EnsureSparseVariableAccess<Device, T>(c, v.get()));
+    // NOTE: We hold the lock for the whole gather operation instead
+    // of increasing the reference count of v->tensor() to avoid a
+    // situation where a write to the same variable will see a
+    // reference count greater than one and make a copy of the
+    // (potentially very large) tensor buffer.
+    tf_shared_lock ml(*v->mu());
+    const Tensor& params = *v->tensor();
+    const Tensor& indices = c->input(1);
+    OP_REQUIRES(
+        c, TensorShapeUtils::IsVectorOrHigher(params.shape()),
+        errors::InvalidArgument("params must be at least 1 dimensional"));
+
+    // Check that we have enough index space
+    const int64 N = indices.NumElements();
+    OP_REQUIRES(
+        c, params.dim_size(0) <= std::numeric_limits<Index>::max(),
+        errors::InvalidArgument("params.shape[0] too large for ",
+                                DataTypeString(DataTypeToEnum<Index>::v()),
+                                " indexing: ", params.dim_size(0), " > ",
+                                std::numeric_limits<Index>::max()));
+
+    // The result shape is params.shape[:batch_dims] +
+    // indices.shape[batch_dims:] + params.shape[batch_dims+1:].
+    TensorShape result_shape;
+    for (int i = 0; i < batch_dims_; ++i) {
+      result_shape.AddDim(params.dim_size(i));
+    }
+    for (int i = batch_dims_; i < indices.dims(); ++i) {
+      result_shape.AddDim(indices.dim_size(i));
+    }
+    for (int i = batch_dims_ + 1; i < params.dims(); ++i) {
+      result_shape.AddDim(params.dim_size(i));
+    }
+
+    Tensor* out = nullptr;
+    Tensor tmp;
+    if (params.dtype() == DT_VARIANT) {
+      tmp = Tensor(DT_VARIANT, result_shape);
+      c->set_output(0, tmp);
+      out = &tmp;
+    } else {
+      OP_REQUIRES_OK(c, c->allocate_output(0, result_shape, &out));
+    }
+
+    if (N > 0) {
+      Tensor tmp_indices;
+
+      // Points to the original or updated (if batch_dims is set) indices.
+      const Tensor* op_indices = &indices;
+      if (batch_dims_ > 0) {
+        OP_REQUIRES_OK(c, c->allocate_temp(indices.dtype(), indices.shape(),
+                                           &tmp_indices));
+        functor::DenseUpdate<Device, Index, ASSIGN> copy_functor;
+        copy_functor(c->eigen_device<Device>(), tmp_indices.flat<Index>(),
+                     indices.flat<Index>());
+
+        AddBatchOffsets(&tmp_indices, params);
+        op_indices = &tmp_indices;
+      }
+
+      int64 gather_dim_size = 1;
+      for (int idx = 0; idx <= batch_dims_; ++idx) {
+        gather_dim_size *= params.dim_size(idx);
+      }
+      int64 inner_size = 1;
+      for (int i = batch_dims_ + 1; i < params.dims(); ++i) {
+        inner_size *= params.dim_size(i);
+      }
+      auto params_flat = params.shaped<T, 3>({1, gather_dim_size, inner_size});
+      const auto indices_flat = op_indices->flat<Index>();
+      auto out_flat = out->shaped<T, 3>({1, N, out->NumElements() / N});
+
+      functor::GatherFunctor<Device, T, Index> functor;
+      int64 bad_i = functor(c, params_flat, indices_flat, out_flat);
+
+      OP_REQUIRES(
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tokens used
+input: 1,257
+cache read: 7,680
+cache write: 0
+output: 153
+reasoning output: 0
+
+The target code matches the vulnerable pattern: it checks only vector-or-higher, then immediately uses `params.dim_size(i)` up to `batch_dims_`, so the newer bounds check maps directly after the existing dimensionality check.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target ResourceGatherOp context",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate equivalent hunk against target base",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Apply minimal backport change",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "content": "Review resulting diff",
+      "status": "pending",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target ResourceGatherOp context",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate equivalent hunk against target base",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Apply minimal backport change",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "content": "Review resulting diff",
+    "status": "pending",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 2,547
+cache read: 8,704
+cache write: 0
+output: 141
+reasoning output: 16
+
+tool: validate
+{
+  "ref": "6a2b0f3d4addeef2f7b00f690ec705064e1dd946",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/resource_variable_ops.cc b/tensorflow/core/kernels/resource_variable_ops.cc\n--- a/tensorflow/core/kernels/resource_variable_ops.cc\n+++ b/tensorflow/core/kernels/resource_variable_ops.cc\n@@ -643,6 +643,11 @@ class ResourceGatherOp : public OpKernel {\n     OP_REQUIRES(\n         c, TensorShapeUtils::IsVectorOrHigher(params.shape()),\n         errors::InvalidArgument(\"params must be at least 1 dimensional\"));\n+    OP_REQUIRES(\n+        c, params.shape().dims() >= batch_dims_,\n+        errors::InvalidArgument(\"params must have at least \", batch_dims_,\n+                                \" (batch_dims) dimensions but it has shape \",\n+                                params.shape().DebugString()));\n \n     // Check that we have enough index space\n     const int64 N = indices.NumElements();\n"
+}
+Patch applied successfully
+
+tokens used
+input: 789
+cache read: 10,752
+cache write: 0
+output: 254
+reasoning output: 0
+
+The candidate hunk applies cleanly to the target base. I’ll now apply the same minimal check in the working tree.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target ResourceGatherOp context",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate equivalent hunk against target base",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Apply minimal backport change",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Review resulting diff",
+      "status": "pending",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target ResourceGatherOp context",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate equivalent hunk against target base",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Apply minimal backport change",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Review resulting diff",
+    "status": "pending",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 1,056
+cache read: 10,752
+cache write: 0
+output: 119
+reasoning output: 0
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/kernels/resource_variable_ops.cc\n@@\n     OP_REQUIRES(\n         c, TensorShapeUtils::IsVectorOrHigher(params.shape()),\n         errors::InvalidArgument(\"params must be at least 1 dimensional\"));\n+    OP_REQUIRES(\n+        c, params.shape().dims() >= batch_dims_,\n+        errors::InvalidArgument(\"params must have at least \", batch_dims_,\n+                                \" (batch_dims) dimensions but it has shape \",\n+                                params.shape().DebugString()));\n \n     // Check that we have enough index space\n     const int64 N = indices.NumElements();\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/kernels/resource_variable_ops.cc
+
+tokens used
+input: 1,308
+cache read: 10,752
+cache write: 0
+output: 174
+reasoning output: 0
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target ResourceGatherOp context",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate equivalent hunk against target base",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Apply minimal backport change",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Review resulting diff",
+      "status": "in_progress",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target ResourceGatherOp context",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate equivalent hunk against target base",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Apply minimal backport change",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Review resulting diff",
+    "status": "in_progress",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 485
+cache read: 11,776
+cache write: 0
+output: 86
+reasoning output: 0
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/kernels/resource_variable_ops.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0203-6a2b0f3d4add"
+}
+warning: in the working copy of 'tensorflow/core/kernels/resource_variable_ops.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/kernels/resource_variable_ops.cc b/tensorflow/core/kernels/resource_variable_ops.cc
+index e056d9cb0f..e4c2dd7919 100644
+--- a/tensorflow/core/kernels/resource_variable_ops.cc
++++ b/tensorflow/core/kernels/resource_variable_ops.cc
+@@ -643,6 +643,11 @@ class ResourceGatherOp : public OpKernel {
+     OP_REQUIRES(
+         c, TensorShapeUtils::IsVectorOrHigher(params.shape()),
+         errors::InvalidArgument("params must be at least 1 dimensional"));
++    OP_REQUIRES(
++        c, params.shape().dims() >= batch_dims_,
++        errors::InvalidArgument("params must have at least ", batch_dims_,
++                                " (batch_dims) dimensions but it has shape ",
++                                params.shape().DebugString()));
+ 
+     // Check that we have enough index space
+     const int64 N = indices.NumElements();
+
+tool: bash
+{
+  "command": "git status --short",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0203-6a2b0f3d4add"
+}
+ M tensorflow/core/kernels/resource_variable_ops.cc
+
+tokens used
+input: 704
+cache read: 11,776
+cache write: 0
+output: 151
+reasoning output: 0
+
+The working tree diff is limited to the intended `ResourceGatherOp` guard. No full build was run per the task constraints.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target ResourceGatherOp context",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate equivalent hunk against target base",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Apply minimal backport change",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Review resulting diff",
+      "status": "completed",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target ResourceGatherOp context",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate equivalent hunk against target base",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Apply minimal backport change",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Review resulting diff",
+    "status": "completed",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 8,288
+cache read: 4,608
+cache write: 0
+output: 118
+reasoning output: 0
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/kernels/resource_variable_ops.cc b/tensorflow/core/kernels/resource_variable_ops.cc
+    index e056d9cb0f..e4c2dd7919 100644
+    --- a/tensorflow/core/kernels/resource_variable_ops.cc
+    +++ b/tensorflow/core/kernels/resource_variable_ops.cc
+    @@ -643,6 +643,11 @@ class ResourceGatherOp : public OpKernel {
+         OP_REQUIRES(
+             c, TensorShapeUtils::IsVectorOrHigher(params.shape()),
+             errors::InvalidArgument("params must be at least 1 dimensional"));
+    +    OP_REQUIRES(
+    +        c, params.shape().dims() >= batch_dims_,
+    +        errors::InvalidArgument("params must have at least ", batch_dims_,
+    +                                " (batch_dims) dimensions but it has shape ",
+    +                                params.shape().DebugString()));
+     
+         // Check that we have enough index space
+         const int64 N = indices.NumElements();
+  notes: >
+    Added the missing ResourceGatherOp params rank check against batch_dims_ to prevent out-of-bounds shape access.
+```
+
+tokens used
+input: 346
+cache read: 12,800
+cache write: 0
+output: 263
+reasoning output: 0

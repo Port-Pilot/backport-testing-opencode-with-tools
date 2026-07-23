@@ -1,0 +1,557 @@
+I’ll locate the older `SparseTensor::Split` implementation and verify whether the newer guard maps directly before editing.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target SparseTensor::Split context",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Validate candidate backport hunk",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "content": "Apply minimal source change",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "content": "Report final unified diff",
+      "status": "pending",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target SparseTensor::Split context",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Validate candidate backport hunk",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "content": "Apply minimal source change",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "content": "Report final unified diff",
+    "status": "pending",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 3,737
+cache read: 4,608
+cache write: 0
+output: 116
+reasoning output: 0
+
+tool: glob
+{
+  "pattern": "tensorflow/core/util/sparse/sparse_tensor.h"
+}
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0175-7a5dd0aa176d\tensorflow\core\util\sparse\sparse_tensor.h
+
+tool: locate_symbol
+{
+  "ref": "7a5dd0aa176dbf81742f84b44aeb0948fa2d8f20",
+  "symbol": "SparseTensor::Split"
+}
+tensorflow/core/util/sparse/sparse_tensor.h:576
+tensorflow/core/kernels/sparse_split_op.cc:74
+tensorflow/core/util/sparse/sparse_tensor_test.cc:624
+
+tool: grep
+{
+  "pattern": "SparseTensor::Split",
+  "path": "."
+}
+Found 3 matches
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0175-7a5dd0aa176d\tensorflow\core\util\sparse\sparse_tensor_test.cc:
+  Line 624:   TF_ASSERT_OK(SparseTensor::Split<int64>(st, 0, 2, &st_list));
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0175-7a5dd0aa176d\tensorflow\core\util\sparse\sparse_tensor.h:
+  Line 576: Status SparseTensor::Split(const SparseTensor& input_tensor,
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0175-7a5dd0aa176d\tensorflow\core\kernels\sparse_split_op.cc:
+  Line 74:                    sparse::SparseTensor::Split<T>(sparse_tensor, split_dim,
+
+tokens used
+input: 3,986
+cache read: 4,608
+cache write: 0
+output: 108
+reasoning output: 0
+
+tool: viewcode
+{
+  "ref": "7a5dd0aa176dbf81742f84b44aeb0948fa2d8f20",
+  "path": "tensorflow/core/util/sparse/sparse_tensor.h",
+  "startline": 540,
+  "endline": 640
+}
+Here are lines 540 through 640.
+
+    num_entries += st.num_entries();  // Update number of entries
+  }
+
+  // If nonconsistent ordering among inputs, set final order to -1s.
+  if (!fully_ordered) {
+    final_order = UndefinedOrder(final_shape);
+  }
+
+  Tensor output_ix(DT_INT64, TensorShape({num_entries, dims}));
+  Tensor output_vals(DataTypeToEnum<T>::v(), TensorShape({num_entries}));
+
+  TTypes<int64>::Matrix ix_t = output_ix.matrix<int64>();
+  typename TTypes<T>::Vec vals_t = output_vals.vec<T>();
+
+  Eigen::DenseIndex offset = 0;
+  int64 shape_offset = 0;
+  for (const SparseTensor& st : tensors) {
+    const int st_num_entries = st.num_entries();
+
+    // Fill in indices & values.
+    std::copy_n(&st.vals_.vec<T>()(0), st_num_entries, &vals_t(offset));
+
+    const auto* st_ix = &st.ix_.matrix<int64>()(0, 0);
+    auto* ix_out = &ix_t(offset, 0);
+    for (std::size_t i = 0; i < st_num_entries * dims; ++i) {
+      *ix_out++ = *st_ix++ + ((i % dims == primary_dim) ? shape_offset : 0);
+    }
+
+    offset += st_num_entries;
+    shape_offset += st.shape()[primary_dim];
+  }
+
+  return SparseTensor(output_ix, output_vals, final_shape, final_order);
+}
+
+template <typename T>
+Status SparseTensor::Split(const SparseTensor& input_tensor,
+                           const int split_dim, const int num_split,
+                           std::vector<SparseTensor>* result) {
+  std::vector<Tensor> output_indices;
+  std::vector<Tensor> output_values;
+  std::vector<TensorShape> output_shapes;
+  output_indices.reserve(num_split);
+  output_values.reserve(num_split);
+  output_shapes.reserve(num_split);
+
+  std::vector<typename TTypes<int64>::Matrix> output_indices_t;
+  std::vector<typename TTypes<T>::Vec> output_values_t;
+  output_indices_t.reserve(num_split);
+  output_values_t.reserve(num_split);
+  auto input_values_t = input_tensor.values().vec<T>();
+  auto input_indices_t = input_tensor.indices().matrix<int64>();
+
+  std::vector<int> num_values(num_split, 0);
+  const int num_dim = input_tensor.shape().size();
+  const int split_dim_size = input_tensor.shape()[split_dim];
+  const int split_size = split_dim_size / num_split;
+
+  if (!(num_split > 0 && num_split <= split_dim_size)) {
+    return Status(error::INVALID_ARGUMENT,
+                  strings::StrCat("num_split must be in the interval (0, ",
+                                  split_dim_size, "]"));
+  }
+  if (!(split_dim >= 0 && split_dim < num_dim)) {
+    return Status(
+        error::INVALID_ARGUMENT,
+        strings::StrCat("num_dim must be in the interval [0, ", num_dim, ")"));
+  }
+
+  const int residual = split_dim_size % num_split;
+  for (int i = 0; i < input_tensor.indices().dim_size(0); ++i) {
+    const int dim = input_tensor.indices().matrix<int64>()(i, split_dim);
+    int slice_index = GetSliceIndex(dim, split_size, residual);
+    num_values[slice_index]++;
+  }
+
+  for (int i = 0; i < num_split; ++i) {
+    // TODO(ataei): Pass an allocator to avoid allocating large memory buffer.
+    output_indices.emplace_back(DT_INT64,
+                                TensorShape({num_values[i], num_dim}));
+    output_values.emplace_back(DataTypeToEnum<T>::v(),
+                               TensorShape({num_values[i]}));
+    output_shapes.emplace_back(input_tensor.shape());
+    output_indices_t.emplace_back(output_indices[i].matrix<int64>());
+    output_values_t.emplace_back(output_values[i].vec<T>());
+    const int size = GetSliceShape(i, split_size, residual);
+    output_shapes[i].set_dim(split_dim, size);
+  }
+
+  std::vector<int> values_inserted_in_slice(num_split, 0);
+  for (int i = 0; i < input_tensor.indices().dim_size(0); ++i) {
+    const int dim = input_indices_t(i, split_dim);
+    const int slice_index = GetSliceIndex(dim, split_size, residual);
+    const int slice_dim = values_inserted_in_slice[slice_index]++;
+    output_values_t[slice_index](slice_dim) = input_values_t(i);
+    for (int j = 0; j < num_dim; ++j) {
+      const int64 original_dim = input_indices_t(i, j);
+      output_indices_t[slice_index](slice_dim, j) =
+          (j == split_dim)
+              ? GetDimensionInSlice(original_dim, split_size, residual)
+              : original_dim;
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tokens used
+input: 1,375
+cache read: 7,680
+cache write: 0
+output: 64
+reasoning output: 0
+
+The target function exists in the same header with matching first counting loop. The older branch uses `Status(error::INVALID_ARGUMENT, strings::StrCat(...))` in this function, so the backport should match that style rather than newer `errors::InvalidArgument`.
+
+tool: viewcode
+{
+  "ref": "7a5dd0aa176dbf81742f84b44aeb0948fa2d8f20",
+  "path": "tensorflow/core/util/sparse/sparse_tensor.h",
+  "startline": 1,
+  "endline": 80
+}
+Here are lines 1 through 80.
+
+/* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+==============================================================================*/
+
+#ifndef TENSORFLOW_CORE_UTIL_SPARSE_SPARSE_TENSOR_H_
+#define TENSORFLOW_CORE_UTIL_SPARSE_SPARSE_TENSOR_H_
+
+#include <limits>
+#include <numeric>
+#include <vector>
+
+#include "absl/base/macros.h"
+#include "third_party/eigen3/unsupported/Eigen/CXX11/Tensor"
+#include "tensorflow/core/framework/bounds_check.h"
+#include "tensorflow/core/framework/tensor.h"
+#include "tensorflow/core/framework/tensor_types.h"
+#include "tensorflow/core/framework/types.h"
+#include "tensorflow/core/framework/types.pb.h"
+#include "tensorflow/core/lib/core/errors.h"
+#include "tensorflow/core/lib/core/status.h"
+#include "tensorflow/core/lib/strings/str_util.h"
+#include "tensorflow/core/lib/strings/strcat.h"
+#include "tensorflow/core/platform/logging.h"
+#include "tensorflow/core/platform/types.h"
+#include "tensorflow/core/util/sparse/dim_comparator.h"
+#include "tensorflow/core/util/sparse/group_iterator.h"
+
+namespace tensorflow {
+namespace sparse {
+
+class SparseTensor {
+ public:
+  typedef typename gtl::ArraySlice<int64> VarDimArray;
+  typedef typename gtl::InlinedVector<int64, 8> ShapeArray;
+
+  static Status Create(Tensor ix, Tensor vals, const VarDimArray shape,
+                       const VarDimArray order, SparseTensor* result) {
+    if (ix.dtype() != DT_INT64) {
+      return Status(
+          error::INVALID_ARGUMENT,
+          strings::StrCat("indices must be type int64 but got: ", ix.dtype()));
+    }
+    if (!TensorShapeUtils::IsVector(vals.shape())) {
+      return Status(error::INVALID_ARGUMENT,
+                    strings::StrCat("vals must be a vec, but got: ",
+                                    vals.shape().DebugString()));
+    }
+    if (ix.shape().dim_size(0) != vals.shape().dim_size(0)) {
+      return Status(error::INVALID_ARGUMENT,
+                    strings::StrCat("indices and values rows (indexing "
+                                    "dimension) must match. (indices = ",
+                                    ix.shape().dim_size(0), ", values = ",
+                                    vals.shape().dim_size(0), ")"));
+    }
+    int dims = 0;
+    TF_RETURN_IF_ERROR(GetDimsFromIx(ix, &dims));
+    if (order.size() != dims) {
+      return Status(error::INVALID_ARGUMENT,
+                    "Order length must be SparseTensor rank.");
+    }
+    if (shape.size() != dims) {
+      return Status(error::INVALID_ARGUMENT,
+                    "Shape rank must be SparseTensor rank.");
+    }
+
+    *result = SparseTensor(ix, vals, shape, order);
+    return Status();
+  }
+
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tokens used
+input: 1,500
+cache read: 8,704
+cache write: 0
+output: 126
+reasoning output: 72
+
+I’m going to validate a one-hunk change that adds the bounds check immediately before `num_values[slice_index]++`.
+
+tool: validate
+{
+  "ref": "7a5dd0aa176dbf81742f84b44aeb0948fa2d8f20",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/util/sparse/sparse_tensor.h b/tensorflow/core/util/sparse/sparse_tensor.h\n--- a/tensorflow/core/util/sparse/sparse_tensor.h\n+++ b/tensorflow/core/util/sparse/sparse_tensor.h\n@@ -607,6 +607,11 @@ Status SparseTensor::Split(const SparseTensor& input_tensor,\n   for (int i = 0; i < input_tensor.indices().dim_size(0); ++i) {\n     const int dim = input_tensor.indices().matrix<int64>()(i, split_dim);\n     int slice_index = GetSliceIndex(dim, split_size, residual);\n+    if (slice_index >= num_values.size()) {\n+      return Status(error::INVALID_ARGUMENT,\n+                    strings::StrCat(\"Slice index \", slice_index,\n+                                    \" is larger than num_split.\"));\n+    }\n     num_values[slice_index]++;\n   }\n\n"
+}
+This patch does not apply to the target TensorFlow ref.
+Git apply output:
+error: corrupt patch at line 15
+Touched files:
+- tensorflow/core/util/sparse/sparse_tensor.h
+Fix the patch context against the older TensorFlow version, then run validate again in hunk mode.
+
+tokens used
+input: 1,389
+cache read: 9,728
+cache write: 0
+output: 292
+reasoning output: 15
+
+tool: validate
+{
+  "ref": "7a5dd0aa176dbf81742f84b44aeb0948fa2d8f20",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/util/sparse/sparse_tensor.h b/tensorflow/core/util/sparse/sparse_tensor.h\n--- a/tensorflow/core/util/sparse/sparse_tensor.h\n+++ b/tensorflow/core/util/sparse/sparse_tensor.h\n@@ -603,10 +603,15 @@ Status SparseTensor::Split(const SparseTensor& input_tensor,\n \n   const int residual = split_dim_size % num_split;\n   for (int i = 0; i < input_tensor.indices().dim_size(0); ++i) {\n     const int dim = input_tensor.indices().matrix<int64>()(i, split_dim);\n     int slice_index = GetSliceIndex(dim, split_size, residual);\n+    if (slice_index >= num_values.size()) {\n+      return Status(error::INVALID_ARGUMENT,\n+                    strings::StrCat(\"Slice index \", slice_index,\n+                                    \" is larger than num_split.\"));\n+    }\n     num_values[slice_index]++;\n   }\n \n   for (int i = 0; i < num_split; ++i) {\n"
+}
+This patch does not apply to the target TensorFlow ref.
+Git apply output:
+error: corrupt patch at line 19
+Touched files:
+- tensorflow/core/util/sparse/sparse_tensor.h
+Fix the patch context against the older TensorFlow version, then run validate again in hunk mode.
+
+tokens used
+input: 741
+cache read: 10,752
+cache write: 0
+output: 294
+reasoning output: 72
+
+tool: validate
+{
+  "ref": "7a5dd0aa176dbf81742f84b44aeb0948fa2d8f20",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/util/sparse/sparse_tensor.h b/tensorflow/core/util/sparse/sparse_tensor.h\n--- a/tensorflow/core/util/sparse/sparse_tensor.h\n+++ b/tensorflow/core/util/sparse/sparse_tensor.h\n@@ -603,9 +603,14 @@ Status SparseTensor::Split(const SparseTensor& input_tensor,\n \n   const int residual = split_dim_size % num_split;\n   for (int i = 0; i < input_tensor.indices().dim_size(0); ++i) {\n     const int dim = input_tensor.indices().matrix<int64>()(i, split_dim);\n     int slice_index = GetSliceIndex(dim, split_size, residual);\n+    if (slice_index >= num_values.size()) {\n+      return Status(error::INVALID_ARGUMENT,\n+                    strings::StrCat(\"Slice index \", slice_index,\n+                                    \" is larger than num_split.\"));\n+    }\n     num_values[slice_index]++;\n   }\n \n   for (int i = 0; i < num_split; ++i) {\n"
+}
+Patch applied successfully
+
+tokens used
+input: 4,248
+cache read: 7,680
+cache write: 0
+output: 294
+reasoning output: 94
+
+The hunk validates cleanly against the target base. I’m applying the same minimal change to the working tree.
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/util/sparse/sparse_tensor.h\n@@\n   for (int i = 0; i < input_tensor.indices().dim_size(0); ++i) {\n     const int dim = input_tensor.indices().matrix<int64>()(i, split_dim);\n     int slice_index = GetSliceIndex(dim, split_size, residual);\n+    if (slice_index >= num_values.size()) {\n+      return Status(error::INVALID_ARGUMENT,\n+                    strings::StrCat(\"Slice index \", slice_index,\n+                                    \" is larger than num_split.\"));\n+    }\n     num_values[slice_index]++;\n   }\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/util/sparse/sparse_tensor.h
+
+tokens used
+input: 553
+cache read: 11,776
+cache write: 0
+output: 200
+reasoning output: 0
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target SparseTensor::Split context",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate candidate backport hunk",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Apply minimal source change",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Report final unified diff",
+      "status": "in_progress",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target SparseTensor::Split context",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate candidate backport hunk",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Apply minimal source change",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Report final unified diff",
+    "status": "in_progress",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 781
+cache read: 11,776
+cache write: 0
+output: 86
+reasoning output: 0
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/util/sparse/sparse_tensor.h",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0175-7a5dd0aa176d"
+}
+warning: in the working copy of 'tensorflow/core/util/sparse/sparse_tensor.h', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/util/sparse/sparse_tensor.h b/tensorflow/core/util/sparse/sparse_tensor.h
+index d33bd03db2..7c556200d7 100644
+--- a/tensorflow/core/util/sparse/sparse_tensor.h
++++ b/tensorflow/core/util/sparse/sparse_tensor.h
+@@ -610,6 +610,11 @@ Status SparseTensor::Split(const SparseTensor& input_tensor,
+   for (int i = 0; i < input_tensor.indices().dim_size(0); ++i) {
+     const int dim = input_tensor.indices().matrix<int64>()(i, split_dim);
+     int slice_index = GetSliceIndex(dim, split_size, residual);
++    if (slice_index >= num_values.size()) {
++      return Status(error::INVALID_ARGUMENT,
++                    strings::StrCat("Slice index ", slice_index,
++                                    " is larger than num_split."));
++    }
+     num_values[slice_index]++;
+   }
+
+tokens used
+input: 1,000
+cache read: 11,776
+cache write: 0
+output: 74
+reasoning output: 14
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target SparseTensor::Split context",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate candidate backport hunk",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Apply minimal source change",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Report final unified diff",
+      "status": "completed",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target SparseTensor::Split context",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate candidate backport hunk",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Apply minimal source change",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Report final unified diff",
+    "status": "completed",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 1,341
+cache read: 11,776
+cache write: 0
+output: 85
+reasoning output: 0
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/util/sparse/sparse_tensor.h b/tensorflow/core/util/sparse/sparse_tensor.h
+    index d33bd03db2..7c556200d7 100644
+    --- a/tensorflow/core/util/sparse/sparse_tensor.h
+    +++ b/tensorflow/core/util/sparse/sparse_tensor.h
+    @@ -610,6 +610,11 @@ Status SparseTensor::Split(const SparseTensor& input_tensor,
+       for (int i = 0; i < input_tensor.indices().dim_size(0); ++i) {
+         const int dim = input_tensor.indices().matrix<int64>()(i, split_dim);
+         int slice_index = GetSliceIndex(dim, split_size, residual);
+    +    if (slice_index >= num_values.size()) {
+    +      return Status(error::INVALID_ARGUMENT,
+    +                    strings::StrCat("Slice index ", slice_index,
+    +                                    " is larger than num_split."));
+    +    }
+         num_values[slice_index]++;
+       }
+     
+  notes: >
+    Added the SparseTensor::Split slice_index bounds check in the TensorFlow 2.1.4 style and validated the hunk against the target base.
+```
+
+tokens used
+input: 534
+cache read: 12,800
+cache write: 0
+output: 278
+reasoning output: 0

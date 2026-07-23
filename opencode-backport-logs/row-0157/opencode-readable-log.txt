@@ -1,0 +1,396 @@
+I’ll locate the target-side cuDNN RNN sequence descriptor implementation, compare it to the supplied 2.5.0-rc0 hunk, then apply the minimal equivalent guard in the 1.15.5 checkout.
+
+tool: grep
+{
+  "pattern": "CHECK_GT\\(max_seq_length, 0\\)|max_seq_length <= 0|CudnnRnnSequenceTensorDescriptor",
+  "path": "tensorflow",
+  "include": "cuda_dnn.cc"
+}
+Found 48 matches
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0157-df8c55ce12b5\tensorflow\stream_executor\cuda\cuda_dnn.cc:
+  Line 1355: class CudnnRnnSequenceTensorDescriptor
+
+  Line 1357:   CudnnRnnSequenceTensorDescriptor(GpuExecutor* parent, int max_seq_length,
+
+  Line 1376:   CudnnRnnSequenceTensorDescriptor(CudnnRnnSequenceTensorDescriptor&&) =
+
+  Line 1379:   static port::StatusOr<CudnnRnnSequenceTensorDescriptor> Create(
+
+  Line 1382:     CHECK_GT(max_seq_length, 0);
+
+  Line 1390:     return CudnnRnnSequenceTensorDescriptor(parent, max_seq_length, batch_size,
+
+  Line 1398:   static port::StatusOr<CudnnRnnSequenceTensorDescriptor> Create(
+
+  Line 1403:     CHECK_GT(max_seq_length, 0);
+
+  Line 1427:     return CudnnRnnSequenceTensorDescriptor(
+
+  Line 1467:   SE_DISALLOW_COPY_AND_ASSIGN(CudnnRnnSequenceTensorDescriptor);
+
+  Line 1518:     const CudnnRnnSequenceTensorDescriptor& input_desc,
+
+  Line 1524:     const CudnnRnnSequenceTensorDescriptor& output_desc,
+
+  Line 1579:     const CudnnRnnSequenceTensorDescriptor& input_desc) {
+
+  Line 1596:     const CudnnRnnSequenceTensorDescriptor& input_desc,
+
+  Line 1666:     const CudnnRnnSequenceTensorDescriptor& input_desc,
+
+  Line 1672:     const CudnnRnnSequenceTensorDescriptor& output_desc,
+
+  Line 1818:     const CudnnRnnSequenceTensorDescriptor& input_desc,
+
+  Line 1824:     const CudnnRnnSequenceTensorDescriptor& output_desc,
+
+  Line 1999:   SE_ASSIGN_OR_RETURN(CudnnRnnSequenceTensorDescriptor descriptor,
+
+  Line 2000:                       CudnnRnnSequenceTensorDescriptor::Create(
+
+  Line 2004:       new CudnnRnnSequenceTensorDescriptor(std::move(descriptor)));
+
+  Line 2012:   SE_ASSIGN_OR_RETURN(CudnnRnnSequenceTensorDescriptor descriptor,
+
+  Line 2013:                       CudnnRnnSequenceTensorDescriptor::Create(
+
+  Line 2017:       new CudnnRnnSequenceTensorDescriptor(std::move(descriptor)));
+
+  Line 2049:   const CudnnRnnSequenceTensorDescriptor& cudnn_input_desc =
+
+  Line 2050:       static_cast<const CudnnRnnSequenceTensorDescriptor&>(input_desc);
+
+  Line 2055:   const CudnnRnnSequenceTensorDescriptor& cudnn_output_desc =
+
+  Line 2056:       static_cast<const CudnnRnnSequenceTensorDescriptor&>(output_desc);
+
+  Line 2090:   const CudnnRnnSequenceTensorDescriptor& cudnn_input_desc =
+
+  Line 2091:       static_cast<const CudnnRnnSequenceTensorDescriptor&>(input_desc);
+
+  Line 2096:   const CudnnRnnSequenceTensorDescriptor& cudnn_output_desc =
+
+  Line 2097:       static_cast<const CudnnRnnSequenceTensorDescriptor&>(output_desc);
+
+  Line 2132:   const CudnnRnnSequenceTensorDescriptor& cudnn_input_desc =
+
+  Line 2133:       static_cast<const CudnnRnnSequenceTensorDescriptor&>(input_desc);
+
+  Line 2138:   const CudnnRnnSequenceTensorDescriptor& cudnn_output_desc =
+
+  Line 2139:       static_cast<const CudnnRnnSequenceTensorDescriptor&>(output_desc);
+
+  Line 2181:   const CudnnRnnSequenceTensorDescriptor& cudnn_input_desc =
+
+  Line 2182:       static_cast<const CudnnRnnSequenceTensorDescriptor&>(input_desc);
+
+  Line 2187:   const CudnnRnnSequenceTensorDescriptor& cudnn_output_desc =
+
+  Line 2188:       static_cast<const CudnnRnnSequenceTensorDescriptor&>(output_desc);
+
+  Line 2232:   const CudnnRnnSequenceTensorDescriptor& cudnn_input_desc =
+
+  Line 2233:       static_cast<const CudnnRnnSequenceTensorDescriptor&>(input_desc);
+
+  Line 2238:   const CudnnRnnSequenceTensorDescriptor& cudnn_output_desc =
+
+  Line 2239:       static_cast<const CudnnRnnSequenceTensorDescriptor&>(output_desc);
+
+  Line 2284:   const CudnnRnnSequenceTensorDescriptor& cudnn_input_desc =
+
+  Line 2285:       static_cast<const CudnnRnnSequenceTensorDescriptor&>(input_desc);
+
+  Line 2290:   const CudnnRnnSequenceTensorDescriptor& cudnn_output_desc =
+
+  Line 2291:       static_cast<const CudnnRnnSequenceTensorDescriptor&>(output_desc);
+
+tool: locate_symbol
+{
+  "ref": "df8c55ce12b5cfc6f29b01889f7773911a75e6ef",
+  "symbol": "CudnnRnnSequenceTensorDescriptor"
+}
+tensorflow/stream_executor/cuda/cuda_dnn.cc:1355
+tensorflow/stream_executor/cuda/cuda_dnn.h:34
+tensorflow/stream_executor/cuda/cuda_dnn.cc:1357
+tensorflow/stream_executor/cuda/cuda_dnn.cc:1376
+tensorflow/stream_executor/cuda/cuda_dnn.cc:1390
+tensorflow/stream_executor/cuda/cuda_dnn.cc:1427
+tensorflow/stream_executor/cuda/cuda_dnn.cc:2004
+tensorflow/stream_executor/cuda/cuda_dnn.cc:2017
+tensorflow/stream_executor/cuda/cuda_dnn.cc:1379
+tensorflow/stream_executor/cuda/cuda_dnn.cc:1398
+tensorflow/stream_executor/cuda/cuda_dnn.cc:1467
+tensorflow/stream_executor/cuda/cuda_dnn.cc:1518
+tensorflow/stream_executor/cuda/cuda_dnn.cc:1524
+tensorflow/stream_executor/cuda/cuda_dnn.cc:1579
+tensorflow/stream_executor/cuda/cuda_dnn.cc:1596
+tensorflow/stream_executor/cuda/cuda_dnn.cc:1666
+tensorflow/stream_executor/cuda/cuda_dnn.cc:1672
+tensorflow/stream_executor/cuda/cuda_dnn.cc:1818
+tensorflow/stream_executor/cuda/cuda_dnn.cc:1824
+tensorflow/stream_executor/cuda/cuda_dnn.cc:1999
+
+tokens used
+input: 3,927
+cache read: 4,608
+cache write: 0
+output: 176
+reasoning output: 0
+
+The matching implementation is in the same file with two `Create` overloads and the same failing `CHECK_GT` pattern. I’m replacing those fatal checks with returned invalid-argument statuses, matching the newer fix and existing `port::StatusOr` API.
+
+tool: viewcode
+{
+  "ref": "df8c55ce12b5cfc6f29b01889f7773911a75e6ef",
+  "path": "tensorflow/stream_executor/cuda/cuda_dnn.cc",
+  "startline": 1370,
+  "endline": 1412
+}
+Here are lines 1370 through 1412.
+
+        rnn_data_handle_(std::move(data_handle)),
+#endif
+        handles_(max_seq_length, handle_.get()) {
+  }
+
+ public:
+  CudnnRnnSequenceTensorDescriptor(CudnnRnnSequenceTensorDescriptor&&) =
+      default;
+
+  static port::StatusOr<CudnnRnnSequenceTensorDescriptor> Create(
+      GpuExecutor* parent, int max_seq_length, int batch_size, int data_size,
+      cudnnDataType_t data_type) {
+    CHECK_GT(max_seq_length, 0);
+    int dims[] = {batch_size, data_size, 1};
+    int strides[] = {dims[1] * dims[2], dims[2], 1};
+    TensorDescriptor tensor_desc = CreateTensorDescriptor();
+    RETURN_IF_CUDNN_ERROR(cudnnSetTensorNdDescriptor(
+        /*tensorDesc=*/tensor_desc.get(), /*dataType=*/data_type,
+        /*nbDims=*/sizeof(dims) / sizeof(dims[0]), /*dimA=*/dims,
+        /*strideA=*/strides));
+    return CudnnRnnSequenceTensorDescriptor(parent, max_seq_length, batch_size,
+                                            data_size, data_type,
+#if CUDNN_VERSION >= 7201
+                                            nullptr,
+#endif
+                                            std::move(tensor_desc));
+  }
+
+  static port::StatusOr<CudnnRnnSequenceTensorDescriptor> Create(
+      GpuExecutor* parent, int max_seq_length, int batch_size, int data_size,
+      const absl::Span<const int>& seq_lengths, bool time_major,
+      cudnnDataType_t data_type) {
+#if CUDNN_VERSION >= 7201
+    CHECK_GT(max_seq_length, 0);
+    int dims[] = {batch_size, data_size, 1};
+    int strides[] = {dims[1] * dims[2], dims[2], 1};
+    TensorDescriptor tensor_desc = CreateTensorDescriptor();
+    RETURN_IF_CUDNN_ERROR(cudnnSetTensorNdDescriptor(
+        /*tensorDesc=*/tensor_desc.get(), /*dataType=*/data_type,
+        /*nbDims=*/sizeof(dims) / sizeof(dims[0]), /*dimA=*/dims,
+        /*strideA=*/strides));
+    const int* seq_lengths_array = seq_lengths.data();
+    RNNDataDescriptor data_desc = CreateRNNDataDescriptor();
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tokens used
+input: 2,487
+cache read: 7,680
+cache write: 0
+output: 127
+reasoning output: 0
+
+tool: grep
+{
+  "pattern": "INVALID_ARGUMENT, \"",
+  "path": "tensorflow/stream_executor/cuda",
+  "include": "*.cc"
+}
+Found 3 matches
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0157-df8c55ce12b5\tensorflow\stream_executor\cuda\cuda_dnn.cc:
+  Line 1546:     return port::Status(port::error::INVALID_ARGUMENT, "Invalid input_h shape");
+
+  Line 1553:     return port::Status(port::error::INVALID_ARGUMENT, "Invalid input_c shape");
+
+  Line 1559:     return port::Status(port::error::INVALID_ARGUMENT, "Invalid output shape");
+
+tool: grep
+{
+  "pattern": "port::Status\\(port::error::INVALID_ARGUMENT",
+  "path": "tensorflow/stream_executor",
+  "include": "*.cc"
+}
+Found 21 matches
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0157-df8c55ce12b5\tensorflow\stream_executor\cuda\cuda_dnn.cc:
+  Line 1072:       return port::Status(port::error::INVALID_ARGUMENT,
+
+  Line 1431:     return port::Status(port::error::INVALID_ARGUMENT,
+
+  Line 1546:     return port::Status(port::error::INVALID_ARGUMENT, "Invalid input_h shape");
+
+  Line 1553:     return port::Status(port::error::INVALID_ARGUMENT, "Invalid input_c shape");
+
+  Line 1559:     return port::Status(port::error::INVALID_ARGUMENT, "Invalid output shape");
+
+  Line 1564:     return port::Status(port::error::INVALID_ARGUMENT,
+
+  Line 1570:     return port::Status(port::error::INVALID_ARGUMENT,
+
+  Line 1587:     return port::Status(port::error::INVALID_ARGUMENT,
+
+  Line 1741:       return port::Status(port::error::INVALID_ARGUMENT,
+
+  Line 1780:       return port::Status(port::error::INVALID_ARGUMENT,
+
+  Line 1891:     return port::Status(port::error::INVALID_ARGUMENT,
+
+  Line 1938:       return port::Status(port::error::INVALID_ARGUMENT,
+
+  Line 2402:     return port::Status(port::error::INVALID_ARGUMENT,
+
+  Line 2447:     return port::Status(port::error::INVALID_ARGUMENT,
+
+  Line 2492:     return port::Status(port::error::INVALID_ARGUMENT,
+
+  Line 3135:     return port::Status(port::error::INVALID_ARGUMENT,
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0157-df8c55ce12b5\tensorflow\stream_executor\cuda\cuda_driver.cc:
+  Line 938:     return port::Status(port::error::INVALID_ARGUMENT,
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0157-df8c55ce12b5\tensorflow\stream_executor\cuda\cuda_fft.cc:
+  Line 136:           return port::Status(port::error::INVALID_ARGUMENT,
+
+  Line 185:           return port::Status(port::error::INVALID_ARGUMENT,
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0157-df8c55ce12b5\tensorflow\stream_executor\rocm\rocm_dnn.cc:
+  Line 2347:     return port::Status(port::error::INVALID_ARGUMENT,
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0157-df8c55ce12b5\tensorflow\stream_executor\stream_executor_pimpl.cc:
+  Line 245:     return port::Status(port::error::INVALID_ARGUMENT, error_msg);
+
+tokens used
+input: 1,099
+cache read: 9,728
+cache write: 0
+output: 89
+reasoning output: 19
+
+There is already nearby `port::Status(port::error::INVALID_ARGUMENT, ...)` usage in this target file, so the newer patch maps directly without API adaptation.
+
+tool: validate
+{
+  "ref": "df8c55ce12b5cfc6f29b01889f7773911a75e6ef",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/stream_executor/cuda/cuda_dnn.cc b/tensorflow/stream_executor/cuda/cuda_dnn.cc\n--- a/tensorflow/stream_executor/cuda/cuda_dnn.cc\n+++ b/tensorflow/stream_executor/cuda/cuda_dnn.cc\n@@ -1379,7 +1379,9 @@ class CudnnRnnSequenceTensorDescriptor\n   static port::StatusOr<CudnnRnnSequenceTensorDescriptor> Create(\n       GpuExecutor* parent, int max_seq_length, int batch_size, int data_size,\n       cudnnDataType_t data_type) {\n-    CHECK_GT(max_seq_length, 0);\n+    if (max_seq_length <= 0) {\n+      return port::Status(port::error::INVALID_ARGUMENT, \"max_seq_length <= 0\");\n+    }\n     int dims[] = {batch_size, data_size, 1};\n     int strides[] = {dims[1] * dims[2], dims[2], 1};\n     TensorDescriptor tensor_desc = CreateTensorDescriptor();\n@@ -1398,7 +1400,9 @@ class CudnnRnnSequenceTensorDescriptor\n       const absl::Span<const int>& seq_lengths, bool time_major,\n       cudnnDataType_t data_type) {\n #if CUDNN_VERSION >= 7201\n-    CHECK_GT(max_seq_length, 0);\n+    if (max_seq_length <= 0) {\n+      return port::Status(port::error::INVALID_ARGUMENT, \"max_seq_length <= 0\");\n+    }\n     int dims[] = {batch_size, data_size, 1};\n     int strides[] = {dims[1] * dims[2], dims[2], 1};\n     TensorDescriptor tensor_desc = CreateTensorDescriptor();\n"
+}
+Patch applied successfully
+
+tokens used
+input: 1,021
+cache read: 10,752
+cache write: 0
+output: 498
+reasoning output: 0
+
+The candidate hunk validates against the target base. I’m applying exactly that source change now.
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/stream_executor/cuda/cuda_dnn.cc\n@@\n   static port::StatusOr<CudnnRnnSequenceTensorDescriptor> Create(\n       GpuExecutor* parent, int max_seq_length, int batch_size, int data_size,\n       cudnnDataType_t data_type) {\n-    CHECK_GT(max_seq_length, 0);\n+    if (max_seq_length <= 0) {\n+      return port::Status(port::error::INVALID_ARGUMENT, \"max_seq_length <= 0\");\n+    }\n     int dims[] = {batch_size, data_size, 1};\n     int strides[] = {dims[1] * dims[2], dims[2], 1};\n     TensorDescriptor tensor_desc = CreateTensorDescriptor();\n@@\n       const absl::Span<const int>& seq_lengths, bool time_major,\n       cudnnDataType_t data_type) {\n #if CUDNN_VERSION >= 7201\n-    CHECK_GT(max_seq_length, 0);\n+    if (max_seq_length <= 0) {\n+      return port::Status(port::error::INVALID_ARGUMENT, \"max_seq_length <= 0\");\n+    }\n     int dims[] = {batch_size, data_size, 1};\n     int strides[] = {dims[1] * dims[2], dims[2], 1};\n     TensorDescriptor tensor_desc = CreateTensorDescriptor();\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/stream_executor/cuda/cuda_dnn.cc
+
+tokens used
+input: 1,532
+cache read: 10,752
+cache write: 0
+output: 374
+reasoning output: 0
+
+The source file is updated. I’m checking the resulting diff to ensure only the intended backport is present.
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/stream_executor/cuda/cuda_dnn.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0157-df8c55ce12b5"
+}
+warning: in the working copy of 'tensorflow/stream_executor/cuda/cuda_dnn.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/stream_executor/cuda/cuda_dnn.cc b/tensorflow/stream_executor/cuda/cuda_dnn.cc
+index d15fdd0655..076831671e 100755
+--- a/tensorflow/stream_executor/cuda/cuda_dnn.cc
++++ b/tensorflow/stream_executor/cuda/cuda_dnn.cc
+@@ -1379,7 +1379,9 @@ class CudnnRnnSequenceTensorDescriptor
+   static port::StatusOr<CudnnRnnSequenceTensorDescriptor> Create(
+       GpuExecutor* parent, int max_seq_length, int batch_size, int data_size,
+       cudnnDataType_t data_type) {
+-    CHECK_GT(max_seq_length, 0);
++    if (max_seq_length <= 0) {
++      return port::Status(port::error::INVALID_ARGUMENT, "max_seq_length <= 0");
++    }
+     int dims[] = {batch_size, data_size, 1};
+     int strides[] = {dims[1] * dims[2], dims[2], 1};
+     TensorDescriptor tensor_desc = CreateTensorDescriptor();
+@@ -1400,7 +1402,9 @@ class CudnnRnnSequenceTensorDescriptor
+       const absl::Span<const int>& seq_lengths, bool time_major,
+       cudnnDataType_t data_type) {
+ #if CUDNN_VERSION >= 7201
+-    CHECK_GT(max_seq_length, 0);
++    if (max_seq_length <= 0) {
++      return port::Status(port::error::INVALID_ARGUMENT, "max_seq_length <= 0");
++    }
+     int dims[] = {batch_size, data_size, 1};
+     int strides[] = {dims[1] * dims[2], dims[2], 1};
+     TensorDescriptor tensor_desc = CreateTensorDescriptor();
+
+tokens used
+input: 912
+cache read: 11,776
+cache write: 0
+output: 103
+reasoning output: 0
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/stream_executor/cuda/cuda_dnn.cc b/tensorflow/stream_executor/cuda/cuda_dnn.cc
+    index d15fdd0655..076831671e 100755
+    --- a/tensorflow/stream_executor/cuda/cuda_dnn.cc
+    +++ b/tensorflow/stream_executor/cuda/cuda_dnn.cc
+    @@ -1379,7 +1379,9 @@ class CudnnRnnSequenceTensorDescriptor
+       static port::StatusOr<CudnnRnnSequenceTensorDescriptor> Create(
+           GpuExecutor* parent, int max_seq_length, int batch_size, int data_size,
+           cudnnDataType_t data_type) {
+    -    CHECK_GT(max_seq_length, 0);
+    +    if (max_seq_length <= 0) {
+    +      return port::Status(port::error::INVALID_ARGUMENT, "max_seq_length <= 0");
+    +    }
+         int dims[] = {batch_size, data_size, 1};
+         int strides[] = {dims[1] * dims[2], dims[2], 1};
+         TensorDescriptor tensor_desc = CreateTensorDescriptor();
+    @@ -1400,7 +1402,9 @@ class CudnnRnnSequenceTensorDescriptor
+           const absl::Span<const int>& seq_lengths, bool time_major,
+           cudnnDataType_t data_type) {
+     #if CUDNN_VERSION >= 7201
+    -    CHECK_GT(max_seq_length, 0);
+    +    if (max_seq_length <= 0) {
+    +      return port::Status(port::error::INVALID_ARGUMENT, "max_seq_length <= 0");
+    +    }
+         int dims[] = {batch_size, data_size, 1};
+         int strides[] = {dims[1] * dims[2], dims[2], 1};
+         TensorDescriptor tensor_desc = CreateTensorDescriptor();
+  notes: >
+    Replaced fatal max_seq_length checks in both CUDA RNN sequence descriptor Create overloads with INVALID_ARGUMENT Status returns; hunk validation succeeded.
+```
+
+tokens used
+input: 1,456
+cache read: 11,776
+cache write: 0
+output: 468
+reasoning output: 19

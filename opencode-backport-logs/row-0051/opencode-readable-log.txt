@@ -1,0 +1,293 @@
+I’ll inspect the target-side `SpecializeType` implementation and the source commit context, then apply only the null-check change needed for the older checkout.
+
+tool: viewcode
+{
+  "ref": "e1192b098f699e4c18e2ecc1c8345edf50ccdf8b",
+  "path": "tensorflow/core/framework/full_type_util.cc",
+  "startline": 1,
+  "endline": 150
+}
+This file only has 124 lines. Here are lines 1 through 124.
+
+/* Copyright 2020 The TensorFlow Authors. All Rights Reserved.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+==============================================================================*/
+
+#include "tensorflow/core/framework/full_type_util.h"
+
+#include "tensorflow/core/framework/attr_value.pb.h"
+#include "tensorflow/core/framework/full_type.pb.h"
+#include "tensorflow/core/framework/node_def.pb.h"
+#include "tensorflow/core/framework/node_def_util.h"
+#include "tensorflow/core/framework/op_def.pb.h"
+#include "tensorflow/core/framework/types.h"
+#include "tensorflow/core/platform/statusor.h"
+
+namespace tensorflow {
+
+namespace full_type {
+
+OpTypeConstructor Unary(FullTypeId t, const string& var_name) {
+  return [t, var_name](OpDef* op_def) {
+    FullTypeDef* tdef =
+        op_def->mutable_output_arg(0)->mutable_experimental_full_type();
+    tdef->set_type_id(t);
+
+    FullTypeDef* arg = tdef->add_args();
+    arg->set_type_id(TFT_VAR);
+    arg->set_s(var_name);
+
+    return Status::OK();
+  };
+}
+
+OpTypeConstructor UnaryGeneric(FullTypeId t) {
+  return [t](OpDef* op_def) {
+    FullTypeDef* tdef =
+        op_def->mutable_output_arg(0)->mutable_experimental_full_type();
+    tdef->set_type_id(t);
+
+    FullTypeDef* arg = tdef->add_args();
+    arg->set_type_id(TFT_ANY);
+
+    return Status::OK();
+  };
+}
+
+OpTypeConstructor UnaryTensorContainer(FullTypeId t, FullTypeId dtype) {
+  return [t, dtype](OpDef* op_def) {
+    FullTypeDef* tdef =
+        op_def->mutable_output_arg(0)->mutable_experimental_full_type();
+    tdef->set_type_id(t);
+
+    FullTypeDef* arg = tdef->add_args();
+    arg->set_type_id(TFT_TENSOR);
+    FullTypeDef* targ = arg->add_args();
+    targ->set_type_id(dtype);
+
+    return Status::OK();
+  };
+}
+
+StatusOr<FullTypeDef> SpecializeType(const AttrSlice& attrs,
+                                     const OpDef& op_def) {
+  FullTypeDef ft;
+  ft.set_type_id(TFT_PRODUCT);
+
+  for (int i = 0; i < op_def.output_arg_size(); i++) {
+    auto* t = ft.add_args();
+
+    *t = op_def.output_arg(i).experimental_full_type();
+
+    // Resolve dependent types. The convention for op registrations is to use
+    // attributes as type variables.
+    // See https://www.tensorflow.org/guide/create_op#type_polymorphism.
+    // Once the op signature can be defined entirely in FullType, this
+    // convention can be deprecated.
+    //
+    // Note: While this code performs some basic verifications, it generally
+    // assumes consistent op defs and attributes. If more complete
+    // verifications are needed, they should be done by separately, and in a
+    // way that can be reused for type inference.
+    for (int j = 0; j < t->args_size(); j++) {
+      auto* arg = t->mutable_args(i);
+      if (arg->type_id() == TFT_VAR) {
+        const auto* attr = attrs.Find(arg->s());
+        DCHECK(attr != nullptr);
+        if (attr->value_case() == AttrValue::kList) {
+          const auto& attr_list = attr->list();
+          arg->set_type_id(TFT_PRODUCT);
+          for (int i = 0; i < attr_list.type_size(); i++) {
+            map_dtype_to_tensor(attr_list.type(i), arg->add_args());
+          }
+
+        } else if (attr->value_case() == AttrValue::kType) {
+          map_dtype_to_tensor(attr->type(), arg);
+
+        } else {
+          return Status(error::UNIMPLEMENTED,
+                        absl::StrCat("unknown attribute type",
+                                     attrs.DebugString(), " key=", arg->s()));
+        }
+
+        arg->clear_s();
+      }
+    }
+  }
+
+  return ft;
+}
+
+}  // namespace full_type
+
+}  // namespace tensorflow
+
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: git_show
+{
+  "ref": "8a513cec4bec15961fbfdedcaa5376522980455c",
+  "context": "StatusOr<FullTypeDef> SpecializeType(const AttrSlice& attrs"
+}
+commit 8a513cec4bec15961fbfdedcaa5376522980455c
+Author: Mihai Maruseac <mihaimaruseac@google.com>
+Date:   Mon Nov 8 10:35:47 2021 -0800
+
+    Prevent null dereference read in `SpecializeType()`
+    
+    For some adversarial protos, the attribute for a key might not exist.
+    
+    PiperOrigin-RevId: 408382090
+    Change-Id: Ie7eabe532c9ff280fce5dce1f6cdb93c76c2e040
+
+ tensorflow/core/framework/full_type_util.cc | 7 ++++++-
+ 1 file changed, 6 insertions(+), 1 deletion(-)
+This commit shows that there is a high probability that this code is new, so the corresponding code segment cannot be found in the old version.
+You can call `viewcode` and `locate_symbol` to further check the results step by step. For newly introduced code, we consider that this hunk `need not ported`.
+
+tool: locate_symbol
+{
+  "ref": "e1192b098f699e4c18e2ecc1c8345edf50ccdf8b",
+  "symbol": "SpecializeType"
+}
+tensorflow/core/framework/full_type_util.cc:72
+tensorflow/core/framework/full_type_util.h:56
+tensorflow/core/framework/shape_inference.cc:172
+tensorflow/core/graph/node_builder.cc:136
+
+tokens used
+input: 3,772
+cache read: 4,608
+cache write: 0
+output: 209
+reasoning output: 0
+
+The equivalent function exists in the target file with the vulnerable `DCHECK(attr != nullptr)` path. I’m applying the same production error return and adding the required error-code include.
+
+tool: validate
+{
+  "ref": "e1192b098f699e4c18e2ecc1c8345edf50ccdf8b",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/framework/full_type_util.cc b/tensorflow/core/framework/full_type_util.cc\n--- a/tensorflow/core/framework/full_type_util.cc\n+++ b/tensorflow/core/framework/full_type_util.cc\n@@ -22,6 +22,7 @@ limitations under the License.\n #include \"tensorflow/core/framework/op_def.pb.h\"\n #include \"tensorflow/core/framework/types.h\"\n #include \"tensorflow/core/platform/statusor.h\"\n+#include \"tensorflow/core/protobuf/error_codes.pb.h\"\n \n namespace tensorflow {\n \n@@ -101,7 +102,11 @@ StatusOr<FullTypeDef> SpecializeType(const AttrSlice& attrs,\n       auto* arg = t->mutable_args(i);\n       if (arg->type_id() == TFT_VAR) {\n         const auto* attr = attrs.Find(arg->s());\n-        DCHECK(attr != nullptr);\n+        if (attr == nullptr) {\n+          return Status(\n+              error::INVALID_ARGUMENT,\n+              absl::StrCat(\"Could not find an attribute for key \", arg->s()));\n+        }\n         if (attr->value_case() == AttrValue::kList) {\n           const auto& attr_list = attr->list();\n           arg->set_type_id(TFT_PRODUCT);\n"
+}
+Patch applied successfully
+
+tokens used
+input: 2,213
+cache read: 7,680
+cache write: 0
+output: 378
+reasoning output: 71
+
+The backport hunk applies cleanly to the target base. I’m updating the checked-out file now.
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/framework/full_type_util.cc\n@@\n #include \"tensorflow/core/framework/op_def.pb.h\"\n #include \"tensorflow/core/framework/types.h\"\n #include \"tensorflow/core/platform/statusor.h\"\n+#include \"tensorflow/core/protobuf/error_codes.pb.h\"\n \n namespace tensorflow {\n@@\n       auto* arg = t->mutable_args(i);\n       if (arg->type_id() == TFT_VAR) {\n         const auto* attr = attrs.Find(arg->s());\n-        DCHECK(attr != nullptr);\n+        if (attr == nullptr) {\n+          return Status(\n+              error::INVALID_ARGUMENT,\n+              absl::StrCat(\"Could not find an attribute for key \", arg->s()));\n+        }\n         if (attr->value_case() == AttrValue::kList) {\n           const auto& attr_list = attr->list();\n           arg->set_type_id(TFT_PRODUCT);\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/framework/full_type_util.cc
+
+tokens used
+input: 627
+cache read: 9,728
+cache write: 0
+output: 264
+reasoning output: 0
+
+I’ll verify the resulting diff only includes the intended security backport.
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/framework/full_type_util.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0051-e1192b098f69",
+  "timeout": 120000
+}
+warning: in the working copy of 'tensorflow/core/framework/full_type_util.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/framework/full_type_util.cc b/tensorflow/core/framework/full_type_util.cc
+index bf2f4fb93a..735255a1b4 100644
+--- a/tensorflow/core/framework/full_type_util.cc
++++ b/tensorflow/core/framework/full_type_util.cc
+@@ -22,6 +22,7 @@ limitations under the License.
+ #include "tensorflow/core/framework/op_def.pb.h"
+ #include "tensorflow/core/framework/types.h"
+ #include "tensorflow/core/platform/statusor.h"
++#include "tensorflow/core/protobuf/error_codes.pb.h"
+ 
+ namespace tensorflow {
+ 
+@@ -93,7 +94,11 @@ StatusOr<FullTypeDef> SpecializeType(const AttrSlice& attrs,
+       auto* arg = t->mutable_args(i);
+       if (arg->type_id() == TFT_VAR) {
+         const auto* attr = attrs.Find(arg->s());
+-        DCHECK(attr != nullptr);
++        if (attr == nullptr) {
++          return Status(
++              error::INVALID_ARGUMENT,
++              absl::StrCat("Could not find an attribute for key ", arg->s()));
++        }
+         if (attr->value_case() == AttrValue::kList) {
+           const auto& attr_list = attr->list();
+           arg->set_type_id(TFT_PRODUCT);
+
+tokens used
+input: 917
+cache read: 9,728
+cache write: 0
+output: 94
+reasoning output: 0
+
+Applied the TensorFlow security backport to `tensorflow/core/framework/full_type_util.cc`.
+
+Validated the hunk against target base `e1192b098f699e4c18e2ecc1c8345edf50ccdf8b` with `validate(mode="hunk")`; it applied cleanly.
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/framework/full_type_util.cc b/tensorflow/core/framework/full_type_util.cc
+    index bf2f4fb93a..735255a1b4 100644
+    --- a/tensorflow/core/framework/full_type_util.cc
+    +++ b/tensorflow/core/framework/full_type_util.cc
+    @@ -22,6 +22,7 @@ limitations under the License.
+     #include "tensorflow/core/framework/op_def.pb.h"
+     #include "tensorflow/core/framework/types.h"
+     #include "tensorflow/core/platform/statusor.h"
+    +#include "tensorflow/core/protobuf/error_codes.pb.h"
+     
+     namespace tensorflow {
+     
+    @@ -93,7 +94,11 @@ StatusOr<FullTypeDef> SpecializeType(const AttrSlice& attrs,
+           auto* arg = t->mutable_args(i);
+           if (arg->type_id() == TFT_VAR) {
+             const auto* attr = attrs.Find(arg->s());
+    -        DCHECK(attr != nullptr);
+    +        if (attr == nullptr) {
+    +          return Status(
+    +              error::INVALID_ARGUMENT,
+    +              absl::StrCat("Could not find an attribute for key ", arg->s()));
+    +        }
+             if (attr->value_case() == AttrValue::kList) {
+               const auto& attr_list = attr->list();
+               arg->set_type_id(TFT_PRODUCT);
+  notes: >
+    Added the missing attribute null check in SpecializeType so malformed protos return INVALID_ARGUMENT instead of dereferencing null.
+```
+
+tokens used
+input: 1,331
+cache read: 9,728
+cache write: 0
+output: 413
+reasoning output: 28

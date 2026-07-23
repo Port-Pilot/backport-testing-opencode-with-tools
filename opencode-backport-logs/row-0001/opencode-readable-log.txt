@@ -1,0 +1,796 @@
+I’ll inspect the target-side locations for both hunks, compare the surrounding 1.15.4 code shape, then apply the minimal equivalent changes without using the known backport commit.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Locate target equivalents for source hunks",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Validate uncertain patch hunks against target base",
+      "status": "pending",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply minimal backport changes",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "content": "Inspect final diff",
+      "status": "pending",
+      "priority": "high"
+    }
+  ]
+}
+[
+  {
+    "content": "Locate target equivalents for source hunks",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Validate uncertain patch hunks against target base",
+    "status": "pending",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply minimal backport changes",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "content": "Inspect final diff",
+    "status": "pending",
+    "priority": "high"
+  }
+]
+
+tokens used
+input: 3,939
+cache read: 4,608
+cache write: 0
+output: 133
+reasoning output: 0
+
+tool: locate_symbol
+{
+  "ref": "fd8e10fb9017783b019fdf4c3bcfa452a79e0c32",
+  "symbol": "KernelAndDeviceOp::Run"
+}
+tensorflow/core/common_runtime/eager/kernel_and_device.cc:169
+tensorflow/core/common_runtime/eager/kernel_and_device.cc:235
+
+tool: locate_symbol
+{
+  "ref": "fd8e10fb9017783b019fdf4c3bcfa452a79e0c32",
+  "symbol": "ControlFlowTest"
+}
+tensorflow/python/autograph/converters/control_flow_test.py:34
+tensorflow/python/framework/test_util.py:481
+tensorflow/python/framework/test_util.py:491
+tensorflow/python/kernel_tests/control_flow_ops_py_test.py:154
+tensorflow/python/ops/parallel_for/control_flow_ops_test.py:810
+tensorflow/compiler/xla/service/copy_insertion_test.cc:2127
+
+tokens used
+input: 1,135
+cache read: 7,680
+cache write: 0
+output: 111
+reasoning output: 0
+
+tool: viewcode
+{
+  "ref": "fd8e10fb9017783b019fdf4c3bcfa452a79e0c32",
+  "path": "tensorflow/core/common_runtime/eager/kernel_and_device.cc",
+  "startline": 220,
+  "endline": 340
+}
+Here are lines 220 through 340.
+
+
+  ms->set_persistent_memory_size(context->persistent_memory_allocated());
+  step_stats_collector->Finalize();
+}
+
+// In certain contexts (e.g. TPU async executions), the CancellationManager is
+// used to shut down the device in error scenarios (as opposed to using the
+// AsyncCompute's DoneCallback). This is handled through the
+// {inc,dec}_num_deferred_ops_function.
+struct OpExecutionState : public core::RefCounted {
+  // TODO(nareshmodi): consider refcounting the cancellation_manager.
+  CancellationManager cancellation_manager;
+};
+}  // anonymous namespace
+
+Status KernelAndDeviceOp::Run(ScopedStepContainer* step_container,
+                              const gtl::InlinedVector<TensorValue, 4>& inputs,
+                              std::vector<Tensor>* outputs,
+                              NodeExecStats* stats, StepStats* step_stats,
+                              GraphCollector* graph_collector,
+                              CancellationManager* cancellation_manager) {
+  gtl::InlinedVector<AllocatorAttributes, 4> in_attrs(kernel_->num_inputs());
+  for (size_t i = 0; i < in_attrs.size(); ++i) {
+    in_attrs[i].set_on_host(kernel_->input_memory_types()[i] ==
+                            tensorflow::HOST_MEMORY);
+  }
+  std::vector<AllocatorAttributes> out_attrs(kernel_->num_outputs());
+  for (size_t i = 0; i < out_attrs.size(); ++i) {
+    out_attrs[i].set_on_host(kernel_->output_memory_types()[i] ==
+                             tensorflow::HOST_MEMORY);
+  }
+
+  gtl::InlinedVector<DeviceContext*, 4> input_device_contexts;
+  for (int i = 0; i < inputs.size(); i++) {
+    DeviceContext* device_context = nullptr;
+    if (device_->tensorflow_gpu_device_info() != nullptr) {
+      device_context = device_->tensorflow_gpu_device_info()->default_context;
+    }
+    input_device_contexts.push_back(device_context);
+  }
+
+  OpKernelContext::Params params;
+  params.is_eager = true;
+  params.device = device_;
+  params.frame_iter = FrameAndIter(0, 0);
+  params.inputs = &inputs;
+  params.op_kernel = kernel_.get();
+  params.resource_manager = device_->resource_manager();
+  params.input_alloc_attrs = &in_attrs;
+  params.output_attr_array = gtl::vector_as_array(&out_attrs);
+  params.function_library = flr_;
+  params.slice_reader_cache = &slice_reader_cache_;
+  params.rendezvous = rendez_;
+  OpExecutionState* op_execution_state = nullptr;
+  if (cancellation_manager) {
+    params.cancellation_manager = cancellation_manager;
+  } else {
+    op_execution_state = new OpExecutionState;
+    params.cancellation_manager = &op_execution_state->cancellation_manager;
+  }
+  params.log_memory = log_memory_;
+  params.inc_num_deferred_ops_function = [op_execution_state]() {
+    if (op_execution_state != nullptr) {
+      op_execution_state->Ref();
+    }
+  };
+  params.dec_num_deferred_ops_function = [op_execution_state]() {
+    if (op_execution_state != nullptr) {
+      op_execution_state->Unref();
+    }
+  };
+  std::unique_ptr<StepStatsCollector> step_stats_collector;
+  if (stats != nullptr) {
+    step_stats_collector.reset(new StepStatsCollector(step_stats));
+    params.track_allocations = true;
+    params.stats_collector = step_stats_collector.get();
+    params.graph_collector = graph_collector;
+  }
+  params.runner = get_runner();
+
+  params.step_container = step_container;
+  params.collective_executor =
+      collective_executor_ ? collective_executor_->get() : nullptr;
+  params.input_device_contexts = &input_device_contexts;
+
+  OpKernelContext context(&params);
+
+  if (kernel_->def().op() == "_Recv") {
+    // TODO(apassos) do not special-case _Recv. Currently the GPU device fails
+    // if trying to run _Recv->Compute(), specifically checking for _Recv. To go
+    // around this we call _Recv->ComputeAsync, to mimic graph mode behavior.
+    AsyncOpKernel* async = kernel_->AsAsync();
+    Notification done;
+    device_->ComputeAsync(async, &context, [&done]() { done.Notify(); });
+    done.WaitForNotification();
+  } else {
+    const string& op_name = kernel_->name();
+    // 'ScopedActivity' will trace the OpKernel scheduling time on host.
+    profiler::TraceMe activity(
+        [&] {
+          return absl::StrCat(op_name, ":", kernel_->type_string(), "#id=",
+                              step_container ? step_container->step_id() : 0,
+                              ",device=", device_->name(), ",async=false#");
+        },
+        profiler::TraceMeLevel::kInfo);
+    // 'ScopedAnnotation' will trace the OpKernel execution time on device.
+    tracing::ScopedAnnotation annotation(
+        [&]() { return absl::StrCat(op_name, ":", kernel_->type_string()); });
+    device_->Compute(kernel_.get(), &context);
+  }
+
+  // Clean up execution op_execution_state if deferred ops aren't running.
+  if (op_execution_state != nullptr) {
+    op_execution_state->Unref();
+  }
+
+  if (!context.status().ok()) return context.status();
+
+  if (outputs != nullptr) {
+    outputs->clear();
+    for (int i = 0; i < context.num_outputs(); ++i) {
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: viewcode
+{
+  "ref": "fd8e10fb9017783b019fdf4c3bcfa452a79e0c32",
+  "path": "tensorflow/python/kernel_tests/control_flow_ops_py_test.py",
+  "startline": 4540,
+  "endline": 4610
+}
+Here are lines 4540 through 4610.
+
+      while_output = self._buildWhileWithShapeInvariants(
+          [tensor_shape.TensorShape(None)])
+      self.assertIsNone(while_output.shape.rank)
+    runTest()
+
+  def testWhileOutputShapeWithShapeInvariantsPartialShape(self):
+    @def_function.function
+    def runTest():
+      while_output = self._buildWhileWithShapeInvariants(
+          [tensor_shape.TensorShape([None])])
+      self.assertAllEqual(while_output.shape.as_list(), [None])
+    runTest()
+
+  def testFunctionInWhile(self):
+
+    @def_function.function
+    def body(x):
+      return x + 1
+
+    r = control_flow_ops.while_loop(lambda x: x < 5, body, [0])
+    self.assertAllEqual(r, 5.)
+
+
+class ControlFlowContextCheckTest(test.TestCase):
+
+  def _getWhileTensor(self):
+    """Creates and returns a tensor from a while context."""
+    tensor = []
+
+    def body(i):
+      if not tensor:
+        tensor.append(constant_op.constant(1))
+      return i + tensor[0]
+
+    control_flow_ops.while_loop(lambda i: i < 10, body, [0])
+    return tensor[0]
+
+  def _getCondTensor(self):
+    cond_tensor = []
+
+    def true_fn():
+      if not cond_tensor:
+        cond_tensor.append(constant_op.constant(1))
+      return cond_tensor[0]
+
+    control_flow_ops.cond(
+        math_ops.less(1, 2), true_fn, lambda: constant_op.constant(0))
+    return cond_tensor[0]
+
+  @test_util.run_v1_only("b/120545219")
+  def testInvalidContext(self):
+    # Accessing a while loop tensor outside of control flow is illegal.
+    while_tensor = self._getWhileTensor()
+    with self.assertRaisesRegexp(
+        ValueError,
+        "Cannot use 'while/Const_1' as input to 'Add' because 'while/Const_1' "
+        "is in a while loop. See info log for more details."):
+      math_ops.add(1, while_tensor)
+
+  @test_util.run_v1_only("b/120545219")
+  def testInvalidContextInCond(self):
+    # Accessing a while loop tensor in cond is illegal.
+    while_tensor = self._getWhileTensor()
+    with self.assertRaisesRegexp(
+        ValueError, "Cannot use 'while/Const_1' as input to 'cond/Add' because "
+        "'while/Const_1' is in a while loop. See info log for more details."):
+      # TODO(skyewm): this passes if we return while_tensor directly instead
+      # of using it as input to another op.
+      control_flow_ops.cond(
+          math_ops.less(1, 2), lambda: math_ops.add(1, while_tensor),
+          lambda: constant_op.constant(0))
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tokens used
+input: 342
+cache read: 8,704
+cache write: 0
+output: 142
+reasoning output: 0
+
+tool: viewcode
+{
+  "ref": "fd8e10fb9017783b019fdf4c3bcfa452a79e0c32",
+  "path": "tensorflow/core/common_runtime/eager/kernel_and_device.cc",
+  "startline": 330,
+  "endline": 360
+}
+Here are lines 330 through 360.
+
+
+  // Clean up execution op_execution_state if deferred ops aren't running.
+  if (op_execution_state != nullptr) {
+    op_execution_state->Unref();
+  }
+
+  if (!context.status().ok()) return context.status();
+
+  if (outputs != nullptr) {
+    outputs->clear();
+    for (int i = 0; i < context.num_outputs(); ++i) {
+      outputs->push_back(Tensor(*context.mutable_output(i)));
+    }
+  }
+  if (stats != nullptr) {
+    UpdateStats(&context, step_stats_collector.get(), stats);
+  }
+  return Status::OK();
+}
+
+Status KernelAndDeviceFunc::Run(
+    ScopedStepContainer* step_container,
+    const gtl::InlinedVector<TensorValue, 4>& inputs,
+    std::vector<Tensor>* outputs, NodeExecStats* stats, StepStats* step_stats,
+    GraphCollector* graph_collector,
+    CancellationManager* cancellation_manager) {
+  FunctionLibraryRuntime::Options opts;
+
+  // We don't pass rendezvous from eager context because we can get tensor
+  // name collisions in send/recv ops when running multiple instances
+  // of the same multi-device function concurrently.
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: grep
+{
+  "pattern": "testUInt64SwitchMerge|testQIntArgAndRet|class ControlFlowTest",
+  "path": "tensorflow/python/kernel_tests/control_flow_ops_py_test.py"
+}
+Found 3 matches
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0001-fd8e10fb9017\tensorflow\python\kernel_tests\control_flow_ops_py_test.py:
+  Line 154: class ControlFlowTest(test.TestCase, parameterized.TestCase):
+
+  Line 4490:   def testUInt64SwitchMerge(self):
+
+  Line 4499:   def testQIntArgAndRet(self):
+
+tokens used
+input: 2,316
+cache read: 8,704
+cache write: 0
+output: 125
+reasoning output: 25
+
+The runtime hunk maps directly to `KernelAndDeviceOp::Run` in the target. The Python test exists in the same file but at an earlier line, so I’m validating and applying the same test addition near `testUInt64SwitchMerge`.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Locate target equivalents for source hunks",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate uncertain patch hunks against target base",
+      "status": "in_progress",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply minimal backport changes",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "content": "Inspect final diff",
+      "status": "pending",
+      "priority": "high"
+    }
+  ]
+}
+[
+  {
+    "content": "Locate target equivalents for source hunks",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate uncertain patch hunks against target base",
+    "status": "in_progress",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply minimal backport changes",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "content": "Inspect final diff",
+    "status": "pending",
+    "priority": "high"
+  }
+]
+
+tokens used
+input: 827
+cache read: 10,752
+cache write: 0
+output: 146
+reasoning output: 0
+
+tool: viewcode
+{
+  "ref": "fd8e10fb9017783b019fdf4c3bcfa452a79e0c32",
+  "path": "tensorflow/python/kernel_tests/control_flow_ops_py_test.py",
+  "startline": 4475,
+  "endline": 4510
+}
+Here are lines 4475 through 4510.
+
+  @test_util.run_v1_only("b/120545219")
+  def testQIntRefSwitchMerge(self):
+    with self.cached_session(use_gpu=test.is_gpu_available()) as sess:
+      var_qint = gen_state_ops.variable(
+          shape=[1], dtype=dtypes.qint8, name="v", container="", shared_name="")
+      assign_op = state_ops.assign(
+          var_qint, constant_op.constant(np.array([42]), dtypes.qint8))
+      self.evaluate(assign_op)
+
+      cond = constant_op.constant(True, dtypes.bool)
+      v_f, v_t = control_flow_ops.ref_switch(var_qint, cond)
+      result = control_flow_ops.ref_merge([v_f, v_t])
+      self.evaluate(result)
+
+  @test_util.run_v1_only("b/120545219")
+  def testUInt64SwitchMerge(self):
+    with self.cached_session(force_gpu=test.is_gpu_available()) as sess:
+      constant_uint64 = constant_op.constant(np.array([42]), dtypes.uint64)
+      cond = constant_op.constant(True, dtypes.bool)
+      v_f, v_t = control_flow_ops.switch(constant_uint64, cond)
+      result = control_flow_ops.merge([v_f, v_t])
+      self.evaluate(result)
+
+  @test_util.run_deprecated_v1
+  def testQIntArgAndRet(self):
+
+    @function.Defun(dtypes.qint8)
+    def func(x):
+      return x
+
+    with self.cached_session(force_gpu=test.is_gpu_available()) as sess:
+      qint = constant_op.constant(np.array([42]), dtypes.qint8)
+      result = func(qint)
+      self.evaluate(result)
+
+  def testSparseIdentity(self):
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tokens used
+input: 1,108
+cache read: 10,752
+cache write: 0
+output: 66
+reasoning output: 0
+
+I’m going to check that the adjusted hunks apply cleanly to the target base before editing the working tree.
+
+tool: validate
+{
+  "ref": "fd8e10fb9017783b019fdf4c3bcfa452a79e0c32",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/common_runtime/eager/kernel_and_device.cc b/tensorflow/core/common_runtime/eager/kernel_and_device.cc\n--- a/tensorflow/core/common_runtime/eager/kernel_and_device.cc\n+++ b/tensorflow/core/common_runtime/eager/kernel_and_device.cc\n@@ -338,7 +338,12 @@ Status KernelAndDeviceOp::Run(ScopedStepContainer* step_container,\n   if (outputs != nullptr) {\n     outputs->clear();\n     for (int i = 0; i < context.num_outputs(); ++i) {\n-      outputs->push_back(Tensor(*context.mutable_output(i)));\n+      const auto* output_tensor = context.mutable_output(i);\n+      if (output_tensor != nullptr) {\n+        outputs->push_back(Tensor(*output_tensor));\n+      } else {\n+        outputs->push_back(Tensor());\n+      }\n     }\n   }\n   if (stats != nullptr) {\n"
+}
+Patch applied successfully
+
+tokens used
+input: 550
+cache read: 11,776
+cache write: 0
+output: 293
+reasoning output: 25
+
+tool: validate
+{
+  "ref": "fd8e10fb9017783b019fdf4c3bcfa452a79e0c32",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/python/kernel_tests/control_flow_ops_py_test.py b/tensorflow/python/kernel_tests/control_flow_ops_py_test.py\n--- a/tensorflow/python/kernel_tests/control_flow_ops_py_test.py\n+++ b/tensorflow/python/kernel_tests/control_flow_ops_py_test.py\n@@ -4497,6 +4497,14 @@ class ControlFlowTest(test.TestCase, parameterized.TestCase):\n       result = control_flow_ops.merge([v_f, v_t])\n       self.evaluate(result)\n \n+  def testSwitchEagerMode(self):\n+    if not context.executing_eagerly():\n+      return\n+    input_data = [1, 2, 3, 4]\n+    vf, vt = control_flow_ops.switch(input_data, False)\n+    self.assertAllEqual(vf, input_data)\n+    self.assertAllEqual(vt, [])\n+\n   @test_util.run_deprecated_v1\n   def testQIntArgAndRet(self):\n \n"
+}
+Patch applied successfully
+
+tokens used
+input: 12,657
+cache read: 0
+cache write: 0
+output: 273
+reasoning output: 0
+
+Both hunks validate against the target base. I’ll now apply the minimal C++ null-output handling and add the eager-mode regression test.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Locate target equivalents for source hunks",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate uncertain patch hunks against target base",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply minimal backport changes",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Inspect final diff",
+      "status": "pending",
+      "priority": "high"
+    }
+  ]
+}
+[
+  {
+    "content": "Locate target equivalents for source hunks",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate uncertain patch hunks against target base",
+    "status": "completed",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply minimal backport changes",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Inspect final diff",
+    "status": "pending",
+    "priority": "high"
+  }
+]
+
+tokens used
+input: 1,167
+cache read: 11,776
+cache write: 0
+output: 123
+reasoning output: 0
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/common_runtime/eager/kernel_and_device.cc\n@@\n   if (outputs != nullptr) {\n     outputs->clear();\n     for (int i = 0; i < context.num_outputs(); ++i) {\n-      outputs->push_back(Tensor(*context.mutable_output(i)));\n+      const auto* output_tensor = context.mutable_output(i);\n+      if (output_tensor != nullptr) {\n+        outputs->push_back(Tensor(*output_tensor));\n+      } else {\n+        outputs->push_back(Tensor());\n+      }\n     }\n   }\n*** Update File: tensorflow/python/kernel_tests/control_flow_ops_py_test.py\n@@\n       result = control_flow_ops.merge([v_f, v_t])\n       self.evaluate(result)\n \n+  def testSwitchEagerMode(self):\n+    if not context.executing_eagerly():\n+      return\n+    input_data = [1, 2, 3, 4]\n+    vf, vt = control_flow_ops.switch(input_data, False)\n+    self.assertAllEqual(vf, input_data)\n+    self.assertAllEqual(vt, [])\n+\n   @test_util.run_deprecated_v1\n   def testQIntArgAndRet(self):\n \n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/common_runtime/eager/kernel_and_device.cc
+M tensorflow/python/kernel_tests/control_flow_ops_py_test.py
+
+tokens used
+input: 1,425
+cache read: 11,776
+cache write: 0
+output: 317
+reasoning output: 0
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Locate target equivalents for source hunks",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate uncertain patch hunks against target base",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply minimal backport changes",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Inspect final diff",
+      "status": "in_progress",
+      "priority": "high"
+    }
+  ]
+}
+[
+  {
+    "content": "Locate target equivalents for source hunks",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate uncertain patch hunks against target base",
+    "status": "completed",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply minimal backport changes",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Inspect final diff",
+    "status": "in_progress",
+    "priority": "high"
+  }
+]
+
+tokens used
+input: 759
+cache read: 12,800
+cache write: 0
+output: 90
+reasoning output: 13
+
+I’m inspecting the resulting diff now to ensure only the intended backport changes are present.
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/common_runtime/eager/kernel_and_device.cc tensorflow/python/kernel_tests/control_flow_ops_py_test.py",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0001-fd8e10fb9017"
+}
+warning: in the working copy of 'tensorflow/core/common_runtime/eager/kernel_and_device.cc', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'tensorflow/python/kernel_tests/control_flow_ops_py_test.py', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/common_runtime/eager/kernel_and_device.cc b/tensorflow/core/common_runtime/eager/kernel_and_device.cc
+index 59c58754e4..bafb5359ac 100644
+--- a/tensorflow/core/common_runtime/eager/kernel_and_device.cc
++++ b/tensorflow/core/common_runtime/eager/kernel_and_device.cc
+@@ -338,7 +338,12 @@ Status KernelAndDeviceOp::Run(ScopedStepContainer* step_container,
+   if (outputs != nullptr) {
+     outputs->clear();
+     for (int i = 0; i < context.num_outputs(); ++i) {
+-      outputs->push_back(Tensor(*context.mutable_output(i)));
++      const auto* output_tensor = context.mutable_output(i);
++      if (output_tensor != nullptr) {
++        outputs->push_back(Tensor(*output_tensor));
++      } else {
++        outputs->push_back(Tensor());
++      }
+     }
+   }
+   if (stats != nullptr) {
+diff --git a/tensorflow/python/kernel_tests/control_flow_ops_py_test.py b/tensorflow/python/kernel_tests/control_flow_ops_py_test.py
+index 007c3f268f..4b420e60b9 100644
+--- a/tensorflow/python/kernel_tests/control_flow_ops_py_test.py
++++ b/tensorflow/python/kernel_tests/control_flow_ops_py_test.py
+@@ -4495,6 +4495,14 @@ class ControlFlowTest(test.TestCase, parameterized.TestCase):
+       result = control_flow_ops.merge([v_f, v_t])
+       self.evaluate(result)
+ 
++  def testSwitchEagerMode(self):
++    if not context.executing_eagerly():
++      return
++    input_data = [1, 2, 3, 4]
++    vf, vt = control_flow_ops.switch(input_data, False)
++    self.assertAllEqual(vf, input_data)
++    self.assertAllEqual(vt, [])
++
+   @test_util.run_deprecated_v1
+   def testQIntArgAndRet(self):
+
+tokens used
+input: 997
+cache read: 12,800
+cache write: 0
+output: 107
+reasoning output: 0
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Locate target equivalents for source hunks",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate uncertain patch hunks against target base",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply minimal backport changes",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Inspect final diff",
+      "status": "completed",
+      "priority": "high"
+    }
+  ]
+}
+[
+  {
+    "content": "Locate target equivalents for source hunks",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate uncertain patch hunks against target base",
+    "status": "completed",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply minimal backport changes",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Inspect final diff",
+    "status": "completed",
+    "priority": "high"
+  }
+]
+
+tokens used
+input: 1,620
+cache read: 12,800
+cache write: 0
+output: 89
+reasoning output: 24
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/common_runtime/eager/kernel_and_device.cc b/tensorflow/core/common_runtime/eager/kernel_and_device.cc
+    index 59c58754e4..bafb5359ac 100644
+    --- a/tensorflow/core/common_runtime/eager/kernel_and_device.cc
+    +++ b/tensorflow/core/common_runtime/eager/kernel_and_device.cc
+    @@ -338,7 +338,12 @@ Status KernelAndDeviceOp::Run(ScopedStepContainer* step_container,
+       if (outputs != nullptr) {
+         outputs->clear();
+         for (int i = 0; i < context.num_outputs(); ++i) {
+    -      outputs->push_back(Tensor(*context.mutable_output(i)));
+    +      const auto* output_tensor = context.mutable_output(i);
+    +      if (output_tensor != nullptr) {
+    +        outputs->push_back(Tensor(*output_tensor));
+    +      } else {
+    +        outputs->push_back(Tensor());
+    +      }
+         }
+       }
+       if (stats != nullptr) {
+    diff --git a/tensorflow/python/kernel_tests/control_flow_ops_py_test.py b/tensorflow/python/kernel_tests/control_flow_ops_py_test.py
+    index 007c3f268f..4b420e60b9 100644
+    --- a/tensorflow/python/kernel_tests/control_flow_ops_py_test.py
+    +++ b/tensorflow/python/kernel_tests/control_flow_ops_py_test.py
+    @@ -4495,6 +4495,14 @@ class ControlFlowTest(test.TestCase, parameterized.TestCase):
+           result = control_flow_ops.merge([v_f, v_t])
+           self.evaluate(result)
+     
+    +  def testSwitchEagerMode(self):
+    +    if not context.executing_eagerly():
+    +      return
+    +    input_data = [1, 2, 3, 4]
+    +    vf, vt = control_flow_ops.switch(input_data, False)
+    +    self.assertAllEqual(vf, input_data)
+    +    self.assertAllEqual(vt, [])
+    +
+       @test_util.run_deprecated_v1
+       def testQIntArgAndRet(self):
+     
+  notes: >
+    Backported the eager KernelAndDevice null output handling and added the Switch eager-mode regression test; both hunks were validated against the target base in hunk mode.
+```
+
+tokens used
+input: 1,867
+cache read: 12,800
+cache write: 0
+output: 525
+reasoning output: 0

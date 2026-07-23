@@ -1,0 +1,785 @@
+I’ll inspect the target-side locations for each hunk, then apply only the equivalent minimal changes in the checked-out 2.6.4 tree.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target code for StagePeekOp, stage_op_test, and StagingArea dtype check",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Validate uncertain hunks against target base if needed",
+      "status": "pending",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply minimal backport changes",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "content": "Review resulting diff",
+      "status": "pending",
+      "priority": "high"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target code for StagePeekOp, stage_op_test, and StagingArea dtype check",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Validate uncertain hunks against target base if needed",
+    "status": "pending",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply minimal backport changes",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "content": "Review resulting diff",
+    "status": "pending",
+    "priority": "high"
+  }
+]
+
+tokens used
+input: 4,185
+cache read: 4,608
+cache write: 0
+output: 138
+reasoning output: 0
+
+tool: locate_symbol
+{
+  "ref": "d80cb5fff6fd147034b53d6ea2e4262ee6624e41",
+  "symbol": "testPeek"
+}
+tensorflow/python/kernel_tests/map_stage_op_test.py:127
+tensorflow/python/kernel_tests/stage_op_test.py:118
+
+tool: locate_symbol
+{
+  "ref": "d80cb5fff6fd147034b53d6ea2e4262ee6624e41",
+  "symbol": "StagePeekOp"
+}
+tensorflow/core/kernels/stage_op.cc:255
+tensorflow/core/kernels/stage_op.cc:257
+tensorflow/core/kernels/stage_op.cc:282
+tensorflow/core/kernels/stage_op.cc:286
+
+tool: locate_symbol
+{
+  "ref": "d80cb5fff6fd147034b53d6ea2e4262ee6624e41",
+  "symbol": "_check_put_dtypes"
+}
+tensorflow/python/ops/data_flow_ops.py:1679
+tensorflow/python/ops/data_flow_ops.py:1923
+tensorflow/python/ops/data_flow_ops.py:2193
+
+tokens used
+input: 374
+cache read: 8,704
+cache write: 0
+output: 150
+reasoning output: 0
+
+tool: viewcode
+{
+  "ref": "d80cb5fff6fd147034b53d6ea2e4262ee6624e41",
+  "path": "tensorflow/core/kernels/stage_op.cc",
+  "startline": 245,
+  "endline": 275
+}
+Here are lines 245 through 275.
+
+    }
+  }
+};
+
+REGISTER_KERNEL_BUILDER(Name("Unstage").Device(DEVICE_CPU), UnstageOp);
+#if (defined(GOOGLE_CUDA) && GOOGLE_CUDA) || \
+    (defined(TENSORFLOW_USE_ROCM) && TENSORFLOW_USE_ROCM)
+REGISTER_KERNEL_BUILDER(Name("Unstage").Device(DEVICE_GPU), UnstageOp);
+#endif
+
+class StagePeekOp : public OpKernel {
+ public:
+  explicit StagePeekOp(OpKernelConstruction* ctx) : OpKernel(ctx) {}
+
+  // Using this op in such a way that it blocks forever
+  // is an error.  As such cancellation is not handled.
+  void Compute(OpKernelContext* ctx) override {
+    Buffer* buf = nullptr;
+    OP_REQUIRES_OK(ctx, GetBuffer(ctx, def(), &buf));
+    core::ScopedUnref scope(buf);
+    Buffer::Tuple tuple;
+
+    std::size_t index = ctx->input(0).scalar<int>()();
+
+    OP_REQUIRES_OK(ctx, buf->Peek(index, &tuple));
+
+    OP_REQUIRES(
+        ctx, tuple.size() == (size_t)ctx->num_outputs(),
+        errors::InvalidArgument("Mismatch stage/unstage: ", tuple.size(),
+                                " vs. ", ctx->num_outputs()));
+
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: viewcode
+{
+  "ref": "d80cb5fff6fd147034b53d6ea2e4262ee6624e41",
+  "path": "tensorflow/python/kernel_tests/stage_op_test.py",
+  "startline": 1,
+  "endline": 155
+}
+Here are lines 1 through 155.
+
+# Copyright 2017 The TensorFlow Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+from __future__ import absolute_import
+from __future__ import division
+from __future__ import print_function
+
+from tensorflow.python.framework import dtypes
+from tensorflow.python.framework import ops
+from tensorflow.python.framework import test_util
+from tensorflow.python.ops import array_ops
+from tensorflow.python.ops import data_flow_ops
+from tensorflow.python.ops import math_ops
+from tensorflow.python.platform import test
+
+TIMEOUT = 1
+
+
+class StageTest(test.TestCase):
+
+  @test_util.run_deprecated_v1
+  def testSimple(self):
+    with ops.Graph().as_default() as G:
+      with ops.device('/cpu:0'):
+        x = array_ops.placeholder(dtypes.float32)
+        v = 2. * (array_ops.zeros([128, 128]) + x)
+      with ops.device(test.gpu_device_name()):
+        stager = data_flow_ops.StagingArea([dtypes.float32])
+        stage = stager.put([v])
+        y = stager.get()
+        y = math_ops.reduce_max(math_ops.matmul(y, y))
+
+    G.finalize()
+
+    with self.session(graph=G) as sess:
+      sess.run(stage, feed_dict={x: -1})
+      for i in range(10):
+        _, yval = sess.run([stage, y], feed_dict={x: i})
+        self.assertAllClose(4 * (i - 1) * (i - 1) * 128, yval, rtol=1e-4)
+
+  @test_util.run_deprecated_v1
+  def testMultiple(self):
+    with ops.Graph().as_default() as G:
+      with ops.device('/cpu:0'):
+        x = array_ops.placeholder(dtypes.float32)
+        v = 2. * (array_ops.zeros([128, 128]) + x)
+      with ops.device(test.gpu_device_name()):
+        stager = data_flow_ops.StagingArea([dtypes.float32, dtypes.float32])
+        stage = stager.put([x, v])
+        z, y = stager.get()
+        y = math_ops.reduce_max(z * math_ops.matmul(y, y))
+
+    G.finalize()
+
+    with self.session(graph=G) as sess:
+      sess.run(stage, feed_dict={x: -1})
+      for i in range(10):
+        _, yval = sess.run([stage, y], feed_dict={x: i})
+        self.assertAllClose(
+            4 * (i - 1) * (i - 1) * (i - 1) * 128, yval, rtol=1e-4)
+
+  @test_util.run_deprecated_v1
+  def testDictionary(self):
+    with ops.Graph().as_default() as G:
+      with ops.device('/cpu:0'):
+        x = array_ops.placeholder(dtypes.float32)
+        v = 2. * (array_ops.zeros([128, 128]) + x)
+      with ops.device(test.gpu_device_name()):
+        stager = data_flow_ops.StagingArea(
+            [dtypes.float32, dtypes.float32],
+            shapes=[[], [128, 128]],
+            names=['x', 'v'])
+        stage = stager.put({'x': x, 'v': v})
+        ret = stager.get()
+        z = ret['x']
+        y = ret['v']
+        y = math_ops.reduce_max(z * math_ops.matmul(y, y))
+
+    G.finalize()
+
+    with self.session(graph=G) as sess:
+      sess.run(stage, feed_dict={x: -1})
+      for i in range(10):
+        _, yval = sess.run([stage, y], feed_dict={x: i})
+        self.assertAllClose(
+            4 * (i - 1) * (i - 1) * (i - 1) * 128, yval, rtol=1e-4)
+
+  def testColocation(self):
+    gpu_dev = test.gpu_device_name()
+
+    with ops.Graph().as_default() as G:
+      with ops.device('/cpu:0'):
+        x = array_ops.placeholder(dtypes.float32)
+        v = 2. * (array_ops.zeros([128, 128]) + x)
+      with ops.device(gpu_dev):
+        stager = data_flow_ops.StagingArea([dtypes.float32])
+        y = stager.put([v])
+        expected_name = gpu_dev if 'gpu' not in gpu_dev else '/device:GPU:0'
+        self.assertEqual(y.device, expected_name)
+      with ops.device('/cpu:0'):
+        x = stager.get()[0]
+        self.assertEqual(x.device, '/device:CPU:0')
+
+    G.finalize()
+
+  @test_util.run_deprecated_v1
+  def testPeek(self):
+    with ops.Graph().as_default() as G:
+      with ops.device('/cpu:0'):
+        x = array_ops.placeholder(dtypes.int32, name='x')
+        p = array_ops.placeholder(dtypes.int32, name='p')
+      with ops.device(test.gpu_device_name()):
+        stager = data_flow_ops.StagingArea(
+            [
+                dtypes.int32,
+            ], shapes=[[]])
+        stage = stager.put([x])
+        peek = stager.peek(p)
+        ret = stager.get()
+
+    G.finalize()
+
+    with self.session(graph=G) as sess:
+      for i in range(10):
+        sess.run(stage, feed_dict={x: i})
+
+      for i in range(10):
+        self.assertTrue(sess.run(peek, feed_dict={p: i}) == [i])
+
+  @test_util.run_deprecated_v1
+  def testSizeAndClear(self):
+    with ops.Graph().as_default() as G:
+      with ops.device('/cpu:0'):
+        x = array_ops.placeholder(dtypes.float32, name='x')
+        v = 2. * (array_ops.zeros([128, 128]) + x)
+      with ops.device(test.gpu_device_name()):
+        stager = data_flow_ops.StagingArea(
+            [dtypes.float32, dtypes.float32],
+            shapes=[[], [128, 128]],
+            names=['x', 'v'])
+        stage = stager.put({'x': x, 'v': v})
+        ret = stager.get()
+        size = stager.size()
+        clear = stager.clear()
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: viewcode
+{
+  "ref": "d80cb5fff6fd147034b53d6ea2e4262ee6624e41",
+  "path": "tensorflow/python/ops/data_flow_ops.py",
+  "startline": 1665,
+  "endline": 1700
+}
+Here are lines 1665 through 1700.
+
+  def names(self):
+    """The list of names for each component of a staging area element."""
+    return self._names
+
+  @property
+  def capacity(self):
+    """The maximum number of elements of this staging area."""
+    return self._capacity
+
+  @property
+  def memory_limit(self):
+    """The maximum number of bytes of this staging area."""
+    return self._memory_limit
+
+  def _check_put_dtypes(self, vals, indices=None):
+    """Validate and convert `vals` to a list of `Tensor`s.
+
+    The `vals` argument can be a Tensor, a list or tuple of tensors, or a
+    dictionary with tensor values.
+
+    If `vals` is a list, then the appropriate indices associated with the
+    values must be provided.
+
+    If it is a dictionary, the staging area must have been constructed with a
+    `names` attribute and the dictionary keys must match the staging area names.
+    `indices` will be inferred from the dictionary keys.
+    If the staging area was constructed with a `names` attribute, `vals` must
+    be a dictionary.
+
+    Checks that the dtype and shape of each value matches that
+    of the staging area.
+
+    Args:
+      vals: A tensor, a list or tuple of tensors, or a dictionary.
+
+    Returns:
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tokens used
+input: 657
+cache read: 8,704
+cache write: 0
+output: 194
+reasoning output: 0
+
+tool: viewcode
+{
+  "ref": "d80cb5fff6fd147034b53d6ea2e4262ee6624e41",
+  "path": "tensorflow/python/ops/data_flow_ops.py",
+  "startline": 1700,
+  "endline": 1745
+}
+Here are lines 1700 through 1745.
+
+    Returns:
+      A (tensors, indices) tuple where `tensors` is a list of `Tensor` objects
+      and `indices` is a list of indices associated with the tensors.
+
+    Raises:
+      ValueError: If `vals` or `indices` is invalid.
+    """
+    if isinstance(vals, dict):
+      if not self._names:
+        raise ValueError(
+            "Staging areas must have names to enqueue a dictionary")
+      if not set(vals.keys()).issubset(self._names):
+        raise ValueError("Keys in dictionary to put do not match names "
+                         "of staging area. Dictionary: (%s), Queue: (%s)" %
+                         (sorted(vals.keys()), sorted(self._names)))
+      # The order of values in `self._names` indicates the order in which the
+      # tensors in the dictionary `vals` must be listed.
+      vals, indices, _ = zip(*[(vals[k], i, k)
+                               for i, k in enumerate(self._names)
+                               if k in vals])
+    else:
+      if self._names:
+        raise ValueError("You must enqueue a dictionary in a staging area "
+                         "with names")
+
+      if indices is None:
+        raise ValueError("Indices must be supplied when inserting a list "
+                         "of tensors")
+
+      if len(indices) != len(vals):
+        raise ValueError("Number of indices '%s' doesn't match "
+                         "number of values '%s'")
+
+      if not isinstance(vals, (list, tuple)):
+        vals = [vals]
+        indices = [0]
+
+    # Sanity check number of values
+    if not len(vals) <= len(self._dtypes):
+      raise ValueError("Unexpected number of inputs '%s' vs '%s'" %
+                       (len(vals), len(self._dtypes)))
+
+    tensors = []
+
+    for val, i in zip(vals, indices):
+      dtype, shape = self._dtypes[i], self._shapes[i]
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tokens used
+input: 3,005
+cache read: 8,704
+cache write: 0
+output: 63
+reasoning output: 0
+
+The target has the vulnerable `StagePeekOp` scalar read in the same kernel file. The Python test file lives at the older path `tensorflow/python/kernel_tests/stage_op_test.py`, and the data_flow_ops message hunk is not equivalent because 2.6.4 still uses the older `%`-format string with spacing already present.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target code for StagePeekOp, stage_op_test, and StagingArea dtype check",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate uncertain hunks against target base if needed",
+      "status": "in_progress",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply minimal backport changes",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "content": "Review resulting diff",
+      "status": "pending",
+      "priority": "high"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target code for StagePeekOp, stage_op_test, and StagingArea dtype check",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate uncertain hunks against target base if needed",
+    "status": "in_progress",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply minimal backport changes",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "content": "Review resulting diff",
+    "status": "pending",
+    "priority": "high"
+  }
+]
+
+tokens used
+input: 1,478
+cache read: 10,752
+cache write: 0
+output: 179
+reasoning output: 90
+
+tool: validate
+{
+  "ref": "d80cb5fff6fd147034b53d6ea2e4262ee6624e41",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/stage_op.cc b/tensorflow/core/kernels/stage_op.cc\n--- a/tensorflow/core/kernels/stage_op.cc\n+++ b/tensorflow/core/kernels/stage_op.cc\n@@ -262,6 +262,8 @@ class StagePeekOp : public OpKernel {\n     core::ScopedUnref scope(buf);\n     Buffer::Tuple tuple;\n \n+    OP_REQUIRES(ctx, TensorShapeUtils::IsScalar(ctx->input(0).shape()),\n+                errors::InvalidArgument(\"index must be scalar\"));\n     std::size_t index = ctx->input(0).scalar<int>()();\n \n     OP_REQUIRES_OK(ctx, buf->Peek(index, &tuple));\n"
+}
+Patch applied successfully
+
+tokens used
+input: 870
+cache read: 11,776
+cache write: 0
+output: 216
+reasoning output: 0
+
+I’m applying the kernel guard and the matching regression test at the older test path.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target code for StagePeekOp, stage_op_test, and StagingArea dtype check",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate uncertain hunks against target base if needed",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply minimal backport changes",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Review resulting diff",
+      "status": "pending",
+      "priority": "high"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target code for StagePeekOp, stage_op_test, and StagingArea dtype check",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate uncertain hunks against target base if needed",
+    "status": "completed",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply minimal backport changes",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Review resulting diff",
+    "status": "pending",
+    "priority": "high"
+  }
+]
+
+tokens used
+input: 1,099
+cache read: 11,776
+cache write: 0
+output: 124
+reasoning output: 0
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/kernels/stage_op.cc\n@@\n     core::ScopedUnref scope(buf);\n     Buffer::Tuple tuple;\n \n+    OP_REQUIRES(ctx, TensorShapeUtils::IsScalar(ctx->input(0).shape()),\n+                errors::InvalidArgument(\"index must be scalar\"));\n     std::size_t index = ctx->input(0).scalar<int>()();\n \n     OP_REQUIRES_OK(ctx, buf->Peek(index, &tuple));\n*** Update File: tensorflow/python/kernel_tests/stage_op_test.py\n@@\n from __future__ import print_function\n \n from tensorflow.python.framework import dtypes\n+from tensorflow.python.framework import errors\n from tensorflow.python.framework import ops\n from tensorflow.python.framework import test_util\n from tensorflow.python.ops import array_ops\n@@\n       for i in range(10):\n         self.assertTrue(sess.run(peek, feed_dict={p: i}) == [i])\n \n+  def testPeekBadIndex(self):\n+    stager = data_flow_ops.StagingArea([\n+        dtypes.int32,\n+    ], shapes=[[10]])\n+    stager.put([array_ops.zeros([10], dtype=dtypes.int32)])\n+\n+    with self.assertRaisesRegex((ValueError, errors.InvalidArgumentError),\n+                                'must be scalar'):\n+      self.evaluate(stager.peek([]))\n+\n   @test_util.run_deprecated_v1\n   def testSizeAndClear(self):\n     with ops.Graph().as_default() as G:\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/kernels/stage_op.cc
+M tensorflow/python/kernel_tests/stage_op_test.py
+
+tokens used
+input: 346
+cache read: 12,800
+cache write: 0
+output: 376
+reasoning output: 0
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target code for StagePeekOp, stage_op_test, and StagingArea dtype check",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate uncertain hunks against target base if needed",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply minimal backport changes",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Review resulting diff",
+      "status": "in_progress",
+      "priority": "high"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target code for StagePeekOp, stage_op_test, and StagingArea dtype check",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate uncertain hunks against target base if needed",
+    "status": "completed",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply minimal backport changes",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Review resulting diff",
+    "status": "in_progress",
+    "priority": "high"
+  }
+]
+
+tokens used
+input: 760
+cache read: 12,800
+cache write: 0
+output: 100
+reasoning output: 0
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/kernels/stage_op.cc tensorflow/python/kernel_tests/stage_op_test.py",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0258-d80cb5fff6fd",
+  "timeout": 120000
+}
+warning: in the working copy of 'tensorflow/core/kernels/stage_op.cc', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'tensorflow/python/kernel_tests/stage_op_test.py', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/kernels/stage_op.cc b/tensorflow/core/kernels/stage_op.cc
+index 58c41c4d0e..866139953f 100644
+--- a/tensorflow/core/kernels/stage_op.cc
++++ b/tensorflow/core/kernels/stage_op.cc
+@@ -264,6 +264,8 @@ class StagePeekOp : public OpKernel {
+     core::ScopedUnref scope(buf);
+     Buffer::Tuple tuple;
+ 
++    OP_REQUIRES(ctx, TensorShapeUtils::IsScalar(ctx->input(0).shape()),
++                errors::InvalidArgument("index must be scalar"));
+     std::size_t index = ctx->input(0).scalar<int>()();
+ 
+     OP_REQUIRES_OK(ctx, buf->Peek(index, &tuple));
+diff --git a/tensorflow/python/kernel_tests/stage_op_test.py b/tensorflow/python/kernel_tests/stage_op_test.py
+index 8ea4c5daa2..dd3a46f361 100644
+--- a/tensorflow/python/kernel_tests/stage_op_test.py
++++ b/tensorflow/python/kernel_tests/stage_op_test.py
+@@ -17,6 +17,7 @@ from __future__ import division
+ from __future__ import print_function
+ 
+ from tensorflow.python.framework import dtypes
++from tensorflow.python.framework import errors
+ from tensorflow.python.framework import ops
+ from tensorflow.python.framework import test_util
+ from tensorflow.python.ops import array_ops
+@@ -138,6 +139,16 @@ class StageTest(test.TestCase):
+       for i in range(10):
+         self.assertTrue(sess.run(peek, feed_dict={p: i}) == [i])
+ 
++  def testPeekBadIndex(self):
++    stager = data_flow_ops.StagingArea([
++        dtypes.int32,
++    ], shapes=[[10]])
++    stager.put([array_ops.zeros([10], dtype=dtypes.int32)])
++
++    with self.assertRaisesRegex((ValueError, errors.InvalidArgumentError),
++                                'must be scalar'):
++      self.evaluate(stager.peek([]))
++
+   @test_util.run_deprecated_v1
+   def testSizeAndClear(self):
+     with ops.Graph().as_default() as G:
+
+tokens used
+input: 13,807
+cache read: 0
+cache write: 0
+output: 83
+reasoning output: 0
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target code for StagePeekOp, stage_op_test, and StagingArea dtype check",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate uncertain hunks against target base if needed",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply minimal backport changes",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Review resulting diff",
+      "status": "completed",
+      "priority": "high"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target code for StagePeekOp, stage_op_test, and StagingArea dtype check",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate uncertain hunks against target base if needed",
+    "status": "completed",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply minimal backport changes",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Review resulting diff",
+    "status": "completed",
+    "priority": "high"
+  }
+]
+
+tokens used
+input: 1,640
+cache read: 12,800
+cache write: 0
+output: 101
+reasoning output: 35
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/kernels/stage_op.cc b/tensorflow/core/kernels/stage_op.cc
+    index 58c41c4d0e..866139953f 100644
+    --- a/tensorflow/core/kernels/stage_op.cc
+    +++ b/tensorflow/core/kernels/stage_op.cc
+    @@ -264,6 +264,8 @@ class StagePeekOp : public OpKernel {
+         core::ScopedUnref scope(buf);
+         Buffer::Tuple tuple;
+     
+    +    OP_REQUIRES(ctx, TensorShapeUtils::IsScalar(ctx->input(0).shape()),
+    +                errors::InvalidArgument("index must be scalar"));
+         std::size_t index = ctx->input(0).scalar<int>()();
+     
+         OP_REQUIRES_OK(ctx, buf->Peek(index, &tuple));
+    diff --git a/tensorflow/python/kernel_tests/stage_op_test.py b/tensorflow/python/kernel_tests/stage_op_test.py
+    index 8ea4c5daa2..dd3a46f361 100644
+    --- a/tensorflow/python/kernel_tests/stage_op_test.py
+    +++ b/tensorflow/python/kernel_tests/stage_op_test.py
+    @@ -17,6 +17,7 @@ from __future__ import division
+     from __future__ import print_function
+     
+     from tensorflow.python.framework import dtypes
+    +from tensorflow.python.framework import errors
+     from tensorflow.python.framework import ops
+     from tensorflow.python.framework import test_util
+     from tensorflow.python.ops import array_ops
+    @@ -138,6 +139,16 @@ class StageTest(test.TestCase):
+           for i in range(10):
+             self.assertTrue(sess.run(peek, feed_dict={p: i}) == [i])
+     
+    +  def testPeekBadIndex(self):
+    +    stager = data_flow_ops.StagingArea([
+    +        dtypes.int32,
+    +    ], shapes=[[10]])
+    +    stager.put([array_ops.zeros([10], dtype=dtypes.int32)])
+    +
+    +    with self.assertRaisesRegex((ValueError, errors.InvalidArgumentError),
+    +                                'must be scalar'):
+    +      self.evaluate(stager.peek([]))
+    +
+       @test_util.run_deprecated_v1
+       def testSizeAndClear(self):
+         with ops.Graph().as_default() as G:
+  notes: >
+    Added scalar validation to StagePeekOp and the corresponding regression test; the data_flow_ops formatting hunk was not needed in this older version.
+```
+
+tokens used
+input: 898
+cache read: 13,824
+cache write: 0
+output: 562
+reasoning output: 0

@@ -1,0 +1,365 @@
+I’ll inspect the target-side `Tensor::FromProto` implementation and validate a minimal hunk against the specified base before editing the checkout.
+
+tool: viewcode
+{
+  "ref": "b2b3444b71ea99685edafa7731fb7ba57939f437",
+  "path": "tensorflow/core/framework/tensor.cc",
+  "startline": 940,
+  "endline": 1010
+}
+Here are lines 940 through 1010.
+
+  }
+  shape_ = shape;
+  set_dtype(proto.dtype());
+  UnrefIfNonNull(buf_);
+  buf_ = p;
+  // TODO(misard) add tracking of which kernels and steps are calling
+  // FromProto.
+  if (MemoryLoggingEnabled() && buf_ != nullptr && buf_->data() != nullptr) {
+    LogMemory::RecordTensorAllocation("Unknown (from Proto)",
+                                      LogMemory::UNKNOWN_STEP_ID, *this);
+  }
+  return true;
+}
+
+void Tensor::AsProtoField(TensorProto* proto) const {
+  proto->Clear();
+  shape_.AsProto(proto->mutable_tensor_shape());
+  proto->set_dtype(dtype());
+  if (buf_) {
+    CASES(dtype(), ToProtoField<T>(*buf_, shape_.num_elements(), proto));
+  }
+}
+
+void Tensor::AsProtoTensorContent(TensorProto* proto) const {
+  proto->Clear();
+  proto->set_dtype(dtype());
+  shape_.AsProto(proto->mutable_tensor_shape());
+  if (buf_) {
+    CASES(dtype(), Helper<T>::Encode(buf_, shape_.num_elements(),
+                                     proto->mutable_tensor_content()));
+  }
+}
+
+size_t Tensor::TotalBytes() const {
+  if (shape_.num_elements() == 0) return 0;
+  CHECK(buf_) << "null buf_ with non-zero shape size " << shape_.num_elements();
+  CASES(dtype(), return Helper<T>::TotalBytes(buf_, shape_.num_elements()));
+  return 0;  // Makes compiler happy.
+}
+
+size_t Tensor::AllocatedBytes() const {
+  if (buf_) {
+    size_t ret;
+    if (buf_->GetAllocatedBytes(&ret)) {
+      return ret;
+    }
+  }
+  return TotalBytes();
+}
+
+bool Tensor::CanUseDMA() const {
+  CASES(dtype(), return is_simple_type<T>::value);
+  return false;  // Makes compiler happy.
+}
+
+#undef CASES
+#undef CASE
+
+namespace {
+
+// StrCat and StrAppend don't support Eigen::half directly at the moment, and
+// we would like to keep them compatible with their absl counterparts, for ease
+// of migration. We could rely on errors::internal::PrepareForStrCat() but the
+// logic is so simple we can just replicate it here, where it is close to its
+// usage and easy to change later. And there's the extra benefit of not
+// accessing an 'internal' namespace.
+inline const strings::AlphaNum& PrintOneElement(const strings::AlphaNum& a,
+                                                bool print_v2) {
+  return a;
+}
+inline string PrintOneElement(const tstring& a, bool print_v2) {
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: git_show
+{
+  "ref": "5b491cd5e41ad63735161cec9c2a568172c8b6a3",
+  "context": "bool Tensor::FromProto(Allocator* a, const TensorProto& proto) {"
+}
+commit 5b491cd5e41ad63735161cec9c2a568172c8b6a3
+Author: Mihai Maruseac <mihaimaruseac@google.com>
+Date:   Mon Nov 8 09:51:28 2021 -0800
+
+    Validate `proto.dtype()` before calling `set_dtype()`.
+    
+    This prevents a `DCHECK`-fail when the proto contains an invalid dtype for a tensor shape with 0 elements or for an incomplete tensor shape.
+    
+    PiperOrigin-RevId: 408369083
+    Change-Id: Ia21a3e3d62a90d642a4561f08f3b543e5ad00c46
+
+ tensorflow/core/framework/tensor.cc | 9 +++++++++
+ 1 file changed, 9 insertions(+)
+This commit shows that there is a high probability that this code is new, so the corresponding code segment cannot be found in the old version.
+You can call `viewcode` and `locate_symbol` to further check the results step by step. For newly introduced code, we consider that this hunk `need not ported`.
+
+tokens used
+input: 3,741
+cache read: 4,608
+cache write: 0
+output: 166
+reasoning output: 0
+
+tool: locate_symbol
+{
+  "ref": "b2b3444b71ea99685edafa7731fb7ba57939f437",
+  "symbol": "FromProto"
+}
+tensorflow/compiler/jit/node_matchers.cc:148
+tensorflow/compiler/jit/xla_device.cc:479
+tensorflow/compiler/mlir/tensorflow/utils/convert_tensor.cc:174
+tensorflow/compiler/mlir/tensorflow/utils/convert_tensor.cc:378
+tensorflow/compiler/tf2tensorrt/convert/convert_nodes.cc:4535
+tensorflow/compiler/tf2xla/kernels/const_op.cc:120
+tensorflow/core/common_runtime/eval_const_tensor.cc:361
+tensorflow/core/common_runtime/gpu/gpu_device.cc:697
+tensorflow/core/common_runtime/mkl_layout_pass.cc:1407
+tensorflow/core/common_runtime/pluggable_device/pluggable_device.cc:370
+tensorflow/core/common_runtime/single_threaded_cpu_device.cc:65
+tensorflow/core/common_runtime/threadpool_device.cc:95
+tensorflow/core/data/compression_utils.cc:150
+tensorflow/core/data/service/data_service.cc:136
+tensorflow/core/data/service/data_service.cc:322
+tensorflow/core/debug/debug_grpc_testlib.cc:56
+tensorflow/core/distributed_runtime/cluster_function_library_runtime.cc:322
+tensorflow/core/distributed_runtime/eager/cluster_function_library_runtime.cc:243
+tensorflow/core/distributed_runtime/eager/eager_service_impl.cc:680
+tensorflow/core/distributed_runtime/message_wrappers.cc:30
+
+tokens used
+input: 1,683
+cache read: 7,680
+cache write: 0
+output: 46
+reasoning output: 20
+
+The first line window landed after the function, so I’m narrowing to the actual `Tensor::FromProto` body in the target file.
+
+tool: grep
+{
+  "pattern": "Tensor::FromProto",
+  "path": "tensorflow/core/framework",
+  "include": "tensor.cc"
+}
+Found 2 matches
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0050-b2b3444b71ea\tensorflow\core\framework\tensor.cc:
+  Line 918: bool Tensor::FromProto(const TensorProto& proto) {
+
+  Line 922: bool Tensor::FromProto(Allocator* a, const TensorProto& proto) {
+
+tokens used
+input: 1,001
+cache read: 8,704
+cache write: 0
+output: 69
+reasoning output: 12
+
+tool: read
+{
+  "filePath": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0050-b2b3444b71ea\\tensorflow\\core\\framework\\tensor.cc",
+  "offset": 900,
+  "limit": 55
+}
+<path>C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0050-b2b3444b71ea\tensorflow\core\framework\tensor.cc</path>
+<type>file</type>
+<content>
+900:   CHECK_LE(index, dim0_size);  // Crash ok.
+901:   Tensor ret;
+902:   ret.shape_ = shape_;
+903:   ret.shape_.RemoveDim(0);
+904:   ret.set_dtype(dtype());
+905:   ret.buf_ = nullptr;
+906:   if (dim0_size > 0) {
+907:     const int64 elems_per_dim0 = NumElements() / dim0_size;
+908:     const int64 delta = index * elems_per_dim0;
+909:     const int64 num_elems = elems_per_dim0;
+910:     if (buf_) {
+911:       DataType dt = dtype();
+912:       CASES(dt, ret.buf_ = new SubBuffer<T>(buf_, delta, num_elems));
+913:     }
+914:   }
+915:   return ret;
+916: }
+917: 
+918: bool Tensor::FromProto(const TensorProto& proto) {
+919:   return FromProto(get_default_cpu_allocator(), proto);
+920: }
+921: 
+922: bool Tensor::FromProto(Allocator* a, const TensorProto& proto) {
+923:   CHECK_NOTNULL(a);
+924:   TensorBuffer* p = nullptr;
+925:   if (!TensorShape::IsValid(proto.tensor_shape())) return false;
+926:   if (proto.dtype() == DT_INVALID) return false;
+927:   TensorShape shape(proto.tensor_shape());
+928:   const int64 N = shape.num_elements();
+929:   if (N > 0 && proto.dtype()) {
+930:     bool dtype_error = false;
+931:     if (!proto.tensor_content().empty()) {
+932:       const auto& content = proto.tensor_content();
+933:       CASES_WITH_DEFAULT(proto.dtype(), p = Helper<T>::Decode(a, content, N),
+934:                          dtype_error = true, dtype_error = true);
+935:     } else {
+936:       CASES_WITH_DEFAULT(proto.dtype(), p = FromProtoField<T>(a, proto, N),
+937:                          dtype_error = true, dtype_error = true);
+938:     }
+939:     if (dtype_error || p == nullptr) return false;
+940:   }
+941:   shape_ = shape;
+942:   set_dtype(proto.dtype());
+943:   UnrefIfNonNull(buf_);
+944:   buf_ = p;
+945:   // TODO(misard) add tracking of which kernels and steps are calling
+946:   // FromProto.
+947:   if (MemoryLoggingEnabled() && buf_ != nullptr && buf_->data() != nullptr) {
+948:     LogMemory::RecordTensorAllocation("Unknown (from Proto)",
+949:                                       LogMemory::UNKNOWN_STEP_ID, *this);
+950:   }
+951:   return true;
+952: }
+953: 
+954: void Tensor::AsProtoField(TensorProto* proto) const {
+
+(Showing lines 900-954 of 1306. Use offset=955 to continue.)
+</content>
+
+tokens used
+input: 1,187
+cache read: 8,704
+cache write: 0
+output: 72
+reasoning output: 0
+
+The target has the same vulnerable control flow: only `DT_INVALID` is rejected before `set_dtype`, while other invalid enum values can reach empty/incomplete tensor handling. I’m applying the source fix directly after the existing `N > 0` decode branch.
+
+tool: validate
+{
+  "ref": "b2b3444b71ea99685edafa7731fb7ba57939f437",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/framework/tensor.cc b/tensorflow/core/framework/tensor.cc\n--- a/tensorflow/core/framework/tensor.cc\n+++ b/tensorflow/core/framework/tensor.cc\n@@ -937,6 +937,15 @@ bool Tensor::FromProto(Allocator* a, const TensorProto& proto) {\n     }\n     if (dtype_error || p == nullptr) return false;\n+  } else {\n+    // Handle the case of empty tensors (N = 0) or tensors with incomplete shape\n+    // (N = -1). All other values of `shape.num_elements()` should be invalid by\n+    // construction.\n+    // Here, we just need to validate that the `proto.dtype()` value is valid.\n+    bool dtype_error = false;\n+    CASES_WITH_DEFAULT(proto.dtype(), break, dtype_error = true,\n+                       dtype_error = true);\n+    if (dtype_error) return false;\n   }\n   shape_ = shape;\n   set_dtype(proto.dtype());\n"
+}
+This patch does not apply to the target TensorFlow ref.
+Git apply output:
+error: corrupt patch at line 19
+Touched files:
+- tensorflow/core/framework/tensor.cc
+Fix the patch context against the older TensorFlow version, then run validate again in hunk mode.
+
+tokens used
+input: 926
+cache read: 9,728
+cache write: 0
+output: 336
+reasoning output: 33
+
+tool: validate
+{
+  "ref": "b2b3444b71ea99685edafa7731fb7ba57939f437",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/framework/tensor.cc b/tensorflow/core/framework/tensor.cc\n--- a/tensorflow/core/framework/tensor.cc\n+++ b/tensorflow/core/framework/tensor.cc\n@@ -936,8 +936,17 @@ bool Tensor::FromProto(Allocator* a, const TensorProto& proto) {\n       CASES_WITH_DEFAULT(proto.dtype(), p = FromProtoField<T>(a, proto, N),\n                          dtype_error = true, dtype_error = true);\n     }\n     if (dtype_error || p == nullptr) return false;\n+  } else {\n+    // Handle the case of empty tensors (N = 0) or tensors with incomplete shape\n+    // (N = -1). All other values of `shape.num_elements()` should be invalid by\n+    // construction.\n+    // Here, we just need to validate that the `proto.dtype()` value is valid.\n+    bool dtype_error = false;\n+    CASES_WITH_DEFAULT(proto.dtype(), break, dtype_error = true,\n+                       dtype_error = true);\n+    if (dtype_error) return false;\n   }\n   shape_ = shape;\n   set_dtype(proto.dtype());\n   UnrefIfNonNull(buf_);\n"
+}
+Patch applied successfully
+
+tokens used
+input: 1,361
+cache read: 9,728
+cache write: 0
+output: 321
+reasoning output: 32
+
+The hunk validates against the target base. I’m editing only `tensorflow/core/framework/tensor.cc` with that validated change.
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/framework/tensor.cc\n@@\n     }\n     if (dtype_error || p == nullptr) return false;\n+  } else {\n+    // Handle the case of empty tensors (N = 0) or tensors with incomplete shape\n+    // (N = -1). All other values of `shape.num_elements()` should be invalid by\n+    // construction.\n+    // Here, we just need to validate that the `proto.dtype()` value is valid.\n+    bool dtype_error = false;\n+    CASES_WITH_DEFAULT(proto.dtype(), break, dtype_error = true,\n+                       dtype_error = true);\n+    if (dtype_error) return false;\n   }\n   shape_ = shape;\n   set_dtype(proto.dtype());\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/framework/tensor.cc
+
+tokens used
+input: 703
+cache read: 10,752
+cache write: 0
+output: 229
+reasoning output: 0
+
+I’ll verify the resulting diff is limited to the intended security check.
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/framework/tensor.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0050-b2b3444b71ea",
+  "timeout": 120000
+}
+warning: in the working copy of 'tensorflow/core/framework/tensor.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/framework/tensor.cc b/tensorflow/core/framework/tensor.cc
+index 167ba5e658..9fd1946fee 100644
+--- a/tensorflow/core/framework/tensor.cc
++++ b/tensorflow/core/framework/tensor.cc
+@@ -937,6 +937,15 @@ bool Tensor::FromProto(Allocator* a, const TensorProto& proto) {
+                          dtype_error = true, dtype_error = true);
+     }
+     if (dtype_error || p == nullptr) return false;
++  } else {
++    // Handle the case of empty tensors (N = 0) or tensors with incomplete shape
++    // (N = -1). All other values of `shape.num_elements()` should be invalid by
++    // construction.
++    // Here, we just need to validate that the `proto.dtype()` value is valid.
++    bool dtype_error = false;
++    CASES_WITH_DEFAULT(proto.dtype(), break, dtype_error = true,
++                       dtype_error = true);
++    if (dtype_error) return false;
+   }
+   shape_ = shape;
+   set_dtype(proto.dtype());
+
+tokens used
+input: 957
+cache read: 10,752
+cache write: 0
+output: 96
+reasoning output: 17
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/framework/tensor.cc b/tensorflow/core/framework/tensor.cc
+    index 167ba5e658..9fd1946fee 100644
+    --- a/tensorflow/core/framework/tensor.cc
+    +++ b/tensorflow/core/framework/tensor.cc
+    @@ -937,6 +937,15 @@ bool Tensor::FromProto(Allocator* a, const TensorProto& proto) {
+                              dtype_error = true, dtype_error = true);
+         }
+         if (dtype_error || p == nullptr) return false;
+    +  } else {
+    +    // Handle the case of empty tensors (N = 0) or tensors with incomplete shape
+    +    // (N = -1). All other values of `shape.num_elements()` should be invalid by
+    +    // construction.
+    +    // Here, we just need to validate that the `proto.dtype()` value is valid.
+    +    bool dtype_error = false;
+    +    CASES_WITH_DEFAULT(proto.dtype(), break, dtype_error = true,
+    +                       dtype_error = true);
+    +    if (dtype_error) return false;
+       }
+       shape_ = shape;
+       set_dtype(proto.dtype());
+  notes: >
+    Backported the dtype validation for empty or incomplete-shape tensors in Tensor::FromProto.
+```
+
+tokens used
+input: 1,353
+cache read: 10,752
+cache write: 0
+output: 304
+reasoning output: 16

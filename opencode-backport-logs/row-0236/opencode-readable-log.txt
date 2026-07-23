@@ -1,0 +1,1088 @@
+I’ll locate the equivalent AvgPoolGrad implementations and pooling test class in the target checkout, then apply only the negative-dimension validation changes that match the provided patch.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target AvgPoolGrad code and pooling test context",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Validate uncertain hunks against target base",
+      "status": "pending",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply minimal backport edits",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "content": "Review final diff",
+      "status": "pending",
+      "priority": "high"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target AvgPoolGrad code and pooling test context",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Validate uncertain hunks against target base",
+    "status": "pending",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply minimal backport edits",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "content": "Review final diff",
+    "status": "pending",
+    "priority": "high"
+  }
+]
+
+tokens used
+input: 4,300
+cache read: 4,608
+cache write: 0
+output: 130
+reasoning output: 0
+
+tool: grep
+{
+  "pattern": "testMaxPoolGradWithArgmaxEagerShapeErrors|class PoolingTest|gen_nn_ops\\.AvgPoolGrad",
+  "path": "tensorflow/python/kernel_tests/nn_ops/pooling_ops_test.py"
+}
+Found 4 matches
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0236-8741e57d163a\tensorflow\python\kernel_tests\nn_ops\pooling_ops_3d_test.py:
+  Line 49: class PoolingTest(test.TestCase):
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0236-8741e57d163a\tensorflow\python\kernel_tests\nn_ops\pooling_ops_test.py:
+  Line 182: class PoolingTest(test.TestCase, parameterized.TestCase):
+
+  Line 2433:   def testMaxPoolGradWithArgmaxEagerShapeErrors(self):
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0236-8741e57d163a\tensorflow\python\kernel_tests\nn_ops\pool_test.py:
+  Line 142: class PoolingTest(test.TestCase):
+
+tool: grep
+{
+  "pattern": "class AvgPoolingGradOp",
+  "path": "tensorflow/core/kernels/avgpooling_op.cc"
+}
+Found 3 matches
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0236-8741e57d163a\tensorflow\core\kernels\avgpooling_op.cc:
+  Line 255: class AvgPoolingGradOp : public OpKernel {
+
+  Line 419: class AvgPoolingGradOp<GPUDevice, T> : public OpKernel {
+
+  Line 505: class AvgPoolingGradOpCustomGPUKernel : public OpKernel {
+
+tokens used
+input: 471
+cache read: 8,704
+cache write: 0
+output: 103
+reasoning output: 0
+
+tool: read
+{
+  "filePath": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0236-8741e57d163a\\tensorflow\\core\\kernels\\avgpooling_op.cc",
+  "offset": 275,
+  "limit": 310
+}
+<path>C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0236-8741e57d163a\tensorflow\core\kernels\avgpooling_op.cc</path>
+<type>file</type>
+<content>
+275:     OP_REQUIRES_OK(context, context->GetAttr("padding", &padding_));
+276:     OP_REQUIRES(context, ksize_[0] == 1 && stride_[0] == 1,
+277:                 errors::Unimplemented(
+278:                     "Pooling is not yet supported on the batch dimension."));
+279:   }
+280: 
+281:   void Compute(OpKernelContext* context) override {
+282:     const Tensor& tensor_in_shape = context->input(0);
+283:     const Tensor& out_backprop = context->input(1);
+284:     // For avgpooling, tensor_in_shape should have 1 dimension, and 4 elements.
+285:     OP_REQUIRES(
+286:         context,
+287:         tensor_in_shape.dims() == 1 && tensor_in_shape.NumElements() == 4,
+288:         errors::InvalidArgument("out_backprop must be 1-dimensional and 4 "
+289:                                 "elements"));
+290:     // For avgpooling, out_backprop should have 4 dimensions.
+291:     OP_REQUIRES(context, out_backprop.dims() == 4,
+292:                 errors::InvalidArgument("out_backprop must be 4-dimensional"));
+293:     const int64_t out_backprop_batch = out_backprop.dim_size(0);
+294:     const int64_t out_backprop_rows = out_backprop.dim_size(1);
+295:     const int64_t out_backprop_cols = out_backprop.dim_size(2);
+296:     const int64_t out_backprop_depth = out_backprop.dim_size(3);
+297: 
+298:     TensorShape output_shape;
+299:     auto shape_vec = tensor_in_shape.vec<int32>();
+300:     for (int64_t i = 0; i < tensor_in_shape.NumElements(); ++i) {
+301:       output_shape.AddDim(shape_vec(i));
+302:     }
+303:     const int64_t in_rows = output_shape.dim_size(1);
+304:     const int64_t in_cols = output_shape.dim_size(2);
+305: 
+306:     Tensor* output = nullptr;
+307:     OP_REQUIRES_OK(context, context->allocate_output(0, output_shape, &output));
+308:     output->flat<T>().setZero();
+309: 
+310:     if (output_shape.num_elements() == 0) {
+311:       return;
+312:     }
+313:     const int window_rows = ksize_[1];
+314:     const int window_cols = ksize_[2];
+315:     const int depth_window = ksize_[3];
+316: 
+317:     const int row_stride = stride_[1];
+318:     const int col_stride = stride_[2];
+319: 
+320:     // We (will) use different code for spatial pooling and
+321:     // non-spatial pooling.
+322:     //
+323:     // Spatial pooling is when depth_window = 1
+324:     OP_REQUIRES(context, depth_window == 1,
+325:                 errors::Unimplemented("Non-spatial pooling is not "
+326:                                       "yet supported. Volunteers? :)"));
+327: 
+328:     int64_t out_height, out_width, pad_rows, pad_cols;
+329:     OP_REQUIRES_OK(context,
+330:                    GetWindowedOutputSize(in_rows, window_rows, row_stride,
+331:                                          padding_, &out_height, &pad_rows));
+332:     OP_REQUIRES_OK(context,
+333:                    GetWindowedOutputSize(in_cols, window_cols, col_stride,
+334:                                          padding_, &out_width, &pad_cols));
+335: 
+336:     const T* out_backprop_ptr = out_backprop.flat<T>().data();
+337:     T* input_backprop_ptr = output->flat<T>().data();
+338: 
+339:     auto shard = [context, out_backprop_ptr, input_backprop_ptr,
+340:                   out_backprop_rows, out_backprop_cols, out_backprop_depth,
+341:                   in_rows, in_cols, window_rows, window_cols, row_stride,
+342:                   col_stride, pad_rows,
+343:                   pad_cols](int64_t start, int64_t limit) {
+344:       for (int64_t b = start; b < limit; ++b) {
+345:         for (int64_t r = 0; r < out_backprop_rows; ++r) {
+346:           // Calculates row broadcast size.  For SAME padding, current
+347:           // index could be in the padding area, and r*row_stride +
+348:           // window_rows could be beyond the input tensor's boundary. In
+349:           // such cases, change the starting index and reduce the
+350:           // broadcast size.
+351:           int rindex, rsize;
+352:           OP_REQUIRES_OK(context,
+353:                          GetBroadcastSize(r, in_rows, window_rows, row_stride,
+354:                                           pad_rows, &rindex, &rsize));
+355:           for (int64_t c = 0; c < out_backprop_cols; ++c) {
+356:             // Calculates col broadcast size.  For SAME padding, current
+357:             // index could be in the padding area, and c*col_stride +
+358:             // window_cols could be beyond the input tensor's boundary. In
+359:             // such cases, change the starting index and reduce the
+360:             // broadcast size.
+361:             int cindex, csize;
+362:             OP_REQUIRES_OK(context,
+363:                            GetBroadcastSize(c, in_cols, window_cols, col_stride,
+364:                                             pad_cols, &cindex, &csize));
+365: 
+366:             T divide_coeff(1.0 / (rsize * csize));
+367:             int64_t output_index =
+368:                 (b * out_backprop_rows + r) * out_backprop_cols + c;
+369:             for (int64_t r_dst = rindex; r_dst < rindex + rsize; ++r_dst) {
+370:               for (int64_t c_dst = cindex; c_dst < cindex + csize; ++c_dst) {
+371:                 int64_t input_index = (b * in_rows + r_dst) * in_cols + c_dst;
+372:                 const T* output_offset =
+373:                     out_backprop_ptr + output_index * out_backprop_depth;
+374:                 T* input_offset =
+375:                     input_backprop_ptr + input_index * out_backprop_depth;
+376:                 for (int64_t d = 0; d < out_backprop_depth; ++d) {
+377:                   *input_offset += *output_offset * divide_coeff;
+378:                   ++output_offset;
+379:                   ++input_offset;
+380:                 }
+381:               }
+382:             }
+383:           }
+384:         }
+385:       }
+386:     };
+387: 
+388:     const DeviceBase::CpuWorkerThreads& worker_threads =
+389:         *(context->device()->tensorflow_cpu_worker_threads());
+390:     const int64_t shard_cost =
+391:         window_rows * window_cols * depth_window * in_rows * in_rows * in_cols;
+392:     Shard(worker_threads.num_threads, worker_threads.workers,
+393:           out_backprop_batch, shard_cost, shard);
+394:   }
+395: 
+396:  private:
+397:   std::vector<int32> ksize_;
+398:   std::vector<int32> stride_;
+399:   Padding padding_;
+400:   TensorFormat data_format_;
+401: };
+402: 
+403: #define REGISTER_CPU_KERNEL(T)                                 \
+404:   REGISTER_KERNEL_BUILDER(Name("AvgPoolGrad")                  \
+405:                               .Device(DEVICE_CPU)              \
+406:                               .TypeConstraint<T>("T")          \
+407:                               .HostMemory("orig_input_shape"), \
+408:                           AvgPoolingGradOp<CPUDevice, T>);
+409: 
+410: TF_CALL_float(REGISTER_CPU_KERNEL);
+411: TF_CALL_double(REGISTER_CPU_KERNEL);
+412: TF_CALL_half(REGISTER_CPU_KERNEL);
+413: 
+414: #if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+415: 
+416: // A CUDNN based AvgPoolingGrad implementation. It includes the padding as the
+417: // candidates for the pooling operation.
+418: template <class T>
+419: class AvgPoolingGradOp<GPUDevice, T> : public OpKernel {
+420:  public:
+421:   typedef GPUDevice Device;
+422: 
+423:   explicit AvgPoolingGradOp(OpKernelConstruction* context) : OpKernel(context) {
+424:     string data_format;
+425:     OP_REQUIRES_OK(context, context->GetAttr("data_format", &data_format));
+426:     OP_REQUIRES(context, FormatFromString(data_format, &data_format_),
+427:                 errors::InvalidArgument("Invalid data format"));
+428:     OP_REQUIRES_OK(context, context->GetAttr("ksize", &ksize_));
+429:     OP_REQUIRES(context, ksize_.size() == 4,
+430:                 errors::InvalidArgument("Sliding window ksize field must "
+431:                                         "specify 4 dimensions"));
+432:     OP_REQUIRES_OK(context, context->GetAttr("strides", &stride_));
+433:     OP_REQUIRES(context, stride_.size() == 4,
+434:                 errors::InvalidArgument("Sliding window strides field must "
+435:                                         "specify 4 dimensions"));
+436:     OP_REQUIRES_OK(context, context->GetAttr("padding", &padding_));
+437:     const int32_t ksize_n = GetTensorDim(ksize_, data_format_, 'N');
+438:     const int32_t stride_n = GetTensorDim(stride_, data_format_, 'N');
+439:     OP_REQUIRES(context, ksize_n == 1 && stride_n == 1,
+440:                 errors::Unimplemented(
+441:                     "Pooling is not yet supported on the batch dimension."));
+442:   }
+443: 
+444:   void Compute(OpKernelContext* context) override {
+445:     const Tensor& tensor_in_shape = context->input(0);
+446:     const Tensor& out_backprop = context->input(1);
+447:     // For avgpooling, tensor_in_shape should have 1 dimension, and 4 elements.
+448:     OP_REQUIRES(
+449:         context,
+450:         tensor_in_shape.dims() == 1 && tensor_in_shape.NumElements() == 4,
+451:         errors::InvalidArgument("out_backprop must be 1-dimensional and 4 "
+452:                                 "elements"));
+453:     // For avgpooling, out_backprop should have 4 dimensions.
+454:     OP_REQUIRES(context, out_backprop.dims() == 4,
+455:                 errors::InvalidArgument("out_backprop must be 4-dimensional"));
+456: 
+457:     TensorShape output_shape;
+458:     auto shape_vec = tensor_in_shape.vec<int32>();
+459:     for (int64_t i = 0; i < tensor_in_shape.NumElements(); ++i) {
+460:       output_shape.AddDim(shape_vec(i));
+461:     }
+462: 
+463:     if (output_shape.num_elements() == 0) {
+464:       Tensor* output = nullptr;
+465:       OP_REQUIRES_OK(context,
+466:                      context->allocate_output(0, output_shape, &output));
+467:       return;
+468:     }
+469: 
+470:     DnnPoolingGradOp<T>::Compute(
+471:         context, se::dnn::PoolingMode::kAverage, ksize_, stride_, padding_,
+472:         /*explicit_paddings=*/{}, data_format_, nullptr, nullptr, out_backprop,
+473:         output_shape, /*propagate_nans=*/false);
+474:   }
+475: 
+476:  private:
+477:   std::vector<int32> ksize_;
+478:   std::vector<int32> stride_;
+479:   Padding padding_;
+480:   TensorFormat data_format_;
+481: };
+482: 
+483: REGISTER_KERNEL_BUILDER(Name("AvgPoolGrad")
+484:                             .Device(DEVICE_GPU)
+485:                             .TypeConstraint<double>("T")
+486:                             .HostMemory("orig_input_shape")
+487:                             .Label("cudnn"),
+488:                         AvgPoolingGradOp<GPUDevice, double>);
+489: REGISTER_KERNEL_BUILDER(Name("AvgPoolGrad")
+490:                             .Device(DEVICE_GPU)
+491:                             .TypeConstraint<float>("T")
+492:                             .HostMemory("orig_input_shape")
+493:                             .Label("cudnn"),
+494:                         AvgPoolingGradOp<GPUDevice, float>);
+495: REGISTER_KERNEL_BUILDER(Name("AvgPoolGrad")
+496:                             .Device(DEVICE_GPU)
+497:                             .TypeConstraint<Eigen::half>("T")
+498:                             .HostMemory("orig_input_shape")
+499:                             .Label("cudnn"),
+500:                         AvgPoolingGradOp<GPUDevice, Eigen::half>);
+501: 
+502: // A custom GPU kernel based AvgPoolingGrad implementation. It includes the
+503: // padding as the candidates for the pooling operation.
+504: template <class T>
+505: class AvgPoolingGradOpCustomGPUKernel : public OpKernel {
+506:  public:
+507:   typedef GPUDevice Device;
+508: 
+509:   explicit AvgPoolingGradOpCustomGPUKernel(OpKernelConstruction* context)
+510:       : OpKernel(context) {
+511:     string data_format;
+512:     OP_REQUIRES_OK(context, context->GetAttr("data_format", &data_format));
+513:     OP_REQUIRES(context, FormatFromString(data_format, &data_format_),
+514:                 errors::InvalidArgument("Invalid data format"));
+515:     OP_REQUIRES_OK(context, context->GetAttr("ksize", &ksize_));
+516:     OP_REQUIRES(context, ksize_.size() == 4,
+517:                 errors::InvalidArgument("Sliding window ksize field must "
+518:                                         "specify 4 dimensions"));
+519:     OP_REQUIRES_OK(context, context->GetAttr("strides", &stride_));
+520:     OP_REQUIRES(context, stride_.size() == 4,
+521:                 errors::InvalidArgument("Sliding window strides field must "
+522:                                         "specify 4 dimensions"));
+523:     OP_REQUIRES_OK(context, context->GetAttr("padding", &padding_));
+524:     const int32_t ksize_n = GetTensorDim(ksize_, data_format_, 'N');
+525:     const int32_t stride_n = GetTensorDim(stride_, data_format_, 'N');
+526:     OP_REQUIRES(context, ksize_n == 1 && stride_n == 1,
+527:                 errors::Unimplemented(
+528:                     "Pooling is not yet supported on the batch dimension."));
+529:   }
+530: 
+531:   void Compute(OpKernelContext* context) override {
+532:     const Tensor& tensor_in_shape = context->input(0);
+533:     const Tensor& out_backprop = context->input(1);
+534:     // For avgpooling, tensor_in_shape should have 1 dimension, and 4 elements.
+535:     OP_REQUIRES(
+536:         context,
+537:         tensor_in_shape.dims() == 1 && tensor_in_shape.NumElements() == 4,
+538:         errors::InvalidArgument("out_backprop must be 1-dimensional and 4 "
+539:                                 "elements"));
+540:     // For avgpooling, out_backprop should have 4 dimensions.
+541:     OP_REQUIRES(context, out_backprop.dims() == 4,
+542:                 errors::InvalidArgument("out_backprop must be 4-dimensional"));
+543:     TensorShape output_shape;
+544:     auto shape_vec = tensor_in_shape.vec<int32>();
+545:     for (int64_t i = 0; i < tensor_in_shape.NumElements(); ++i) {
+546:       output_shape.AddDim(shape_vec(i));
+547:     }
+548:     if (output_shape.num_elements() == 0) {
+549:       Tensor* output = nullptr;
+550:       OP_REQUIRES_OK(context,
+551:                      context->allocate_output(0, output_shape, &output));
+552:       return;
+553:     }
+554: 
+555: #if CUDNN_VERSION >= 7300
+556:     DnnPoolingGradOp<T>::Compute(context, se::dnn::PoolingMode::kAverage,
+557:                                  ksize_, stride_, padding_,
+558:                                  /*explicit_paddings=*/{}, data_format_,
+559:                                  nullptr, nullptr, out_backprop, output_shape,
+560:                                  /*propagate_nans=*/false);
+561: #else
+562:     if (data_format_ == FORMAT_NHWC) {
+563:       const int64 out_backprop_batch = out_backprop.dim_size(0);
+564:       const int64 out_backprop_rows = out_backprop.dim_size(1);
+565:       const int64 out_backprop_cols = out_backprop.dim_size(2);
+566:       const int64 out_backprop_depth = out_backprop.dim_size(3);
+567: 
+568:       const int64 in_rows = output_shape.dim_size(1);
+569:       const int64 in_cols = output_shape.dim_size(2);
+570:       Tensor* output = nullptr;
+571:       OP_REQUIRES_OK(context,
+572:                      context->allocate_output(0, output_shape, &output));
+573: 
+574:       const int window_rows = ksize_[1];
+575:       const int window_cols = ksize_[2];
+576:       const int depth_window = ksize_[3];
+577: 
+578:       const int row_stride = stride_[1];
+579:       const int col_stride = stride_[2];
+580: 
+581:       // We (will) use different code for spatial pooling and
+582:       // non-spatial pooling.
+583:       //
+584:       // Spatial pooling is when depth_window = 1
+
+(Showing lines 275-584 of 647. Use offset=585 to continue.)
+</content>
+
+tool: read
+{
+  "filePath": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0236-8741e57d163a\\tensorflow\\python\\kernel_tests\\nn_ops\\pooling_ops_test.py",
+  "offset": 2400,
+  "limit": 100
+}
+<path>C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0236-8741e57d163a\tensorflow\python\kernel_tests\nn_ops\pooling_ops_test.py</path>
+<type>file</type>
+<content>
+2400: 
+2401:       # Test invalid orig_out shape
+2402:       orig_out = array_ops.ones((1, 1, 1, 2))
+2403:       grad = array_ops.ones((1, 1, 1, 1))
+2404:       with self.assertRaisesRegex(
+2405:           errors_impl.InvalidArgumentError,
+2406:           r"Expected orig_output shape to be \[1,1,1,1\], but got \[1,1,1,2\]"):
+2407:         gen_nn_ops.max_pool_grad(
+2408:             orig_in, orig_out, grad, ksize=[1, 1, 1, 1], strides=[1, 1, 1, 1],
+2409:             padding="VALID")
+2410:       with self.assertRaisesRegex(
+2411:           errors_impl.InvalidArgumentError,
+2412:           r"Expected orig_output shape to be \[1,1,1,1\], but got \[1,1,1,2\]"):
+2413:         gen_nn_ops.max_pool_grad_grad(
+2414:             orig_in, orig_out, grad, ksize=[1, 1, 1, 1], strides=[1, 1, 1, 1],
+2415:             padding="VALID")
+2416: 
+2417:       # Test invalid grad shape
+2418:       orig_out = array_ops.ones((1, 1, 1, 1))
+2419:       grad = array_ops.ones((1, 1, 1, 2))
+2420:       with self.assertRaisesRegex(
+2421:           errors_impl.InvalidArgumentError,
+2422:           r"Expected grad shape to be \[1,1,1,1\], but got \[1,1,1,2\]"):
+2423:         gen_nn_ops.max_pool_grad(
+2424:             orig_in, orig_out, grad, ksize=[1, 1, 1, 1], strides=[1, 1, 1, 1],
+2425:             padding="VALID")
+2426:       with self.assertRaisesRegex(
+2427:           errors_impl.InvalidArgumentError,
+2428:           r"Expected grad shape to be \[1,1,1,1\], but got \[1,1,1,2\]"):
+2429:         gen_nn_ops.max_pool_grad_grad(
+2430:             orig_in, orig_out, grad, ksize=[1, 1, 1, 1], strides=[1, 1, 1, 1],
+2431:             padding="VALID")
+2432: 
+2433:   def testMaxPoolGradWithArgmaxEagerShapeErrors(self):
+2434:     with context.eager_mode():
+2435:       inp = array_ops.ones((1, 1, 1, 1))
+2436: 
+2437:       # Test invalid grad shape
+2438:       grad = array_ops.ones((1, 1, 1, 2))
+2439:       argmax = array_ops.zeros((1, 1, 1, 1), dtype=dtypes.int64)
+2440:       with self.assertRaisesRegex(
+2441:           errors_impl.InvalidArgumentError,
+2442:           r"Expected grad shape to be \[1,1,1,1\], but got \[1,1,1,2\]"):
+2443:         gen_nn_ops.max_pool_grad_with_argmax(
+2444:             inp, grad, argmax, ksize=[1, 1, 1, 1], strides=[1, 1, 1, 1],
+2445:             padding="VALID")
+2446:       # max_pool_grad_grad_with_argmax is only implemented for GPUs
+2447:       if test.is_gpu_available():
+2448:         with self.assertRaisesRegex(
+2449:             errors_impl.InvalidArgumentError,
+2450:             r"Expected grad shape to be \[1,1,1,1\], but got \[1,1,1,2\]"):
+2451:           gen_nn_ops.max_pool_grad_grad_with_argmax(
+2452:               inp, grad, argmax, ksize=[1, 1, 1, 1], strides=[1, 1, 1, 1],
+2453:               padding="VALID")
+2454: 
+2455:       # Test invalid argmax shape
+2456:       grad = array_ops.ones((1, 1, 1, 1))
+2457:       argmax = array_ops.ones((1, 1, 1, 2), dtype=dtypes.int64)
+2458:       with self.assertRaisesRegex(
+2459:           errors_impl.InvalidArgumentError,
+2460:           r"Expected argmax shape to be \[1,1,1,1\], but got \[1,1,1,2\]"):
+2461:         gen_nn_ops.max_pool_grad_with_argmax(
+2462:             inp, grad, argmax, ksize=[1, 1, 1, 1], strides=[1, 1, 1, 1],
+2463:             padding="VALID")
+2464:       # max_pool_grad_grad_with_argmax is only implemented for GPUs
+2465:       if test.is_gpu_available():
+2466:         with self.assertRaisesRegex(
+2467:             errors_impl.InvalidArgumentError,
+2468:             r"Expected argmax shape to be \[1,1,1,1\], but got \[1,1,1,2\]"):
+2469:           gen_nn_ops.max_pool_grad_grad_with_argmax(
+2470:               inp, grad, argmax, ksize=[1, 1, 1, 1], strides=[1, 1, 1, 1],
+2471:               padding="VALID")
+2472: 
+2473: 
+2474: def GetMaxPoolFwdTest(input_size, filter_size, strides, padding):
+2475: 
+2476:   def Test(self):
+2477:     # MaxPoolWithArgMax is implemented only on CUDA.
+2478:     if not test.is_gpu_available(cuda_only=True):
+2479:       return
+2480:     self._CompareMaxPoolingFwd(input_size, filter_size, strides, padding)
+2481: 
+2482:   return Test
+2483: 
+2484: 
+2485: def GetMaxPoolGradTest(input_size, filter_size, output_size, strides, padding):
+2486: 
+2487:   def Test(self):
+2488:     # MaxPoolWithArgMax is implemented only on CUDA.
+2489:     if not test.is_gpu_available(cuda_only=True):
+2490:       return
+2491:     self._CompareMaxPoolingBk(input_size, output_size, filter_size, strides,
+2492:                               padding)
+2493: 
+2494:   return Test
+2495: 
+2496: 
+2497: def GetMaxPoolGradGradTest(input_size, filter_size, output_size, strides,
+2498:                            padding):
+2499: 
+
+(Showing lines 2400-2499 of 2521. Use offset=2500 to continue.)
+</content>
+
+tokens used
+input: 952
+cache read: 8,704
+cache write: 0
+output: 168
+reasoning output: 0
+
+The target file has the same three vulnerable `AddDim(shape_vec(i))` sites and the test insertion point matches the provided patch. I’m checking API availability before editing.
+
+tool: grep
+{
+  "pattern": "from tensorflow\\.python\\.framework import errors_impl|errors_impl",
+  "path": "tensorflow/python/kernel_tests/nn_ops/pooling_ops_test.py"
+}
+Found 46 matches
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0236-8741e57d163a\tensorflow\python\kernel_tests\nn_ops\bias_op_base.py:
+  Line 23: from tensorflow.python.framework import errors_impl
+
+  Line 94:       return errors_impl.InvalidArgumentError
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0236-8741e57d163a\tensorflow\python\kernel_tests\nn_ops\conv_ops_3d_test.py:
+  Line 23: from tensorflow.python.framework import errors_impl
+
+  Line 465:         errors_impl.InvalidArgumentError, "filter must not have zero elements"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0236-8741e57d163a\tensorflow\python\kernel_tests\nn_ops\conv_ops_test.py:
+  Line 29: from tensorflow.python.framework import errors_impl
+
+  Line 2529:     with self.assertRaisesRegex((ValueError, errors_impl.UnimplementedError),
+
+  Line 2536:     with self.assertRaisesRegex((ValueError, errors_impl.UnimplementedError),
+
+  Line 2572:         errors_impl.InvalidArgumentError, "filter must not have zero elements"
+
+  Line 2582:         errors_impl.InvalidArgumentError,
+
+  Line 2594:         errors_impl.InvalidArgumentError,
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0236-8741e57d163a\tensorflow\python\kernel_tests\nn_ops\ctc_loss_op_test.py:
+  Line 25: from tensorflow.python.framework import errors_impl
+
+  Line 300:       with self.assertRaisesRegex(errors_impl.InvalidArgumentError,
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0236-8741e57d163a\tensorflow\python\kernel_tests\nn_ops\losses_test.py:
+  Line 21: from tensorflow.python.framework import errors_impl
+
+  Line 1156:       with self.assertRaisesRegex(errors_impl.OpError, expected_error_msg):
+
+  Line 1465:         with self.assertRaisesRegex(errors_impl.OpError, expected_error_msg):
+
+  Line 1488:         with self.assertRaisesRegex(errors_impl.OpError, expected_error_msg):
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0236-8741e57d163a\tensorflow\python\kernel_tests\nn_ops\lrn_op_test.py:
+  Line 23: from tensorflow.python.framework import errors_impl
+
+  Line 140:     with self.assertRaises((ValueError, errors_impl.InvalidArgumentError)):
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0236-8741e57d163a\tensorflow\python\kernel_tests\nn_ops\morphological_ops_test.py:
+  Line 21: from tensorflow.python.framework import errors_impl
+
+  Line 245:             errors_impl.UnimplementedError, "Determinism is not yet supported "
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0236-8741e57d163a\tensorflow\python\kernel_tests\nn_ops\pooling_ops_test.py:
+  Line 26: from tensorflow.python.framework import errors_impl
+
+  Line 857:       with self.assertRaisesRegex(errors_impl.UnimplementedError, error_msg):
+
+  Line 1049:               errors_impl.UnimplementedError, "Determinism is not yet supported "
+
+  Line 2288:               errors_impl.UnimplementedError,
+
+  Line 2347:           (errors_impl.UnimplementedError, errors_impl.InvalidArgumentError),
+
+  Line 2405:           errors_impl.InvalidArgumentError,
+
+  Line 2411:           errors_impl.InvalidArgumentError,
+
+  Line 2421:           errors_impl.InvalidArgumentError,
+
+  Line 2427:           errors_impl.InvalidArgumentError,
+
+  Line 2441:           errors_impl.InvalidArgumentError,
+
+  Line 2449:             errors_impl.InvalidArgumentError,
+
+  Line 2459:           errors_impl.InvalidArgumentError,
+
+  Line 2467:             errors_impl.InvalidArgumentError,
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0236-8741e57d163a\tensorflow\python\kernel_tests\nn_ops\pooling_ops_3d_test.py:
+  Line 23: from tensorflow.python.framework import errors_impl
+
+  Line 550:           errors_impl.InvalidArgumentError,
+
+  Line 557:           errors_impl.InvalidArgumentError,
+
+  Line 568:           errors_impl.InvalidArgumentError,
+
+  Line 574:           errors_impl.InvalidArgumentError,
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0236-8741e57d163a\tensorflow\python\kernel_tests\nn_ops\rnn_cell_test.py:
+  Line 29: from tensorflow.python.framework import errors_impl
+
+  Line 1342:     with self.assertRaises(errors_impl.InvalidArgumentError):
+
+  Line 2699:         with self.assertRaises((ValueError, errors_impl.InvalidArgumentError)):
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0236-8741e57d163a\tensorflow\python\kernel_tests\nn_ops\softmax_op_test.py:
+  Line 24: from tensorflow.python.framework import errors_impl
+
+  Line 252:       with self.assertRaises(errors_impl.InvalidArgumentError):
+
+  Line 259:       with self.assertRaises(errors_impl.InvalidArgumentError):
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0236-8741e57d163a\tensorflow\python\kernel_tests\nn_ops\xent_op_d9m_test.py:
+  Line 23: from tensorflow.python.framework import errors_impl
+
+  Line 53:             errors_impl.UnimplementedError,
+
+tool: grep
+{
+  "pattern": "AddDimWithStatus",
+  "path": "tensorflow",
+  "include": "*.h"
+}
+Found 5 matches
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0236-8741e57d163a\tensorflow\core\util\image_resizer_state.h:
+  Line 149:     OP_REQUIRES_OK(context, shape.AddDimWithStatus(batch_size));
+
+  Line 150:     OP_REQUIRES_OK(context, shape.AddDimWithStatus(out_height));
+
+  Line 151:     OP_REQUIRES_OK(context, shape.AddDimWithStatus(out_width));
+
+  Line 152:     OP_REQUIRES_OK(context, shape.AddDimWithStatus(channels));
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0236-8741e57d163a\tensorflow\core\framework\tensor_shape.h:
+  Line 209:   Status AddDimWithStatus(int64_t size);
+
+tokens used
+input: 6,713
+cache read: 8,704
+cache write: 0
+output: 130
+reasoning output: 19
+
+`TensorShape::AddDimWithStatus` and the Python test imports already exist in 2.6.4, so the source patch can be ported directly with target line context.
+
+tool: validate
+{
+  "ref": "8741e57d163a079db05a7107a7609af70931def4",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/avgpooling_op.cc b/tensorflow/core/kernels/avgpooling_op.cc\n--- a/tensorflow/core/kernels/avgpooling_op.cc\n+++ b/tensorflow/core/kernels/avgpooling_op.cc\n@@ -298,7 +298,7 @@ class AvgPoolingGradOp : public OpKernel {\n     TensorShape output_shape;\n     auto shape_vec = tensor_in_shape.vec<int32>();\n     for (int64_t i = 0; i < tensor_in_shape.NumElements(); ++i) {\n-      output_shape.AddDim(shape_vec(i));\n+      OP_REQUIRES_OK(context, output_shape.AddDimWithStatus(shape_vec(i)));\n     }\n     const int64_t in_rows = output_shape.dim_size(1);\n     const int64_t in_cols = output_shape.dim_size(2);\n@@ -457,7 +457,7 @@ class AvgPoolingGradOp<GPUDevice, T> : public OpKernel {\n     TensorShape output_shape;\n     auto shape_vec = tensor_in_shape.vec<int32>();\n     for (int64_t i = 0; i < tensor_in_shape.NumElements(); ++i) {\n-      output_shape.AddDim(shape_vec(i));\n+      OP_REQUIRES_OK(context, output_shape.AddDimWithStatus(shape_vec(i)));\n     }\n \n     if (output_shape.num_elements() == 0) {\n@@ -543,7 +543,7 @@ class AvgPoolingGradOpCustomGPUKernel : public OpKernel {\n     TensorShape output_shape;\n     auto shape_vec = tensor_in_shape.vec<int32>();\n     for (int64_t i = 0; i < tensor_in_shape.NumElements(); ++i) {\n-      output_shape.AddDim(shape_vec(i));\n+      OP_REQUIRES_OK(context, output_shape.AddDimWithStatus(shape_vec(i)));\n     }\n     if (output_shape.num_elements() == 0) {\n       Tensor* output = nullptr\ndiff --git a/tensorflow/python/kernel_tests/nn_ops/pooling_ops_test.py b/tensorflow/python/kernel_tests/nn_ops/pooling_ops_test.py\n--- a/tensorflow/python/kernel_tests/nn_ops/pooling_ops_test.py\n+++ b/tensorflow/python/kernel_tests/nn_ops/pooling_ops_test.py\n@@ -2470,6 +2470,22 @@ def testMaxPoolGradWithArgmaxEagerShapeErrors(self):\n               inp, grad, argmax, ksize=[1, 1, 1, 1], strides=[1, 1, 1, 1],\n               padding=\"VALID\")\n \n+  def testAvgPoolGradInvalidInputShapeRaiseError(self):\n+    with self.assertRaises((ValueError, errors_impl.InvalidArgumentError)):\n+      with self.cached_session():\n+        orig_input_shape = constant_op.constant(\n+            -536870912, shape=[4], dtype=dtypes.int32)\n+        grad = constant_op.constant(\n+            .0890338004362538, shape=[1, 5, 7, 1], dtype=dtypes.float64)\n+        t = gen_nn_ops.AvgPoolGrad(\n+            orig_input_shape=orig_input_shape,\n+            grad=grad,\n+            ksize=[1, 2, 2, 1],\n+            strides=[1, 2, 2, 1],\n+            padding=\"VALID\",\n+            data_format=\"NHWC\")\n+        self.evaluate(t)\n+\n \n def GetMaxPoolFwdTest(input_size, filter_size, strides, padding):\n"
+}
+This patch does not apply to the target TensorFlow ref.
+Git apply output:
+error: corrupt patch at line 56
+Touched files:
+- tensorflow/core/kernels/avgpooling_op.cc
+- tensorflow/python/kernel_tests/nn_ops/pooling_ops_test.py
+Fix the patch context against the older TensorFlow version, then run validate again in hunk mode.
+
+tokens used
+input: 2,385
+cache read: 14,848
+cache write: 0
+output: 903
+reasoning output: 25
+
+The first validation attempt had malformed diff text, not a source mismatch. I’m rerunning with corrected target-context hunks before applying.
+
+tool: validate
+{
+  "ref": "8741e57d163a079db05a7107a7609af70931def4",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/avgpooling_op.cc b/tensorflow/core/kernels/avgpooling_op.cc\n--- a/tensorflow/core/kernels/avgpooling_op.cc\n+++ b/tensorflow/core/kernels/avgpooling_op.cc\n@@ -298,7 +298,7 @@ class AvgPoolingGradOp : public OpKernel {\n     TensorShape output_shape;\n     auto shape_vec = tensor_in_shape.vec<int32>();\n     for (int64_t i = 0; i < tensor_in_shape.NumElements(); ++i) {\n-      output_shape.AddDim(shape_vec(i));\n+      OP_REQUIRES_OK(context, output_shape.AddDimWithStatus(shape_vec(i)));\n     }\n     const int64_t in_rows = output_shape.dim_size(1);\n     const int64_t in_cols = output_shape.dim_size(2);\n@@ -457,7 +457,7 @@ class AvgPoolingGradOp<GPUDevice, T> : public OpKernel {\n     TensorShape output_shape;\n     auto shape_vec = tensor_in_shape.vec<int32>();\n     for (int64_t i = 0; i < tensor_in_shape.NumElements(); ++i) {\n-      output_shape.AddDim(shape_vec(i));\n+      OP_REQUIRES_OK(context, output_shape.AddDimWithStatus(shape_vec(i)));\n     }\n \n     if (output_shape.num_elements() == 0) {\n@@ -543,7 +543,7 @@ class AvgPoolingGradOpCustomGPUKernel : public OpKernel {\n     TensorShape output_shape;\n     auto shape_vec = tensor_in_shape.vec<int32>();\n     for (int64_t i = 0; i < tensor_in_shape.NumElements(); ++i) {\n-      output_shape.AddDim(shape_vec(i));\n+      OP_REQUIRES_OK(context, output_shape.AddDimWithStatus(shape_vec(i)));\n     }\n     if (output_shape.num_elements() == 0) {\n       Tensor* output = nullptr;\n"
+}
+Patch applied successfully
+
+tokens used
+input: 1,349
+cache read: 16,896
+cache write: 0
+output: 526
+reasoning output: 48
+
+tool: validate
+{
+  "ref": "8741e57d163a079db05a7107a7609af70931def4",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/python/kernel_tests/nn_ops/pooling_ops_test.py b/tensorflow/python/kernel_tests/nn_ops/pooling_ops_test.py\n--- a/tensorflow/python/kernel_tests/nn_ops/pooling_ops_test.py\n+++ b/tensorflow/python/kernel_tests/nn_ops/pooling_ops_test.py\n@@ -2470,6 +2470,22 @@ def testMaxPoolGradWithArgmaxEagerShapeErrors(self):\n               inp, grad, argmax, ksize=[1, 1, 1, 1], strides=[1, 1, 1, 1],\n               padding=\"VALID\")\n \n+  def testAvgPoolGradInvalidInputShapeRaiseError(self):\n+    with self.assertRaises((ValueError, errors_impl.InvalidArgumentError)):\n+      with self.cached_session():\n+        orig_input_shape = constant_op.constant(\n+            -536870912, shape=[4], dtype=dtypes.int32)\n+        grad = constant_op.constant(\n+            .0890338004362538, shape=[1, 5, 7, 1], dtype=dtypes.float64)\n+        t = gen_nn_ops.AvgPoolGrad(\n+            orig_input_shape=orig_input_shape,\n+            grad=grad,\n+            ksize=[1, 2, 2, 1],\n+            strides=[1, 2, 2, 1],\n+            padding=\"VALID\",\n+            data_format=\"NHWC\")\n+        self.evaluate(t)\n+\n \n def GetMaxPoolFwdTest(input_size, filter_size, strides, padding):\n"
+}
+This patch does not apply to the target TensorFlow ref.
+Git apply output:
+error: corrupt patch at line 26
+Touched files:
+- tensorflow/python/kernel_tests/nn_ops/pooling_ops_test.py
+Fix the patch context against the older TensorFlow version, then run validate again in hunk mode.
+
+tokens used
+input: 912
+cache read: 17,920
+cache write: 0
+output: 411
+reasoning output: 0
+
+The C++ hunks validated cleanly. The Python hunk location is confirmed by direct file context; the validation helper is rejecting my hand-written test diff formatting, so I’ll apply the same insertion with `apply_patch` and then review the resulting diff.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target AvgPoolGrad code and pooling test context",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate uncertain hunks against target base",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply minimal backport edits",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Review final diff",
+      "status": "pending",
+      "priority": "high"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target AvgPoolGrad code and pooling test context",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate uncertain hunks against target base",
+    "status": "completed",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply minimal backport edits",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Review final diff",
+    "status": "pending",
+    "priority": "high"
+  }
+]
+
+tokens used
+input: 1,395
+cache read: 17,920
+cache write: 0
+output: 151
+reasoning output: 263
+
+I’m editing the three shape-construction paths to propagate negative-dimension errors and adding the regression test for invalid `orig_input_shape`.
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/kernels/avgpooling_op.cc\n@@\n     TensorShape output_shape;\n     auto shape_vec = tensor_in_shape.vec<int32>();\n     for (int64_t i = 0; i < tensor_in_shape.NumElements(); ++i) {\n-      output_shape.AddDim(shape_vec(i));\n+      OP_REQUIRES_OK(context, output_shape.AddDimWithStatus(shape_vec(i)));\n     }\n@@\n     TensorShape output_shape;\n     auto shape_vec = tensor_in_shape.vec<int32>();\n     for (int64_t i = 0; i < tensor_in_shape.NumElements(); ++i) {\n-      output_shape.AddDim(shape_vec(i));\n+      OP_REQUIRES_OK(context, output_shape.AddDimWithStatus(shape_vec(i)));\n     }\n@@\n     TensorShape output_shape;\n     auto shape_vec = tensor_in_shape.vec<int32>();\n     for (int64_t i = 0; i < tensor_in_shape.NumElements(); ++i) {\n-      output_shape.AddDim(shape_vec(i));\n+      OP_REQUIRES_OK(context, output_shape.AddDimWithStatus(shape_vec(i)));\n     }\n*** Update File: tensorflow/python/kernel_tests/nn_ops/pooling_ops_test.py\n@@\n           gen_nn_ops.max_pool_grad_grad_with_argmax(\n               inp, grad, argmax, ksize=[1, 1, 1, 1], strides=[1, 1, 1, 1],\n               padding=\"VALID\")\n \n+  def testAvgPoolGradInvalidInputShapeRaiseError(self):\n+    with self.assertRaises((ValueError, errors_impl.InvalidArgumentError)):\n+      with self.cached_session():\n+        orig_input_shape = constant_op.constant(\n+            -536870912, shape=[4], dtype=dtypes.int32)\n+        grad = constant_op.constant(\n+            .0890338004362538, shape=[1, 5, 7, 1], dtype=dtypes.float64)\n+        t = gen_nn_ops.AvgPoolGrad(\n+            orig_input_shape=orig_input_shape,\n+            grad=grad,\n+            ksize=[1, 2, 2, 1],\n+            strides=[1, 2, 2, 1],\n+            padding=\"VALID\",\n+            data_format=\"NHWC\")\n+        self.evaluate(t)\n+\n \n def GetMaxPoolFwdTest(input_size, filter_size, strides, padding):\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/kernels/avgpooling_op.cc
+M tensorflow/python/kernel_tests/nn_ops/pooling_ops_test.py
+
+tokens used
+input: 922
+cache read: 18,944
+cache write: 0
+output: 629
+reasoning output: 0
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target AvgPoolGrad code and pooling test context",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate uncertain hunks against target base",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply minimal backport edits",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Review final diff",
+      "status": "in_progress",
+      "priority": "high"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target AvgPoolGrad code and pooling test context",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate uncertain hunks against target base",
+    "status": "completed",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply minimal backport edits",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Review final diff",
+    "status": "in_progress",
+    "priority": "high"
+  }
+]
+
+tokens used
+input: 1,594
+cache read: 18,944
+cache write: 0
+output: 90
+reasoning output: 0
+
+The backport edits are applied. I’m reviewing the resulting diff for scope and correctness.
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/kernels/avgpooling_op.cc tensorflow/python/kernel_tests/nn_ops/pooling_ops_test.py",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0236-8741e57d163a",
+  "timeout": 120000
+}
+warning: in the working copy of 'tensorflow/core/kernels/avgpooling_op.cc', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'tensorflow/python/kernel_tests/nn_ops/pooling_ops_test.py', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/kernels/avgpooling_op.cc b/tensorflow/core/kernels/avgpooling_op.cc
+index 0429d50cde..7e302a7e52 100644
+--- a/tensorflow/core/kernels/avgpooling_op.cc
++++ b/tensorflow/core/kernels/avgpooling_op.cc
+@@ -298,7 +298,7 @@ class AvgPoolingGradOp : public OpKernel {
+     TensorShape output_shape;
+     auto shape_vec = tensor_in_shape.vec<int32>();
+     for (int64_t i = 0; i < tensor_in_shape.NumElements(); ++i) {
+-      output_shape.AddDim(shape_vec(i));
++      OP_REQUIRES_OK(context, output_shape.AddDimWithStatus(shape_vec(i)));
+     }
+     const int64_t in_rows = output_shape.dim_size(1);
+     const int64_t in_cols = output_shape.dim_size(2);
+@@ -457,7 +457,7 @@ class AvgPoolingGradOp<GPUDevice, T> : public OpKernel {
+     TensorShape output_shape;
+     auto shape_vec = tensor_in_shape.vec<int32>();
+     for (int64_t i = 0; i < tensor_in_shape.NumElements(); ++i) {
+-      output_shape.AddDim(shape_vec(i));
++      OP_REQUIRES_OK(context, output_shape.AddDimWithStatus(shape_vec(i)));
+     }
+ 
+     if (output_shape.num_elements() == 0) {
+@@ -543,7 +543,7 @@ class AvgPoolingGradOpCustomGPUKernel : public OpKernel {
+     TensorShape output_shape;
+     auto shape_vec = tensor_in_shape.vec<int32>();
+     for (int64_t i = 0; i < tensor_in_shape.NumElements(); ++i) {
+-      output_shape.AddDim(shape_vec(i));
++      OP_REQUIRES_OK(context, output_shape.AddDimWithStatus(shape_vec(i)));
+     }
+     if (output_shape.num_elements() == 0) {
+       Tensor* output = nullptr;
+diff --git a/tensorflow/python/kernel_tests/nn_ops/pooling_ops_test.py b/tensorflow/python/kernel_tests/nn_ops/pooling_ops_test.py
+index aca29d05a3..391f8ec025 100644
+--- a/tensorflow/python/kernel_tests/nn_ops/pooling_ops_test.py
++++ b/tensorflow/python/kernel_tests/nn_ops/pooling_ops_test.py
+@@ -2470,6 +2470,22 @@ class PoolingTest(test.TestCase, parameterized.TestCase):
+               inp, grad, argmax, ksize=[1, 1, 1, 1], strides=[1, 1, 1, 1],
+               padding="VALID")
+ 
++  def testAvgPoolGradInvalidInputShapeRaiseError(self):
++    with self.assertRaises((ValueError, errors_impl.InvalidArgumentError)):
++      with self.cached_session():
++        orig_input_shape = constant_op.constant(
++            -536870912, shape=[4], dtype=dtypes.int32)
++        grad = constant_op.constant(
++            .0890338004362538, shape=[1, 5, 7, 1], dtype=dtypes.float64)
++        t = gen_nn_ops.AvgPoolGrad(
++            orig_input_shape=orig_input_shape,
++            grad=grad,
++            ksize=[1, 2, 2, 1],
++            strides=[1, 2, 2, 1],
++            padding="VALID",
++            data_format="NHWC")
++        self.evaluate(t)
++
+ 
+ def GetMaxPoolFwdTest(input_size, filter_size, strides, padding):
+
+tool: bash
+{
+  "command": "git status --short",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0236-8741e57d163a",
+  "timeout": 120000
+}
+ M tensorflow/core/kernels/avgpooling_op.cc
+ M tensorflow/python/kernel_tests/nn_ops/pooling_ops_test.py
+
+tokens used
+input: 797
+cache read: 19,968
+cache write: 0
+output: 194
+reasoning output: 0
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target AvgPoolGrad code and pooling test context",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate uncertain hunks against target base",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply minimal backport edits",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Review final diff",
+      "status": "completed",
+      "priority": "high"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target AvgPoolGrad code and pooling test context",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate uncertain hunks against target base",
+    "status": "completed",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply minimal backport edits",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Review final diff",
+    "status": "completed",
+    "priority": "high"
+  }
+]
+
+tokens used
+input: 1,885
+cache read: 19,968
+cache write: 0
+output: 91
+reasoning output: 33
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/kernels/avgpooling_op.cc b/tensorflow/core/kernels/avgpooling_op.cc
+    index 0429d50cde..7e302a7e52 100644
+    --- a/tensorflow/core/kernels/avgpooling_op.cc
+    +++ b/tensorflow/core/kernels/avgpooling_op.cc
+    @@ -298,7 +298,7 @@ class AvgPoolingGradOp : public OpKernel {
+         TensorShape output_shape;
+         auto shape_vec = tensor_in_shape.vec<int32>();
+         for (int64_t i = 0; i < tensor_in_shape.NumElements(); ++i) {
+    -      output_shape.AddDim(shape_vec(i));
+    +      OP_REQUIRES_OK(context, output_shape.AddDimWithStatus(shape_vec(i)));
+         }
+         const int64_t in_rows = output_shape.dim_size(1);
+         const int64_t in_cols = output_shape.dim_size(2);
+    @@ -457,7 +457,7 @@ class AvgPoolingGradOp<GPUDevice, T> : public OpKernel {
+         TensorShape output_shape;
+         auto shape_vec = tensor_in_shape.vec<int32>();
+         for (int64_t i = 0; i < tensor_in_shape.NumElements(); ++i) {
+    -      output_shape.AddDim(shape_vec(i));
+    +      OP_REQUIRES_OK(context, output_shape.AddDimWithStatus(shape_vec(i)));
+         }
+     
+         if (output_shape.num_elements() == 0) {
+    @@ -543,7 +543,7 @@ class AvgPoolingGradOpCustomGPUKernel : public OpKernel {
+         TensorShape output_shape;
+         auto shape_vec = tensor_in_shape.vec<int32>();
+         for (int64_t i = 0; i < tensor_in_shape.NumElements(); ++i) {
+    -      output_shape.AddDim(shape_vec(i));
+    +      OP_REQUIRES_OK(context, output_shape.AddDimWithStatus(shape_vec(i)));
+         }
+         if (output_shape.num_elements() == 0) {
+           Tensor* output = nullptr;
+    diff --git a/tensorflow/python/kernel_tests/nn_ops/pooling_ops_test.py b/tensorflow/python/kernel_tests/nn_ops/pooling_ops_test.py
+    index aca29d05a3..391f8ec025 100644
+    --- a/tensorflow/python/kernel_tests/nn_ops/pooling_ops_test.py
+    +++ b/tensorflow/python/kernel_tests/nn_ops/pooling_ops_test.py
+    @@ -2470,6 +2470,22 @@ class PoolingTest(test.TestCase, parameterized.TestCase):
+                   inp, grad, argmax, ksize=[1, 1, 1, 1], strides=[1, 1, 1, 1],
+                   padding="VALID")
+     
+    +  def testAvgPoolGradInvalidInputShapeRaiseError(self):
+    +    with self.assertRaises((ValueError, errors_impl.InvalidArgumentError)):
+    +      with self.cached_session():
+    +        orig_input_shape = constant_op.constant(
+    +            -536870912, shape=[4], dtype=dtypes.int32)
+    +        grad = constant_op.constant(
+    +            .0890338004362538, shape=[1, 5, 7, 1], dtype=dtypes.float64)
+    +        t = gen_nn_ops.AvgPoolGrad(
+    +            orig_input_shape=orig_input_shape,
+    +            grad=grad,
+    +            ksize=[1, 2, 2, 1],
+    +            strides=[1, 2, 2, 1],
+    +            padding="VALID",
+    +            data_format="NHWC")
+    +        self.evaluate(t)
+    +
+     
+     def GetMaxPoolFwdTest(input_size, filter_size, strides, padding):
+  notes: >
+    Backported AvgPoolGrad shape validation by replacing unchecked AddDim calls with AddDimWithStatus and added the invalid orig_input_shape regression test.
+```
+
+tokens used
+input: 1,121
+cache read: 20,992
+cache write: 0
+output: 870
+reasoning output: 0

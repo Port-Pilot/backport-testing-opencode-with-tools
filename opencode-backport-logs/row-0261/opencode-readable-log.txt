@@ -1,0 +1,1160 @@
+I’ll inspect the target-side kernel and test context, then apply only the equivalent shape validation and regression test if the older APIs match.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Locate equivalent target code and test context",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Validate uncertain hunks against target base",
+      "status": "pending",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply minimal backport changes",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "content": "Inspect final diff",
+      "status": "pending",
+      "priority": "high"
+    }
+  ]
+}
+[
+  {
+    "content": "Locate equivalent target code and test context",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Validate uncertain hunks against target base",
+    "status": "pending",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply minimal backport changes",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "content": "Inspect final diff",
+    "status": "pending",
+    "priority": "high"
+  }
+]
+
+tokens used
+input: 4,255
+cache read: 4,608
+cache write: 0
+output: 121
+reasoning output: 0
+
+tool: viewcode
+{
+  "ref": "b10f03fd7c3c4f48b6e1e23dfe0b140d9419ac0e",
+  "path": "tensorflow/python/kernel_tests/io_ops/checkpoint_ops_test.py",
+  "startline": 190,
+  "endline": 255
+}
+This file doesn't exist in this commit.
+
+tool: viewcode
+{
+  "ref": "b10f03fd7c3c4f48b6e1e23dfe0b140d9419ac0e",
+  "path": "tensorflow/core/kernels/load_and_remap_matrix_op.cc",
+  "startline": 55,
+  "endline": 105
+}
+Here are lines 55 through 105.
+
+}  // anonymous namespace
+
+// This op loads a rank-2 Tensor (matrix) from a TensorFlow checkpoint (V2) and
+// swaps around the rows/columns according to row_remapping/col_remapping.
+// "Missing" cells are initialized with values from initializing_values.
+class LoadAndRemapMatrixOp : public OpKernel {
+ public:
+  explicit LoadAndRemapMatrixOp(OpKernelConstruction* context)
+      : OpKernel(context) {
+    OP_REQUIRES_OK(context, context->GetAttr("num_rows", &num_rows_));
+    OP_REQUIRES_OK(context, context->GetAttr("num_cols", &num_cols_));
+    OP_REQUIRES_OK(
+        context, context->GetAttr("max_rows_in_memory", &max_rows_in_memory_));
+  }
+
+  void Compute(OpKernelContext* context) override {
+    // Checks what we're remapping and inverts the relevant remapping Tensors to
+    // be maps with key = old ID, value = new ID.
+    std::unordered_map<int64, int64> old_row_to_new_row_map;
+    std::vector<bool> row_id_present;
+    const Tensor* row_remapping_t;
+    OP_REQUIRES_OK(context, context->input("row_remapping", &row_remapping_t));
+    const auto row_remapping = row_remapping_t->vec<int64>();
+    OP_REQUIRES(context, row_remapping.size() == num_rows_,
+                errors::InvalidArgument(strings::StrCat(
+                    "Size of row_remapping is ", row_remapping.size(),
+                    " instead of being equal to num_rows=", num_rows_)));
+    OP_REQUIRES_OK(context, RemapVectorToMap(row_remapping, &row_id_present,
+                                             &old_row_to_new_row_map));
+
+    // Calculates the min/max old row ID that we need to read, to save us from
+    // reading some unnecessary slices of the old tensor.
+    int64 min_old_row = -1;
+    int64 max_old_row = -1;
+    for (int i = 0; i < row_remapping.size(); ++i) {
+      if (min_old_row < 0 ||
+          (row_remapping(i) >= 0 && row_remapping(i) < min_old_row)) {
+        min_old_row = row_remapping(i);
+      }
+      if (max_old_row < 0 ||
+          (row_remapping(i) >= 0 && row_remapping(i) > max_old_row)) {
+        max_old_row = row_remapping(i);
+      }
+    }
+
+    // Processes the remapping for columns.
+    std::unordered_map<int64, int64> old_col_to_new_col_map;
+    std::vector<bool> col_id_present;
+    const Tensor* col_remapping_t;
+    OP_REQUIRES_OK(context, context->input("col_remapping", &col_remapping_t));
+    const auto col_remapping = col_remapping_t->vec<int64>();
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: locate_symbol
+{
+  "ref": "b10f03fd7c3c4f48b6e1e23dfe0b140d9419ac0e",
+  "symbol": "LoadAndRemapMatrixOp"
+}
+tensorflow/core/kernels/load_and_remap_matrix_op.cc:60
+tensorflow/core/kernels/load_and_remap_matrix_op.cc:62
+tensorflow/core/kernels/load_and_remap_matrix_op.cc:309
+
+tokens used
+input: 414
+cache read: 8,704
+cache write: 0
+output: 204
+reasoning output: 0
+
+The kernel location matches the newer patch closely. The Python test file path from the newer release does not exist at that target ref, so I’m locating the older test file before editing.
+
+tool: glob
+{
+  "pattern": "tensorflow/python/**/*checkpoint_ops_test.py"
+}
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0261-b10f03fd7c3c\tensorflow\python\training\checkpoint_ops_test.py
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0261-b10f03fd7c3c\tensorflow\python\kernel_tests\checkpoint_ops_test.py
+
+tool: grep
+{
+  "pattern": "gen_checkpoint_ops.load_and_remap_matrix",
+  "path": "tensorflow/python",
+  "include": "*.py"
+}
+Found 14 matches
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0261-b10f03fd7c3c\tensorflow\python\kernel_tests\checkpoint_ops_test.py:
+  Line 138:     remapped_matrix = gen_checkpoint_ops.load_and_remap_matrix(
+
+  Line 153:     remapped_matrix = gen_checkpoint_ops.load_and_remap_matrix(
+
+  Line 168:     remapped_matrix = gen_checkpoint_ops.load_and_remap_matrix(
+
+  Line 183:     remapped_matrix = gen_checkpoint_ops.load_and_remap_matrix(
+
+  Line 203:     remapped_matrix = gen_checkpoint_ops.load_and_remap_matrix(
+
+  Line 221:     remapped_matrix = gen_checkpoint_ops.load_and_remap_matrix(
+
+  Line 243:     remapped_matrix = gen_checkpoint_ops.load_and_remap_matrix(
+
+  Line 255:     remapped_matrix = gen_checkpoint_ops.load_and_remap_matrix(
+
+  Line 269:     remapped_matrix = gen_checkpoint_ops.load_and_remap_matrix(
+
+  Line 284:     remapped_matrix = gen_checkpoint_ops.load_and_remap_matrix(
+
+  Line 323:       remapped_matrix = gen_checkpoint_ops.load_and_remap_matrix(
+
+  Line 341:       remapped_matrix = gen_checkpoint_ops.load_and_remap_matrix(
+
+  Line 362:       remapped_matrix = gen_checkpoint_ops.load_and_remap_matrix(
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0261-b10f03fd7c3c\tensorflow\python\training\checkpoint_ops.py:
+  Line 181:   return_tensor = gen_checkpoint_ops.load_and_remap_matrix(
+
+tool: grep
+{
+  "pattern": "test_load_and_remap_all_missing_rows_and_cols|load_and_remap_invalid_remapping",
+  "path": "tensorflow/python",
+  "include": "*.py"
+}
+Found 2 matches
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0261-b10f03fd7c3c\tensorflow\python\kernel_tests\checkpoint_ops_test.py:
+  Line 216:   def test_load_and_remap_all_missing_rows_and_cols(self):
+
+  Line 235:   def test_load_and_remap_invalid_remapping(self):
+
+tokens used
+input: 1,345
+cache read: 8,704
+cache write: 0
+output: 157
+reasoning output: 21
+
+tool: read
+{
+  "filePath": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0261-b10f03fd7c3c\\tensorflow\\python\\kernel_tests\\checkpoint_ops_test.py",
+  "offset": 1,
+  "limit": 270
+}
+<path>C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0261-b10f03fd7c3c\tensorflow\python\kernel_tests\checkpoint_ops_test.py</path>
+<type>file</type>
+<content>
+1: # Copyright 2017 The TensorFlow Authors. All Rights Reserved.
+2: #
+3: # Licensed under the Apache License, Version 2.0 (the "License");
+4: # you may not use this file except in compliance with the License.
+5: # You may obtain a copy of the License at
+6: #
+7: #     http://www.apache.org/licenses/LICENSE-2.0
+8: #
+9: # Unless required by applicable law or agreed to in writing, software
+10: # distributed under the License is distributed on an "AS IS" BASIS,
+11: # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+12: # See the License for the specific language governing permissions and
+13: # limitations under the License.
+14: # ==============================================================================
+15: """Functional tests for the ops to generate and execute vocab remapping."""
+16: from __future__ import absolute_import
+17: from __future__ import division
+18: from __future__ import print_function
+19: 
+20: import os
+21: 
+22: import numpy as np
+23: 
+24: from tensorflow.python.framework import constant_op
+25: from tensorflow.python.framework import dtypes
+26: from tensorflow.python.framework import errors
+27: from tensorflow.python.framework import ops
+28: from tensorflow.python.framework import test_util
+29: from tensorflow.python.ops import gen_checkpoint_ops
+30: from tensorflow.python.ops import partitioned_variables
+31: from tensorflow.python.ops import variable_scope
+32: from tensorflow.python.ops import variables
+33: from tensorflow.python.platform import flags
+34: from tensorflow.python.platform import test
+35: from tensorflow.python.training import saver
+36: 
+37: FLAGS = flags.FLAGS
+38: 
+39: 
+40: class GenerateVocabRemappingTest(test.TestCase):
+41:   """Tests for the generate_vocab_remapping() method."""
+42: 
+43:   def setUp(self):
+44:     self.new_vocab_file = os.path.join(self.get_temp_dir(),
+45:                                        'keyword_shifted.txt')
+46:     with open(self.new_vocab_file, 'w') as f:
+47:       f.write('\n'.join(['MISSING', 'knitting', 'eminem']) + '\n')
+48:     self.old_vocab_file = os.path.join(self.get_temp_dir(),
+49:                                        'keyword.txt')
+50:     with open(self.old_vocab_file, 'w') as f:
+51:       f.write('\n'.join(['knitting', 'eminem', 'MISSING']) + '\n')
+52: 
+53:   @test_util.run_deprecated_v1
+54:   def test_generate_remapping_with_no_vocab_changes(self):
+55:     """Tests where vocab does not change at all."""
+56:     remapping, num_present = gen_checkpoint_ops.generate_vocab_remapping(
+57:         new_vocab_file=self.old_vocab_file,
+58:         old_vocab_file=self.old_vocab_file,
+59:         num_new_vocab=3,
+60:         new_vocab_offset=0)
+61:     expected_remapping = range(0, 3)
+62:     expected_num_present = 3
+63:     with self.cached_session():
+64:       self.assertAllEqual(expected_remapping, self.evaluate(remapping))
+65:       self.assertAllEqual(expected_num_present, self.evaluate(num_present))
+66: 
+67:   def test_generate_remapping_with_shifted_vocab(self):
+68:     """Tests where vocab is the same, but shifted / ordered differently."""
+69:     remapping, num_present = gen_checkpoint_ops.generate_vocab_remapping(
+70:         new_vocab_file=self.new_vocab_file,
+71:         old_vocab_file=self.old_vocab_file,
+72:         num_new_vocab=3,
+73:         new_vocab_offset=0)
+74:     expected_remapping = [2, 0, 1]
+75:     expected_num_present = 3
+76:     with self.cached_session():
+77:       self.assertAllEqual(expected_remapping, self.evaluate(remapping))
+78:       self.assertAllEqual(expected_num_present, self.evaluate(num_present))
+79: 
+80:   def test_generate_remapping_with_offset(self):
+81:     """Tests offset and num_new_vocab logic."""
+82:     remapping, num_present = gen_checkpoint_ops.generate_vocab_remapping(
+83:         new_vocab_file=self.new_vocab_file,
+84:         old_vocab_file=self.old_vocab_file,
+85:         num_new_vocab=1,
+86:         new_vocab_offset=1)
+87:     expected_remapping = [0]
+88:     expected_num_present = 1
+89:     with self.cached_session():
+90:       self.assertAllEqual(expected_remapping, self.evaluate(remapping))
+91:       self.assertAllEqual(expected_num_present, self.evaluate(num_present))
+92: 
+93:   def test_generate_remapping_with_old_vocab_size(self):
+94:     """Tests where old_vocab_size is specified."""
+95:     remapping, num_present = gen_checkpoint_ops.generate_vocab_remapping(
+96:         new_vocab_file=self.new_vocab_file,
+97:         old_vocab_file=self.old_vocab_file,
+98:         num_new_vocab=3,
+99:         new_vocab_offset=0,
+100:         # Old vocabulary becomes ['knitting', 'eminem'].
+101:         old_vocab_size=2)
+102:     expected_remapping = [-1, 0, 1]
+103:     expected_num_present = 2
+104:     with self.cached_session():
+105:       self.assertAllEqual(expected_remapping, self.evaluate(remapping))
+106:       self.assertAllEqual(expected_num_present, self.evaluate(num_present))
+107: 
+108: 
+109: class LoadAndRemapMatrixTest(test.TestCase):
+110:   """Tests for the load_and_remap_matrix() op."""
+111: 
+112:   def setUp(self):
+113:     ops.reset_default_graph()
+114:     self.old_num_rows = 5
+115:     self.old_num_cols = 16
+116:     self.matrix_value = np.reshape(
+117:         range(0, self.old_num_rows * self.old_num_cols), (self.old_num_rows,
+118:                                                           self.old_num_cols))
+119:     with variable_scope.variable_scope('some_scope'):
+120:       matrix = variable_scope.get_variable(
+121:           'matrix',
+122:           dtype=dtypes.float32,
+123:           initializer=constant_op.constant(
+124:               self.matrix_value, dtype=dtypes.float32))
+125:       self.old_tensor_name = 'some_scope/matrix'
+126: 
+127:     save = saver.Saver([matrix])
+128:     with self.cached_session() as sess:
+129:       self.evaluate(variables.global_variables_initializer())
+130:       self.bundle_file = os.path.join(test.get_temp_dir(), 'bundle_checkpoint')
+131:       save.save(sess, self.bundle_file)
+132: 
+133:   def test_load_and_remap_no_missing(self):
+134:     """Tests the op's load and remap where there are no missing entries."""
+135: 
+136:     # No column remapping, new weight matrix has second row, then first row.
+137:     row_remapping = [1, 0]
+138:     remapped_matrix = gen_checkpoint_ops.load_and_remap_matrix(
+139:         ckpt_path=[self.bundle_file],
+140:         old_tensor_name=self.old_tensor_name,
+141:         row_remapping=row_remapping,
+142:         col_remapping=[],
+143:         initializing_values=[],
+144:         num_rows=2,
+145:         num_cols=self.old_num_cols)
+146:     with self.cached_session():
+147:       self.assertAllClose(self.matrix_value[row_remapping],
+148:                           self.evaluate(remapped_matrix))
+149: 
+150:     # No row remapping, new weight matrix has third col, then first col.
+151:     row_remapping = list(range(self.old_num_rows))
+152:     col_remapping = [2, 0]
+153:     remapped_matrix = gen_checkpoint_ops.load_and_remap_matrix(
+154:         ckpt_path=[self.bundle_file],
+155:         old_tensor_name=self.old_tensor_name,
+156:         row_remapping=row_remapping,
+157:         col_remapping=col_remapping,
+158:         initializing_values=[],
+159:         num_rows=len(row_remapping),
+160:         num_cols=len(col_remapping))
+161:     with self.cached_session():
+162:       self.assertAllClose(self.matrix_value[row_remapping][:, col_remapping],
+163:                           self.evaluate(remapped_matrix))
+164: 
+165:     # Both row and column remappings.
+166:     row_remapping = [1, 0, 4]
+167:     col_remapping = [1, 15]
+168:     remapped_matrix = gen_checkpoint_ops.load_and_remap_matrix(
+169:         ckpt_path=[self.bundle_file],
+170:         old_tensor_name=self.old_tensor_name,
+171:         row_remapping=row_remapping,
+172:         col_remapping=col_remapping,
+173:         initializing_values=[],
+174:         num_rows=len(row_remapping),
+175:         num_cols=len(col_remapping))
+176:     with self.cached_session():
+177:       self.assertAllClose(self.matrix_value[row_remapping][:, col_remapping],
+178:                           self.evaluate(remapped_matrix))
+179: 
+180:   def test_load_and_remap_with_init(self):
+181:     """Tests the op's load and remap where there are missing entries."""
+182:     init_val = 42
+183:     remapped_matrix = gen_checkpoint_ops.load_and_remap_matrix(
+184:         ckpt_path=[self.bundle_file],
+185:         old_tensor_name=self.old_tensor_name,
+186:         row_remapping=[2, -1, 0],
+187:         col_remapping=[1, -1],
+188:         initializing_values=[init_val] * 4,
+189:         num_rows=3,
+190:         num_cols=2)
+191: 
+192:     expected_remapped_matrix = np.reshape(
+193:         [33, init_val, init_val, init_val, 1, init_val], [3, 2])
+194: 
+195:     with self.cached_session():
+196:       self.assertAllClose(expected_remapped_matrix,
+197:                           self.evaluate(remapped_matrix))
+198: 
+199:   def test_load_and_remap_all_missing_rows(self):
+200:     """Tests when all the rows are missing and need to be initialized."""
+201:     num_rows = 7
+202:     initializing_values = [42] * num_rows * self.old_num_cols
+203:     remapped_matrix = gen_checkpoint_ops.load_and_remap_matrix(
+204:         ckpt_path=[self.bundle_file],
+205:         old_tensor_name=self.old_tensor_name,
+206:         row_remapping=[-1] * num_rows,
+207:         col_remapping=[],
+208:         initializing_values=initializing_values,
+209:         num_rows=num_rows,
+210:         num_cols=self.old_num_cols)
+211:     with self.cached_session():
+212:       self.assertAllClose(
+213:           np.reshape(initializing_values, (num_rows, self.old_num_cols)),
+214:           self.evaluate(remapped_matrix))
+215: 
+216:   def test_load_and_remap_all_missing_rows_and_cols(self):
+217:     """Tests when all the rows & cols are missing and need to be initialized."""
+218:     num_rows = 7
+219:     num_cols = 4
+220:     initializing_values = [42] * num_rows * num_cols
+221:     remapped_matrix = gen_checkpoint_ops.load_and_remap_matrix(
+222:         ckpt_path=[self.bundle_file],
+223:         old_tensor_name=self.old_tensor_name,
+224:         row_remapping=[-1] * num_rows,
+225:         col_remapping=[-1] * num_cols,
+226:         initializing_values=initializing_values,
+227:         num_rows=num_rows,
+228:         num_cols=num_cols)
+229:     with self.cached_session():
+230:       self.assertAllClose(
+231:           np.reshape(initializing_values, (num_rows, num_cols)),
+232:           self.evaluate(remapped_matrix))
+233: 
+234:   @test_util.run_deprecated_v1
+235:   def test_load_and_remap_invalid_remapping(self):
+236:     """Tests that errors are raised when an ID maps to multiple new IDs.
+237: 
+238:     (This should usually not happen when using public APIs).
+239:     """
+240:     invalid_remapping = [1, 0, 0, 0, 1, 2]
+241: 
+242:     # Invalid row remapping.
+243:     remapped_matrix = gen_checkpoint_ops.load_and_remap_matrix(
+244:         ckpt_path=[self.bundle_file],
+245:         old_tensor_name=self.old_tensor_name,
+246:         row_remapping=invalid_remapping,
+247:         col_remapping=[],
+248:         initializing_values=[],
+249:         num_rows=len(invalid_remapping),
+250:         num_cols=self.old_num_cols)
+251:     with self.cached_session(), self.assertRaises(errors.UnimplementedError):
+252:       self.evaluate(remapped_matrix)
+253: 
+254:     # Invalid column remapping.
+255:     remapped_matrix = gen_checkpoint_ops.load_and_remap_matrix(
+256:         ckpt_path=[self.bundle_file],
+257:         old_tensor_name=self.old_tensor_name,
+258:         row_remapping=list(range(self.old_num_rows)),
+259:         col_remapping=invalid_remapping,
+260:         initializing_values=[],
+261:         num_rows=self.old_num_rows,
+262:         num_cols=len(invalid_remapping))
+263:     with self.cached_session(), self.assertRaises(errors.UnimplementedError):
+264:       self.evaluate(remapped_matrix)
+265: 
+266:   @test_util.run_deprecated_v1
+267:   def test_load_and_remap_incorrect_initializing_values(self):
+268:     """Tests that errors are raised with incorrect number of init values."""
+269:     remapped_matrix = gen_checkpoint_ops.load_and_remap_matrix(
+270:         ckpt_path=[self.bundle_file],
+
+(Showing lines 1-270 of 455. Use offset=271 to continue.)
+</content>
+
+tokens used
+input: 1,114
+cache read: 9,728
+cache write: 0
+output: 76
+reasoning output: 0
+
+The older test lives at `tensorflow/python/kernel_tests/checkpoint_ops_test.py` rather than the newer `io_ops` subdirectory. I’m going to validate the adapted hunks before applying them.
+
+tool: validate
+{
+  "ref": "b10f03fd7c3c4f48b6e1e23dfe0b140d9419ac0e",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/load_and_remap_matrix_op.cc b/tensorflow/core/kernels/load_and_remap_matrix_op.cc\n--- a/tensorflow/core/kernels/load_and_remap_matrix_op.cc\n+++ b/tensorflow/core/kernels/load_and_remap_matrix_op.cc\n@@ -73,6 +73,11 @@ class LoadAndRemapMatrixOp : public OpKernel {\n     std::vector<bool> row_id_present;\n     const Tensor* row_remapping_t;\n     OP_REQUIRES_OK(context, context->input(\"row_remapping\", &row_remapping_t));\n+    OP_REQUIRES(\n+        context, row_remapping_t->dims() == 1,\n+        errors::InvalidArgument(\"The `row_remapping` tensor must be 1-D, got \"\n+                                \"a tensor of shape \",\n+                                row_remapping_t->shape().DebugString()));\n     const auto row_remapping = row_remapping_t->vec<int64>();\n     OP_REQUIRES(context, row_remapping.size() == num_rows_,\n                 errors::InvalidArgument(strings::StrCat(\n"
+}
+Patch applied successfully
+
+tokens used
+input: 3,235
+cache read: 10,752
+cache write: 0
+output: 354
+reasoning output: 82
+
+tool: validate
+{
+  "ref": "b10f03fd7c3c4f48b6e1e23dfe0b140d9419ac0e",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/python/kernel_tests/checkpoint_ops_test.py b/tensorflow/python/kernel_tests/checkpoint_ops_test.py\n--- a/tensorflow/python/kernel_tests/checkpoint_ops_test.py\n+++ b/tensorflow/python/kernel_tests/checkpoint_ops_test.py\n@@ -231,6 +231,32 @@ class LoadAndRemapMatrixTest(test.TestCase):\n           np.reshape(initializing_values, (num_rows, num_cols)),\n           self.evaluate(remapped_matrix))\n \n+  def test_load_and_remap_invalid_dims(self):\n+    ckpt_path = constant_op.constant(\n+        '/tmp/warm_starting_util_test5kl2a3pc/tmpph76tep2/model-0',\n+        shape=[],\n+        dtype=dtypes.string)\n+    old_tensor_name = constant_op.constant(\n+        '/tmp/warm_starting_util_test5kl2a3pc/tmpph76tep2/model-0',\n+        shape=[],\n+        dtype=dtypes.string)\n+    row_remapping = constant_op.constant(0, shape=[], dtype=dtypes.int64)\n+    col_remapping = constant_op.constant(3, shape=[3], dtype=dtypes.int64)\n+    initializing_values = constant_op.constant([],\n+                                               shape=[0, 1],\n+                                               dtype=dtypes.float32)\n+    with self.cached_session(), self.assertRaisesRegexp(\n+        (ValueError, errors.InvalidArgumentError), 'tensor must be 1-D'):\n+      self.evaluate(\n+          gen_checkpoint_ops.load_and_remap_matrix(\n+              ckpt_path=ckpt_path,\n+              old_tensor_name=old_tensor_name,\n+              row_remapping=row_remapping,\n+              col_remapping=col_remapping,\n+              initializing_values=initializing_values,\n+              num_rows=1,\n+              num_cols=1))\n+\n   @test_util.run_deprecated_v1\n   def test_load_and_remap_invalid_remapping(self):\n     \"\"\"Tests that errors are raised when an ID maps to multiple new IDs.\n"
+}
+Patch applied successfully
+
+tokens used
+input: 612
+cache read: 13,824
+cache write: 0
+output: 523
+reasoning output: 0
+
+Both adapted hunks apply to the target base. The only test API adaptation is using the older `assertRaisesRegexp` style already common in this branch.
+
+tool: grep
+{
+  "pattern": "assertRaisesRegex|assertRaisesRegexp",
+  "path": "tensorflow/python/kernel_tests",
+  "include": "*.py"
+}
+Found 100 matches (more matches available)
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0261-b10f03fd7c3c\tensorflow\python\kernel_tests\array_ops\unstack_op_test.py:
+  Line 152:       with self.assertRaisesRegex(ValueError,
+
+  Line 166:       with self.assertRaisesRegex(
+
+  Line 193:     with self.assertRaisesRegex(ValueError, r'axis = 2 not in \[-2, 2\)'):
+
+  Line 198:     with self.assertRaisesRegex(ValueError, r'axis = -3 not in \[-2, 2\)'):
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0261-b10f03fd7c3c\tensorflow\python\kernel_tests\array_ops\stack_op_test.py:
+  Line 89:     with self.assertRaisesRegex(errors.InvalidArgumentError,
+
+  Line 274:     with self.assertRaisesRegex(ValueError, r"axis = 2 not in \[-2, 2\)"):
+
+  Line 279:     with self.assertRaisesRegex(ValueError, r"axis = -3 not in \[-2, 2\)"):
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0261-b10f03fd7c3c\tensorflow\python\kernel_tests\array_ops\slice_op_test.py:
+  Line 456:       with self.assertRaisesRegex(errors_impl.OperatorNotAllowedInGraphError,
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0261-b10f03fd7c3c\tensorflow\python\kernel_tests\array_ops\gather_op_test.py:
+  Line 285:     with self.assertRaisesRegex(
+
+  Line 320:         with self.assertRaisesRegex(
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0261-b10f03fd7c3c\tensorflow\python\kernel_tests\betainc_op_test.py:
+  Line 100:       with self.assertRaisesRegex(ValueError, "must be equal"):
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0261-b10f03fd7c3c\tensorflow\python\kernel_tests\base64_ops_test.py:
+  Line 110:       with self.assertRaisesRegex(errors.InvalidArgumentError, "1 modulo 4"):
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0261-b10f03fd7c3c\tensorflow\python\kernel_tests\barrier_ops_test.py:
+  Line 91:       with self.assertRaisesRegex(ValueError, error_message):
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0261-b10f03fd7c3c\tensorflow\python\kernel_tests\bincount_op_test.py:
+  Line 124:     with self.assertRaisesRegex(
+
+  Line 129:     with self.assertRaisesRegex((ValueError, errors.InvalidArgumentError),
+
+  Line 328:     with self.assertRaisesRegex((ValueError, errors.InvalidArgumentError),
+
+  Line 337:     with self.assertRaisesRegex((ValueError, errors.InvalidArgumentError),
+
+  Line 512:     with self.assertRaisesRegex((ValueError, errors.InvalidArgumentError),
+
+  Line 664:     with self.assertRaisesRegex((ValueError, errors.InvalidArgumentError),
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0261-b10f03fd7c3c\tensorflow\python\kernel_tests\bucketize_op_test.py:
+  Line 70:       with self.assertRaisesRegex(errors_impl.InvalidArgumentError,
+
+  Line 75:     with self.assertRaisesRegex(TypeError, "Expected list.*"):
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0261-b10f03fd7c3c\tensorflow\python\kernel_tests\bitcast_op_test.py:
+  Line 68:     with self.assertRaisesRegex((ValueError, errors.InvalidArgumentError),
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0261-b10f03fd7c3c\tensorflow\python\kernel_tests\broadcast_to_ops_test.py:
+  Line 124:       with self.assertRaisesRegex(errors.InvalidArgumentError,
+
+  Line 197:     with self.assertRaisesRegex((ValueError, errors.InvalidArgumentError),
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0261-b10f03fd7c3c\tensorflow\python\kernel_tests\array_ops_test.py:
+  Line 121:     with self.assertRaisesRegex(ValueError, "should be a "):
+
+  Line 259:     with self.assertRaisesRegex(ValueError, "dimensions must be specified"):
+
+  Line 268:       with self.assertRaisesRegex(ValueError, "incompatible"):
+
+  Line 275:       with self.assertRaisesRegex(ValueError, "mask.*scalar"):
+
+  Line 282:       with self.assertRaisesRegex(ValueError, "incompatible"):
+
+  Line 342:     with self.assertRaisesRegex(
+
+  Line 352:     with self.assertRaisesRegex(Exception,
+
+  Line 406:     with self.assertRaisesRegex((ValueError, errors.InvalidArgumentError),
+
+  Line 409:     with self.assertRaisesRegex((ValueError, errors.InvalidArgumentError),
+
+  Line 412:     with self.assertRaisesRegex((ValueError, errors.InvalidArgumentError),
+
+  Line 429:     with self.assertRaisesRegex((ValueError, errors_impl.InvalidArgumentError),
+
+  Line 432:     with self.assertRaisesRegex((ValueError, errors_impl.InvalidArgumentError),
+
+  Line 435:     with self.assertRaisesRegex(
+
+  Line 712:       with self.assertRaisesRegex((ValueError, errors.InvalidArgumentError),
+
+  Line 758:       with self.assertRaisesRegex(TypeError, expected):
+
+  Line 760:       with self.assertRaisesRegex(TypeError, expected):
+
+  Line 762:       with self.assertRaisesRegex(TypeError, expected):
+
+  Line 764:       with self.assertRaisesRegex(TypeError, expected):
+
+  Line 766:       with self.assertRaisesRegex(TypeError, expected):
+
+  Line 768:       with self.assertRaisesRegex(TypeError, expected):
+
+  Line 1051:       with self.assertRaisesRegex((ValueError, errors.InvalidArgumentError),
+
+  Line 1054:       with self.assertRaisesRegex((ValueError, errors.InvalidArgumentError),
+
+  Line 1215:     with self.assertRaisesRegex(AttributeError, "no attribute 'assign'"):
+
+  Line 1371:       with self.assertRaisesRegex(ValueError, "maxlen must be scalar"):
+
+  Line 1577:         with self.assertRaisesRegex(errors.InvalidArgumentError,
+
+  Line 1586:         with self.assertRaisesRegex(
+
+  Line 1693:     with self.assertRaisesRegex(error, error_message_pattern):
+
+  Line 1724:     with self.assertRaisesRegex(error,
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0261-b10f03fd7c3c\tensorflow\python\kernel_tests\cholesky_op_test.py:
+  Line 170:       with self.assertRaisesRegex(
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0261-b10f03fd7c3c\tensorflow\python\kernel_tests\check_ops_test.py:
+  Line 102:         with self.assertRaisesRegex(error, "fail"):
+
+  Line 113:     with self.assertRaisesRegex(TypeError, "proper"):
+
+  Line 120:     with self.assertRaisesRegex(TypeError, "proper"):
+
+  Line 126:     with self.assertRaisesRegex(TypeError, "proper"):
+
+  Line 132:     with self.assertRaisesRegex(TypeError, "proper"):
+
+  Line 138:     with self.assertRaisesRegex(TypeError, "to be iterable"):
+
+  Line 168:     with self.assertRaisesRegex(errors.InvalidArgumentError, "fail"):
+
+  Line 183:     with self.assertRaisesRegex(errors.InvalidArgumentError, "fail"):
+
+  Line 242:       with self.assertRaisesRegex(errors.InvalidArgumentError,
+
+  Line 246:       with self.assertRaisesRegex(errors.InvalidArgumentError,
+
+  Line 249:       with self.assertRaisesRegex(errors.InvalidArgumentError,
+
+  Line 260:     with self.assertRaisesRegex(errors.InvalidArgumentError, "fail"):
+
+  Line 297:     with self.assertRaisesRegex(errors.InvalidArgumentError, "fail"):
+
+  Line 380:       with self.assertRaisesRegex(  # pylint:disable=g-error-prone-assert-raises
+
+  Line 392:       with self.assertRaisesRegex(  # pylint:disable=g-error-prone-assert-raises
+
+  Line 396:       with self.assertRaisesRegex(  # pylint:disable=g-error-prone-assert-raises
+
+  Line 400:       with self.assertRaisesRegex(  # pylint:disable=g-error-prone-assert-raises
+
+  Line 403:       with self.assertRaisesRegex(  # pylint:disable=g-error-prone-assert-raises
+
+  Line 605:       with self.assertRaisesRegex(  # pylint:disable=g-error-prone-assert-raises
+
+  Line 656:     with self.assertRaisesRegex(  # pylint:disable=g-error-prone-assert-raises
+
+  Line 676:       with self.assertRaisesRegex(  # pylint:disable=g-error-prone-assert-raises
+
+  Line 729:     with self.assertRaisesRegex(  # pylint:disable=g-error-prone-assert-raises
+
+  Line 747:       with self.assertRaisesRegex(  # pylint:disable=g-error-prone-assert-raises
+
+  Line 800:     with self.assertRaisesRegex(  # pylint:disable=g-error-prone-assert-raises
+
+  Line 820:       with self.assertRaisesRegex(  # pylint:disable=g-error-prone-assert-raises
+
+  Line 869:       with self.assertRaisesRegex(errors.InvalidArgumentError,
+
+  Line 917:       with self.assertRaisesRegex(errors.InvalidArgumentError,
+
+  Line 1094:     with self.assertRaisesRegex(ValueError, "fail.*must have rank 1"):
+
+  Line 1132:     with self.assertRaisesRegex(ValueError, "rank"):
+
+  Line 1168:     with self.assertRaisesRegex(ValueError, "rank"):
+
+  Line 1186:     with self.assertRaisesRegex(ValueError, "Rank must be a scalar"):
+
+  Line 1203:     with self.assertRaisesRegex(TypeError, "must be of type <dtype: 'int32'>"):
+
+  Line 1212:       with self.assertRaisesRegex(TypeError,
+
+  Line 1224:     with self.assertRaisesRegex(ValueError, "fail.*must have rank.*in.*1.*2"):
+
+  Line 1277:     with self.assertRaisesRegex(ValueError, "rank"):
+
+  Line 1299:     with self.assertRaisesRegex(ValueError, "Rank must be a scalar"):
+
+  Line 1321:     with self.assertRaisesRegex(TypeError, "must be of type <dtype: 'int32'>"):
+
+  Line 1330:       with self.assertRaisesRegex(TypeError,
+
+  Line 1343:     with self.assertRaisesRegex(ValueError, "rank at least 1"):
+
+  Line 1413:     with self.assertRaisesRegex(ValueError, "rank at least 2"):
+
+  Line 1460:       with self.assertRaisesRegex(errors.InvalidArgumentError,
+
+  Line 1496:       with self.assertRaisesRegex(errors.InvalidArgumentError,
+
+  Line 1513:     with self.assertRaisesRegex(TypeError, "Expected.*integer"):
+
+  Line 1544:     with self.assertRaisesRegex(TypeError, "must be of type.*float32"):
+
+  Line 1553:     with self.assertRaisesRegexp(TypeError, "must be of type.*float32"):
+
+  Line 1560:     with self.assertRaisesRegexp(TypeError,
+
+  Line 1898:     with self.assertRaisesRegex(ValueError, regex):
+
+
+(Results truncated. Consider using a more specific path or pattern.)
+
+tokens used
+input: 1,148
+cache read: 13,824
+cache write: 0
+output: 76
+reasoning output: 22
+
+I found `assertRaisesRegex` is available in this target branch, so I’ll keep the regression test closer to the source patch rather than using the older alias.
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/kernels/load_and_remap_matrix_op.cc\n@@\n     std::vector<bool> row_id_present;\n     const Tensor* row_remapping_t;\n     OP_REQUIRES_OK(context, context->input(\"row_remapping\", &row_remapping_t));\n+    OP_REQUIRES(\n+        context, row_remapping_t->dims() == 1,\n+        errors::InvalidArgument(\"The `row_remapping` tensor must be 1-D, got \"\n+                                \"a tensor of shape \",\n+                                row_remapping_t->shape().DebugString()));\n     const auto row_remapping = row_remapping_t->vec<int64>();\n     OP_REQUIRES(context, row_remapping.size() == num_rows_,\n                 errors::InvalidArgument(strings::StrCat(\n*** Update File: tensorflow/python/kernel_tests/checkpoint_ops_test.py\n@@\n   def test_load_and_remap_all_missing_rows_and_cols(self):\n     \"\"\"Tests when all the rows & cols are missing and need to be initialized.\"\"\"\n     num_rows = 7\n     num_cols = 4\n     initializing_values = [42] * num_rows * num_cols\n@@\n       self.assertAllClose(\n           np.reshape(initializing_values, (num_rows, num_cols)),\n           self.evaluate(remapped_matrix))\n \n+  def test_load_and_remap_invalid_dims(self):\n+    ckpt_path = constant_op.constant(\n+        '/tmp/warm_starting_util_test5kl2a3pc/tmpph76tep2/model-0',\n+        shape=[],\n+        dtype=dtypes.string)\n+    old_tensor_name = constant_op.constant(\n+        '/tmp/warm_starting_util_test5kl2a3pc/tmpph76tep2/model-0',\n+        shape=[],\n+        dtype=dtypes.string)\n+    row_remapping = constant_op.constant(0, shape=[], dtype=dtypes.int64)\n+    col_remapping = constant_op.constant(3, shape=[3], dtype=dtypes.int64)\n+    initializing_values = constant_op.constant([],\n+                                               shape=[0, 1],\n+                                               dtype=dtypes.float32)\n+    with self.cached_session(), self.assertRaisesRegex(\n+        (ValueError, errors.InvalidArgumentError), 'tensor must be 1-D'):\n+      self.evaluate(\n+          gen_checkpoint_ops.load_and_remap_matrix(\n+              ckpt_path=ckpt_path,\n+              old_tensor_name=old_tensor_name,\n+              row_remapping=row_remapping,\n+              col_remapping=col_remapping,\n+              initializing_values=initializing_values,\n+              num_rows=1,\n+              num_cols=1))\n+\n   @test_util.run_deprecated_v1\n   def test_load_and_remap_invalid_remapping(self):\n     \"\"\"Tests that errors are raised when an ID maps to multiple new IDs.\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/kernels/load_and_remap_matrix_op.cc
+M tensorflow/python/kernel_tests/checkpoint_ops_test.py
+
+tokens used
+input: 3,078
+cache read: 14,848
+cache write: 0
+output: 735
+reasoning output: 44
+
+The minimal source and regression test changes are applied. I’ll inspect the resulting diff for accuracy.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Locate equivalent target code and test context",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate uncertain hunks against target base",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply minimal backport changes",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Inspect final diff",
+      "status": "in_progress",
+      "priority": "high"
+    }
+  ]
+}
+[
+  {
+    "content": "Locate equivalent target code and test context",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate uncertain hunks against target base",
+    "status": "completed",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply minimal backport changes",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Inspect final diff",
+    "status": "in_progress",
+    "priority": "high"
+  }
+]
+
+tokens used
+input: 1,850
+cache read: 16,896
+cache write: 0
+output: 113
+reasoning output: 0
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/kernels/load_and_remap_matrix_op.cc tensorflow/python/kernel_tests/checkpoint_ops_test.py",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0261-b10f03fd7c3c",
+  "timeout": 120000
+}
+warning: in the working copy of 'tensorflow/core/kernels/load_and_remap_matrix_op.cc', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'tensorflow/python/kernel_tests/checkpoint_ops_test.py', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/kernels/load_and_remap_matrix_op.cc b/tensorflow/core/kernels/load_and_remap_matrix_op.cc
+index 5ec28c7035..34d1bedba2 100644
+--- a/tensorflow/core/kernels/load_and_remap_matrix_op.cc
++++ b/tensorflow/core/kernels/load_and_remap_matrix_op.cc
+@@ -74,6 +74,11 @@ class LoadAndRemapMatrixOp : public OpKernel {
+     std::vector<bool> row_id_present;
+     const Tensor* row_remapping_t;
+     OP_REQUIRES_OK(context, context->input("row_remapping", &row_remapping_t));
++    OP_REQUIRES(
++        context, row_remapping_t->dims() == 1,
++        errors::InvalidArgument("The `row_remapping` tensor must be 1-D, got "
++                                "a tensor of shape ",
++                                row_remapping_t->shape().DebugString()));
+     const auto row_remapping = row_remapping_t->vec<int64>();
+     OP_REQUIRES(context, row_remapping.size() == num_rows_,
+                 errors::InvalidArgument(strings::StrCat(
+diff --git a/tensorflow/python/kernel_tests/checkpoint_ops_test.py b/tensorflow/python/kernel_tests/checkpoint_ops_test.py
+index 305480c6b4..8b50b9b2ef 100644
+--- a/tensorflow/python/kernel_tests/checkpoint_ops_test.py
++++ b/tensorflow/python/kernel_tests/checkpoint_ops_test.py
+@@ -231,6 +231,32 @@ class LoadAndRemapMatrixTest(test.TestCase):
+           np.reshape(initializing_values, (num_rows, num_cols)),
+           self.evaluate(remapped_matrix))
+ 
++  def test_load_and_remap_invalid_dims(self):
++    ckpt_path = constant_op.constant(
++        '/tmp/warm_starting_util_test5kl2a3pc/tmpph76tep2/model-0',
++        shape=[],
++        dtype=dtypes.string)
++    old_tensor_name = constant_op.constant(
++        '/tmp/warm_starting_util_test5kl2a3pc/tmpph76tep2/model-0',
++        shape=[],
++        dtype=dtypes.string)
++    row_remapping = constant_op.constant(0, shape=[], dtype=dtypes.int64)
++    col_remapping = constant_op.constant(3, shape=[3], dtype=dtypes.int64)
++    initializing_values = constant_op.constant([],
++                                               shape=[0, 1],
++                                               dtype=dtypes.float32)
++    with self.cached_session(), self.assertRaisesRegex(
++        (ValueError, errors.InvalidArgumentError), 'tensor must be 1-D'):
++      self.evaluate(
++          gen_checkpoint_ops.load_and_remap_matrix(
++              ckpt_path=ckpt_path,
++              old_tensor_name=old_tensor_name,
++              row_remapping=row_remapping,
++              col_remapping=col_remapping,
++              initializing_values=initializing_values,
++              num_rows=1,
++              num_cols=1))
++
+   @test_util.run_deprecated_v1
+   def test_load_and_remap_invalid_remapping(self):
+     """Tests that errors are raised when an ID maps to multiple new IDs.
+
+tool: bash
+{
+  "command": "git status --short",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0261-b10f03fd7c3c",
+  "timeout": 120000
+}
+ M tensorflow/core/kernels/load_and_remap_matrix_op.cc
+ M tensorflow/python/kernel_tests/checkpoint_ops_test.py
+
+tokens used
+input: 1,073
+cache read: 17,920
+cache write: 0
+output: 169
+reasoning output: 0
+
+tool: grep
+{
+  "pattern": "LoadAndRemapMatrix|load_and_remap_matrix",
+  "path": "tensorflow/core/ops",
+  "include": "*.cc"
+}
+Found 1 matches
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0261-b10f03fd7c3c\tensorflow\core\ops\checkpoint_ops.cc:
+  Line 43: REGISTER_OP("LoadAndRemapMatrix")
+
+tokens used
+input: 2,051
+cache read: 17,920
+cache write: 0
+output: 42
+reasoning output: 104
+
+tool: read
+{
+  "filePath": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0261-b10f03fd7c3c\\tensorflow\\core\\ops\\checkpoint_ops.cc",
+  "offset": 1,
+  "limit": 100
+}
+<path>C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0261-b10f03fd7c3c\tensorflow\core\ops\checkpoint_ops.cc</path>
+<type>file</type>
+<content>
+1: /* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
+2: 
+3: Licensed under the Apache License, Version 2.0 (the "License");
+4: you may not use this file except in compliance with the License.
+5: You may obtain a copy of the License at
+6: 
+7:     http://www.apache.org/licenses/LICENSE-2.0
+8: 
+9: Unless required by applicable law or agreed to in writing, software
+10: distributed under the License is distributed on an "AS IS" BASIS,
+11: WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+12: See the License for the specific language governing permissions and
+13: limitations under the License.
+14: ==============================================================================*/
+15: 
+16: #include "tensorflow/core/framework/op.h"
+17: #include "tensorflow/core/framework/shape_inference.h"
+18: 
+19: namespace tensorflow {
+20: REGISTER_OP("GenerateVocabRemapping")
+21:     .Input("new_vocab_file: string")
+22:     .Input("old_vocab_file: string")
+23:     .Attr("new_vocab_offset: int >= 0")
+24:     .Attr("num_new_vocab: int >= 0")
+25:     .Attr("old_vocab_size: int >= -1 = -1")
+26:     .Output("remapping: int64")
+27:     .Output("num_present: int32")
+28:     .SetShapeFn([](shape_inference::InferenceContext* c) {
+29:       shape_inference::ShapeHandle unused;
+30:       TF_RETURN_IF_ERROR(c->WithRank(c->input(0), 0, &unused));
+31:       TF_RETURN_IF_ERROR(c->WithRank(c->input(1), 0, &unused));
+32: 
+33:       int64 new_vocab_offset;
+34:       TF_RETURN_IF_ERROR(c->GetAttr("new_vocab_offset", &new_vocab_offset));
+35:       int64 num_new_vocab;
+36:       TF_RETURN_IF_ERROR(c->GetAttr("num_new_vocab", &num_new_vocab));
+37: 
+38:       c->set_output(0, c->Vector(num_new_vocab));
+39:       c->set_output(1, c->Scalar());
+40:       return Status::OK();
+41:     });
+42: 
+43: REGISTER_OP("LoadAndRemapMatrix")
+44:     .Input("ckpt_path: string")
+45:     .Input("old_tensor_name: string")
+46:     .Input("row_remapping: int64")
+47:     .Input("col_remapping: int64")
+48:     .Input("initializing_values: float")
+49:     .Attr("num_rows: int >= 0")
+50:     .Attr("num_cols: int >= 1")
+51:     .Attr("max_rows_in_memory: int = -1")
+52:     .Output("output_matrix: float")
+53:     // TODO(b/30502450): Setting the op as being stateful prevents it from being
+54:     // executed more often than expected (possibly due to stateful ops not being
+55:     // subject to constant folding?). This op is usually slow and may require
+56:     // multiple disk reads, so we want to minimize the number of times it's
+57:     // executed redundantly.
+58:     .SetIsStateful()
+59:     .SetShapeFn([](shape_inference::InferenceContext* c) {
+60:       shape_inference::ShapeHandle unused;
+61:       TF_RETURN_IF_ERROR(c->WithRank(c->input(1), 0, &unused));
+62: 
+63:       int64 num_rows;
+64:       TF_RETURN_IF_ERROR(c->GetAttr("num_rows", &num_rows));
+65:       int64 num_cols;
+66:       TF_RETURN_IF_ERROR(c->GetAttr("num_cols", &num_cols));
+67: 
+68:       c->set_output(0, c->Matrix(num_rows, num_cols));
+69:       return Status::OK();
+70:     });
+71: }  // namespace tensorflow
+
+(End of file - total 71 lines)
+</content>
+
+tokens used
+input: 1,254
+cache read: 18,944
+cache write: 0
+output: 74
+reasoning output: 0
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Locate equivalent target code and test context",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate uncertain hunks against target base",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply minimal backport changes",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Inspect final diff",
+      "status": "completed",
+      "priority": "high"
+    }
+  ]
+}
+[
+  {
+    "content": "Locate equivalent target code and test context",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate uncertain hunks against target base",
+    "status": "completed",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply minimal backport changes",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Inspect final diff",
+    "status": "completed",
+    "priority": "high"
+  }
+]
+
+tokens used
+input: 1,255
+cache read: 19,968
+cache write: 0
+output: 88
+reasoning output: 50
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/kernels/load_and_remap_matrix_op.cc b/tensorflow/core/kernels/load_and_remap_matrix_op.cc
+    index 5ec28c7035..34d1bedba2 100644
+    --- a/tensorflow/core/kernels/load_and_remap_matrix_op.cc
+    +++ b/tensorflow/core/kernels/load_and_remap_matrix_op.cc
+    @@ -74,6 +74,11 @@ class LoadAndRemapMatrixOp : public OpKernel {
+         std::vector<bool> row_id_present;
+         const Tensor* row_remapping_t;
+         OP_REQUIRES_OK(context, context->input("row_remapping", &row_remapping_t));
+    +    OP_REQUIRES(
+    +        context, row_remapping_t->dims() == 1,
+    +        errors::InvalidArgument("The `row_remapping` tensor must be 1-D, got "
+    +                                "a tensor of shape ",
+    +                                row_remapping_t->shape().DebugString()));
+         const auto row_remapping = row_remapping_t->vec<int64>();
+         OP_REQUIRES(context, row_remapping.size() == num_rows_,
+                     errors::InvalidArgument(strings::StrCat(
+    diff --git a/tensorflow/python/kernel_tests/checkpoint_ops_test.py b/tensorflow/python/kernel_tests/checkpoint_ops_test.py
+    index 305480c6b4..8b50b9b2ef 100644
+    --- a/tensorflow/python/kernel_tests/checkpoint_ops_test.py
+    +++ b/tensorflow/python/kernel_tests/checkpoint_ops_test.py
+    @@ -231,6 +231,32 @@ class LoadAndRemapMatrixTest(test.TestCase):
+               np.reshape(initializing_values, (num_rows, num_cols)),
+               self.evaluate(remapped_matrix))
+     
+    +  def test_load_and_remap_invalid_dims(self):
+    +    ckpt_path = constant_op.constant(
+    +        '/tmp/warm_starting_util_test5kl2a3pc/tmpph76tep2/model-0',
+    +        shape=[],
+    +        dtype=dtypes.string)
+    +    old_tensor_name = constant_op.constant(
+    +        '/tmp/warm_starting_util_test5kl2a3pc/tmpph76tep2/model-0',
+    +        shape=[],
+    +        dtype=dtypes.string)
+    +    row_remapping = constant_op.constant(0, shape=[], dtype=dtypes.int64)
+    +    col_remapping = constant_op.constant(3, shape=[3], dtype=dtypes.int64)
+    +    initializing_values = constant_op.constant([],
+    +                                               shape=[0, 1],
+    +                                               dtype=dtypes.float32)
+    +    with self.cached_session(), self.assertRaisesRegex(
+    +        (ValueError, errors.InvalidArgumentError), 'tensor must be 1-D'):
+    +      self.evaluate(
+    +          gen_checkpoint_ops.load_and_remap_matrix(
+    +              ckpt_path=ckpt_path,
+    +              old_tensor_name=old_tensor_name,
+    +              row_remapping=row_remapping,
+    +              col_remapping=col_remapping,
+    +              initializing_values=initializing_values,
+    +              num_rows=1,
+    +              num_cols=1))
+    +
+       @test_util.run_deprecated_v1
+       def test_load_and_remap_invalid_remapping(self):
+         """Tests that errors are raised when an ID maps to multiple new IDs.
+  notes: >
+    Backported the row_remapping rank validation and adapted the regression test to the TensorFlow 2.6.4 test file layout.
+```
+
+tokens used
+input: 502
+cache read: 20,992
+cache write: 0
+output: 795
+reasoning output: 0

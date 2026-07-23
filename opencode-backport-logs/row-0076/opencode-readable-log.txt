@@ -1,0 +1,542 @@
+I’ll inspect the target-side implementations for the three patched areas, then apply the minimal equivalent hunks and validate uncertain context against the target base.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target code context for SplitV kernel, op shape function, and tests",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Apply minimal backport changes to matching target files",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "content": "Validate resulting diff and summarize in required YAML format",
+      "status": "pending",
+      "priority": "high"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target code context for SplitV kernel, op shape function, and tests",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Apply minimal backport changes to matching target files",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "content": "Validate resulting diff and summarize in required YAML format",
+    "status": "pending",
+    "priority": "high"
+  }
+]
+
+tokens used
+input: 4,346
+cache read: 4,608
+cache write: 0
+output: 123
+reasoning output: 0
+
+tool: viewcode
+{
+  "ref": "bb93d96771228278adee16f357f5b86d588887f4",
+  "path": "tensorflow/core/ops/array_ops.cc",
+  "startline": 640,
+  "endline": 710
+}
+Here are lines 640 through 710.
+
+        // output shape can be different since splitv doesn't always split
+        // tensors evenly.
+        for (int i = 0; i < num_outputs; ++i) {
+          c->set_output(i, c->UnknownShapeOfRank(rank));
+        }
+      } else {
+        // Determine the output shape if split dimension and split sizes are
+        // known.
+        int64 split_dim = c->Value(split_dimension);
+        TF_RETURN_IF_ERROR(c->WithRankAtLeast(input, split_dim + 1, &input));
+        std::vector<int64> data;
+        if (size_splits->dtype() == DT_INT32) {
+          data = AsInt64<int32>(size_splits, size_splits->shape().dim_size(0));
+        } else {
+          data = AsInt64<int64>(size_splits, size_splits->shape().dim_size(0));
+        }
+        if (num_outputs != data.size()) {
+          return errors::InvalidArgument(
+              "Length of size_splits should be equal to num_outputs");
+        }
+        int64_t total_size = 0;
+        bool has_neg_one = false;
+        for (const auto size : data) {
+          if (size == -1) {
+            if (has_neg_one) {
+              return errors::InvalidArgument(
+                  "size_splits can only have one -1");
+            }
+            has_neg_one = true;
+          } else {
+            total_size += size;
+          }
+        }
+        auto split_dim_size = c->Value(c->Dim(input, split_dim));
+        // If the sizes of the splits are known, then
+        // make sure that the sizes add up to the expected
+        // dimension size, with the possibility of a -1.
+        // Specify the full output shapes.
+        for (int i = 0; i < num_outputs; ++i) {
+          auto size = data[i];
+          if (data[i] == -1 && c->ValueKnown(split_dim_size)) {
+            size = split_dim_size - total_size;
+          }
+          TF_RETURN_IF_ERROR(
+              c->ReplaceDim(input, split_dim, c->MakeDim(size), &output_shape));
+          c->set_output(i, output_shape);
+        }
+        if (c->ValueKnown(split_dim_size)) {
+          if (has_neg_one ? total_size > split_dim_size
+                          : total_size != split_dim_size) {
+            return errors::InvalidArgument(
+                "can't split axis of size ", split_dim_size,
+                " into pieces of size [", absl::StrJoin(data, ","), "]");
+          }
+        }
+      }
+
+      return Status::OK();
+    });
+
+// --------------------------------------------------------------------------
+REGISTER_OP("Const")
+    .Output("output: dtype")
+    .Attr("value: tensor")
+    .Attr("dtype: type")
+    .SetShapeFn([](InferenceContext* c) {
+      const TensorProto* proto = nullptr;
+      TF_RETURN_IF_ERROR(c->GetAttr("value", &proto));
+      TF_RETURN_IF_ERROR(TensorShape::IsValidShape(proto->tensor_shape()));
+      TensorShape shape(proto->tensor_shape());
+      std::vector<DimensionHandle> dims;
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: viewcode
+{
+  "ref": "bb93d96771228278adee16f357f5b86d588887f4",
+  "path": "tensorflow/core/kernels/split_v_op.cc",
+  "startline": 100,
+  "endline": 180
+}
+Here are lines 100 through 180.
+
+      OP_REQUIRES(
+          context, (*split_sizes_vec)[0] == input_size_split_dim,
+          errors::InvalidArgument("If there is only one output, it must have "
+                                  "the same size as the input. Input size: ",
+                                  input_size_split_dim,
+                                  " output size: ", (*split_sizes_vec)[0]));
+      *done = true;
+      return;
+    }
+
+    // Determine sizes of output, in case of a -1 input value
+    int neg_one_dim = -1;
+    Tlen determined_size = 0;
+    for (int d = 0; d < split_sizes_vec->size(); ++d) {
+      Tlen size = (*split_sizes_vec)[d];
+
+      if (size == -1) {
+        OP_REQUIRES(context, neg_one_dim == -1,
+                    errors::InvalidArgument("There can only be one -1 in the "
+                                            "input."));
+        neg_one_dim = d;
+      } else {
+        determined_size += size;
+      }
+    }
+
+    OP_REQUIRES(
+        context,
+        (neg_one_dim == -1 && determined_size == input_size_split_dim) ||
+            (neg_one_dim >= 0 && determined_size <= input_size_split_dim),
+        errors::InvalidArgument("Determined shape must either match "
+                                "input shape along split_dim exactly if "
+                                "fully specified, or be less than the size of "
+                                "the input along split_dim if not fully "
+                                "specified.  Got: ",
+                                determined_size));
+
+    if (neg_one_dim >= 0) {
+      (*split_sizes_vec)[neg_one_dim] = input_size_split_dim - determined_size;
+    }
+
+    // Special case 2: split along the 1st dimension. We can share the
+    // underlying buffer.
+    //
+    // Apply this optimization conservatively: if input is aligned,
+    // the resulting tensors must be aligned. It's conservative
+    // because if the immediate consumer of the resulting tensors are
+    // not using eigen for computation, its perfectly fine to avoid
+    // the copying.
+    if ((split_dim == 0) && IsInnerDimsSizeAligned<T>(input_shape)) {
+      Tlen start = 0;
+      for (int i = 0; i < num_split; ++i) {
+        context->set_output(i,
+                            input.Slice(start, start + (*split_sizes_vec)[i]));
+        start += (*split_sizes_vec)[i];
+      }
+      *done = true;
+      return;
+    }
+  }
+
+  template <typename IndexType>
+  std::tuple<IndexType, IndexType, IndexType> SetDims(
+      const TensorShape& input_shape, const int32 split_dim) const {
+    static_assert(std::is_integral<IndexType>::value,
+                  "IndexType must be an integer type");
+    int32 prefix_dim_size = 1;
+    for (int i = 0; i < split_dim; ++i) {
+      prefix_dim_size *= input_shape.dim_size(i);
+    }
+
+    // Caller must ensure that dim_size and suffix_dim_size are <
+    // std::numeric_limits<IndexType>::max()
+    IndexType split_dim_size =
+        static_cast<IndexType>(input_shape.dim_size(split_dim));
+
+    IndexType suffix_dim_size = 1;
+    for (int i = split_dim + 1; i < input_shape.dims(); ++i) {
+      suffix_dim_size *= static_cast<IndexType>(input_shape.dim_size(i));
+    }
+    return std::make_tuple(prefix_dim_size, split_dim_size, suffix_dim_size);
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: viewcode
+{
+  "ref": "bb93d96771228278adee16f357f5b86d588887f4",
+  "path": "tensorflow/python/kernel_tests/split_op_test.py",
+  "startline": 340,
+  "endline": 410
+}
+This file only has 393 lines. Here are lines 340 through 393.
+
+    # split dim less than -(rank of input)
+    with self.assertRaises(ValueError):
+      array_ops.split(value=[[0, 1], [2, 3]], num_or_size_splits=4, axis=-3)
+
+    # num_split does not evenly divide the size in split_dim.
+    with self.assertRaisesRegex(ValueError, "should evenly divide"):
+      array_ops.split(value=[0, 1, 2, 3], num_or_size_splits=3, axis=0)
+
+    # Unknown split_dim.
+    splits = array_ops.split(
+        value=[[0, 1, 2, 3]],
+        num_or_size_splits=4,
+        axis=array_ops.placeholder(dtypes.int32))
+    for s in splits:
+      self.assertEqual([None, None], s.get_shape().as_list())
+
+    # Unknown split_dim and input shape.
+    splits = array_ops.split(
+        value=array_ops.placeholder(dtypes.float32),
+        num_or_size_splits=4,
+        axis=array_ops.placeholder(dtypes.int32))
+    for s in splits:
+      self.assertEqual(None, s.get_shape().ndims)
+
+  @test_util.run_deprecated_v1
+  def testVariableShapeFunction(self):
+    # size_splits too big
+    with self.assertRaises(ValueError):
+      array_ops.split([0, 1], [3, -1], axis=0)
+
+    # Correct inference of variable dimension
+    s0, s1 = array_ops.split([0, 1, 2], [2, -1], axis=0)
+    assert s0.shape.as_list() == [2]
+    assert s1.shape.as_list() == [1]
+
+  @test_util.run_deprecated_v1
+  def testNonexistentDimTensor(self):
+    x = array_ops.placeholder(dtypes.int32)
+    values = np.zeros([5, 30])
+    splits = array_ops.placeholder(dtypes.int32)
+    with self.assertRaisesRegex(ValueError, "Cannot infer"):
+      y = array_ops.split(values, splits, axis=x)
+
+    splits = array_ops.placeholder(dtypes.int32, [3])
+    y = array_ops.split(values, splits, axis=x)
+    with self.session(use_gpu=True) as sess:
+      with self.assertRaisesRegex(errors_impl.InvalidArgumentError,
+                                  "must have exactly one element"):
+        sess.run(y, {x: np.array([], dtype=np.int32), splits: [4, 11, 15]})
+
+
+if __name__ == "__main__":
+  test.main()
+
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tokens used
+input: 4,590
+cache read: 4,608
+cache write: 0
+output: 187
+reasoning output: 0
+
+The target code has the same SplitV kernel and shape-function structure as the supplied patch, and the test file ends at the patched insertion point. I’m applying the three minimal hunks directly.
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/kernels/split_v_op.cc\n@@\n     if (neg_one_dim >= 0) {\n       (*split_sizes_vec)[neg_one_dim] = input_size_split_dim - determined_size;\n     }\n \n+    for (int i = 0; i < split_sizes_vec->size(); ++i) {\n+      const Tlen& split_size = (*split_sizes_vec)[i];\n+      OP_REQUIRES(context, split_size >= Tlen(0),\n+                  errors::InvalidArgument(\"Split size at index \", i,\n+                                          \" must be >= 0. Got: \", split_size));\n+    }\n+\n     // Special case 2: split along the 1st dimension. We can share the\n     // underlying buffer.\n*** Update File: tensorflow/core/ops/array_ops.cc\n@@\n         for (int i = 0; i < num_outputs; ++i) {\n           auto size = data[i];\n           if (data[i] == -1 && c->ValueKnown(split_dim_size)) {\n             size = split_dim_size - total_size;\n           }\n+          // If we have a negative known size (either explicit, or computed\n+          // via -1), then the split sizes are invalid.\n+          if (size < -1 || (size == -1 && c->ValueKnown(split_dim_size))) {\n+            return errors::InvalidArgument(\"Split size at index \", i,\n+                                           \" must be >= 0. Got: \", size);\n+          }\n           TF_RETURN_IF_ERROR(\n               c->ReplaceDim(input, split_dim, c->MakeDim(size), &output_shape));\n           c->set_output(i, output_shape);\n         }\n*** Update File: tensorflow/python/kernel_tests/split_op_test.py\n@@\n       with self.assertRaisesRegex(errors_impl.InvalidArgumentError,\n                                   \"must have exactly one element\"):\n         sess.run(y, {x: np.array([], dtype=np.int32), splits: [4, 11, 15]})\n \n+  @test_util.run_in_graph_and_eager_modes\n+  def testNegativeSizes(self):\n+    x = constant_op.constant([1, 2, 3], dtypes.float32)\n+    # A size of -1 signifies to determine size based on sum of other splits.\n+    with self.assertRaisesRegex((ValueError, errors_impl.InvalidArgumentError),\n+                                \"Split size at index 1 must be >= 0. Got: -2\"):\n+      splits = [-1, -2]\n+      self.evaluate(array_ops.split(x, splits, axis=0))\n+\n+  @test_util.run_in_graph_and_eager_modes\n+  def testBadSplitSizes(self):\n+    x = constant_op.constant([1, 2], dtypes.float32)\n+    with self.assertRaisesRegex((ValueError, errors_impl.InvalidArgumentError),\n+                                \"Determined shape must either match input\"\n+                                \"|can't split axis\"):\n+      splits = [1, 2]\n+      self.evaluate(array_ops.split(x, splits, axis=0))\n+\n \n if __name__ == \"__main__\":\n   test.main()\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/kernels/split_v_op.cc
+M tensorflow/core/ops/array_ops.cc
+M tensorflow/python/kernel_tests/split_op_test.py
+
+tokens used
+input: 2,762
+cache read: 8,704
+cache write: 0
+output: 808
+reasoning output: 57
+
+The backport is applied. I’m checking the resulting diff and doing lightweight validation only, without switching refs or running full builds.
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/kernels/split_v_op.cc tensorflow/core/ops/array_ops.cc tensorflow/python/kernel_tests/split_op_test.py",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0076-bb93d9677122"
+}
+warning: in the working copy of 'tensorflow/core/kernels/split_v_op.cc', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'tensorflow/core/ops/array_ops.cc', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'tensorflow/python/kernel_tests/split_op_test.py', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/kernels/split_v_op.cc b/tensorflow/core/kernels/split_v_op.cc
+index fc07061087..b60ec773f7 100644
+--- a/tensorflow/core/kernels/split_v_op.cc
++++ b/tensorflow/core/kernels/split_v_op.cc
+@@ -138,6 +138,13 @@ class SplitVOpBase : public OpKernel {
+       (*split_sizes_vec)[neg_one_dim] = input_size_split_dim - determined_size;
+     }
+ 
++    for (int i = 0; i < split_sizes_vec->size(); ++i) {
++      const Tlen& split_size = (*split_sizes_vec)[i];
++      OP_REQUIRES(context, split_size >= Tlen(0),
++                  errors::InvalidArgument("Split size at index ", i,
++                                          " must be >= 0. Got: ", split_size));
++    }
++
+     // Special case 2: split along the 1st dimension. We can share the
+     // underlying buffer.
+     //
+diff --git a/tensorflow/core/ops/array_ops.cc b/tensorflow/core/ops/array_ops.cc
+index 2806f1decd..babc73ccb4 100644
+--- a/tensorflow/core/ops/array_ops.cc
++++ b/tensorflow/core/ops/array_ops.cc
+@@ -680,6 +680,12 @@ REGISTER_OP("SplitV")
+           if (data[i] == -1 && c->ValueKnown(split_dim_size)) {
+             size = split_dim_size - total_size;
+           }
++          // If we have a negative known size (either explicit, or computed
++          // via -1), then the split sizes are invalid.
++          if (size < -1 || (size == -1 && c->ValueKnown(split_dim_size))) {
++            return errors::InvalidArgument("Split size at index ", i,
++                                           " must be >= 0. Got: ", size);
++          }
+           TF_RETURN_IF_ERROR(
+               c->ReplaceDim(input, split_dim, c->MakeDim(size), &output_shape));
+           c->set_output(i, output_shape);
+diff --git a/tensorflow/python/kernel_tests/split_op_test.py b/tensorflow/python/kernel_tests/split_op_test.py
+index 16f92dbd87..1658eab4bd 100644
+--- a/tensorflow/python/kernel_tests/split_op_test.py
++++ b/tensorflow/python/kernel_tests/split_op_test.py
+@@ -387,6 +387,24 @@ class SplitOpTest(test.TestCase):
+                                   "must have exactly one element"):
+         sess.run(y, {x: np.array([], dtype=np.int32), splits: [4, 11, 15]})
+ 
++  @test_util.run_in_graph_and_eager_modes
++  def testNegativeSizes(self):
++    x = constant_op.constant([1, 2, 3], dtypes.float32)
++    # A size of -1 signifies to determine size based on sum of other splits.
++    with self.assertRaisesRegex((ValueError, errors_impl.InvalidArgumentError),
++                                "Split size at index 1 must be >= 0. Got: -2"):
++      splits = [-1, -2]
++      self.evaluate(array_ops.split(x, splits, axis=0))
++
++  @test_util.run_in_graph_and_eager_modes
++  def testBadSplitSizes(self):
++    x = constant_op.constant([1, 2], dtypes.float32)
++    with self.assertRaisesRegex((ValueError, errors_impl.InvalidArgumentError),
++                                "Determined shape must either match input"
++                                "|can't split axis"):
++      splits = [1, 2]
++      self.evaluate(array_ops.split(x, splits, axis=0))
++
+ 
+ if __name__ == "__main__":
+   test.main()
+
+tool: bash
+{
+  "command": "git status --short",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0076-bb93d9677122"
+}
+ M tensorflow/core/kernels/split_v_op.cc
+ M tensorflow/core/ops/array_ops.cc
+ M tensorflow/python/kernel_tests/split_op_test.py
+
+tokens used
+input: 1,628
+cache read: 10,752
+cache write: 0
+output: 194
+reasoning output: 0
+
+The diff matches the intended three-file change. I’m using `validate` in hunk mode against the target base for the complete patch context, as requested.
+
+tool: validate
+{
+  "ref": "bb93d96771228278adee16f357f5b86d588887f4",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/split_v_op.cc b/tensorflow/core/kernels/split_v_op.cc\nindex fc07061087..b60ec773f7 100644\n--- a/tensorflow/core/kernels/split_v_op.cc\n+++ b/tensorflow/core/kernels/split_v_op.cc\n@@ -138,6 +138,13 @@ class SplitVOpBase : public OpKernel {\n       (*split_sizes_vec)[neg_one_dim] = input_size_split_dim - determined_size;\n     }\n \n+    for (int i = 0; i < split_sizes_vec->size(); ++i) {\n+      const Tlen& split_size = (*split_sizes_vec)[i];\n+      OP_REQUIRES(context, split_size >= Tlen(0),\n+                  errors::InvalidArgument(\"Split size at index \", i,\n+                                          \" must be >= 0. Got: \", split_size));\n+    }\n+\n     // Special case 2: split along the 1st dimension. We can share the\n     // underlying buffer.\n     //\ndiff --git a/tensorflow/core/ops/array_ops.cc b/tensorflow/core/ops/array_ops.cc\nindex 2806f1decd..babc73ccb4 100644\n--- a/tensorflow/core/ops/array_ops.cc\n+++ b/tensorflow/core/ops/array_ops.cc\n@@ -680,6 +680,12 @@ REGISTER_OP(\"SplitV\")\n           if (data[i] == -1 && c->ValueKnown(split_dim_size)) {\n             size = split_dim_size - total_size;\n           }\n+          // If we have a negative known size (either explicit, or computed\n+          // via -1), then the split sizes are invalid.\n+          if (size < -1 || (size == -1 && c->ValueKnown(split_dim_size))) {\n+            return errors::InvalidArgument(\"Split size at index \", i,\n+                                           \" must be >= 0. Got: \", size);\n+          }\n           TF_RETURN_IF_ERROR(\n               c->ReplaceDim(input, split_dim, c->MakeDim(size), &output_shape));\n           c->set_output(i, output_shape);\ndiff --git a/tensorflow/python/kernel_tests/split_op_test.py b/tensorflow/python/kernel_tests/split_op_test.py\nindex 16f92dbd87..1658eab4bd 100644\n--- a/tensorflow/python/kernel_tests/split_op_test.py\n+++ b/tensorflow/python/kernel_tests/split_op_test.py\n@@ -387,6 +387,24 @@ class SplitOpTest(test.TestCase):\n                                   \"must have exactly one element\"):\n         sess.run(y, {x: np.array([], dtype=np.int32), splits: [4, 11, 15]})\n \n+  @test_util.run_in_graph_and_eager_modes\n+  def testNegativeSizes(self):\n+    x = constant_op.constant([1, 2, 3], dtypes.float32)\n+    # A size of -1 signifies to determine size based on sum of other splits.\n+    with self.assertRaisesRegex((ValueError, errors_impl.InvalidArgumentError),\n+                                \"Split size at index 1 must be >= 0. Got: -2\"):\n+      splits = [-1, -2]\n+      self.evaluate(array_ops.split(x, splits, axis=0))\n+\n+  @test_util.run_in_graph_and_eager_modes\n+  def testBadSplitSizes(self):\n+    x = constant_op.constant([1, 2], dtypes.float32)\n+    with self.assertRaisesRegex((ValueError, errors_impl.InvalidArgumentError),\n+                                \"Determined shape must either match input\"\n+                                \"|can't split axis\"):\n+      splits = [1, 2]\n+      self.evaluate(array_ops.split(x, splits, axis=0))\n+\n \n if __name__ == \"__main__\":\n   test.main()\n"
+}
+Patch applied successfully
+
+tokens used
+input: 1,781
+cache read: 11,776
+cache write: 0
+output: 995
+reasoning output: 65
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target code context for SplitV kernel, op shape function, and tests",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Apply minimal backport changes to matching target files",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate resulting diff and summarize in required YAML format",
+      "status": "completed",
+      "priority": "high"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target code context for SplitV kernel, op shape function, and tests",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Apply minimal backport changes to matching target files",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate resulting diff and summarize in required YAML format",
+    "status": "completed",
+    "priority": "high"
+  }
+]
+
+tokens used
+input: 1,830
+cache read: 12,800
+cache write: 0
+output: 88
+reasoning output: 42
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/kernels/split_v_op.cc b/tensorflow/core/kernels/split_v_op.cc
+    index fc07061087..b60ec773f7 100644
+    --- a/tensorflow/core/kernels/split_v_op.cc
+    +++ b/tensorflow/core/kernels/split_v_op.cc
+    @@ -138,6 +138,13 @@ class SplitVOpBase : public OpKernel {
+           (*split_sizes_vec)[neg_one_dim] = input_size_split_dim - determined_size;
+         }
+     
+    +    for (int i = 0; i < split_sizes_vec->size(); ++i) {
+    +      const Tlen& split_size = (*split_sizes_vec)[i];
+    +      OP_REQUIRES(context, split_size >= Tlen(0),
+    +                  errors::InvalidArgument("Split size at index ", i,
+    +                                          " must be >= 0. Got: ", split_size));
+    +    }
+    +
+         // Special case 2: split along the 1st dimension. We can share the
+         // underlying buffer.
+         //
+    diff --git a/tensorflow/core/ops/array_ops.cc b/tensorflow/core/ops/array_ops.cc
+    index 2806f1decd..babc73ccb4 100644
+    --- a/tensorflow/core/ops/array_ops.cc
+    +++ b/tensorflow/core/ops/array_ops.cc
+    @@ -680,6 +680,12 @@ REGISTER_OP("SplitV")
+               if (data[i] == -1 && c->ValueKnown(split_dim_size)) {
+                 size = split_dim_size - total_size;
+               }
+    +          // If we have a negative known size (either explicit, or computed
+    +          // via -1), then the split sizes are invalid.
+    +          if (size < -1 || (size == -1 && c->ValueKnown(split_dim_size))) {
+    +            return errors::InvalidArgument("Split size at index ", i,
+    +                                           " must be >= 0. Got: ", size);
+    +          }
+               TF_RETURN_IF_ERROR(
+                   c->ReplaceDim(input, split_dim, c->MakeDim(size), &output_shape));
+               c->set_output(i, output_shape);
+    diff --git a/tensorflow/python/kernel_tests/split_op_test.py b/tensorflow/python/kernel_tests/split_op_test.py
+    index 16f92dbd87..1658eab4bd 100644
+    --- a/tensorflow/python/kernel_tests/split_op_test.py
+    +++ b/tensorflow/python/kernel_tests/split_op_test.py
+    @@ -387,6 +387,24 @@ class SplitOpTest(test.TestCase):
+                                       "must have exactly one element"):
+             sess.run(y, {x: np.array([], dtype=np.int32), splits: [4, 11, 15]})
+     
+    +  @test_util.run_in_graph_and_eager_modes
+    +  def testNegativeSizes(self):
+    +    x = constant_op.constant([1, 2, 3], dtypes.float32)
+    +    # A size of -1 signifies to determine size based on sum of other splits.
+    +    with self.assertRaisesRegex((ValueError, errors_impl.InvalidArgumentError),
+    +                                "Split size at index 1 must be >= 0. Got: -2"):
+    +      splits = [-1, -2]
+    +      self.evaluate(array_ops.split(x, splits, axis=0))
+    +
+    +  @test_util.run_in_graph_and_eager_modes
+    +  def testBadSplitSizes(self):
+    +    x = constant_op.constant([1, 2], dtypes.float32)
+    +    with self.assertRaisesRegex((ValueError, errors_impl.InvalidArgumentError),
+    +                                "Determined shape must either match input"
+    +                                "|can't split axis"):
+    +      splits = [1, 2]
+    +      self.evaluate(array_ops.split(x, splits, axis=0))
+    +
+     
+     if __name__ == "__main__":
+       test.main()
+  notes: >
+    Backported SplitV negative split-size validation in kernel and shape inference, plus regression tests; hunk validation against the target base succeeded.
+```
+
+tokens used
+input: 1,056
+cache read: 13,824
+cache write: 0
+output: 939
+reasoning output: 0

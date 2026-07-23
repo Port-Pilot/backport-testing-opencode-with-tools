@@ -1,0 +1,530 @@
+I’ll inspect the target-side implementation of `PredictCropAndResize`, then validate and apply the minimal equivalent hunk against the checked-out base.
+
+tool: locate_symbol
+{
+  "ref": "b2b3444b71ea99685edafa7731fb7ba57939f437",
+  "symbol": "OpLevelCostEstimator::PredictCropAndResize"
+}
+tensorflow/core/grappler/costs/op_level_cost_estimator.cc:2618
+tensorflow/core/grappler/costs/op_level_cost_estimator.cc:527
+
+tokens used
+input: 4,240
+cache read: 4,608
+cache write: 0
+output: 87
+reasoning output: 0
+
+tool: viewcode
+{
+  "ref": "b2b3444b71ea99685edafa7731fb7ba57939f437",
+  "path": "tensorflow/core/grappler/costs/op_level_cost_estimator.cc",
+  "startline": 2618,
+  "endline": 2735
+}
+This file only has 2690 lines. Here are lines 2618 through 2690.
+
+Status OpLevelCostEstimator::PredictCropAndResize(const OpContext& op_context,
+                                                  NodeCosts* node_costs) const {
+  bool found_unknown_shapes = false;
+
+  const auto method = op_context.op_info.attr().find("method");
+  bool use_bilinear_interp;
+  if (method == op_context.op_info.attr().end() ||
+      method->second.s() == "bilinear") {
+    use_bilinear_interp = true;
+  } else if (method->second.s() == "nearest") {
+    use_bilinear_interp = false;
+  } else {
+    LOG(WARNING) << "method attr in CropAndResize invalid; expected bilinear "
+                    "or nearest.";
+    return PredictCostOfAnUnknownOp(op_context, node_costs);
+  }
+
+  const int64 num_boxes = op_context.op_info.inputs(1).shape().dim(0).size();
+  const auto crop_shape = MaybeGetMinimumShape(
+      op_context.op_info.outputs(0).shape(), 4, &found_unknown_shapes);
+  const int64 crop_height = crop_shape.dim(1).size();
+  const int64 crop_width = crop_shape.dim(2).size();
+  const int64 output_elements = CalculateTensorElementCount(
+      op_context.op_info.outputs(0), &found_unknown_shapes);
+
+#define EIGEN_COST(X) Eigen::internal::functor_traits<Eigen::internal::X>::Cost
+  const auto sub_cost = EIGEN_COST(scalar_difference_op<float>);
+  const auto add_cost = EIGEN_COST(scalar_sum_op<float>);
+  const auto mul_cost = EIGEN_COST(scalar_product_op<float>);
+  auto div_cost = EIGEN_COST(scalar_div_cost<float>);
+  const auto floor_cost = EIGEN_COST(scalar_floor_op<float>);
+  const auto ceil_cost = EIGEN_COST(scalar_ceil_op<float>);
+  auto round_cost = EIGEN_COST(scalar_round_op<float>);
+  const auto cast_to_float_cost = Eigen::internal::functor_traits<
+      Eigen::internal::scalar_cast_op<int64, float>>::Cost;
+#undef EIGEN_COST
+
+  // Computing ops following
+  // tensorflow/core/kernels/image/crop_and_resize_op.cc at 08/25/2020. Op
+  // calculation differs from rough estimate in implementation, as it separates
+  // out cost per box from cost per pixel and cost per element.
+
+  // Ops for variables height_scale and width_scale.
+  int64 ops = (sub_cost * 6 + mul_cost * 2 + div_cost * 2) * num_boxes;
+  // Ops for variable in_y.
+  ops += (mul_cost * 2 + sub_cost + add_cost) * crop_height * num_boxes;
+  // Ops for variable in_x (same computation across both branches).
+  ops += (mul_cost * 2 + sub_cost + add_cost) * crop_height * crop_width *
+         num_boxes;
+  // Specify op_cost based on the method.
+  if (use_bilinear_interp) {
+    // Ops for variables top_y_index, bottom_y_index, y_lerp.
+    ops += (floor_cost + ceil_cost + sub_cost) * crop_height * num_boxes;
+    // Ops for variables left_x, right_x, x_lerp;
+    ops += (floor_cost + ceil_cost + sub_cost) * crop_height * crop_width *
+           num_boxes;
+    // Ops for innermost loop across depth.
+    ops +=
+        (cast_to_float_cost * 4 + add_cost * 3 + sub_cost * 3 + mul_cost * 3) *
+        output_elements;
+  } else /* method == "nearest" */ {
+    // Ops for variables closest_x_index and closest_y_index.
+    ops += round_cost * 2 * crop_height * crop_width * num_boxes;
+    // Ops for innermost loop across depth.
+    ops += cast_to_float_cost * output_elements;
+  }
+  return PredictDefaultNodeCosts(ops, op_context, &found_unknown_shapes,
+                                 node_costs);
+}
+
+}  // end namespace grappler
+}  // end namespace tensorflow
+
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tokens used
+input: 277
+cache read: 8,704
+cache write: 0
+output: 67
+reasoning output: 0
+
+The target function matches the vulnerable arithmetic shape from the newer patch, with only a punctuation difference in one comment. I’m checking the overflow helper is available in this file before editing.
+
+tool: grep
+{
+  "pattern": "MultiplyWithoutOverflow",
+  "path": "tensorflow/core/grappler/costs",
+  "include": "op_level_cost_estimator.cc"
+}
+No files found
+
+tokens used
+input: 1,268
+cache read: 8,704
+cache write: 0
+output: 85
+reasoning output: 14
+
+tool: grep
+{
+  "pattern": "MultiplyWithoutOverflow",
+  "path": "tensorflow",
+  "include": "*.h"
+}
+Found 3 matches
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0040-b2b3444b71ea\tensorflow\compiler\xla\overflow_util.h:
+  Line 30: inline int64 MultiplyWithoutOverflow(const int64 x, const int64 y) {
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0040-b2b3444b71ea\tensorflow\core\util\overflow.h:
+  Line 27: inline int64 MultiplyWithoutOverflow(const int64 x, const int64 y) {
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0040-b2b3444b71ea\tensorflow\core\kernels\reshape_op.h:
+  Line 140:         if (MultiplyWithoutOverflow(shape->num_elements(), size) < 0) {
+
+tool: grep
+{
+  "pattern": "MultiplyWithoutOverflow",
+  "path": "tensorflow",
+  "include": "*.cc"
+}
+Found 18 matches
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0040-b2b3444b71ea\tensorflow\core\util\overflow_test.cc:
+  Line 65:       int64 xy = MultiplyWithoutOverflow(x, y);
+
+  Line 78:     EXPECT_LT(MultiplyWithoutOverflow(n, 0), 0) << n;
+
+  Line 79:     EXPECT_LT(MultiplyWithoutOverflow(0, n), 0) << n;
+
+  Line 80:     EXPECT_LT(MultiplyWithoutOverflow(n, n), 0) << n;
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0040-b2b3444b71ea\tensorflow\core\framework\tensor_shape.cc:
+  Line 70:       num_elements = MultiplyWithoutOverflow(num_elements, d);
+
+  Line 90:       num_elements = MultiplyWithoutOverflow(num_elements, d.size());
+
+  Line 128:       num_elements = MultiplyWithoutOverflow(num_elements, d.size());
+
+  Line 384:     n = MultiplyWithoutOverflow(n, dim.size);
+
+  Line 404:     new_num_elements = MultiplyWithoutOverflow(num_elements(), size);
+
+  Line 431:     new_num_elements = MultiplyWithoutOverflow(num_elements(), size);
+
+  Line 811:       new_num_elements = MultiplyWithoutOverflow(out->num_elements(), dim);
+
+  Line 1007:     n = MultiplyWithoutOverflow(n, dim);
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0040-b2b3444b71ea\tensorflow\compiler\xla\shape_util.cc:
+  Line 233:     dense_shape_size = MultiplyWithoutOverflow(dense_shape_size, d);
+
+  Line 878:       dense_shape_size = MultiplyWithoutOverflow(dense_shape_size, dim);
+
+  Line 883:     dense_shape_size = MultiplyWithoutOverflow(
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0040-b2b3444b71ea\tensorflow\core\kernels\one_hot_op.cc:
+  Line 85:         MultiplyWithoutOverflow(indices_shape.num_elements(), depth_v) >= 0,
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0040-b2b3444b71ea\tensorflow\compiler\xla\service\hlo_sharding.cc:
+  Line 509:         MultiplyWithoutOverflow(product_of_dimensions, dimension);
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0040-b2b3444b71ea\tensorflow\core\kernels\sparse_concat_op.cc:
+  Line 80:             MultiplyWithoutOverflow(new_num_elements, input_shape_vector(j));
+
+tokens used
+input: 357
+cache read: 9,728
+cache write: 0
+output: 70
+reasoning output: 0
+
+tool: viewcode
+{
+  "ref": "b2b3444b71ea99685edafa7731fb7ba57939f437",
+  "path": "tensorflow/core/grappler/costs/op_level_cost_estimator.cc",
+  "startline": 1,
+  "endline": 80
+}
+Here are lines 1 through 80.
+
+
+/* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+==============================================================================*/
+
+#include "tensorflow/core/grappler/costs/op_level_cost_estimator.h"
+
+#include "absl/strings/match.h"
+#include "third_party/eigen3/Eigen/Core"
+#include "tensorflow/core/framework/attr_value.pb.h"
+#include "tensorflow/core/framework/attr_value_util.h"
+#include "tensorflow/core/framework/tensor.pb.h"
+#include "tensorflow/core/framework/tensor_shape.pb.h"
+#include "tensorflow/core/framework/types.h"
+#include "tensorflow/core/grappler/clusters/utils.h"
+#include "tensorflow/core/grappler/costs/op_context.h"
+#include "tensorflow/core/grappler/costs/utils.h"
+#include "tensorflow/core/platform/errors.h"
+
+namespace tensorflow {
+namespace grappler {
+
+// TODO(dyoon): update op to Predict method map for TF ops with V2 or V3 suffix.
+constexpr int kOpsPerMac = 2;
+constexpr char kGuaranteeConst[] = "GuaranteeConst";
+constexpr char kAddN[] = "AddN";
+constexpr char kBitCast[] = "BitCast";
+constexpr char kConcatV2[] = "ConcatV2";
+constexpr char kConv2d[] = "Conv2D";
+constexpr char kConv2dBackpropFilter[] = "Conv2DBackpropFilter";
+constexpr char kConv2dBackpropInput[] = "Conv2DBackpropInput";
+constexpr char kFusedConv2dBiasActivation[] = "FusedConv2DBiasActivation";
+constexpr char kDataFormatVecPermute[] = "DataFormatVecPermute";
+constexpr char kDepthToSpace[] = "DepthToSpace";
+constexpr char kDepthwiseConv2dNative[] = "DepthwiseConv2dNative";
+constexpr char kDepthwiseConv2dNativeBackpropFilter[] =
+    "DepthwiseConv2dNativeBackpropFilter";
+constexpr char kDepthwiseConv2dNativeBackpropInput[] =
+    "DepthwiseConv2dNativeBackpropInput";
+constexpr char kMatMul[] = "MatMul";
+constexpr char kXlaEinsum[] = "XlaEinsum";
+constexpr char kEinsum[] = "Einsum";
+constexpr char kExpandDims[] = "ExpandDims";
+constexpr char kFill[] = "Fill";
+constexpr char kSparseMatMul[] = "SparseMatMul";
+constexpr char kSparseTensorDenseMatMul[] = "SparseTensorDenseMatMul";
+constexpr char kPlaceholder[] = "Placeholder";
+constexpr char kIdentity[] = "Identity";
+constexpr char kIdentityN[] = "IdentityN";
+constexpr char kRefIdentity[] = "RefIdentity";
+constexpr char kNoOp[] = "NoOp";
+constexpr char kReshape[] = "Reshape";
+constexpr char kSplit[] = "Split";
+constexpr char kSqueeze[] = "Squeeze";
+constexpr char kRecv[] = "_Recv";
+constexpr char kSend[] = "_Send";
+constexpr char kBatchMatMul[] = "BatchMatMul";
+constexpr char kBatchMatMulV2[] = "BatchMatMulV2";
+constexpr char kOneHot[] = "OneHot";
+constexpr char kPack[] = "Pack";
+constexpr char kRank[] = "Rank";
+constexpr char kRange[] = "Range";
+constexpr char kShape[] = "Shape";
+constexpr char kShapeN[] = "ShapeN";
+constexpr char kSize[] = "Size";
+constexpr char kStopGradient[] = "StopGradient";
+constexpr char kPreventGradient[] = "PreventGradient";
+constexpr char kGather[] = "Gather";
+constexpr char kGatherNd[] = "GatherNd";
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tokens used
+input: 1,342
+cache read: 9,728
+cache write: 0
+output: 67
+reasoning output: 10
+
+`MultiplyWithoutOverflow` exists in `tensorflow/core/util/overflow.h`, but this target `.cc` does not include it directly. I’ll add that include along with the arithmetic guard hunk so the backport is self-contained for 2.5.2.
+
+tool: viewcode
+{
+  "ref": "0aaaae6eca5a7175a193696383f582f53adab23f",
+  "path": "tensorflow/core/grappler/costs/op_level_cost_estimator.cc",
+  "startline": 15,
+  "endline": 35
+}
+Here are lines 15 through 35.
+
+==============================================================================*/
+
+#include "tensorflow/core/grappler/costs/op_level_cost_estimator.h"
+
+#include "absl/strings/match.h"
+#include "third_party/eigen3/Eigen/Core"
+#include "tensorflow/core/framework/attr_value.pb.h"
+#include "tensorflow/core/framework/attr_value_util.h"
+#include "tensorflow/core/framework/tensor.pb.h"
+#include "tensorflow/core/framework/tensor_shape.pb.h"
+#include "tensorflow/core/framework/types.h"
+#include "tensorflow/core/grappler/clusters/utils.h"
+#include "tensorflow/core/grappler/costs/op_context.h"
+#include "tensorflow/core/grappler/costs/utils.h"
+#include "tensorflow/core/platform/errors.h"
+#include "tensorflow/core/util/overflow.h"
+
+namespace tensorflow {
+namespace grappler {
+
+// TODO(dyoon): update op to Predict method map for TF ops with V2 or V3 suffix.
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tokens used
+input: 1,293
+cache read: 10,752
+cache write: 0
+output: 128
+reasoning output: 112
+
+The newer fixed file includes `tensorflow/core/util/overflow.h`; the target base does not. I’m validating a target-adapted patch that adds that include and ports the overflow-safe intermediate products.
+
+tool: validate
+{
+  "ref": "b2b3444b71ea99685edafa7731fb7ba57939f437",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/grappler/costs/op_level_cost_estimator.cc b/tensorflow/core/grappler/costs/op_level_cost_estimator.cc\n--- a/tensorflow/core/grappler/costs/op_level_cost_estimator.cc\n+++ b/tensorflow/core/grappler/costs/op_level_cost_estimator.cc\n@@ -27,6 +27,7 @@\n #include \"tensorflow/core/grappler/costs/op_context.h\"\n #include \"tensorflow/core/grappler/costs/utils.h\"\n #include \"tensorflow/core/platform/errors.h\"\n+#include \"tensorflow/core/util/overflow.h\"\n \n namespace tensorflow {\n namespace grappler {\n@@ -2657,27 +2658,42 @@ Status OpLevelCostEstimator::PredictCropAndResize(const OpContext& op_context,\n   // calculation differs from rough estimate in implementation, as it separates\n   // out cost per box from cost per pixel and cost per element.\n \n+  // Since crop arguments are user controlled, check for overflow.\n+  int64 crop_area = MultiplyWithoutOverflow(crop_height, crop_width);\n+  if (crop_area < 0)\n+    return errors::InvalidArgument(\"Cannot estimate cost, multiplying \",\n+                                   crop_height, \" with \", crop_width,\n+                                   \" would overflow\");\n+  int64 crop_volume = MultiplyWithoutOverflow(crop_area, num_boxes);\n+  if (crop_volume < 0)\n+    return errors::InvalidArgument(\"Cannot estimate cost, multiplying \",\n+                                   crop_area, \" with \", num_boxes,\n+                                   \" would overflow\");\n+  int64 crop_depth = MultiplyWithoutOverflow(crop_height, num_boxes);\n+  if (crop_depth < 0)\n+    return errors::InvalidArgument(\"Cannot estimate cost, multiplying \",\n+                                   crop_height, \" with \", num_boxes,\n+                                   \" would overflow\");\n+\n   // Ops for variables height_scale and width_scale.\n   int64 ops = (sub_cost * 6 + mul_cost * 2 + div_cost * 2) * num_boxes;\n   // Ops for variable in_y.\n-  ops += (mul_cost * 2 + sub_cost + add_cost) * crop_height * num_boxes;\n+  ops += (mul_cost * 2 + sub_cost + add_cost) * crop_depth;\n   // Ops for variable in_x (same computation across both branches).\n-  ops += (mul_cost * 2 + sub_cost + add_cost) * crop_height * crop_width *\n-         num_boxes;\n+  ops += (mul_cost * 2 + sub_cost + add_cost) * crop_volume;\n   // Specify op_cost based on the method.\n   if (use_bilinear_interp) {\n     // Ops for variables top_y_index, bottom_y_index, y_lerp.\n-    ops += (floor_cost + ceil_cost + sub_cost) * crop_height * num_boxes;\n+    ops += (floor_cost + ceil_cost + sub_cost) * crop_depth;\n     // Ops for variables left_x, right_x, x_lerp;\n-    ops += (floor_cost + ceil_cost + sub_cost) * crop_height * crop_width *\n-           num_boxes;\n+    ops += (floor_cost + ceil_cost + sub_cost) * crop_volume;\n     // Ops for innermost loop across depth.\n     ops +=\n         (cast_to_float_cost * 4 + add_cost * 3 + sub_cost * 3 + mul_cost * 3) *\n         output_elements;\n   } else /* method == \"nearest\" */ {\n     // Ops for variables closest_x_index and closest_y_index.\n-    ops += round_cost * 2 * crop_height * crop_width * num_boxes;\n+    ops += round_cost * 2 * crop_volume;\n     // Ops for innermost loop across depth.\n     ops += cast_to_float_cost * output_elements;\n   }\n"
+}
+Patch applied successfully
+
+tokens used
+input: 731
+cache read: 11,776
+cache write: 0
+output: 979
+reasoning output: 60
+
+The target-adapted hunk applies cleanly. I’m applying it to the working tree now.
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/grappler/costs/op_level_cost_estimator.cc\n@@\n #include \"tensorflow/core/grappler/costs/op_context.h\"\n #include \"tensorflow/core/grappler/costs/utils.h\"\n #include \"tensorflow/core/platform/errors.h\"\n+#include \"tensorflow/core/util/overflow.h\"\n \n namespace tensorflow {\n namespace grappler {\n@@\n   // calculation differs from rough estimate in implementation, as it separates\n   // out cost per box from cost per pixel and cost per element.\n \n+  // Since crop arguments are user controlled, check for overflow.\n+  int64 crop_area = MultiplyWithoutOverflow(crop_height, crop_width);\n+  if (crop_area < 0)\n+    return errors::InvalidArgument(\"Cannot estimate cost, multiplying \",\n+                                   crop_height, \" with \", crop_width,\n+                                   \" would overflow\");\n+  int64 crop_volume = MultiplyWithoutOverflow(crop_area, num_boxes);\n+  if (crop_volume < 0)\n+    return errors::InvalidArgument(\"Cannot estimate cost, multiplying \",\n+                                   crop_area, \" with \", num_boxes,\n+                                   \" would overflow\");\n+  int64 crop_depth = MultiplyWithoutOverflow(crop_height, num_boxes);\n+  if (crop_depth < 0)\n+    return errors::InvalidArgument(\"Cannot estimate cost, multiplying \",\n+                                   crop_height, \" with \", num_boxes,\n+                                   \" would overflow\");\n+\n   // Ops for variables height_scale and width_scale.\n   int64 ops = (sub_cost * 6 + mul_cost * 2 + div_cost * 2) * num_boxes;\n   // Ops for variable in_y.\n-  ops += (mul_cost * 2 + sub_cost + add_cost) * crop_height * num_boxes;\n+  ops += (mul_cost * 2 + sub_cost + add_cost) * crop_depth;\n   // Ops for variable in_x (same computation across both branches).\n-  ops += (mul_cost * 2 + sub_cost + add_cost) * crop_height * crop_width *\n-         num_boxes;\n+  ops += (mul_cost * 2 + sub_cost + add_cost) * crop_volume;\n   // Specify op_cost based on the method.\n   if (use_bilinear_interp) {\n     // Ops for variables top_y_index, bottom_y_index, y_lerp.\n-    ops += (floor_cost + ceil_cost + sub_cost) * crop_height * num_boxes;\n+    ops += (floor_cost + ceil_cost + sub_cost) * crop_depth;\n     // Ops for variables left_x, right_x, x_lerp;\n-    ops += (floor_cost + ceil_cost + sub_cost) * crop_height * crop_width *\n-           num_boxes;\n+    ops += (floor_cost + ceil_cost + sub_cost) * crop_volume;\n     // Ops for innermost loop across depth.\n     ops +=\n         (cast_to_float_cost * 4 + add_cost * 3 + sub_cost * 3 + mul_cost * 3) *\n         output_elements;\n   } else /* method == \"nearest\" */ {\n     // Ops for variables closest_x_index and closest_y_index.\n-    ops += round_cost * 2 * crop_height * crop_width * num_boxes;\n+    ops += round_cost * 2 * crop_volume;\n     // Ops for innermost loop across depth.\n     ops += cast_to_float_cost * output_elements;\n   }\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/grappler/costs/op_level_cost_estimator.cc
+
+tokens used
+input: 1,783
+cache read: 11,776
+cache write: 0
+output: 847
+reasoning output: 8
+
+The source change is applied. I’m checking the resulting diff only, without running any full build or validation.
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/grappler/costs/op_level_cost_estimator.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0040-b2b3444b71ea"
+}
+warning: in the working copy of 'tensorflow/core/grappler/costs/op_level_cost_estimator.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/grappler/costs/op_level_cost_estimator.cc b/tensorflow/core/grappler/costs/op_level_cost_estimator.cc
+index 32cca991f4..5c52ba59bc 100644
+--- a/tensorflow/core/grappler/costs/op_level_cost_estimator.cc
++++ b/tensorflow/core/grappler/costs/op_level_cost_estimator.cc
+@@ -27,6 +27,7 @@ limitations under the License.
+ #include "tensorflow/core/grappler/costs/op_context.h"
+ #include "tensorflow/core/grappler/costs/utils.h"
+ #include "tensorflow/core/platform/errors.h"
++#include "tensorflow/core/util/overflow.h"
+ 
+ namespace tensorflow {
+ namespace grappler {
+@@ -2657,27 +2658,42 @@ Status OpLevelCostEstimator::PredictCropAndResize(const OpContext& op_context,
+   // calculation differs from rough estimate in implementation, as it separates
+   // out cost per box from cost per pixel and cost per element.
+ 
++  // Since crop arguments are user controlled, check for overflow.
++  int64 crop_area = MultiplyWithoutOverflow(crop_height, crop_width);
++  if (crop_area < 0)
++    return errors::InvalidArgument("Cannot estimate cost, multiplying ",
++                                   crop_height, " with ", crop_width,
++                                   " would overflow");
++  int64 crop_volume = MultiplyWithoutOverflow(crop_area, num_boxes);
++  if (crop_volume < 0)
++    return errors::InvalidArgument("Cannot estimate cost, multiplying ",
++                                   crop_area, " with ", num_boxes,
++                                   " would overflow");
++  int64 crop_depth = MultiplyWithoutOverflow(crop_height, num_boxes);
++  if (crop_depth < 0)
++    return errors::InvalidArgument("Cannot estimate cost, multiplying ",
++                                   crop_height, " with ", num_boxes,
++                                   " would overflow");
++
+   // Ops for variables height_scale and width_scale.
+   int64 ops = (sub_cost * 6 + mul_cost * 2 + div_cost * 2) * num_boxes;
+   // Ops for variable in_y.
+-  ops += (mul_cost * 2 + sub_cost + add_cost) * crop_height * num_boxes;
++  ops += (mul_cost * 2 + sub_cost + add_cost) * crop_depth;
+   // Ops for variable in_x (same computation across both branches).
+-  ops += (mul_cost * 2 + sub_cost + add_cost) * crop_height * crop_width *
+-         num_boxes;
++  ops += (mul_cost * 2 + sub_cost + add_cost) * crop_volume;
+   // Specify op_cost based on the method.
+   if (use_bilinear_interp) {
+     // Ops for variables top_y_index, bottom_y_index, y_lerp.
+-    ops += (floor_cost + ceil_cost + sub_cost) * crop_height * num_boxes;
++    ops += (floor_cost + ceil_cost + sub_cost) * crop_depth;
+     // Ops for variables left_x, right_x, x_lerp;
+-    ops += (floor_cost + ceil_cost + sub_cost) * crop_height * crop_width *
+-           num_boxes;
++    ops += (floor_cost + ceil_cost + sub_cost) * crop_volume;
+     // Ops for innermost loop across depth.
+     ops +=
+         (cast_to_float_cost * 4 + add_cost * 3 + sub_cost * 3 + mul_cost * 3) *
+         output_elements;
+   } else /* method == "nearest" */ {
+     // Ops for variables closest_x_index and closest_y_index.
+-    ops += round_cost * 2 * crop_height * crop_width * num_boxes;
++    ops += round_cost * 2 * crop_volume;
+     // Ops for innermost loop across depth.
+     ops += cast_to_float_cost * output_elements;
+   }
+
+tokens used
+input: 1,647
+cache read: 12,800
+cache write: 0
+output: 107
+reasoning output: 14
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/grappler/costs/op_level_cost_estimator.cc b/tensorflow/core/grappler/costs/op_level_cost_estimator.cc
+    index 32cca991f4..5c52ba59bc 100644
+    --- a/tensorflow/core/grappler/costs/op_level_cost_estimator.cc
+    +++ b/tensorflow/core/grappler/costs/op_level_cost_estimator.cc
+    @@ -27,6 +27,7 @@ limitations under the License.
+     #include "tensorflow/core/grappler/costs/op_context.h"
+     #include "tensorflow/core/grappler/costs/utils.h"
+     #include "tensorflow/core/platform/errors.h"
+    +#include "tensorflow/core/util/overflow.h"
+     
+     namespace tensorflow {
+     namespace grappler {
+    @@ -2657,27 +2658,42 @@ Status OpLevelCostEstimator::PredictCropAndResize(const OpContext& op_context,
+       // calculation differs from rough estimate in implementation, as it separates
+       // out cost per box from cost per pixel and cost per element.
+     
+    +  // Since crop arguments are user controlled, check for overflow.
+    +  int64 crop_area = MultiplyWithoutOverflow(crop_height, crop_width);
+    +  if (crop_area < 0)
+    +    return errors::InvalidArgument("Cannot estimate cost, multiplying ",
+    +                                   crop_height, " with ", crop_width,
+    +                                   " would overflow");
+    +  int64 crop_volume = MultiplyWithoutOverflow(crop_area, num_boxes);
+    +  if (crop_volume < 0)
+    +    return errors::InvalidArgument("Cannot estimate cost, multiplying ",
+    +                                   crop_area, " with ", num_boxes,
+    +                                   " would overflow");
+    +  int64 crop_depth = MultiplyWithoutOverflow(crop_height, num_boxes);
+    +  if (crop_depth < 0)
+    +    return errors::InvalidArgument("Cannot estimate cost, multiplying ",
+    +                                   crop_height, " with ", num_boxes,
+    +                                   " would overflow");
+    +
+       // Ops for variables height_scale and width_scale.
+       int64 ops = (sub_cost * 6 + mul_cost * 2 + div_cost * 2) * num_boxes;
+       // Ops for variable in_y.
+    -  ops += (mul_cost * 2 + sub_cost + add_cost) * crop_height * num_boxes;
+    +  ops += (mul_cost * 2 + sub_cost + add_cost) * crop_depth;
+       // Ops for variable in_x (same computation across both branches).
+    -  ops += (mul_cost * 2 + sub_cost + add_cost) * crop_height * crop_width *
+    -         num_boxes;
+    +  ops += (mul_cost * 2 + sub_cost + add_cost) * crop_volume;
+       // Specify op_cost based on the method.
+       if (use_bilinear_interp) {
+         // Ops for variables top_y_index, bottom_y_index, y_lerp.
+    -    ops += (floor_cost + ceil_cost + sub_cost) * crop_height * num_boxes;
+    +    ops += (floor_cost + ceil_cost + sub_cost) * crop_depth;
+         // Ops for variables left_x, right_x, x_lerp;
+    -    ops += (floor_cost + ceil_cost + sub_cost) * crop_height * crop_width *
+    -           num_boxes;
+    +    ops += (floor_cost + ceil_cost + sub_cost) * crop_volume;
+         // Ops for innermost loop across depth.
+         ops +=
+             (cast_to_float_cost * 4 + add_cost * 3 + sub_cost * 3 + mul_cost * 3) *
+             output_elements;
+       } else /* method == "nearest" */ {
+         // Ops for variables closest_x_index and closest_y_index.
+    -    ops += round_cost * 2 * crop_height * crop_width * num_boxes;
+    +    ops += round_cost * 2 * crop_volume;
+         // Ops for innermost loop across depth.
+         ops += cast_to_float_cost * output_elements;
+       }
+  notes: >
+    Backported the CropAndResize cost estimator overflow checks and safe intermediate products, including the required overflow helper include; hunk validation succeeded.
+```
+
+tokens used
+input: 1,624
+cache read: 13,824
+cache write: 0
+output: 930
+reasoning output: 24

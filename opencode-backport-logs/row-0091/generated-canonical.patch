@@ -1,0 +1,44 @@
+diff --git a/tensorflow/core/util/image_resizer_state.h b/tensorflow/core/util/image_resizer_state.h
+index 84459c9447..baa6a9a0f1 100644
+--- a/tensorflow/core/util/image_resizer_state.h
++++ b/tensorflow/core/util/image_resizer_state.h
+@@ -135,11 +135,15 @@ struct ImageResizerState {
+   void ValidateAndCreateOutput(OpKernelContext* context, const Tensor& input) {
+     ValidateAndCalculateOutputSize(context, input);
+     if (!context->status().ok()) return;
+-    OP_REQUIRES_OK(context, context->allocate_output(
+-                                0,
+-                                TensorShape({input.dim_size(0), out_height,
+-                                             out_width, input.dim_size(3)}),
+-                                &output));
++
++    TensorShape shape;
++    // Guard against shape overflow.
++    int64 shape_dims[] = {batch_size, out_height, out_width, channels};
++    Status shape_status = TensorShapeUtils::MakeShape(shape_dims, 4, &shape);
++    OP_REQUIRES(context, shape_status.ok(),
++                errors::Internal(shape_status.error_message()));
++
++    OP_REQUIRES_OK(context, context->allocate_output(0, shape, &output));
+   }
+ 
+   int64 batch_size;
+diff --git a/tensorflow/python/ops/image_ops_test.py b/tensorflow/python/ops/image_ops_test.py
+index 320facf5af..7f361a489a 100644
+--- a/tensorflow/python/ops/image_ops_test.py
++++ b/tensorflow/python/ops/image_ops_test.py
+@@ -3149,6 +3149,14 @@ class ResizeImagesV2Test(test_util.TensorFlowTestCase, parameterized.TestCase):
+ 
+     self._assertResizeCheckShape(x, x_shape, [320, 320], [320, 320, 3])
+ 
++  def testLargeDim(self):
++    with self.session():
++      with self.assertRaises(errors.InternalError):
++        x = np.ones((5, 1, 1, 2))
++        v = image_ops.resize_images_v2(x, [1610637938, 1610637938],
++                                       image_ops.ResizeMethod.BILINEAR)
++        _ = self.evaluate(v)
++
+ 
+ class ResizeImagesTest(test_util.TensorFlowTestCase,
+                        parameterized.TestCase):

@@ -1,0 +1,1548 @@
+I’ll inspect the target-side `sparse_cross_op.cc` structure and symbol locations, then map the supplied hunks onto the 2.1.4 code before editing.
+
+tool: grep
+{
+  "pattern": "ValidateInput|class SparseCross|REGISTER_KERNEL_BUILDER",
+  "path": "tensorflow/core/kernels",
+  "include": "sparse_cross_op.cc"
+}
+Found 7 matches
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0006-9323859dd3d8\tensorflow\core\kernels\sparse_cross_op.cc:
+  Line 289: class SparseCrossOp : public OpKernel {
+
+  Line 311:     ValidateInput(context, indices_list_in, values_list_in, shapes_list_in,
+
+  Line 351:   void ValidateInput(OpKernelContext* context,
+
+  Line 556: REGISTER_KERNEL_BUILDER(Name("SparseCross")
+
+  Line 562: REGISTER_KERNEL_BUILDER(Name("SparseCross")
+
+  Line 568: REGISTER_KERNEL_BUILDER(Name("SparseCross")
+
+  Line 574: REGISTER_KERNEL_BUILDER(Name("SparseCross")
+
+tool: locate_symbol
+{
+  "ref": "9323859dd3d8d24c892201ef5a78591fcc592f25",
+  "symbol": "SparseCrossOp"
+}
+tensorflow/core/kernels/sparse_cross_op.cc:289
+tensorflow/core/kernels/sparse_cross_op.cc:291
+tensorflow/python/feature_column/feature_column.py:1650
+tensorflow/python/feature_column/feature_column_v2.py:2086
+tensorflow/core/kernels/sparse_cross_op.cc:560
+tensorflow/core/kernels/sparse_cross_op.cc:566
+tensorflow/core/kernels/sparse_cross_op.cc:572
+tensorflow/core/kernels/sparse_cross_op.cc:578
+
+tool: locate_symbol
+{
+  "ref": "9323859dd3d8d24c892201ef5a78591fcc592f25",
+  "symbol": "ValidateInput"
+}
+tensorflow/core/kernels/sparse_cross_op.cc:311
+tensorflow/core/kernels/sparse_cross_op.cc:351
+tensorflow/core/util/batch_util.cc:29
+tensorflow/core/util/batch_util.cc:139
+tensorflow/core/util/batch_util.cc:163
+tensorflow/core/util/batch_util.cc:188
+tensorflow/core/util/batch_util.cc:36
+
+tokens used
+input: 5,068
+cache read: 4,608
+cache write: 0
+output: 184
+reasoning output: 0
+
+The older target only has the original `SparseCrossOp` implementation, not the V2/Hashed classes from the 2.5.0 patch, so I’m focusing the backport on equivalent validation inside that class.
+
+tool: viewcode
+{
+  "ref": "9323859dd3d8d24c892201ef5a78591fcc592f25",
+  "path": "tensorflow/core/kernels/sparse_cross_op.cc",
+  "startline": 1,
+  "endline": 140
+}
+Here are lines 1 through 140.
+
+/* Copyright 2016 The TensorFlow Authors. All Rights Reserved.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+==============================================================================*/
+
+// Contains OP to generate sparse crosses.
+#include <assert.h>
+#include <limits>
+#include <string>
+#include <vector>
+
+#include "third_party/eigen3/unsupported/Eigen/CXX11/Tensor"
+#include "tensorflow/core/framework/kernel_def_builder.h"
+#include "tensorflow/core/framework/op_def_builder.h"
+#include "tensorflow/core/framework/op_kernel.h"
+#include "tensorflow/core/framework/tensor.h"
+#include "tensorflow/core/framework/tensor_shape.h"
+#include "tensorflow/core/framework/types.h"
+#include "tensorflow/core/lib/core/stringpiece.h"
+#include "tensorflow/core/lib/strings/str_util.h"
+#include "tensorflow/core/platform/fingerprint.h"
+#include "tensorflow/core/util/work_sharder.h"
+
+namespace tensorflow {
+
+namespace {
+// An interface that represents a column with batches.
+template <typename InternalType>
+class ColumnInterface {
+ public:
+  // Returns the number of features in the specified batch.
+  virtual int64 FeatureCount(int64 batch) const = 0;
+
+  // Returns the fingerprint of nth feature from the specified batch.
+  virtual InternalType Feature(int64 batch, int64 n) const = 0;
+
+  virtual ~ColumnInterface() {}
+};
+
+// A column that is backed by a sparse tensor.
+template <typename InternalType>
+class SparseTensorColumn : public ColumnInterface<InternalType> {
+ public:
+  SparseTensorColumn(const Tensor& values, std::vector<int64> feature_counts,
+                     std::vector<int64> feature_start_indices)
+      : values_(values),
+        feature_counts_(std::move(feature_counts)),
+        feature_start_indices_(std::move(feature_start_indices)) {
+    CHECK_EQ(feature_counts_.size(), feature_start_indices_.size());
+  }
+
+  int64 FeatureCount(int64 batch) const override {
+    return feature_counts_[batch];
+  }
+
+  InternalType Feature(int64 batch, int64 n) const override;
+
+  ~SparseTensorColumn() override {}
+
+ private:
+  const Tensor& values_;
+  std::vector<int64> feature_counts_;
+  std::vector<int64> feature_start_indices_;
+};
+
+// InternalType is int64 only when using HashCrosser.
+template <>
+int64 SparseTensorColumn<int64>::Feature(int64 batch, int64 n) const {
+  const int64 start = feature_start_indices_[batch];
+  if (DT_STRING == values_.dtype())
+    return Fingerprint64(values_.vec<tstring>().data()[start + n]);
+  return values_.vec<int64>().data()[start + n];
+}
+
+// InternalType is string or StringPiece when using StringCrosser.
+template <>
+tstring SparseTensorColumn<tstring>::Feature(int64 batch, int64 n) const {
+  const int64 start = feature_start_indices_[batch];
+  if (DT_STRING == values_.dtype())
+    return values_.vec<tstring>().data()[start + n];
+  return std::to_string(values_.vec<int64>().data()[start + n]);
+}
+
+template <>
+StringPiece SparseTensorColumn<StringPiece>::Feature(int64 batch,
+                                                     int64 n) const {
+  const int64 start = feature_start_indices_[batch];
+  return values_.vec<tstring>().data()[start + n];
+}
+
+// A column that is backed by a dense tensor.
+template <typename InternalType>
+class DenseTensorColumn : public ColumnInterface<InternalType> {
+ public:
+  explicit DenseTensorColumn(const Tensor& tensor) : tensor_(tensor) {}
+
+  int64 FeatureCount(int64 batch) const override { return tensor_.dim_size(1); }
+
+  InternalType Feature(int64 batch, int64 n) const override;
+
+  ~DenseTensorColumn() override {}
+
+ private:
+  const Tensor& tensor_;
+};
+
+// InternalType is int64 only when using HashCrosser.
+template <>
+int64 DenseTensorColumn<int64>::Feature(int64 batch, int64 n) const {
+  if (DT_STRING == tensor_.dtype())
+    return Fingerprint64(tensor_.matrix<tstring>()(batch, n));
+  return tensor_.matrix<int64>()(batch, n);
+}
+
+// Internal type is string or StringPiece when using StringCrosser.
+template <>
+tstring DenseTensorColumn<tstring>::Feature(int64 batch, int64 n) const {
+  if (DT_STRING == tensor_.dtype()) return tensor_.matrix<tstring>()(batch, n);
+  return std::to_string(tensor_.matrix<int64>()(batch, n));
+}
+
+template <>
+StringPiece DenseTensorColumn<StringPiece>::Feature(int64 batch,
+                                                    int64 n) const {
+  return tensor_.matrix<tstring>()(batch, n);
+}
+
+// Updates Output tensors with sparse crosses.
+template <typename OutType>
+class OutputUpdater {
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: viewcode
+{
+  "ref": "9323859dd3d8d24c892201ef5a78591fcc592f25",
+  "path": "tensorflow/core/kernels/sparse_cross_op.cc",
+  "startline": 250,
+  "endline": 430
+}
+Here are lines 250 through 430.
+
+        next_permutation_[i] = next_permutation_[i] + 1;
+      }
+      if (next_permutation_[i] == columns_[i]->FeatureCount(batch_index_)) {
+        next_permutation_[i] = 0;
+      } else {
+        carry = false;
+        break;
+      }
+    }
+    has_next_ = !carry;
+    return permutation;
+  }
+
+  bool HasNext() { return has_next_; }
+
+ private:
+  bool has_next_;
+  const std::vector<std::unique_ptr<ColumnInterface<InternalType>>>& columns_;
+  const int64 batch_index_;
+  std::vector<int> next_permutation_;
+};
+
+template <bool HASHED_OUTPUT, typename InternalType>
+struct CrossTraits;
+
+template <typename InternalType>
+struct CrossTraits<false, InternalType> {
+  typedef StringCrosser<InternalType> Crosser;
+  typedef OutputUpdater<tstring> Updater;
+};
+
+template <>
+struct CrossTraits<true, int64> {
+  typedef HashCrosser Crosser;
+  typedef OutputUpdater<int64> Updater;
+};
+}  // namespace
+
+template <bool HASHED_OUTPUT, typename InternalType>
+class SparseCrossOp : public OpKernel {
+ public:
+  explicit SparseCrossOp(OpKernelConstruction* context) : OpKernel(context) {
+    OP_REQUIRES_OK(context, context->GetAttr("num_buckets", &num_buckets_));
+    // Read signed_hash_key_ as int64 since uint64 attributes are not
+    // supported by REGISTER_OP.
+    int64 signed_hash_key_;
+    OP_REQUIRES_OK(context, context->GetAttr("hash_key", &signed_hash_key_));
+    hash_key_ = static_cast<uint64>(signed_hash_key_);
+  }
+
+  void Compute(OpKernelContext* context) override {
+    OpInputList indices_list_in;
+    OP_REQUIRES_OK(context, context->input_list("indices", &indices_list_in));
+    OpInputList values_list_in;
+    OP_REQUIRES_OK(context, context->input_list("values", &values_list_in));
+    OpInputList shapes_list_in;
+    OP_REQUIRES_OK(context, context->input_list("shapes", &shapes_list_in));
+    OpInputList dense_list_in;
+    OP_REQUIRES_OK(context,
+                   context->input_list("dense_inputs", &dense_list_in));
+
+    ValidateInput(context, indices_list_in, values_list_in, shapes_list_in,
+                  dense_list_in);
+
+    std::vector<std::unique_ptr<ColumnInterface<InternalType>>> columns =
+        GenerateColumnsFromInput(indices_list_in, values_list_in,
+                                 shapes_list_in, dense_list_in);
+
+    typename CrossTraits<HASHED_OUTPUT, InternalType>::Crosser crosser(
+        columns, num_buckets_, hash_key_);
+    Tensor* indices_out;
+    Tensor* values_out;
+    Tensor* shape_out;
+    const int64 batch_size = CalculateBatchSize(shapes_list_in, dense_list_in);
+    std::vector<int64> output_start_indices(batch_size);
+    CreateOutputTensors(columns, batch_size, context, &indices_out, &values_out,
+                        &shape_out, &output_start_indices);
+
+    typename CrossTraits<HASHED_OUTPUT, InternalType>::Updater updater(
+        output_start_indices, indices_out, values_out);
+    auto do_work = [&columns, crosser, updater](int64 begin, int64 end) {
+      for (int b = begin; b < end; b++) {
+        ProductIterator<InternalType> product_iterator(columns, b);
+        int64 cross_count = 0;
+        while (product_iterator.HasNext()) {
+          const auto permutation = product_iterator.Next();
+          updater.Update(b, cross_count, crosser.Generate(b, permutation));
+          cross_count++;
+        }
+      }
+    };
+
+    auto* worker_threads = context->device()->tensorflow_cpu_worker_threads();
+    // TODO(zakaria): optimize kCostPerUnit
+    const int kCostPerUnit = 5000 * indices_list_in.size();
+    Shard(worker_threads->num_threads, worker_threads->workers, batch_size,
+          kCostPerUnit, do_work);
+  }
+
+ private:
+  // Validates input tensors.
+  void ValidateInput(OpKernelContext* context,
+                     const OpInputList& indices_list_in,
+                     const OpInputList& values_list_in,
+                     const OpInputList& shapes_list_in,
+                     const OpInputList& dense_list_in) {
+    const auto size = indices_list_in.size();
+    // Validates indices_list_in OpInputList.
+    for (int i = 0; i < size; i++) {
+      OP_REQUIRES(
+          context, TensorShapeUtils::IsMatrix(indices_list_in[i].shape()),
+          errors::InvalidArgument(
+              "Input indices should be a matrix but received shape ",
+              indices_list_in[i].shape().DebugString(), " at position ", i));
+      OP_REQUIRES(
+          context, indices_list_in[i].shape().dim_size(1) == 2,
+          errors::InvalidArgument("Expected D2 of index to be 2 got ",
+                                  indices_list_in[i].shape().dim_size(1),
+                                  " at position ", i));
+    }
+
+    // Validates values_list_in OpInputList.
+    OP_REQUIRES(
+        context, values_list_in.size() == size,
+        errors::InvalidArgument("Expected ", size, " input values, got ",
+                                values_list_in.size()));
+    for (int i = 0; i < size; i++) {
+      OP_REQUIRES(
+          context, TensorShapeUtils::IsVector(values_list_in[i].shape()),
+          errors::InvalidArgument(
+              "Input values should be a std::vector but received shape ",
+              values_list_in[i].shape().DebugString(), " at position ", i));
+      OP_REQUIRES(
+          context,
+          indices_list_in[i].shape().dim_size(0) ==
+              values_list_in[i].shape().dim_size(0),
+          errors::InvalidArgument(
+              "Expected size of values to be ",
+              indices_list_in[i].shape().dim_size(0), " got ",
+              values_list_in[i].shape().dim_size(0), " at position ", i));
+    }
+
+    // Validates shapes_list_in OpInputList
+    OP_REQUIRES(
+        context, shapes_list_in.size() == size,
+        errors::InvalidArgument("Expected ", size, " input shapes, got ",
+                                shapes_list_in.size()));
+    const auto batch_size = CalculateBatchSize(shapes_list_in, dense_list_in);
+    for (int i = 0; i < size; i++) {
+      OP_REQUIRES(
+          context, TensorShapeUtils::IsVector(shapes_list_in[i].shape()),
+          errors::InvalidArgument(
+              "Input shapes should be a std::vector but received shape ",
+              shapes_list_in[i].shape().DebugString(), " at position ", i));
+
+      OP_REQUIRES(
+          context, shapes_list_in[i].vec<int64>().size() == 2,
+          errors::InvalidArgument("shape should imply a 2D tensor, but got ",
+                                  shapes_list_in[i].shape().DebugString(),
+                                  " at position ", i));
+      OP_REQUIRES(context, shapes_list_in[i].vec<int64>()(0) == batch_size,
+                  errors::InvalidArgument(
+                      "Expected batch size ", batch_size, " got ",
+                      shapes_list_in[i].vec<int64>()(0), " at position ", i));
+    }
+
+    // Validates dense_list_in OpInputList
+    for (int i = 0; i < dense_list_in.size(); ++i) {
+      OP_REQUIRES(
+          context, TensorShapeUtils::IsMatrix(dense_list_in[i].shape()),
+          errors::InvalidArgument(
+              "Dense inputs should be a matrix but received shape ",
+              dense_list_in[i].shape().DebugString(), " at position ", i));
+      OP_REQUIRES(context, dense_list_in[i].dim_size(0) == batch_size,
+                  errors::InvalidArgument("Expected batch size ", batch_size,
+                                          " got ", dense_list_in[i].dim_size(0),
+                                          " at dense tensor ", i));
+    }
+  }
+
+  // Calculate the batch size from either the shapes input or the dense input.
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: viewcode
+{
+  "ref": "9323859dd3d8d24c892201ef5a78591fcc592f25",
+  "path": "tensorflow/core/kernels/sparse_cross_op.cc",
+  "startline": 520,
+  "endline": 590
+}
+This file only has 581 lines. Here are lines 520 through 581.
+
+    // Allocates tensors.
+    OP_REQUIRES_OK(context,
+                   context->allocate_output(
+                       0, TensorShape({cross_count_total, 2}), indices_out));
+    OP_REQUIRES_OK(context,
+                   context->allocate_output(1, TensorShape({cross_count_total}),
+                                            values_out));
+    OP_REQUIRES_OK(context,
+                   context->allocate_output(2, TensorShape({2}), shape_out));
+
+    // Sets shape.
+    auto shape_vec = (*shape_out)->vec<int64>();
+    shape_vec(0) = batch_size;
+    shape_vec(1) = max_cross_count;
+  }
+
+  // Returns number of crosses for a given batch_index
+  int64 CrossCountByBatchIndex(
+      const std::vector<std::unique_ptr<ColumnInterface<InternalType>>>&
+          columns,
+      int batch_index) {
+    int64 cross_count = 1;
+    for (int i = 0; i < columns.size(); i++) {
+      const auto feature_count = columns[i]->FeatureCount(batch_index);
+      // If one column is missing any feature, there won't be any cross.
+      if (feature_count == 0) {
+        return 0;
+      }
+      cross_count *= feature_count;
+    }
+    return cross_count;
+  }
+  int64 num_buckets_;
+  uint64 hash_key_;
+};
+
+REGISTER_KERNEL_BUILDER(Name("SparseCross")
+                            .Device(DEVICE_CPU)
+                            .TypeConstraint<tstring>("out_type")
+                            .TypeConstraint<tstring>("internal_type"),
+                        SparseCrossOp<false, StringPiece>);
+
+REGISTER_KERNEL_BUILDER(Name("SparseCross")
+                            .Device(DEVICE_CPU)
+                            .TypeConstraint<tstring>("out_type")
+                            .TypeConstraint<int64>("internal_type"),
+                        SparseCrossOp<false, tstring>);
+
+REGISTER_KERNEL_BUILDER(Name("SparseCross")
+                            .Device(DEVICE_CPU)
+                            .TypeConstraint<int64>("out_type")
+                            .TypeConstraint<tstring>("internal_type"),
+                        SparseCrossOp<true, int64>);
+
+REGISTER_KERNEL_BUILDER(Name("SparseCross")
+                            .Device(DEVICE_CPU)
+                            .TypeConstraint<int64>("out_type")
+                            .TypeConstraint<int64>("internal_type"),
+                        SparseCrossOp<true, int64>);
+
+}  // namespace tensorflow
+
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tokens used
+input: 10,237
+cache read: 0
+cache write: 0
+output: 241
+reasoning output: 0
+
+tool: grep
+{
+  "pattern": "#include \"tensorflow/core/framework/types.pb.h\"",
+  "path": "tensorflow/core/kernels",
+  "include": "*.cc"
+}
+Found 83 matches
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0006-9323859dd3d8\tensorflow\core\kernels\adjust_contrast_op_test.cc:
+  Line 24: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0006-9323859dd3d8\tensorflow\core\kernels\batch_matmul_op_test.cc:
+  Line 20: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0006-9323859dd3d8\tensorflow\core\kernels\batch_norm_op_test.cc:
+  Line 24: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0006-9323859dd3d8\tensorflow\core\kernels\cast_op_test.cc:
+  Line 20: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0006-9323859dd3d8\tensorflow\core\kernels\clustering_ops_test.cc:
+  Line 18: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0006-9323859dd3d8\tensorflow\core\kernels\colorspace_op_test.cc:
+  Line 23: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0006-9323859dd3d8\tensorflow\core\kernels\concat_op_test.cc:
+  Line 25: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0006-9323859dd3d8\tensorflow\core\kernels\constant_op_test.cc:
+  Line 23: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0006-9323859dd3d8\tensorflow\core\kernels\conv_ops_benchmark_test.cc:
+  Line 24: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0006-9323859dd3d8\tensorflow\core\kernels\conv_ops_test.cc:
+  Line 28: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0006-9323859dd3d8\tensorflow\core\kernels\crop_and_resize_op_test.cc:
+  Line 25: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0006-9323859dd3d8\tensorflow\core\kernels\cross_op_test.cc:
+  Line 23: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0006-9323859dd3d8\tensorflow\core\kernels\debug_ops_test.cc:
+  Line 29: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0006-9323859dd3d8\tensorflow\core\kernels\decode_bmp_op.cc:
+  Line 25: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0006-9323859dd3d8\tensorflow\core\kernels\decode_wav_op_test.cc:
+  Line 29: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0006-9323859dd3d8\tensorflow\core\kernels\data\dataset_utils_test.cc:
+  Line 21: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0006-9323859dd3d8\tensorflow\core\kernels\dynamic_partition_op_test.cc:
+  Line 26: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0006-9323859dd3d8\tensorflow\core\kernels\dynamic_stitch_op_test.cc:
+  Line 25: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0006-9323859dd3d8\tensorflow\core\kernels\encode_wav_op_test.cc:
+  Line 28: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0006-9323859dd3d8\tensorflow\core\kernels\example_parsing_ops_test.cc:
+  Line 25: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0006-9323859dd3d8\tensorflow\core\kernels\fingerprint_op.cc:
+  Line 22: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0006-9323859dd3d8\tensorflow\core\kernels\fingerprint_op_test.cc:
+  Line 25: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0006-9323859dd3d8\tensorflow\core\kernels\fused_batch_norm_ex_op_test.cc:
+  Line 25: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0006-9323859dd3d8\tensorflow\core\kernels\gather_nd_op_test.cc:
+  Line 27: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0006-9323859dd3d8\tensorflow\core\kernels\gather_op_test.cc:
+  Line 27: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0006-9323859dd3d8\tensorflow\core\kernels\immutable_constant_op.cc:
+  Line 20: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0006-9323859dd3d8\tensorflow\core\kernels\mfcc_op_test.cc:
+  Line 28: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0006-9323859dd3d8\tensorflow\core\kernels\mkl_conv_ops_test.cc:
+  Line 23: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0006-9323859dd3d8\tensorflow\core\kernels\mkl_fused_ops_test.cc:
+  Line 24: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0006-9323859dd3d8\tensorflow\core\kernels\mkl_qmatmul_op_test.cc:
+  Line 29: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0006-9323859dd3d8\tensorflow\core\kernels\mkl_quantized_concat_op_test.cc:
+  Line 32: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0006-9323859dd3d8\tensorflow\core\kernels\mkl_quantized_conv_ops_perchannel_test.cc:
+  Line 30: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0006-9323859dd3d8\tensorflow\core\kernels\mkl_quantized_conv_ops_test.cc:
+  Line 30: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0006-9323859dd3d8\tensorflow\core\kernels\mkl_quantized_pooling_ops_test.cc:
+  Line 25: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0006-9323859dd3d8\tensorflow\core\kernels\mkl_requantize_ops_test.cc:
+  Line 26: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0006-9323859dd3d8\tensorflow\core\kernels\nn_ops_test.cc:
+  Line 43: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0006-9323859dd3d8\tensorflow\core\kernels\non_max_suppression_op_gpu_test.cc:
+  Line 23: #include "tensorflow/core/framework/types.pb.h"  // NOLINT
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0006-9323859dd3d8\tensorflow\core\kernels\non_max_suppression_op_test.cc:
+  Line 23: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0006-9323859dd3d8\tensorflow\core\kernels\ops_testutil_test.cc:
+  Line 19: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0006-9323859dd3d8\tensorflow\core\kernels\partitioned_function_ops.cc:
+  Line 26: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0006-9323859dd3d8\tensorflow\core\kernels\quantized_activation_ops_test.cc:
+  Line 25: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0006-9323859dd3d8\tensorflow\core\kernels\quantized_add_op_test.cc:
+  Line 28: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0006-9323859dd3d8\tensorflow\core\kernels\quantized_batch_norm_op_test.cc:
+  Line 24: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0006-9323859dd3d8\tensorflow\core\kernels\quantized_bias_add_op_test.cc:
+  Line 27: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0006-9323859dd3d8\tensorflow\core\kernels\quantized_concat_op_test.cc:
+  Line 30: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0006-9323859dd3d8\tensorflow\core\kernels\quantized_conv_ops_test.cc:
+  Line 29: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0006-9323859dd3d8\tensorflow\core\kernels\quantized_matmul_op_test.cc:
+  Line 29: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0006-9323859dd3d8\tensorflow\core\kernels\quantized_mul_op_test.cc:
+  Line 28: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0006-9323859dd3d8\tensorflow\core\kernels\quantized_pooling_ops_test.cc:
+  Line 25: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0006-9323859dd3d8\tensorflow\core\kernels\quantized_reshape_op_test.cc:
+  Line 28: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0006-9323859dd3d8\tensorflow\core\kernels\quantize_and_dequantize_op_test.cc:
+  Line 29: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0006-9323859dd3d8\tensorflow\core\kernels\quantize_down_and_shrink_range_op_test.cc:
+  Line 23: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0006-9323859dd3d8\tensorflow\core\kernels\regex_replace_op_test.cc:
+  Line 24: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0006-9323859dd3d8\tensorflow\core\kernels\requantization_range_op_test.cc:
+  Line 23: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0006-9323859dd3d8\tensorflow\core\kernels\requantize_op_test.cc:
+  Line 23: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0006-9323859dd3d8\tensorflow\core\kernels\resize_bilinear_op_test.cc:
+  Line 22: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0006-9323859dd3d8\tensorflow\core\kernels\resize_nearest_neighbor_op_test.cc:
+  Line 26: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0006-9323859dd3d8\tensorflow\core\kernels\restore_op_test.cc:
+  Line 28: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0006-9323859dd3d8\tensorflow\core\kernels\restore_v2_op_test.cc:
+  Line 30: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0006-9323859dd3d8\tensorflow\core\kernels\reverse_op_test.cc:
+  Line 28: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0006-9323859dd3d8\tensorflow\core\kernels\roll_op_test.cc:
+  Line 28: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0006-9323859dd3d8\tensorflow\core\kernels\save_op_test.cc:
+  Line 28: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0006-9323859dd3d8\tensorflow\core\kernels\save_restore_v2_ops.cc:
+  Line 25: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0006-9323859dd3d8\tensorflow\core\kernels\save_v2_op_test.cc:
+  Line 24: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0006-9323859dd3d8\tensorflow\core\kernels\scale_and_translate_op.cc:
+  Line 29: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0006-9323859dd3d8\tensorflow\core\kernels\scale_and_translate_op_test.cc:
+  Line 23: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0006-9323859dd3d8\tensorflow\core\kernels\scatter_nd_op_test.cc:
+  Line 26: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0006-9323859dd3d8\tensorflow\core\kernels\scatter_op_test.cc:
+  Line 26: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0006-9323859dd3d8\tensorflow\core\kernels\segment_reduction_ops_test.cc:
+  Line 29: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0006-9323859dd3d8\tensorflow\core\kernels\sequence_ops_test.cc:
+  Line 23: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0006-9323859dd3d8\tensorflow\core\kernels\slice_op_test.cc:
+  Line 24: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0006-9323859dd3d8\tensorflow\core\kernels\sparse_matmul_op_test.cc:
+  Line 20: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0006-9323859dd3d8\tensorflow\core\kernels\sparse_to_dense_op_test.cc:
+  Line 28: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0006-9323859dd3d8\tensorflow\core\kernels\sparse_utils_test.cc:
+  Line 22: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0006-9323859dd3d8\tensorflow\core\kernels\spectrogram_op_test.cc:
+  Line 28: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0006-9323859dd3d8\tensorflow\core\kernels\split_op_test.cc:
+  Line 21: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0006-9323859dd3d8\tensorflow\core\kernels\split_v_op_test.cc:
+  Line 24: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0006-9323859dd3d8\tensorflow\core\kernels\strided_slice_op_test.cc:
+  Line 25: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0006-9323859dd3d8\tensorflow\core\kernels\string_ngrams_op_test.cc:
+  Line 24: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0006-9323859dd3d8\tensorflow\core\kernels\string_split_op_test.cc:
+  Line 24: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0006-9323859dd3d8\tensorflow\core\kernels\substr_op_test.cc:
+  Line 29: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0006-9323859dd3d8\tensorflow\core\kernels\summary_op_test.cc:
+  Line 26: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0006-9323859dd3d8\tensorflow\core\kernels\unique_op_test.cc:
+  Line 23: #include "tensorflow/core/framework/types.pb.h"
+
+tool: grep
+{
+  "pattern": "GetAttr\\(\"internal_type\",.*DataType|DataType internal_type_|DT_INVALID",
+  "path": "tensorflow/core",
+  "include": "*.cc"
+}
+Found 93 matches
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0006-9323859dd3d8\tensorflow\core\framework\attr_value_util.cc:
+  Line 156:   } else if (a.type() != DT_INVALID && b.type() != DT_INVALID) {
+
+  Line 361:   // Ref types and DT_INVALID are illegal, and DataTypes must
+
+  Line 373:     if (attr_value.type() == DT_INVALID) {
+
+  Line 388:       if (dtype == DT_INVALID) {
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0006-9323859dd3d8\tensorflow\core\framework\common_shape_fns.cc:
+  Line 1917:     shape_and_type->emplace_back(c->UnknownShape(), DT_INVALID);
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0006-9323859dd3d8\tensorflow\core\grappler\utils.cc:
+  Line 369: // doesn't exist, returns DT_INVALID.
+
+  Line 372:     return DT_INVALID;
+
+  Line 376:     return DT_INVALID;
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0006-9323859dd3d8\tensorflow\core\ops\lookup_ops.cc:
+  Line 98:     output_shape_and_type->dtype = DT_INVALID;
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0006-9323859dd3d8\tensorflow\core\common_runtime\direct_session_test.cc:
+  Line 2486:       case DT_INVALID:
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0006-9323859dd3d8\tensorflow\core\grappler\op_types.cc:
+  Line 726:       return type != DT_INVALID && type != DT_STRING;                      \
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0006-9323859dd3d8\tensorflow\core\util\example_proto_fast_parsing.cc:
+  Line 78:       *dtype = DT_INVALID;
+
+  Line 95:         *dtype = DT_INVALID;
+
+  Line 400:       case DT_INVALID:
+
+  Line 620:       if (example_dtype == DT_INVALID) continue;
+
+  Line 694:         if (example_dtype != DT_INVALID &&
+
+  Line 711:             if (example_dtype != DT_INVALID) {
+
+  Line 723:             if (example_dtype != DT_INVALID) {
+
+  Line 735:             if (example_dtype != DT_INVALID) {
+
+  Line 784:       if (example_dtype != DT_INVALID && example_dtype != feature_dtype) {
+
+  Line 793:           if (example_dtype != DT_INVALID) {
+
+  Line 802:           if (example_dtype != DT_INVALID) {
+
+  Line 811:           if (example_dtype != DT_INVALID) {
+
+  Line 1528:     if (example_dtype == DT_INVALID) continue;
+
+  Line 1624:         if (example_dtype != DT_INVALID && example_dtype != feature_dtype) {
+
+  Line 2012:       return DT_INVALID;
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0006-9323859dd3d8\tensorflow\core\util\tensor_slice_writer.cc:
+  Line 169:     case DT_INVALID:
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0006-9323859dd3d8\tensorflow\core\util\tensor_bundle\tensor_bundle.cc:
+  Line 479:   if (full_entry->dtype() != DT_INVALID) {
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0006-9323859dd3d8\tensorflow\core\grappler\optimizers\auto_mixed_precision.cc:
+  Line 62:         fixed_type(DT_INVALID) {}
+
+  Line 101: // Returns the data type of the given type attribute, or DT_INVALID if the type
+
+  Line 108:     return DT_INVALID;
+
+  Line 116:       return DT_INVALID;
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0006-9323859dd3d8\tensorflow\core\grappler\optimizers\arithmetic_optimizer.cc:
+  Line 2060:       if (input_arg.type() == DT_INVALID || input_arg.type() != dtype) {
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0006-9323859dd3d8\tensorflow\core\grappler\optimizers\constant_folding.cc:
+  Line 1115:   DataType dtype = DT_INVALID;
+
+  Line 1642:   if (prop.dtype() == DT_INVALID) {
+
+  Line 1760:   if (dtype == DT_INVALID) return;
+
+  Line 1791:   if (dtype == DT_INVALID) return;
+
+  Line 1815:   if (dtype == DT_INVALID) return;
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0006-9323859dd3d8\tensorflow\core\grappler\costs\graph_properties_test.cc:
+  Line 226:         EXPECT_EQ(DT_INVALID, prop.dtype());
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0006-9323859dd3d8\tensorflow\core\ops\resource_variable_ops.cc:
+  Line 60:       shape_and_type.dtype = DT_INVALID;
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0006-9323859dd3d8\tensorflow\core\framework\node_def_builder.cc:
+  Line 127:   if (input_arg->type() != DT_INVALID) {
+
+  Line 144:     if (input_arg->type() != DT_INVALID) {
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0006-9323859dd3d8\tensorflow\core\framework\kernel_def_util.cc:
+  Line 118:     if (attr_value->type() != DT_INVALID) {
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0006-9323859dd3d8\tensorflow\core\framework\function.cc:
+  Line 96:   if (arg_def.type() != DT_INVALID) {
+
+  Line 99:     dtype = DT_INVALID;
+
+  Line 487:   if (arg.type() != DT_INVALID) {
+
+  Line 633:       dt = DT_INVALID;
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0006-9323859dd3d8\tensorflow\core\framework\fake_input.cc:
+  Line 145:   } else if (arg_->type() != DT_INVALID) {
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0006-9323859dd3d8\tensorflow\core\framework\op_def_util.cc:
+  Line 42:   return arg.type() != DT_INVALID || !arg.type_attr().empty() ||
+
+  Line 215:     VALIDATE((arg.type() != DT_INVALID ? 1 : 0) +
+
+  Line 220:     const int num_type_fields = (arg.type() != DT_INVALID ? 1 : 0) +
+
+  Line 391:     if (arg.type() != DT_INVALID) {
+
+  Line 587:       if (arg.type() != DT_INVALID) {
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0006-9323859dd3d8\tensorflow\core\framework\node_def_util.cc:
+  Line 480:     } else if (arg_def.type() != DT_INVALID) {
+
+  Line 500:   } else if (arg_def.type() != DT_INVALID) {
+
+  Line 690:   } else if (!arg_def.type_attr().empty() || arg_def.type() != DT_INVALID) {
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0006-9323859dd3d8\tensorflow\core\graph\costmodel.cc:
+  Line 149:     max_mem_usage->output_port_type.resize(num_outputs, DT_INVALID);
+
+  Line 299:     return DT_INVALID;
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0006-9323859dd3d8\tensorflow\core\framework\shape_inference.cc:
+  Line 1150:       if (existing.dtype != DT_INVALID) {
+
+  Line 1209:       if (existing.dtype != DT_INVALID) {
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0006-9323859dd3d8\tensorflow\core\framework\shape_inference_test.cc:
+  Line 1636:                               {c.UnknownShape(), DT_INVALID},
+
+  Line 1674:   // updated unless original dtype is DT_INVALID.
+
+  Line 1747:                               {c.UnknownShape(), DT_INVALID},
+
+  Line 1781:   // updated unless original dtype is DT_INVALID.
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0006-9323859dd3d8\tensorflow\core\grappler\costs\utils.cc:
+  Line 53:   input.set_dtype(DataType::DT_INVALID);
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0006-9323859dd3d8\tensorflow\core\framework\tensor.cc:
+  Line 755:     case DT_INVALID:                                           \
+
+  Line 920:   if (proto.dtype() == DT_INVALID) return false;
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0006-9323859dd3d8\tensorflow\core\framework\tensor_shape.cc:
+  Line 140:   set_data_type(DT_INVALID);
+
+  Line 159:   set_data_type(DT_INVALID);
+
+  Line 253:   set_data_type(DT_INVALID);
+
+  Line 312:   set_data_type(DT_INVALID);
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0006-9323859dd3d8\tensorflow\core\framework\tensor_shape_test.cc:
+  Line 177:   EXPECT_EQ(TensorShapeTestHelper::data_type(&s), DT_INVALID);
+
+  Line 198:   EXPECT_EQ(TensorShapeTestHelper::data_type(&s2), DT_INVALID);
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0006-9323859dd3d8\tensorflow\core\graph\mkl_layout_pass.cc:
+  Line 3778:   DataType T = DT_INVALID;
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0006-9323859dd3d8\tensorflow\core\ops\training_ops.cc:
+  Line 28:       (*handle_data)[0].dtype != DT_INVALID) {
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0006-9323859dd3d8\tensorflow\core\framework\types.cc:
+  Line 55:     case DT_INVALID:
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0006-9323859dd3d8\tensorflow\core\framework\types_test.cc:
+  Line 41:   if (e == DT_INVALID) ++e;
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0006-9323859dd3d8\tensorflow\core\grappler\optimizers\remapper.cc:
+  Line 208:   return lhs_attr != DT_INVALID && rhs_attr != DT_INVALID &&
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0006-9323859dd3d8\tensorflow\core\grappler\optimizers\scoped_allocator_optimizer.cc:
+  Line 96:   *type = DT_INVALID;
+
+  Line 265:     DataType inode_dtype = DT_INVALID;
+
+  Line 293:     if (inode_dtype == DT_INVALID) {
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0006-9323859dd3d8\tensorflow\core\common_runtime\shape_refiner_test.cc:
+  Line 1291:       {unknown, DT_INVALID},
+
+  Line 1296:       {unknown, DT_INVALID},
+
+  Line 1301:       {ctx->UnknownShape(), DT_INVALID},
+
+  Line 1306:       {ctx->UnknownShape(), DT_INVALID},
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0006-9323859dd3d8\tensorflow\core\kernels\decode_proto_op.cc:
+  Line 67:   DataType dtype = DataType::DT_INVALID;
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0006-9323859dd3d8\tensorflow\core\kernels\list_kernels.cc:
+  Line 50:     if (tensors().at(i).dtype() != DT_INVALID) {
+
+  Line 81:     if (t.dtype() != DT_INVALID) {
+
+  Line 122:       tensors().emplace_back(Tensor(DT_INVALID));
+
+  Line 411:     output.tensors().resize(num_elements, Tensor(DT_INVALID));
+
+  Line 455:         out->tensors().resize(size, Tensor(DT_INVALID));
+
+  Line 474:       // Add DT_INVALID tensors to the end of the list if the requested size
+
+  Line 476:       output_list.tensors().resize(size, Tensor(DT_INVALID));
+
+tokens used
+input: 4,171
+cache read: 9,728
+cache write: 0
+output: 98
+reasoning output: 88
+
+I’m applying the minimal target-version adaptation: read the existing `internal_type` attribute in `SparseCrossOp` and enforce dtype checks in its member `ValidateInput`, using `OP_REQUIRES` because this older implementation validates directly on the context.
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/kernels/sparse_cross_op.cc\n@@\n #include \"tensorflow/core/framework/tensor.h\"\n #include \"tensorflow/core/framework/tensor_shape.h\"\n #include \"tensorflow/core/framework/types.h\"\n+#include \"tensorflow/core/framework/types.pb.h\"\n #include \"tensorflow/core/lib/core/stringpiece.h\"\n #include \"tensorflow/core/lib/strings/str_util.h\"\n #include \"tensorflow/core/platform/fingerprint.h\"\n@@\n     OP_REQUIRES_OK(context, context->GetAttr(\"hash_key\", &signed_hash_key_));\n     hash_key_ = static_cast<uint64>(signed_hash_key_);\n+    OP_REQUIRES_OK(context, context->GetAttr(\"internal_type\", &internal_type_));\n   }\n@@\n     const auto size = indices_list_in.size();\n     // Validates indices_list_in OpInputList.\n     for (int i = 0; i < size; i++) {\n+      OP_REQUIRES(context, indices_list_in[i].dtype() == DT_INT64,\n+                  errors::InvalidArgument(\"Input indices should be of type \",\n+                                          DT_INT64, \" but received \",\n+                                          indices_list_in[i].dtype()));\n       OP_REQUIRES(\n           context, TensorShapeUtils::IsMatrix(indices_list_in[i].shape()),\n           errors::InvalidArgument(\n@@\n                                 values_list_in.size()));\n     for (int i = 0; i < size; i++) {\n+      // Make sure to avoid the expected type to be string, but input values to\n+      // be int64.\n+      OP_REQUIRES(context,\n+                  internal_type_ != DT_STRING ||\n+                      values_list_in[i].dtype() != DT_INT64,\n+                  errors::InvalidArgument(\n+                      \"Input values should be of internal type \",\n+                      internal_type_, \" but received \",\n+                      values_list_in[i].dtype()));\n       OP_REQUIRES(\n           context, TensorShapeUtils::IsVector(values_list_in[i].shape()),\n           errors::InvalidArgument(\n@@\n                                 shapes_list_in.size()));\n     const auto batch_size = CalculateBatchSize(shapes_list_in, dense_list_in);\n     for (int i = 0; i < size; i++) {\n+      OP_REQUIRES(context, shapes_list_in[i].dtype() == DT_INT64,\n+                  errors::InvalidArgument(\"Input shape should be of type \",\n+                                          DT_INT64, \" but received \",\n+                                          shapes_list_in[i].dtype()));\n       OP_REQUIRES(\n           context, TensorShapeUtils::IsVector(shapes_list_in[i].shape()),\n           errors::InvalidArgument(\n@@\n \n     // Validates dense_list_in OpInputList\n     for (int i = 0; i < dense_list_in.size(); ++i) {\n+      // Make sure to avoid the expected type to be string, but input values to\n+      // be int64.\n+      OP_REQUIRES(context,\n+                  internal_type_ != DT_STRING ||\n+                      dense_list_in[i].dtype() != DT_INT64,\n+                  errors::InvalidArgument(\n+                      \"Dense inputs should be of internal type \",\n+                      internal_type_, \" but received \", dense_list_in[i].dtype()));\n       OP_REQUIRES(\n           context, TensorShapeUtils::IsMatrix(dense_list_in[i].shape()),\n           errors::InvalidArgument(\n@@\n   }\n   int64 num_buckets_;\n   uint64 hash_key_;\n+  DataType internal_type_;\n };\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/kernels/sparse_cross_op.cc
+
+tokens used
+input: 9,666
+cache read: 13,824
+cache write: 0
+output: 908
+reasoning output: 228
+
+I’ll verify the resulting diff and use hunk validation against the specified target base, without running a full build.
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/kernels/sparse_cross_op.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0006-9323859dd3d8"
+}
+warning: in the working copy of 'tensorflow/core/kernels/sparse_cross_op.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/kernels/sparse_cross_op.cc b/tensorflow/core/kernels/sparse_cross_op.cc
+index a16e34c7cb..2963746ed6 100644
+--- a/tensorflow/core/kernels/sparse_cross_op.cc
++++ b/tensorflow/core/kernels/sparse_cross_op.cc
+@@ -26,6 +26,7 @@ limitations under the License.
+ #include "tensorflow/core/framework/tensor.h"
+ #include "tensorflow/core/framework/tensor_shape.h"
+ #include "tensorflow/core/framework/types.h"
++#include "tensorflow/core/framework/types.pb.h"
+ #include "tensorflow/core/lib/core/stringpiece.h"
+ #include "tensorflow/core/lib/strings/str_util.h"
+ #include "tensorflow/core/platform/fingerprint.h"
+@@ -295,6 +296,7 @@ class SparseCrossOp : public OpKernel {
+     int64 signed_hash_key_;
+     OP_REQUIRES_OK(context, context->GetAttr("hash_key", &signed_hash_key_));
+     hash_key_ = static_cast<uint64>(signed_hash_key_);
++    OP_REQUIRES_OK(context, context->GetAttr("internal_type", &internal_type_));
+   }
+ 
+   void Compute(OpKernelContext* context) override {
+@@ -356,6 +358,10 @@ class SparseCrossOp : public OpKernel {
+     const auto size = indices_list_in.size();
+     // Validates indices_list_in OpInputList.
+     for (int i = 0; i < size; i++) {
++      OP_REQUIRES(context, indices_list_in[i].dtype() == DT_INT64,
++                  errors::InvalidArgument("Input indices should be of type ",
++                                          DT_INT64, " but received ",
++                                          indices_list_in[i].dtype()));
+       OP_REQUIRES(
+           context, TensorShapeUtils::IsMatrix(indices_list_in[i].shape()),
+           errors::InvalidArgument(
+@@ -374,6 +380,15 @@ class SparseCrossOp : public OpKernel {
+         errors::InvalidArgument("Expected ", size, " input values, got ",
+                                 values_list_in.size()));
+     for (int i = 0; i < size; i++) {
++      // Make sure to avoid the expected type to be string, but input values to
++      // be int64.
++      OP_REQUIRES(context,
++                  internal_type_ != DT_STRING ||
++                      values_list_in[i].dtype() != DT_INT64,
++                  errors::InvalidArgument(
++                      "Input values should be of internal type ",
++                      internal_type_, " but received ",
++                      values_list_in[i].dtype()));
+       OP_REQUIRES(
+           context, TensorShapeUtils::IsVector(values_list_in[i].shape()),
+           errors::InvalidArgument(
+@@ -396,6 +411,10 @@ class SparseCrossOp : public OpKernel {
+                                 shapes_list_in.size()));
+     const auto batch_size = CalculateBatchSize(shapes_list_in, dense_list_in);
+     for (int i = 0; i < size; i++) {
++      OP_REQUIRES(context, shapes_list_in[i].dtype() == DT_INT64,
++                  errors::InvalidArgument("Input shape should be of type ",
++                                          DT_INT64, " but received ",
++                                          shapes_list_in[i].dtype()));
+       OP_REQUIRES(
+           context, TensorShapeUtils::IsVector(shapes_list_in[i].shape()),
+           errors::InvalidArgument(
+@@ -415,6 +434,14 @@ class SparseCrossOp : public OpKernel {
+ 
+     // Validates dense_list_in OpInputList
+     for (int i = 0; i < dense_list_in.size(); ++i) {
++      // Make sure to avoid the expected type to be string, but input values to
++      // be int64.
++      OP_REQUIRES(context,
++                  internal_type_ != DT_STRING ||
++                      dense_list_in[i].dtype() != DT_INT64,
++                  errors::InvalidArgument(
++                      "Dense inputs should be of internal type ",
++                      internal_type_, " but received ", dense_list_in[i].dtype()));
+       OP_REQUIRES(
+           context, TensorShapeUtils::IsMatrix(dense_list_in[i].shape()),
+           errors::InvalidArgument(
+@@ -551,6 +578,7 @@ class SparseCrossOp : public OpKernel {
+   }
+   int64 num_buckets_;
+   uint64 hash_key_;
++  DataType internal_type_;
+ };
+ 
+ REGISTER_KERNEL_BUILDER(Name("SparseCross")
+
+tool: bash
+{
+  "command": "git status --short",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0006-9323859dd3d8"
+}
+ M tensorflow/core/kernels/sparse_cross_op.cc
+
+tokens used
+input: 1,614
+cache read: 23,040
+cache write: 0
+output: 178
+reasoning output: 47
+
+The backport is isolated to `tensorflow/core/kernels/sparse_cross_op.cc`; I noticed one long line in the generated diff and will format that small expression before validation.
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/kernels/sparse_cross_op.cc\n@@\n                   errors::InvalidArgument(\n                       \"Dense inputs should be of internal type \",\n-                      internal_type_, \" but received \", dense_list_in[i].dtype()));\n+                      internal_type_, \" but received \",\n+                      dense_list_in[i].dtype()));\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/kernels/sparse_cross_op.cc
+
+tokens used
+input: 1,817
+cache read: 24,064
+cache write: 0
+output: 148
+reasoning output: 52
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/kernels/sparse_cross_op.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0006-9323859dd3d8",
+  "timeout": 120000
+}
+warning: in the working copy of 'tensorflow/core/kernels/sparse_cross_op.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/kernels/sparse_cross_op.cc b/tensorflow/core/kernels/sparse_cross_op.cc
+index a16e34c7cb..865ce4e8a8 100644
+--- a/tensorflow/core/kernels/sparse_cross_op.cc
++++ b/tensorflow/core/kernels/sparse_cross_op.cc
+@@ -26,6 +26,7 @@ limitations under the License.
+ #include "tensorflow/core/framework/tensor.h"
+ #include "tensorflow/core/framework/tensor_shape.h"
+ #include "tensorflow/core/framework/types.h"
++#include "tensorflow/core/framework/types.pb.h"
+ #include "tensorflow/core/lib/core/stringpiece.h"
+ #include "tensorflow/core/lib/strings/str_util.h"
+ #include "tensorflow/core/platform/fingerprint.h"
+@@ -295,6 +296,7 @@ class SparseCrossOp : public OpKernel {
+     int64 signed_hash_key_;
+     OP_REQUIRES_OK(context, context->GetAttr("hash_key", &signed_hash_key_));
+     hash_key_ = static_cast<uint64>(signed_hash_key_);
++    OP_REQUIRES_OK(context, context->GetAttr("internal_type", &internal_type_));
+   }
+ 
+   void Compute(OpKernelContext* context) override {
+@@ -356,6 +358,10 @@ class SparseCrossOp : public OpKernel {
+     const auto size = indices_list_in.size();
+     // Validates indices_list_in OpInputList.
+     for (int i = 0; i < size; i++) {
++      OP_REQUIRES(context, indices_list_in[i].dtype() == DT_INT64,
++                  errors::InvalidArgument("Input indices should be of type ",
++                                          DT_INT64, " but received ",
++                                          indices_list_in[i].dtype()));
+       OP_REQUIRES(
+           context, TensorShapeUtils::IsMatrix(indices_list_in[i].shape()),
+           errors::InvalidArgument(
+@@ -374,6 +380,15 @@ class SparseCrossOp : public OpKernel {
+         errors::InvalidArgument("Expected ", size, " input values, got ",
+                                 values_list_in.size()));
+     for (int i = 0; i < size; i++) {
++      // Make sure to avoid the expected type to be string, but input values to
++      // be int64.
++      OP_REQUIRES(context,
++                  internal_type_ != DT_STRING ||
++                      values_list_in[i].dtype() != DT_INT64,
++                  errors::InvalidArgument(
++                      "Input values should be of internal type ",
++                      internal_type_, " but received ",
++                      values_list_in[i].dtype()));
+       OP_REQUIRES(
+           context, TensorShapeUtils::IsVector(values_list_in[i].shape()),
+           errors::InvalidArgument(
+@@ -396,6 +411,10 @@ class SparseCrossOp : public OpKernel {
+                                 shapes_list_in.size()));
+     const auto batch_size = CalculateBatchSize(shapes_list_in, dense_list_in);
+     for (int i = 0; i < size; i++) {
++      OP_REQUIRES(context, shapes_list_in[i].dtype() == DT_INT64,
++                  errors::InvalidArgument("Input shape should be of type ",
++                                          DT_INT64, " but received ",
++                                          shapes_list_in[i].dtype()));
+       OP_REQUIRES(
+           context, TensorShapeUtils::IsVector(shapes_list_in[i].shape()),
+           errors::InvalidArgument(
+@@ -415,6 +434,15 @@ class SparseCrossOp : public OpKernel {
+ 
+     // Validates dense_list_in OpInputList
+     for (int i = 0; i < dense_list_in.size(); ++i) {
++      // Make sure to avoid the expected type to be string, but input values to
++      // be int64.
++      OP_REQUIRES(context,
++                  internal_type_ != DT_STRING ||
++                      dense_list_in[i].dtype() != DT_INT64,
++                  errors::InvalidArgument(
++                      "Dense inputs should be of internal type ",
++                      internal_type_, " but received ",
++                      dense_list_in[i].dtype()));
+       OP_REQUIRES(
+           context, TensorShapeUtils::IsMatrix(dense_list_in[i].shape()),
+           errors::InvalidArgument(
+@@ -551,6 +579,7 @@ class SparseCrossOp : public OpKernel {
+   }
+   int64 num_buckets_;
+   uint64 hash_key_;
++  DataType internal_type_;
+ };
+ 
+ REGISTER_KERNEL_BUILDER(Name("SparseCross")
+
+tokens used
+input: 1,021
+cache read: 25,088
+cache write: 0
+output: 78
+reasoning output: 11
+
+tool: validate
+{
+  "ref": "9323859dd3d8d24c892201ef5a78591fcc592f25",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/sparse_cross_op.cc b/tensorflow/core/kernels/sparse_cross_op.cc\nindex a16e34c7cb..865ce4e8a8 100644\n--- a/tensorflow/core/kernels/sparse_cross_op.cc\n+++ b/tensorflow/core/kernels/sparse_cross_op.cc\n@@ -26,6 +26,7 @@ limitations under the License.\n #include \"tensorflow/core/framework/tensor.h\"\n #include \"tensorflow/core/framework/tensor_shape.h\"\n #include \"tensorflow/core/framework/types.h\"\n+#include \"tensorflow/core/framework/types.pb.h\"\n #include \"tensorflow/core/lib/core/stringpiece.h\"\n #include \"tensorflow/core/lib/strings/str_util.h\"\n #include \"tensorflow/core/platform/fingerprint.h\"\n@@ -295,6 +296,7 @@ class SparseCrossOp : public OpKernel {\n     int64 signed_hash_key_;\n     OP_REQUIRES_OK(context, context->GetAttr(\"hash_key\", &signed_hash_key_));\n     hash_key_ = static_cast<uint64>(signed_hash_key_);\n+    OP_REQUIRES_OK(context, context->GetAttr(\"internal_type\", &internal_type_));\n   }\n \n   void Compute(OpKernelContext* context) override {\n@@ -356,6 +358,10 @@ class SparseCrossOp : public OpKernel {\n     const auto size = indices_list_in.size();\n     // Validates indices_list_in OpInputList.\n     for (int i = 0; i < size; i++) {\n+      OP_REQUIRES(context, indices_list_in[i].dtype() == DT_INT64,\n+                  errors::InvalidArgument(\"Input indices should be of type \",\n+                                          DT_INT64, \" but received \",\n+                                          indices_list_in[i].dtype()));\n       OP_REQUIRES(\n           context, TensorShapeUtils::IsMatrix(indices_list_in[i].shape()),\n           errors::InvalidArgument(\n@@ -374,6 +380,15 @@ class SparseCrossOp : public OpKernel {\n         errors::InvalidArgument(\"Expected \", size, \" input values, got \",\n                                 values_list_in.size()));\n     for (int i = 0; i < size; i++) {\n+      // Make sure to avoid the expected type to be string, but input values to\n+      // be int64.\n+      OP_REQUIRES(context,\n+                  internal_type_ != DT_STRING ||\n+                      values_list_in[i].dtype() != DT_INT64,\n+                  errors::InvalidArgument(\n+                      \"Input values should be of internal type \",\n+                      internal_type_, \" but received \",\n+                      values_list_in[i].dtype()));\n       OP_REQUIRES(\n           context, TensorShapeUtils::IsVector(values_list_in[i].shape()),\n           errors::InvalidArgument(\n@@ -396,6 +411,10 @@ class SparseCrossOp : public OpKernel {\n                                 shapes_list_in.size()));\n     const auto batch_size = CalculateBatchSize(shapes_list_in, dense_list_in);\n     for (int i = 0; i < size; i++) {\n+      OP_REQUIRES(context, shapes_list_in[i].dtype() == DT_INT64,\n+                  errors::InvalidArgument(\"Input shape should be of type \",\n+                                          DT_INT64, \" but received \",\n+                                          shapes_list_in[i].dtype()));\n       OP_REQUIRES(\n           context, TensorShapeUtils::IsVector(shapes_list_in[i].shape()),\n           errors::InvalidArgument(\n@@ -415,6 +434,15 @@ class SparseCrossOp : public OpKernel {\n \n     // Validates dense_list_in OpInputList\n     for (int i = 0; i < dense_list_in.size(); ++i) {\n+      // Make sure to avoid the expected type to be string, but input values to\n+      // be int64.\n+      OP_REQUIRES(context,\n+                  internal_type_ != DT_STRING ||\n+                      dense_list_in[i].dtype() != DT_INT64,\n+                  errors::InvalidArgument(\n+                      \"Dense inputs should be of internal type \",\n+                      internal_type_, \" but received \",\n+                      dense_list_in[i].dtype()));\n       OP_REQUIRES(\n           context, TensorShapeUtils::IsMatrix(dense_list_in[i].shape()),\n           errors::InvalidArgument(\n@@ -551,6 +579,7 @@ class SparseCrossOp : public OpKernel {\n   }\n   int64 num_buckets_;\n   uint64 hash_key_;\n+  DataType internal_type_;\n };\n \n REGISTER_KERNEL_BUILDER(Name(\"SparseCross\")\n"
+}
+Patch applied successfully
+
+tokens used
+input: 2,096
+cache read: 25,088
+cache write: 0
+output: 1,108
+reasoning output: 7
+
+Hunk validation against `9323859dd3d8d24c892201ef5a78591fcc592f25` succeeded. I’ll run a lightweight whitespace check and capture the final diff.
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/kernels/sparse_cross_op.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0006-9323859dd3d8",
+  "timeout": 120000
+}
+warning: in the working copy of 'tensorflow/core/kernels/sparse_cross_op.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/kernels/sparse_cross_op.cc b/tensorflow/core/kernels/sparse_cross_op.cc
+index a16e34c7cb..865ce4e8a8 100644
+--- a/tensorflow/core/kernels/sparse_cross_op.cc
++++ b/tensorflow/core/kernels/sparse_cross_op.cc
+@@ -26,6 +26,7 @@ limitations under the License.
+ #include "tensorflow/core/framework/tensor.h"
+ #include "tensorflow/core/framework/tensor_shape.h"
+ #include "tensorflow/core/framework/types.h"
++#include "tensorflow/core/framework/types.pb.h"
+ #include "tensorflow/core/lib/core/stringpiece.h"
+ #include "tensorflow/core/lib/strings/str_util.h"
+ #include "tensorflow/core/platform/fingerprint.h"
+@@ -295,6 +296,7 @@ class SparseCrossOp : public OpKernel {
+     int64 signed_hash_key_;
+     OP_REQUIRES_OK(context, context->GetAttr("hash_key", &signed_hash_key_));
+     hash_key_ = static_cast<uint64>(signed_hash_key_);
++    OP_REQUIRES_OK(context, context->GetAttr("internal_type", &internal_type_));
+   }
+ 
+   void Compute(OpKernelContext* context) override {
+@@ -356,6 +358,10 @@ class SparseCrossOp : public OpKernel {
+     const auto size = indices_list_in.size();
+     // Validates indices_list_in OpInputList.
+     for (int i = 0; i < size; i++) {
++      OP_REQUIRES(context, indices_list_in[i].dtype() == DT_INT64,
++                  errors::InvalidArgument("Input indices should be of type ",
++                                          DT_INT64, " but received ",
++                                          indices_list_in[i].dtype()));
+       OP_REQUIRES(
+           context, TensorShapeUtils::IsMatrix(indices_list_in[i].shape()),
+           errors::InvalidArgument(
+@@ -374,6 +380,15 @@ class SparseCrossOp : public OpKernel {
+         errors::InvalidArgument("Expected ", size, " input values, got ",
+                                 values_list_in.size()));
+     for (int i = 0; i < size; i++) {
++      // Make sure to avoid the expected type to be string, but input values to
++      // be int64.
++      OP_REQUIRES(context,
++                  internal_type_ != DT_STRING ||
++                      values_list_in[i].dtype() != DT_INT64,
++                  errors::InvalidArgument(
++                      "Input values should be of internal type ",
++                      internal_type_, " but received ",
++                      values_list_in[i].dtype()));
+       OP_REQUIRES(
+           context, TensorShapeUtils::IsVector(values_list_in[i].shape()),
+           errors::InvalidArgument(
+@@ -396,6 +411,10 @@ class SparseCrossOp : public OpKernel {
+                                 shapes_list_in.size()));
+     const auto batch_size = CalculateBatchSize(shapes_list_in, dense_list_in);
+     for (int i = 0; i < size; i++) {
++      OP_REQUIRES(context, shapes_list_in[i].dtype() == DT_INT64,
++                  errors::InvalidArgument("Input shape should be of type ",
++                                          DT_INT64, " but received ",
++                                          shapes_list_in[i].dtype()));
+       OP_REQUIRES(
+           context, TensorShapeUtils::IsVector(shapes_list_in[i].shape()),
+           errors::InvalidArgument(
+@@ -415,6 +434,15 @@ class SparseCrossOp : public OpKernel {
+ 
+     // Validates dense_list_in OpInputList
+     for (int i = 0; i < dense_list_in.size(); ++i) {
++      // Make sure to avoid the expected type to be string, but input values to
++      // be int64.
++      OP_REQUIRES(context,
++                  internal_type_ != DT_STRING ||
++                      dense_list_in[i].dtype() != DT_INT64,
++                  errors::InvalidArgument(
++                      "Dense inputs should be of internal type ",
++                      internal_type_, " but received ",
++                      dense_list_in[i].dtype()));
+       OP_REQUIRES(
+           context, TensorShapeUtils::IsMatrix(dense_list_in[i].shape()),
+           errors::InvalidArgument(
+@@ -551,6 +579,7 @@ class SparseCrossOp : public OpKernel {
+   }
+   int64 num_buckets_;
+   uint64 hash_key_;
++  DataType internal_type_;
+ };
+ 
+ REGISTER_KERNEL_BUILDER(Name("SparseCross")
+
+tool: bash
+{
+  "command": "git diff --check -- tensorflow/core/kernels/sparse_cross_op.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0006-9323859dd3d8",
+  "timeout": 120000
+}
+warning: in the working copy of 'tensorflow/core/kernels/sparse_cross_op.cc', LF will be replaced by CRLF the next time Git touches it
+
+tokens used
+input: 2,200
+cache read: 26,112
+cache write: 0
+output: 217
+reasoning output: 24
+
+Applied the TensorFlow 2.5.0 SparseCross type-confusion fix to the 2.1.4 target implementation.
+
+Validated with:
+`validate(..., mode="hunk")` against `9323859dd3d8d24c892201ef5a78591fcc592f25`
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/kernels/sparse_cross_op.cc b/tensorflow/core/kernels/sparse_cross_op.cc
+    index a16e34c7cb..865ce4e8a8 100644
+    --- a/tensorflow/core/kernels/sparse_cross_op.cc
+    +++ b/tensorflow/core/kernels/sparse_cross_op.cc
+    @@ -26,6 +26,7 @@ limitations under the License.
+     #include "tensorflow/core/framework/tensor.h"
+     #include "tensorflow/core/framework/tensor_shape.h"
+     #include "tensorflow/core/framework/types.h"
+    +#include "tensorflow/core/framework/types.pb.h"
+     #include "tensorflow/core/lib/core/stringpiece.h"
+     #include "tensorflow/core/lib/strings/str_util.h"
+     #include "tensorflow/core/platform/fingerprint.h"
+    @@ -295,6 +296,7 @@ class SparseCrossOp : public OpKernel {
+         int64 signed_hash_key_;
+         OP_REQUIRES_OK(context, context->GetAttr("hash_key", &signed_hash_key_));
+         hash_key_ = static_cast<uint64>(signed_hash_key_);
+    +    OP_REQUIRES_OK(context, context->GetAttr("internal_type", &internal_type_));
+       }
+     
+       void Compute(OpKernelContext* context) override {
+    @@ -356,6 +358,10 @@ class SparseCrossOp : public OpKernel {
+         const auto size = indices_list_in.size();
+         // Validates indices_list_in OpInputList.
+         for (int i = 0; i < size; i++) {
+    +      OP_REQUIRES(context, indices_list_in[i].dtype() == DT_INT64,
+    +                  errors::InvalidArgument("Input indices should be of type ",
+    +                                          DT_INT64, " but received ",
+    +                                          indices_list_in[i].dtype()));
+           OP_REQUIRES(
+               context, TensorShapeUtils::IsMatrix(indices_list_in[i].shape()),
+               errors::InvalidArgument(
+    @@ -374,6 +380,15 @@ class SparseCrossOp : public OpKernel {
+             errors::InvalidArgument("Expected ", size, " input values, got ",
+                                     values_list_in.size()));
+         for (int i = 0; i < size; i++) {
+    +      // Make sure to avoid the expected type to be string, but input values to
+    +      // be int64.
+    +      OP_REQUIRES(context,
+    +                  internal_type_ != DT_STRING ||
+    +                      values_list_in[i].dtype() != DT_INT64,
+    +                  errors::InvalidArgument(
+    +                      "Input values should be of internal type ",
+    +                      internal_type_, " but received ",
+    +                      values_list_in[i].dtype()));
+           OP_REQUIRES(
+               context, TensorShapeUtils::IsVector(values_list_in[i].shape()),
+               errors::InvalidArgument(
+    @@ -396,6 +411,10 @@ class SparseCrossOp : public OpKernel {
+                                     shapes_list_in.size()));
+         const auto batch_size = CalculateBatchSize(shapes_list_in, dense_list_in);
+         for (int i = 0; i < size; i++) {
+    +      OP_REQUIRES(context, shapes_list_in[i].dtype() == DT_INT64,
+    +                  errors::InvalidArgument("Input shape should be of type ",
+    +                                          DT_INT64, " but received ",
+    +                                          shapes_list_in[i].dtype()));
+           OP_REQUIRES(
+               context, TensorShapeUtils::IsVector(shapes_list_in[i].shape()),
+               errors::InvalidArgument(
+    @@ -415,6 +434,15 @@ class SparseCrossOp : public OpKernel {
+     
+         // Validates dense_list_in OpInputList
+         for (int i = 0; i < dense_list_in.size(); ++i) {
+    +      // Make sure to avoid the expected type to be string, but input values to
+    +      // be int64.
+    +      OP_REQUIRES(context,
+    +                  internal_type_ != DT_STRING ||
+    +                      dense_list_in[i].dtype() != DT_INT64,
+    +                  errors::InvalidArgument(
+    +                      "Dense inputs should be of internal type ",
+    +                      internal_type_, " but received ",
+    +                      dense_list_in[i].dtype()));
+           OP_REQUIRES(
+               context, TensorShapeUtils::IsMatrix(dense_list_in[i].shape()),
+               errors::InvalidArgument(
+    @@ -551,6 +579,7 @@ class SparseCrossOp : public OpKernel {
+       }
+       int64 num_buckets_;
+       uint64 hash_key_;
+    +  DataType internal_type_;
+     };
+     
+     REGISTER_KERNEL_BUILDER(Name("SparseCross")
+  notes: >
+    Backported the SparseCross dtype validation by checking indices/shapes are int64 and rejecting int64 values/dense inputs when internal_type is string in the older single-op implementation.
+```
+
+tokens used
+input: 1,420
+cache read: 28,160
+cache write: 0
+output: 1,120
+reasoning output: 24

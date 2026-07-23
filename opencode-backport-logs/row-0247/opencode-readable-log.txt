@@ -1,0 +1,614 @@
+I’ll inspect the target 2.5.3 locations for the BUILD target, include list, and `CalculateOutputSize` implementation, then apply the minimal equivalent overflow check.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target files and equivalent code locations",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Validate adapted hunks against target base",
+      "status": "pending",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply minimal backport changes",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "content": "Inspect final diff",
+      "status": "pending",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target files and equivalent code locations",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Validate adapted hunks against target base",
+    "status": "pending",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply minimal backport changes",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "content": "Inspect final diff",
+    "status": "pending",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 4,015
+cache read: 4,608
+cache write: 0
+output: 130
+reasoning output: 0
+
+tool: viewcode
+{
+  "ref": "b2b3444b71ea99685edafa7731fb7ba57939f437",
+  "path": "tensorflow/core/grappler/costs/op_level_cost_estimator.cc",
+  "startline": 1585,
+  "endline": 1625
+}
+Here are lines 1585 through 1625.
+
+  }
+  return largest_input_count;
+}
+
+int64 OpLevelCostEstimator::CalculateOutputSize(const OpInfo& op_info,
+                                                bool* found_unknown_shapes) {
+  int64 total_output_size = 0;
+  // Use float as default for calculations.
+  for (const auto& output : op_info.outputs()) {
+    DataType dt = output.dtype();
+    const auto& original_output_shape = output.shape();
+    int64 output_size = DataTypeSize(BaseType(dt));
+    int num_dims = std::max(1, original_output_shape.dim_size());
+    auto output_shape = MaybeGetMinimumShape(original_output_shape, num_dims,
+                                             found_unknown_shapes);
+    for (const auto& dim : output_shape.dim()) {
+      output_size *= dim.size();
+    }
+    total_output_size += output_size;
+    VLOG(1) << "Output Size: " << output_size
+            << " Total Output Size:" << total_output_size;
+  }
+  return total_output_size;
+}
+
+std::vector<int64> OpLevelCostEstimator::CalculateOutputTensorSize(
+    const OpInfo& op_info, bool* found_unknown_shapes) {
+  std::vector<int64> output_tensor_size;
+  output_tensor_size.reserve(op_info.outputs().size());
+  // Use float as default for calculations.
+  for (const auto& output : op_info.outputs()) {
+    DataType dt = output.dtype();
+    const auto& original_output_shape = output.shape();
+    int64 output_size = DataTypeSize(BaseType(dt));
+    int num_dims = std::max(1, original_output_shape.dim_size());
+    auto output_shape = MaybeGetMinimumShape(original_output_shape, num_dims,
+                                             found_unknown_shapes);
+    for (const auto& dim : output_shape.dim()) {
+      output_size *= dim.size();
+    }
+    output_tensor_size.push_back(output_size);
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: viewcode
+{
+  "ref": "b2b3444b71ea99685edafa7731fb7ba57939f437",
+  "path": "tensorflow/core/grappler/costs/BUILD",
+  "startline": 310,
+  "endline": 370
+}
+Here are lines 310 through 370.
+
+    deps = [
+        ":robust_stats",
+        "//tensorflow/core:core_cpu",
+        "//tensorflow/core:framework",
+        "//tensorflow/core:lib",
+        "//tensorflow/core:lib_internal",
+        "//tensorflow/core:lib_proto_parsing",
+        "//tensorflow/core:protos_all_cc",
+        "//tensorflow/core/grappler:grappler_item",
+        "//tensorflow/core/grappler/clusters:cluster",
+        "//tensorflow/core/grappler/costs:cost_estimator",
+        "//tensorflow/core/kernels:ops_util",
+    ],
+    alwayslink = 1,
+)
+
+cc_library(
+    name = "op_level_cost_estimator",
+    srcs = ["op_level_cost_estimator.cc"],
+    hdrs = ["op_level_cost_estimator.h"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":cost_estimator",
+        ":op_context",
+        ":utils",
+        "@com_google_absl//absl/strings",
+        "//third_party/eigen3",
+        "//tensorflow/core:framework",
+        "//tensorflow/core:lib",
+        "//tensorflow/core:protos_all_cc",
+        "//tensorflow/core/grappler/clusters:utils",
+    ] + tf_protos_grappler(),
+)
+
+tf_cc_test(
+    name = "op_level_cost_estimator_test",
+    srcs = ["op_level_cost_estimator_test.cc"],
+    tags = ["no_oss"],  # b/163222310
+    deps = [
+        ":op_level_cost_estimator",
+        "//tensorflow/core:framework",
+        "//tensorflow/core:protos_all_cc",
+        "//tensorflow/core:test",
+        "//tensorflow/core:test_main",
+        "//tensorflow/core/platform:status_matchers",
+    ],
+)
+
+cc_library(
+    name = "analytical_cost_estimator",
+    srcs = ["analytical_cost_estimator.cc"],
+    hdrs = ["analytical_cost_estimator.h"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":cost_estimator",
+        ":graph_properties",
+        ":op_level_cost_estimator",
+        ":utils",
+        ":virtual_placer",
+        ":virtual_scheduler",
+        "//tensorflow/core:core_cpu_base",
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: viewcode
+{
+  "ref": "b2b3444b71ea99685edafa7731fb7ba57939f437",
+  "path": "tensorflow/core/grappler/costs/op_level_cost_estimator.cc",
+  "startline": 20,
+  "endline": 40
+}
+Here are lines 20 through 40.
+
+#include "third_party/eigen3/Eigen/Core"
+#include "tensorflow/core/framework/attr_value.pb.h"
+#include "tensorflow/core/framework/attr_value_util.h"
+#include "tensorflow/core/framework/tensor.pb.h"
+#include "tensorflow/core/framework/tensor_shape.pb.h"
+#include "tensorflow/core/framework/types.h"
+#include "tensorflow/core/grappler/clusters/utils.h"
+#include "tensorflow/core/grappler/costs/op_context.h"
+#include "tensorflow/core/grappler/costs/utils.h"
+#include "tensorflow/core/platform/errors.h"
+
+namespace tensorflow {
+namespace grappler {
+
+// TODO(dyoon): update op to Predict method map for TF ops with V2 or V3 suffix.
+constexpr int kOpsPerMac = 2;
+constexpr char kGuaranteeConst[] = "GuaranteeConst";
+constexpr char kAddN[] = "AddN";
+constexpr char kBitCast[] = "BitCast";
+constexpr char kConcatV2[] = "ConcatV2";
+constexpr char kConv2d[] = "Conv2D";
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: grep
+{
+  "pattern": "MultiplyWithoutOverflow|overflow.h",
+  "path": "tensorflow/core",
+  "include": "*.{cc,h,BUILD,bzl}"
+}
+Found 22 matches
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0247-b2b3444b71ea\tensorflow\core\util\overflow_test.cc:
+  Line 16: #include "tensorflow/core/util/overflow.h"
+
+  Line 65:       int64 xy = MultiplyWithoutOverflow(x, y);
+
+  Line 78:     EXPECT_LT(MultiplyWithoutOverflow(n, 0), 0) << n;
+
+  Line 79:     EXPECT_LT(MultiplyWithoutOverflow(0, n), 0) << n;
+
+  Line 80:     EXPECT_LT(MultiplyWithoutOverflow(n, n), 0) << n;
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0247-b2b3444b71ea\tensorflow\core\util\overflow.h:
+  Line 27: inline int64 MultiplyWithoutOverflow(const int64 x, const int64 y) {
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0247-b2b3444b71ea\tensorflow\core\framework\tensor_shape.cc:
+  Line 26: #include "tensorflow/core/util/overflow.h"
+
+  Line 70:       num_elements = MultiplyWithoutOverflow(num_elements, d);
+
+  Line 90:       num_elements = MultiplyWithoutOverflow(num_elements, d.size());
+
+  Line 128:       num_elements = MultiplyWithoutOverflow(num_elements, d.size());
+
+  Line 384:     n = MultiplyWithoutOverflow(n, dim.size);
+
+  Line 404:     new_num_elements = MultiplyWithoutOverflow(num_elements(), size);
+
+  Line 431:     new_num_elements = MultiplyWithoutOverflow(num_elements(), size);
+
+  Line 811:       new_num_elements = MultiplyWithoutOverflow(out->num_elements(), dim);
+
+  Line 1007:     n = MultiplyWithoutOverflow(n, dim);
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0247-b2b3444b71ea\tensorflow\core\kernels\one_hot_op.cc:
+  Line 37: #include "tensorflow/core/util/overflow.h"
+
+  Line 85:         MultiplyWithoutOverflow(indices_shape.num_elements(), depth_v) >= 0,
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0247-b2b3444b71ea\tensorflow\core\kernels\reshape_op.h:
+  Line 28: #include "tensorflow/core/util/overflow.h"
+
+  Line 140:         if (MultiplyWithoutOverflow(shape->num_elements(), size) < 0) {
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0247-b2b3444b71ea\tensorflow\core\kernels\sparse_concat_op.cc:
+  Line 30: #include "tensorflow/core/util/overflow.h"
+
+  Line 80:             MultiplyWithoutOverflow(new_num_elements, input_shape_vector(j));
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0247-b2b3444b71ea\tensorflow\core\kernels\sparse_tensors_map_ops.cc:
+  Line 31: #include "tensorflow/core/util/overflow.h"
+
+tokens used
+input: 1,207
+cache read: 7,680
+cache write: 0
+output: 237
+reasoning output: 0
+
+The target code has the same vulnerable multiplication in `CalculateOutputSize`, and `tensorflow/core/util/overflow.h` plus the Bazel `//tensorflow/core/util:overflow` target already exist in 2.5.3. I’m validating the adapted hunks with the target’s `int64` spelling before editing.
+
+tool: validate
+{
+  "ref": "b2b3444b71ea99685edafa7731fb7ba57939f437",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/grappler/costs/BUILD b/tensorflow/core/grappler/costs/BUILD\n--- a/tensorflow/core/grappler/costs/BUILD\n+++ b/tensorflow/core/grappler/costs/BUILD\n@@ -335,6 +335,7 @@ cc_library(\n         \"//tensorflow/core:lib\",\n         \"//tensorflow/core:protos_all_cc\",\n         \"//tensorflow/core/grappler/clusters:utils\",\n+        \"//tensorflow/core/util:overflow\",\n     ] + tf_protos_grappler(),\n )\n \ndiff --git a/tensorflow/core/grappler/costs/op_level_cost_estimator.cc b/tensorflow/core/grappler/costs/op_level_cost_estimator.cc\n--- a/tensorflow/core/grappler/costs/op_level_cost_estimator.cc\n+++ b/tensorflow/core/grappler/costs/op_level_cost_estimator.cc\n@@ -27,6 +27,7 @@ limitations under the License.\n #include \"tensorflow/core/grappler/costs/op_context.h\"\n #include \"tensorflow/core/grappler/costs/utils.h\"\n #include \"tensorflow/core/platform/errors.h\"\n+#include \"tensorflow/core/util/overflow.h\"\n \n namespace tensorflow {\n namespace grappler {\n@@ -1597,7 +1598,14 @@ int64 OpLevelCostEstimator::CalculateOutputSize(const OpInfo& op_info,\n     auto output_shape = MaybeGetMinimumShape(original_output_shape, num_dims,\n                                              found_unknown_shapes);\n     for (const auto& dim : output_shape.dim()) {\n-      output_size *= dim.size();\n+      int64 new_output_size = MultiplyWithoutOverflow(output_size, dim.size());\n+      if (new_output_size < 0) {\n+        VLOG(1) << \"Overflow encountered when estimating cost, multiplying \"\n+                << output_size << \" with \" << dim.size();\n+        return -1;\n+      }\n+      output_size = new_output_size;\n     }\n     total_output_size += output_size;\n     VLOG(1) << \"Output Size: \" << output_size\n"
+}
+This patch does not apply to the target TensorFlow ref.
+Git apply output:
+error: corrupt patch at line 38
+Touched files:
+- tensorflow/core/grappler/costs/BUILD
+- tensorflow/core/grappler/costs/op_level_cost_estimator.cc
+Fix the patch context against the older TensorFlow version, then run validate again in hunk mode.
+
+tokens used
+input: 2,385
+cache read: 8,704
+cache write: 0
+output: 603
+reasoning output: 74
+
+tool: validate
+{
+  "ref": "b2b3444b71ea99685edafa7731fb7ba57939f437",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/grappler/costs/BUILD b/tensorflow/core/grappler/costs/BUILD\n--- a/tensorflow/core/grappler/costs/BUILD\n+++ b/tensorflow/core/grappler/costs/BUILD\n@@ -335,6 +335,7 @@ cc_library(\n         \"//tensorflow/core:lib\",\n         \"//tensorflow/core:protos_all_cc\",\n         \"//tensorflow/core/grappler/clusters:utils\",\n+        \"//tensorflow/core/util:overflow\",\n     ] + tf_protos_grappler(),\n )\n \ndiff --git a/tensorflow/core/grappler/costs/op_level_cost_estimator.cc b/tensorflow/core/grappler/costs/op_level_cost_estimator.cc\n--- a/tensorflow/core/grappler/costs/op_level_cost_estimator.cc\n+++ b/tensorflow/core/grappler/costs/op_level_cost_estimator.cc\n@@ -27,6 +27,7 @@ limitations under the License.\n #include \"tensorflow/core/grappler/costs/op_context.h\"\n #include \"tensorflow/core/grappler/costs/utils.h\"\n #include \"tensorflow/core/platform/errors.h\"\n+#include \"tensorflow/core/util/overflow.h\"\n \n namespace tensorflow {\n namespace grappler {\n@@ -1597,7 +1598,13 @@ int64 OpLevelCostEstimator::CalculateOutputSize(const OpInfo& op_info,\n     auto output_shape = MaybeGetMinimumShape(original_output_shape, num_dims,\n                                              found_unknown_shapes);\n     for (const auto& dim : output_shape.dim()) {\n-      output_size *= dim.size();\n+      int64 new_output_size = MultiplyWithoutOverflow(output_size, dim.size());\n+      if (new_output_size < 0) {\n+        VLOG(1) << \"Overflow encountered when estimating cost, multiplying \"\n+                << output_size << \" with \" << dim.size();\n+        return -1;\n+      }\n+      output_size = new_output_size;\n     }\n     total_output_size += output_size;\n     VLOG(1) << \"Output Size: \" << output_size\n"
+}
+Patch applied successfully
+
+tokens used
+input: 1,100
+cache read: 10,752
+cache write: 0
+output: 531
+reasoning output: 391
+
+The adapted patch applies cleanly in hunk validation. I’m applying exactly those target-compatible changes now.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target files and equivalent code locations",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate adapted hunks against target base",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply minimal backport changes",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Inspect final diff",
+      "status": "pending",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target files and equivalent code locations",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate adapted hunks against target base",
+    "status": "completed",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply minimal backport changes",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Inspect final diff",
+    "status": "pending",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 1,011
+cache read: 11,776
+cache write: 0
+output: 115
+reasoning output: 0
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/grappler/costs/BUILD\n@@\n         \"//tensorflow/core:lib\",\n         \"//tensorflow/core:protos_all_cc\",\n         \"//tensorflow/core/grappler/clusters:utils\",\n+        \"//tensorflow/core/util:overflow\",\n     ] + tf_protos_grappler(),\n )\n*** Update File: tensorflow/core/grappler/costs/op_level_cost_estimator.cc\n@@\n #include \"tensorflow/core/grappler/costs/op_context.h\"\n #include \"tensorflow/core/grappler/costs/utils.h\"\n #include \"tensorflow/core/platform/errors.h\"\n+#include \"tensorflow/core/util/overflow.h\"\n@@\n     auto output_shape = MaybeGetMinimumShape(original_output_shape, num_dims,\n                                              found_unknown_shapes);\n     for (const auto& dim : output_shape.dim()) {\n-      output_size *= dim.size();\n+      int64 new_output_size = MultiplyWithoutOverflow(output_size, dim.size());\n+      if (new_output_size < 0) {\n+        VLOG(1) << \"Overflow encountered when estimating cost, multiplying \"\n+                << output_size << \" with \" << dim.size();\n+        return -1;\n+      }\n+      output_size = new_output_size;\n     }\n     total_output_size += output_size;\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/grappler/costs/BUILD
+M tensorflow/core/grappler/costs/op_level_cost_estimator.cc
+
+tokens used
+input: 1,260
+cache read: 11,776
+cache write: 0
+output: 327
+reasoning output: 0
+
+The source files are updated. I’m checking the resulting diff for scope and formatting.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target files and equivalent code locations",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate adapted hunks against target base",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply minimal backport changes",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Inspect final diff",
+      "status": "in_progress",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target files and equivalent code locations",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate adapted hunks against target base",
+    "status": "completed",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply minimal backport changes",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Inspect final diff",
+    "status": "in_progress",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 608
+cache read: 12,800
+cache write: 0
+output: 111
+reasoning output: 0
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/grappler/costs/BUILD tensorflow/core/grappler/costs/op_level_cost_estimator.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0247-b2b3444b71ea",
+  "timeout": 120000
+}
+warning: in the working copy of 'tensorflow/core/grappler/costs/BUILD', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'tensorflow/core/grappler/costs/op_level_cost_estimator.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/grappler/costs/BUILD b/tensorflow/core/grappler/costs/BUILD
+index aae2af92e4..f9d93cf61d 100644
+--- a/tensorflow/core/grappler/costs/BUILD
++++ b/tensorflow/core/grappler/costs/BUILD
+@@ -338,6 +338,7 @@ cc_library(
+         "//tensorflow/core:lib",
+         "//tensorflow/core:protos_all_cc",
+         "//tensorflow/core/grappler/clusters:utils",
++        "//tensorflow/core/util:overflow",
+     ] + tf_protos_grappler(),
+ )
+ 
+diff --git a/tensorflow/core/grappler/costs/op_level_cost_estimator.cc b/tensorflow/core/grappler/costs/op_level_cost_estimator.cc
+index 32cca991f4..990c8a7fd5 100644
+--- a/tensorflow/core/grappler/costs/op_level_cost_estimator.cc
++++ b/tensorflow/core/grappler/costs/op_level_cost_estimator.cc
+@@ -27,6 +27,7 @@ limitations under the License.
+ #include "tensorflow/core/grappler/costs/op_context.h"
+ #include "tensorflow/core/grappler/costs/utils.h"
+ #include "tensorflow/core/platform/errors.h"
++#include "tensorflow/core/util/overflow.h"
+ 
+ namespace tensorflow {
+ namespace grappler {
+@@ -1598,7 +1599,13 @@ int64 OpLevelCostEstimator::CalculateOutputSize(const OpInfo& op_info,
+     auto output_shape = MaybeGetMinimumShape(original_output_shape, num_dims,
+                                              found_unknown_shapes);
+     for (const auto& dim : output_shape.dim()) {
+-      output_size *= dim.size();
++      int64 new_output_size = MultiplyWithoutOverflow(output_size, dim.size());
++      if (new_output_size < 0) {
++        VLOG(1) << "Overflow encountered when estimating cost, multiplying "
++                << output_size << " with " << dim.size();
++        return -1;
++      }
++      output_size = new_output_size;
+     }
+     total_output_size += output_size;
+     VLOG(1) << "Output Size: " << output_size
+
+tokens used
+input: 853
+cache read: 12,800
+cache write: 0
+output: 91
+reasoning output: 0
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target files and equivalent code locations",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate adapted hunks against target base",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply minimal backport changes",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Inspect final diff",
+      "status": "completed",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target files and equivalent code locations",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate adapted hunks against target base",
+    "status": "completed",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply minimal backport changes",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Inspect final diff",
+    "status": "completed",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 1,508
+cache read: 12,800
+cache write: 0
+output: 88
+reasoning output: 15
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/grappler/costs/BUILD b/tensorflow/core/grappler/costs/BUILD
+    index aae2af92e4..f9d93cf61d 100644
+    --- a/tensorflow/core/grappler/costs/BUILD
+    +++ b/tensorflow/core/grappler/costs/BUILD
+    @@ -338,6 +338,7 @@ cc_library(
+             "//tensorflow/core:lib",
+             "//tensorflow/core:protos_all_cc",
+             "//tensorflow/core/grappler/clusters:utils",
+    +        "//tensorflow/core/util:overflow",
+         ] + tf_protos_grappler(),
+     )
+     
+    diff --git a/tensorflow/core/grappler/costs/op_level_cost_estimator.cc b/tensorflow/core/grappler/costs/op_level_cost_estimator.cc
+    index 32cca991f4..990c8a7fd5 100644
+    --- a/tensorflow/core/grappler/costs/op_level_cost_estimator.cc
+    +++ b/tensorflow/core/grappler/costs/op_level_cost_estimator.cc
+    @@ -27,6 +27,7 @@ limitations under the License.
+     #include "tensorflow/core/grappler/costs/op_context.h"
+     #include "tensorflow/core/grappler/costs/utils.h"
+     #include "tensorflow/core/platform/errors.h"
+    +#include "tensorflow/core/util/overflow.h"
+     
+     namespace tensorflow {
+     namespace grappler {
+    @@ -1598,7 +1599,13 @@ int64 OpLevelCostEstimator::CalculateOutputSize(const OpInfo& op_info,
+         auto output_shape = MaybeGetMinimumShape(original_output_shape, num_dims,
+                                                  found_unknown_shapes);
+         for (const auto& dim : output_shape.dim()) {
+    -      output_size *= dim.size();
+    +      int64 new_output_size = MultiplyWithoutOverflow(output_size, dim.size());
+    +      if (new_output_size < 0) {
+    +        VLOG(1) << "Overflow encountered when estimating cost, multiplying "
+    +                << output_size << " with " << dim.size();
+    +        return -1;
+    +      }
+    +      output_size = new_output_size;
+         }
+         total_output_size += output_size;
+         VLOG(1) << "Output Size: " << output_size
+  notes: >
+    Backported the overflow-safe output size multiplication and added the required overflow utility dependency for TensorFlow 2.5.3.
+```
+
+tokens used
+input: 720
+cache read: 13,824
+cache write: 0
+output: 564
+reasoning output: 0

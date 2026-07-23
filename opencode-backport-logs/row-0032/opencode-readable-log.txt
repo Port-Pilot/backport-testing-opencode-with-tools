@@ -1,0 +1,1806 @@
+I’ll inspect the target-side files and symbols first, then apply the minimal equivalent rank checks and tests if the file layout matches TensorFlow 2.12.1.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target TensorFlow 2.12.1 code locations for searchsorted op and tests",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Validate uncertain hunks against target base",
+      "status": "pending",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply minimal backport changes",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "content": "Review resulting diff",
+      "status": "pending",
+      "priority": "high"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target TensorFlow 2.12.1 code locations for searchsorted op and tests",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Validate uncertain hunks against target base",
+    "status": "pending",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply minimal backport changes",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "content": "Review resulting diff",
+    "status": "pending",
+    "priority": "high"
+  }
+]
+
+tokens used
+input: 5,425
+cache read: 4,608
+cache write: 0
+output: 139
+reasoning output: 0
+
+tool: viewcode
+{
+  "ref": "1e8f3f6a3e899fe75d3c394d4fe07f2c2b69e2ec",
+  "path": "tensorflow/python/ops/array_ops_test.py",
+  "startline": 1,
+  "endline": 160
+}
+This file only has 112 lines. Here are lines 1 through 112.
+
+# Copyright 2017 The TensorFlow Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+"""Tests for array operations."""
+
+from tensorflow.python.eager import backprop
+from tensorflow.python.eager import def_function
+from tensorflow.python.framework import dtypes
+from tensorflow.python.framework import tensor_spec
+from tensorflow.python.framework import test_util
+from tensorflow.python.ops import array_ops
+from tensorflow.python.ops import math_ops
+from tensorflow.python.ops import random_ops
+from tensorflow.python.platform import test
+
+
+class ArrayOpTest(test.TestCase):
+
+  def testGatherGradHasPartialStaticShape(self):
+    # Create a tensor with an unknown dim 1.
+    x = random_ops.random_normal([4, 10, 10])
+    x = array_ops.gather(
+        x,
+        array_ops.reshape(array_ops.where_v2(x[0, :, 0] > 0.5), [-1]),
+        axis=1)
+    x.shape.assert_is_compatible_with([4, None, 10])
+
+    with backprop.GradientTape() as tape:
+      tape.watch(x)
+      a = array_ops.gather(array_ops.gather(x, [0, 1]), [0, 1])
+    grad_a = tape.gradient(a, x)
+    with backprop.GradientTape() as tape:
+      tape.watch(x)
+      b = array_ops.gather(array_ops.gather(x, [2, 3], axis=2), [0, 1])
+    grad_b = tape.gradient(b, x)
+
+    # We make sure that the representation of the shapes are correct; the shape
+    # equality check will always eval to false due to the shapes being partial.
+    grad_a.shape.assert_is_compatible_with([None, None, 10])
+    grad_b.shape.assert_is_compatible_with([4, None, 10])
+
+  def testReshapeShapeInference(self):
+    # Create a tensor with an unknown dim 1.
+    x = random_ops.random_normal([4, 10, 10])
+    x = array_ops.gather(
+        x,
+        array_ops.reshape(array_ops.where_v2(x[0, :, 0] > 0.5), [-1]),
+        axis=1)
+    x.shape.assert_is_compatible_with([4, None, 10])
+    a = array_ops.reshape(x, array_ops.shape(x))
+    a.shape.assert_is_compatible_with([4, None, 10])
+    b = array_ops.reshape(x, math_ops.cast(array_ops.shape(x), dtypes.int64))
+    b.shape.assert_is_compatible_with([4, None, 10])
+
+    # We do not shape-infer across a tf.cast into anything that's not tf.int32
+    # or tf.int64, since they might end up mangling the shape.
+    c = array_ops.reshape(
+        x,
+        math_ops.cast(
+            math_ops.cast(array_ops.shape(x), dtypes.float32), dtypes.int32))
+    c.shape.assert_is_compatible_with([None, None, None])
+
+  def testEmptyMeshgrid(self):
+    self.assertEqual(array_ops.meshgrid(), [])
+
+  def testSlicedPartialShapeInference(self):
+
+    @def_function.function(autograph=False)
+    def g(x):
+      return array_ops.zeros([array_ops.shape(x)[0]])
+
+    conc = g.get_concrete_function(tensor_spec.TensorSpec([10, None]))
+    self.assertAllEqual(conc.output_shapes.as_list(), [10])
+
+  def testIdentityOnSlicedPartialShapeInference(self):
+
+    @def_function.function(autograph=False)
+    def g(x):
+      return array_ops.zeros([array_ops.identity(array_ops.shape(x)[0])])
+
+    conc = g.get_concrete_function(tensor_spec.TensorSpec([10, None]))
+    self.assertAllEqual(conc.output_shapes.as_list(), [10])
+
+  @test_util.run_in_graph_and_eager_modes
+  def testParallelConcatFailsWithRankZeroShape(self):
+    op = array_ops.ParallelConcat
+    para = {"shape": 0, "values": [1]}
+
+    def func():
+      y = op(**para)
+      return y
+
+    with self.assertRaisesRegex(
+        Exception, "(rank|dimension) of .* must be greater than .* 0"
+    ):
+      func()
+
+
+if __name__ == "__main__":
+  test.main()
+
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: viewcode
+{
+  "ref": "1e8f3f6a3e899fe75d3c394d4fe07f2c2b69e2ec",
+  "path": "tensorflow/core/kernels/searchsorted_op.cc",
+  "startline": 1,
+  "endline": 230
+}
+Here are lines 1 through 230.
+
+/* Copyright 2018 The TensorFlow Authors. All Rights Reserved.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+==============================================================================*/
+
+#define EIGEN_USE_THREADS
+
+#include "tensorflow/core/kernels/searchsorted_op.h"
+
+#include "tensorflow/core/framework/bounds_check.h"
+#include "tensorflow/core/framework/op_kernel.h"
+#include "tensorflow/core/framework/register_types.h"
+#include "tensorflow/core/framework/tensor.h"
+#include "tensorflow/core/framework/tensor_shape.h"
+#include "tensorflow/core/kernels/fill_functor.h"
+#include "tensorflow/core/lib/core/bits.h"
+#include "tensorflow/core/platform/logging.h"
+#include "tensorflow/core/platform/threadpool.h"
+#include "tensorflow/core/platform/types.h"
+
+namespace tensorflow {
+typedef Eigen::ThreadPoolDevice CPUDevice;
+typedef Eigen::GpuDevice GPUDevice;
+
+namespace functor {
+template <typename T, typename OutType>
+struct UpperBoundFunctor<CPUDevice, T, OutType> {
+  static Status Compute(OpKernelContext* context,
+                        const typename TTypes<T, 1>::ConstTensor& sorted_inputs,
+                        const typename TTypes<T, 1>::ConstTensor& values,
+                        int batch_size, int num_inputs, int num_values,
+                        typename TTypes<OutType, 1>::Tensor* output) {
+    auto work_fn = [&](int64_t first, int64_t last) {
+      for (int b = 0; b < batch_size; ++b) {
+        const T* sorted_inputs_ptr = sorted_inputs.data() + b * num_inputs;
+        OutType* output_ptr = output->data() + b * num_values;
+        for (int i = first; i < last; ++i) {
+          output_ptr[i] = std::upper_bound(sorted_inputs_ptr,
+                                           sorted_inputs_ptr + num_inputs,
+                                           values(i + b * num_values)) -
+                          sorted_inputs_ptr;
+        }
+      }
+    };
+    auto worker_threads = *(context->device()->tensorflow_cpu_worker_threads());
+    thread::ThreadPool* thread_pool = worker_threads.workers;
+    const float kCostMultiplier = 1.f;  // Can be tuned to minimize overhead
+    int64_t cost_per_unit =
+        kCostMultiplier * batch_size * Log2Ceiling(num_inputs);
+    thread_pool->ParallelFor(num_values, cost_per_unit, work_fn);
+    return OkStatus();
+  }
+};
+
+template <typename T, typename OutType>
+struct LowerBoundFunctor<CPUDevice, T, OutType> {
+  static Status Compute(OpKernelContext* context,
+                        const typename TTypes<T, 1>::ConstTensor& sorted_inputs,
+                        const typename TTypes<T, 1>::ConstTensor& values,
+                        int batch_size, int num_inputs, int num_values,
+                        typename TTypes<OutType, 1>::Tensor* output) {
+    auto work_fn = [&](int64_t first, int64_t last) {
+      for (int b = 0; b < batch_size; ++b) {
+        const T* sorted_inputs_ptr = sorted_inputs.data() + b * num_inputs;
+        OutType* output_ptr = output->data() + b * num_values;
+        for (int i = first; i < last; ++i) {
+          output_ptr[i] = std::lower_bound(sorted_inputs_ptr,
+                                           sorted_inputs_ptr + num_inputs,
+                                           values(i + b * num_values)) -
+                          sorted_inputs_ptr;
+        }
+      }
+    };
+    auto worker_threads = *(context->device()->tensorflow_cpu_worker_threads());
+    thread::ThreadPool* thread_pool = worker_threads.workers;
+    const float kCostMultiplier = 1.f;  // Can be tuned to minimize overhead
+    int64_t cost_per_unit =
+        kCostMultiplier * batch_size * Log2Ceiling(num_inputs);
+    thread_pool->ParallelFor(num_values, cost_per_unit, work_fn);
+    return OkStatus();
+  }
+};
+}  // namespace functor
+
+template <typename Device, typename T, typename OutType>
+class UpperBoundOp : public OpKernel {
+ public:
+  explicit UpperBoundOp(OpKernelConstruction* ctx) : OpKernel(ctx) {}
+
+  void Compute(OpKernelContext* ctx) override {
+    const Tensor& sorted_inputs_t = ctx->input(0);
+    const Tensor& values_t = ctx->input(1);
+
+    // inputs must be at least a matrix
+    OP_REQUIRES(
+        ctx, sorted_inputs_t.shape().dims() >= 2,
+        errors::InvalidArgument("sorted input argument must be a matrix"));
+    // must have same batch dim_size for both
+    OP_REQUIRES(ctx, sorted_inputs_t.dim_size(0) == values_t.dim_size(0),
+                Status(error::INVALID_ARGUMENT,
+                       "Leading dim_size of both tensors must match."));
+
+    // this is required because we do indexing in int32 on the GPU
+    OP_REQUIRES(ctx, values_t.NumElements() < std::numeric_limits<int>::max(),
+                Status(error::INVALID_ARGUMENT,
+                       "values tensor size must less than INT_MAX"));
+
+    Tensor* output_t;
+    OP_REQUIRES_OK(ctx, ctx->allocate_output(0, values_t.shape(), &output_t));
+
+    if (output_t->dtype() == DT_INT32) {
+      OP_REQUIRES(ctx,
+                  FastBoundsCheck(sorted_inputs_t.dim_size(1),
+                                  std::numeric_limits<int>::max()),
+                  errors::InvalidArgument("trailing dim_size must less than "
+                                          "INT_MAX for int32 output type, was ",
+                                          sorted_inputs_t.dim_size(1)));
+    }
+
+    auto output = output_t->template flat<OutType>();
+    const auto sorted_inputs = sorted_inputs_t.template flat<T>();
+    const auto values = values_t.template flat<T>();
+
+    // For empty inputs, all values will be placed at the zeroth position.
+    if (sorted_inputs.size() == 0) {
+      functor::SetZeroFunctor<Device, OutType> set_zero;
+      set_zero(ctx->eigen_device<Device>(), output);
+      return;
+    }
+
+    OP_REQUIRES_OK(
+        ctx, functor::UpperBoundFunctor<Device, T, OutType>::Compute(
+                 ctx, sorted_inputs, values, sorted_inputs_t.dim_size(0),
+                 sorted_inputs_t.dim_size(1), values_t.dim_size(1), &output));
+  }
+};
+
+template <typename Device, typename T, typename OutType>
+class LowerBoundOp : public OpKernel {
+ public:
+  explicit LowerBoundOp(OpKernelConstruction* ctx) : OpKernel(ctx) {}
+
+  void Compute(OpKernelContext* ctx) override {
+    const Tensor& sorted_inputs_t = ctx->input(0);
+    const Tensor& values_t = ctx->input(1);
+
+    // inputs must be at least a matrix
+    OP_REQUIRES(
+        ctx, sorted_inputs_t.shape().dims() >= 2,
+        errors::InvalidArgument("sorted input argument must be a matrix"));
+    // must have same batch dim_size for both
+    OP_REQUIRES(ctx, sorted_inputs_t.dim_size(0) == values_t.dim_size(0),
+                Status(error::INVALID_ARGUMENT,
+                       "Leading dim_size of both tensors must match."));
+
+    // this is required because we do indexing in int32 on the GPU
+    OP_REQUIRES(ctx, values_t.NumElements() < std::numeric_limits<int>::max(),
+                Status(error::INVALID_ARGUMENT,
+                       "values tensor size must less than INT_MAX"));
+
+    Tensor* output_t;
+    OP_REQUIRES_OK(ctx, ctx->allocate_output(0, values_t.shape(), &output_t));
+
+    if (output_t->dtype() == DT_INT32) {
+      OP_REQUIRES(ctx,
+                  FastBoundsCheck(sorted_inputs_t.dim_size(1),
+                                  std::numeric_limits<int>::max()),
+                  errors::InvalidArgument("trailing dim_size must less than "
+                                          "INT_MAX for int32 output type, was ",
+                                          sorted_inputs_t.dim_size(1)));
+    }
+
+    auto output = output_t->template flat<OutType>();
+    const auto sorted_inputs = sorted_inputs_t.template flat<T>();
+    const auto values = values_t.template flat<T>();
+
+    // For empty inputs, all values will be placed at the zeroth position.
+    if (sorted_inputs.size() == 0) {
+      functor::SetZeroFunctor<Device, OutType> set_zero;
+      set_zero(ctx->eigen_device<Device>(), output);
+      return;
+    }
+
+    OP_REQUIRES_OK(
+        ctx, functor::LowerBoundFunctor<Device, T, OutType>::Compute(
+                 ctx, sorted_inputs, values, sorted_inputs_t.dim_size(0),
+                 sorted_inputs_t.dim_size(1), values_t.dim_size(1), &output));
+  }
+};
+
+#define REGISTER_KERNELS(type)                                    \
+  REGISTER_KERNEL_BUILDER(Name("UpperBound")                      \
+                              .Device(DEVICE_CPU)                 \
+                              .TypeConstraint<type>("T")          \
+                              .TypeConstraint<int32>("out_type"), \
+                          UpperBoundOp<CPUDevice, type, int32>);
+
+TF_CALL_REAL_NUMBER_TYPES(REGISTER_KERNELS);
+#undef REGISTER_KERNELS
+
+#define REGISTER_KERNELS(type)                                      \
+  REGISTER_KERNEL_BUILDER(Name("UpperBound")                        \
+                              .Device(DEVICE_CPU)                   \
+                              .TypeConstraint<type>("T")            \
+                              .TypeConstraint<int64_t>("out_type"), \
+                          UpperBoundOp<CPUDevice, type, int64>);
+
+TF_CALL_REAL_NUMBER_TYPES(REGISTER_KERNELS);
+#undef REGISTER_KERNELS
+
+#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+
+#define REGISTER_KERNELS(type)                                    \
+  REGISTER_KERNEL_BUILDER(Name("UpperBound")                      \
+                              .Device(DEVICE_GPU)                 \
+                              .TypeConstraint<type>("T")          \
+                              .TypeConstraint<int32>("out_type"), \
+                          UpperBoundOp<GPUDevice, type, int32>);
+
+TF_CALL_REAL_NUMBER_TYPES(REGISTER_KERNELS);
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: locate_symbol
+{
+  "ref": "1e8f3f6a3e899fe75d3c394d4fe07f2c2b69e2ec",
+  "symbol": "UpperBoundOp"
+}
+tensorflow/compiler/tf2xla/kernels/lower_upper_bound_ops.cc:99
+tensorflow/core/kernels/searchsorted_op.cc:96
+tensorflow/compiler/tf2xla/kernels/lower_upper_bound_ops.cc:101
+tensorflow/core/kernels/searchsorted_op.cc:98
+tensorflow/compiler/mlir/xla/transforms/legalize_tf_with_tf2xla.cc:281
+tensorflow/compiler/tf2xla/kernels/lower_upper_bound_ops.cc:113
+tensorflow/core/kernels/searchsorted_op.cc:206
+tensorflow/core/kernels/searchsorted_op.cc:216
+tensorflow/core/kernels/searchsorted_op.cc:228
+tensorflow/core/kernels/searchsorted_op.cc:238
+
+tool: locate_symbol
+{
+  "ref": "1e8f3f6a3e899fe75d3c394d4fe07f2c2b69e2ec",
+  "symbol": "ArrayOpsTest"
+}
+tensorflow/core/ops/array_ops_test.cc:33
+tensorflow/core/ops/array_ops_test.cc:54
+tensorflow/core/ops/array_ops_test.cc:66
+tensorflow/core/ops/array_ops_test.cc:81
+tensorflow/core/ops/array_ops_test.cc:133
+tensorflow/core/ops/array_ops_test.cc:172
+tensorflow/core/ops/array_ops_test.cc:194
+tensorflow/core/ops/array_ops_test.cc:217
+tensorflow/core/ops/array_ops_test.cc:224
+tensorflow/core/ops/array_ops_test.cc:249
+tensorflow/core/ops/array_ops_test.cc:257
+tensorflow/core/ops/array_ops_test.cc:269
+tensorflow/core/ops/array_ops_test.cc:277
+tensorflow/core/ops/array_ops_test.cc:286
+tensorflow/core/ops/array_ops_test.cc:298
+tensorflow/core/ops/array_ops_test.cc:310
+tensorflow/core/ops/array_ops_test.cc:323
+tensorflow/core/ops/array_ops_test.cc:330
+tensorflow/core/ops/array_ops_test.cc:396
+tensorflow/core/ops/array_ops_test.cc:408
+
+tokens used
+input: 589
+cache read: 9,728
+cache write: 0
+output: 249
+reasoning output: 0
+
+The target files contain the same vulnerable checks: `sorted_inputs` only requires rank >= 2 and `values` rank is unchecked before `dim_size(1)`. I’m validating a minimal patch that mirrors the 2.13 fix against the target base before editing.
+
+tool: validate
+{
+  "ref": "1e8f3f6a3e899fe75d3c394d4fe07f2c2b69e2ec",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/searchsorted_op.cc b/tensorflow/core/kernels/searchsorted_op.cc\n--- a/tensorflow/core/kernels/searchsorted_op.cc\n+++ b/tensorflow/core/kernels/searchsorted_op.cc\n@@ -101,10 +101,20 @@ class UpperBoundOp : public OpKernel {\n     const Tensor& sorted_inputs_t = ctx->input(0);\n     const Tensor& values_t = ctx->input(1);\n \n-    // inputs must be at least a matrix\n+    // Inputs must be a matrix\n+    // This replicates the shape requirements for the op in array_ops.cc\n     OP_REQUIRES(\n-        ctx, sorted_inputs_t.shape().dims() >= 2,\n-        errors::InvalidArgument(\"sorted input argument must be a matrix\"));\n+        ctx, sorted_inputs_t.shape().dims() == 2,\n+        errors::InvalidArgument(absl::StrCat(\n+            \"Shape must be rank 2 but is rank \", sorted_inputs_t.shape().dims(),\n+            \" for \"\n+            \"`sorted_inputs` argument\")));\n+    // Values must be a matrix\n+    // This replicates the shape requirements for the op in array_ops.cc\n+    OP_REQUIRES(ctx, values_t.shape().dims() == 2,\n+                errors::InvalidArgument(absl::StrCat(\n+                    \"Shape must be rank 2 but is rank \",\n+                    values_t.shape().dims(), \" for `values` argument\")));\n     // must have same batch dim_size for both\n     OP_REQUIRES(ctx, sorted_inputs_t.dim_size(0) == values_t.dim_size(0),\n                 Status(error::INVALID_ARGUMENT,\n@@ -154,10 +164,20 @@ class LowerBoundOp : public OpKernel {\n     const Tensor& sorted_inputs_t = ctx->input(0);\n     const Tensor& values_t = ctx->input(1);\n \n-    // inputs must be at least a matrix\n+    // Inputs must be a matrix\n+    // This replicates the shape requirements for the op in array_ops.cc\n     OP_REQUIRES(\n-        ctx, sorted_inputs_t.shape().dims() >= 2,\n-        errors::InvalidArgument(\"sorted input argument must be a matrix\"));\n+        ctx, sorted_inputs_t.shape().dims() == 2,\n+        errors::InvalidArgument(absl::StrCat(\n+            \"Shape must be rank 2 but is rank \", sorted_inputs_t.shape().dims(),\n+            \" for \"\n+            \"`sorted_inputs` argument\")));\n+    // Values must be a matrix\n+    // This replicates the shape requirements for the op in array_ops.cc\n+    OP_REQUIRES(ctx, values_t.shape().dims() == 2,\n+                errors::InvalidArgument(absl::StrCat(\n+                    \"Shape must be rank 2 but is rank \",\n+                    values_t.shape().dims(), \" for `values` argument\")));\n     // must have same batch dim_size for both\n     OP_REQUIRES(ctx, sorted_inputs_t.dim_size(0) == values_t.dim_size(0),\n                 Status(error::INVALID_ARGUMENT,\ndiff --git a/tensorflow/python/ops/array_ops_test.py b/tensorflow/python/ops/array_ops_test.py\n--- a/tensorflow/python/ops/array_ops_test.py\n+++ b/tensorflow/python/ops/array_ops_test.py\n@@ -20,6 +20,7 @@ from tensorflow.python.framework import dtypes\n from tensorflow.python.framework import tensor_spec\n from tensorflow.python.framework import test_util\n from tensorflow.python.ops import array_ops\n+from tensorflow.python.ops import gen_array_ops\n from tensorflow.python.ops import math_ops\n from tensorflow.python.ops import random_ops\n from tensorflow.python.platform import test\n@@ -106,6 +107,43 @@ class ArrayOpTest(test.TestCase):\n     ):\n       func()\n \n+  @test_util.run_in_graph_and_eager_modes\n+  def testUpperBoundValuesWrongRank(self):\n+    # Used to cause a segfault, b/266336058\n+    arg0 = array_ops.zeros([2, 3], dtype=dtypes.float32)\n+    arg1 = array_ops.zeros([2, 1, 0], dtype=dtypes.float32)\n+    with self.assertRaisesRegex(\n+        Exception, \"Shape must be rank 2 but is rank 3\"\n+    ):\n+      gen_array_ops.upper_bound(arg0, arg1)\n+\n+  def testLowerBoundValuesWrongRank(self):\n+    # Used to cause a segfault, b/266336058\n+    arg0 = array_ops.zeros([2, 3], dtype=dtypes.float32)\n+    arg1 = array_ops.zeros([2, 1, 0], dtype=dtypes.float32)\n+    with self.assertRaisesRegex(\n+        Exception, \"Shape must be rank 2 but is rank 3\"\n+    ):\n+      gen_array_ops.lower_bound(arg0, arg1)\n+\n+  def testUpperBoundInputsWrongRank(self):\n+    # Used to cause a segfault, b/266336058\n+    arg0 = array_ops.zeros([2, 1, 0], dtype=dtypes.float32)\n+    arg1 = array_ops.zeros([2, 3], dtype=dtypes.float32)\n+    with self.assertRaisesRegex(\n+        Exception, \"Shape must be rank 2 but is rank 3\"\n+    ):\n+      gen_array_ops.upper_bound(arg0, arg1)\n+\n+  def testLowerBoundInputsWrongRank(self):\n+    # Used to cause a segfault, b/266336058\n+    arg0 = array_ops.zeros([2, 1, 0], dtype=dtypes.float32)\n+    arg1 = array_ops.zeros([2, 3], dtype=dtypes.float32)\n+    with self.assertRaisesRegex(\n+        Exception, \"Shape must be rank 2 but is rank 3\"\n+    ):\n+      gen_array_ops.lower_bound(arg0, arg1)\n+\n \n if __name__ == \"__main__\":\n   test.main()\n"
+}
+Patch applied successfully
+
+tokens used
+input: 4,511
+cache read: 9,728
+cache write: 0
+output: 1,523
+reasoning output: 171
+
+The hunk applies cleanly to the target base. I’m applying the kernel rank validation and the focused regression tests now.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target TensorFlow 2.12.1 code locations for searchsorted op and tests",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate uncertain hunks against target base",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply minimal backport changes",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Review resulting diff",
+      "status": "pending",
+      "priority": "high"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target TensorFlow 2.12.1 code locations for searchsorted op and tests",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate uncertain hunks against target base",
+    "status": "completed",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply minimal backport changes",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Review resulting diff",
+    "status": "pending",
+    "priority": "high"
+  }
+]
+
+tokens used
+input: 2,122
+cache read: 13,824
+cache write: 0
+output: 132
+reasoning output: 12
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/kernels/searchsorted_op.cc\n@@\n-    // inputs must be at least a matrix\n+    // Inputs must be a matrix\n+    // This replicates the shape requirements for the op in array_ops.cc\n     OP_REQUIRES(\n-        ctx, sorted_inputs_t.shape().dims() >= 2,\n-        errors::InvalidArgument(\"sorted input argument must be a matrix\"));\n+        ctx, sorted_inputs_t.shape().dims() == 2,\n+        errors::InvalidArgument(absl::StrCat(\n+            \"Shape must be rank 2 but is rank \", sorted_inputs_t.shape().dims(),\n+            \" for \"\n+            \"`sorted_inputs` argument\")));\n+    // Values must be a matrix\n+    // This replicates the shape requirements for the op in array_ops.cc\n+    OP_REQUIRES(ctx, values_t.shape().dims() == 2,\n+                errors::InvalidArgument(absl::StrCat(\n+                    \"Shape must be rank 2 but is rank \",\n+                    values_t.shape().dims(), \" for `values` argument\")));\n@@\n-    // inputs must be at least a matrix\n+    // Inputs must be a matrix\n+    // This replicates the shape requirements for the op in array_ops.cc\n     OP_REQUIRES(\n-        ctx, sorted_inputs_t.shape().dims() >= 2,\n-        errors::InvalidArgument(\"sorted input argument must be a matrix\"));\n+        ctx, sorted_inputs_t.shape().dims() == 2,\n+        errors::InvalidArgument(absl::StrCat(\n+            \"Shape must be rank 2 but is rank \", sorted_inputs_t.shape().dims(),\n+            \" for \"\n+            \"`sorted_inputs` argument\")));\n+    // Values must be a matrix\n+    // This replicates the shape requirements for the op in array_ops.cc\n+    OP_REQUIRES(ctx, values_t.shape().dims() == 2,\n+                errors::InvalidArgument(absl::StrCat(\n+                    \"Shape must be rank 2 but is rank \",\n+                    values_t.shape().dims(), \" for `values` argument\")));\n*** Update File: tensorflow/python/ops/array_ops_test.py\n@@\n from tensorflow.python.framework import tensor_spec\n from tensorflow.python.framework import test_util\n from tensorflow.python.ops import array_ops\n+from tensorflow.python.ops import gen_array_ops\n from tensorflow.python.ops import math_ops\n from tensorflow.python.ops import random_ops\n from tensorflow.python.platform import test\n@@\n     ):\n       func()\n \n+  @test_util.run_in_graph_and_eager_modes\n+  def testUpperBoundValuesWrongRank(self):\n+    # Used to cause a segfault, b/266336058\n+    arg0 = array_ops.zeros([2, 3], dtype=dtypes.float32)\n+    arg1 = array_ops.zeros([2, 1, 0], dtype=dtypes.float32)\n+    with self.assertRaisesRegex(\n+        Exception, \"Shape must be rank 2 but is rank 3\"\n+    ):\n+      gen_array_ops.upper_bound(arg0, arg1)\n+\n+  def testLowerBoundValuesWrongRank(self):\n+    # Used to cause a segfault, b/266336058\n+    arg0 = array_ops.zeros([2, 3], dtype=dtypes.float32)\n+    arg1 = array_ops.zeros([2, 1, 0], dtype=dtypes.float32)\n+    with self.assertRaisesRegex(\n+        Exception, \"Shape must be rank 2 but is rank 3\"\n+    ):\n+      gen_array_ops.lower_bound(arg0, arg1)\n+\n+  def testUpperBoundInputsWrongRank(self):\n+    # Used to cause a segfault, b/266336058\n+    arg0 = array_ops.zeros([2, 1, 0], dtype=dtypes.float32)\n+    arg1 = array_ops.zeros([2, 3], dtype=dtypes.float32)\n+    with self.assertRaisesRegex(\n+        Exception, \"Shape must be rank 2 but is rank 3\"\n+    ):\n+      gen_array_ops.upper_bound(arg0, arg1)\n+\n+  def testLowerBoundInputsWrongRank(self):\n+    # Used to cause a segfault, b/266336058\n+    arg0 = array_ops.zeros([2, 1, 0], dtype=dtypes.float32)\n+    arg1 = array_ops.zeros([2, 3], dtype=dtypes.float32)\n+    with self.assertRaisesRegex(\n+        Exception, \"Shape must be rank 2 but is rank 3\"\n+    ):\n+      gen_array_ops.lower_bound(arg0, arg1)\n+\n \n if __name__ == \"__main__\":\n   test.main()\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/kernels/searchsorted_op.cc
+M tensorflow/python/ops/array_ops_test.py
+
+tokens used
+input: 363
+cache read: 15,872
+cache write: 0
+output: 1,133
+reasoning output: 0
+
+The source and test changes are applied. I’m reviewing the resulting diff and checking whether the edited C++ file already has the necessary include context for `absl::StrCat`.
+
+tool: grep
+{
+  "pattern": "absl::StrCat|str_cat",
+  "path": "tensorflow/core/kernels/searchsorted_op.cc"
+}
+Found 100 matches (more matches available)
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0032-1e8f3f6a3e89\tensorflow\core\kernels\autotune_conv_impl.h:
+  Line 86:           absl::StrCat("Profiling failure on CUDNN engine ", desc.ToString(),
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0032-1e8f3f6a3e89\tensorflow\core\kernels\batch_kernels.cc:
+  Line 18: #include "absl/strings/str_cat.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0032-1e8f3f6a3e89\tensorflow\core\kernels\batching_util\basic_batch_scheduler_benchmark_test.cc:
+  Line 282:   return absl::StrCat(
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0032-1e8f3f6a3e89\tensorflow\core\kernels\batching_util\batch_resource_base.cc:
+  Line 20: #include "absl/strings/str_cat.h"
+
+  Line 56:   cell->GetCell(model_name, absl::StrCat(execution_batch_size), op_name)
+
+  Line 70:   cell->GetCell(model_name, absl::StrCat(execution_batch_size), op_name)
+
+  Line 954:           {{absl::StrCat(cost_type, kWithSmearSuffix), cost_with_smear},
+
+  Line 955:            {absl::StrCat(cost_type, kNoSmearSuffix), cost_no_smear}});
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0032-1e8f3f6a3e89\tensorflow\core\kernels\checkpoint_callback_manager.cc:
+  Line 21: #include "absl/strings/str_cat.h"
+
+  Line 51:       checkpoint_dir, absl::StrCat(checkpoint_id, ".", file_extension));
+
+  Line 86:       checkpoint_dir, absl::StrCat(checkpoint_id, ".", file_extension));
+
+  Line 142:       absl::StrCat("Failed to find a checkpoint id. prefix = ", prefix));
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0032-1e8f3f6a3e89\tensorflow\core\kernels\checkpoint_callback_manager_test.cc:
+  Line 20: #include "absl/strings/str_cat.h"
+
+  Line 166:     return absl::StrCat("MockContent1::", checkpoint_id);
+
+  Line 169:     return absl::StrCat("MockContent2::", checkpoint_id);
+
+  Line 195:     return absl::StrCat("MockContent::", checkpoint_id);
+
+  Line 282:     return absl::StrCat("MockContent::", checkpoint_id);
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0032-1e8f3f6a3e89\tensorflow\core\kernels\collective_ops.cc:
+  Line 18: #include "absl/strings/str_cat.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0032-1e8f3f6a3e89\tensorflow\core\kernels\control_flow_ops_test.cc:
+  Line 139:     std::string name = absl::StrCat("Identity", i);
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0032-1e8f3f6a3e89\tensorflow\core\kernels\conv_ops_gpu.h:
+  Line 24: #include "absl/strings/str_cat.h"
+
+  Line 65:                          absl::StrCat("Requested memory size (", byte_size,
+
+  Line 77:           absl::StrCat("Failed to allocate the requested memory size (",
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0032-1e8f3f6a3e89\tensorflow\core\kernels\conv_ops_test.cc:
+  Line 796:       Output arg = ops::Const(root.WithOpName(absl::StrCat("arg", i)),
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0032-1e8f3f6a3e89\tensorflow\core\kernels\data\batch_dataset_op_test.cc:
+  Line 309:     std::string name = absl::StrCat("Identity", i);
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0032-1e8f3f6a3e89\tensorflow\core\kernels\data\filter_dataset_op_test.cc:
+  Line 56:           absl::StrCat(FilterDatasetOp::kOtherArguments, "_", i));
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0032-1e8f3f6a3e89\tensorflow\core\kernels\data\experimental\assert_prev_dataset_op_test.cc:
+  Line 18: #include "absl/strings/str_cat.h"
+
+  Line 36:   message.set_name(absl::StrCat(name, "Dataset"));
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0032-1e8f3f6a3e89\tensorflow\core\kernels\data\fixed_length_record_dataset_op_test.cc:
+  Line 117:       absl::StrCat("HHHHH", "111", "222", "333", "FF"),
+
+  Line 118:       absl::StrCat("HHHHH", "aaa", "bbb", "FF")};
+
+  Line 138:       absl::StrCat("HHHHH", "111", "222", "333", "FF"),
+
+  Line 139:       absl::StrCat("HHHHH", "aaa", "bbb", "FF")};
+
+  Line 158:       absl::StrCat("HHHHH", "111", "222", "333", "FF"),
+
+  Line 159:       absl::StrCat("HHHHH", "aaa", "bbb", "FF")};
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0032-1e8f3f6a3e89\tensorflow\core\kernels\data\experimental\auto_shard_dataset_op_test.cc:
+  Line 208:     std::string name = absl::StrCat("Identity", i);
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0032-1e8f3f6a3e89\tensorflow\core\kernels\data\flat_map_dataset_op_test.cc:
+  Line 53:           absl::StrCat(FlatMapDatasetOp::kOtherArguments, "_", i));
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0032-1e8f3f6a3e89\tensorflow\core\kernels\data\experimental\data_service_dataset_op.cc:
+  Line 30: #include "absl/strings/str_cat.h"
+
+  Line 488:     dataset_id = absl::StrCat(dataset_id_int);
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0032-1e8f3f6a3e89\tensorflow\core\kernels\data\experimental\data_service_dataset_op.h:
+  Line 22: #include "absl/strings/str_cat.h"
+
+  Line 44:     return absl::StrCat(counter_);
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0032-1e8f3f6a3e89\tensorflow\core\kernels\data\interleave_dataset_op_test.cc:
+  Line 64:           absl::StrCat(InterleaveDatasetOp::kOtherArguments, "_", i));
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0032-1e8f3f6a3e89\tensorflow\core\kernels\data\iterator_ops.cc:
+  Line 1070:             s, absl::StrCat(
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0032-1e8f3f6a3e89\tensorflow\core\kernels\data\experimental\directed_interleave_dataset_op_test.cc:
+  Line 57:       input_names->emplace_back(absl::StrCat(
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0032-1e8f3f6a3e89\tensorflow\core\kernels\data\experimental\list_dataset_op_test.cc:
+  Line 53:       input_names->emplace_back(absl::StrCat("tensors_", i));
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0032-1e8f3f6a3e89\tensorflow\core\kernels\data\options_dataset_op.cc:
+  Line 44:                 errors::InvalidArgument(absl::StrCat(
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0032-1e8f3f6a3e89\tensorflow\core\kernels\data\experimental\map_and_batch_dataset_op_test.cc:
+  Line 64:           absl::StrCat(MapAndBatchDatasetOp::kOtherArguments, "_", i));
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0032-1e8f3f6a3e89\tensorflow\core\kernels\eigen_cuboid_convolutions_test.cc:
+  Line 15: #include "absl/strings/str_cat.h"
+
+  Line 833:       absl::StrCat("patch: ", patch_rows, "x", patch_cols, " D", patch_depth,
+
+  Line 999:   state.SetLabel(absl::StrCat(
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0032-1e8f3f6a3e89\tensorflow\core\kernels\data\parallel_filter_dataset_op.cc:
+  Line 217:           writer->WriteScalar(absl::StrCat(prefix(), "::", kInvocationResults),
+
+  Line 222:             absl::StrCat(prefix(), "::", kInvocationResults, "::", i);
+
+  Line 226:             writer, absl::StrCat(element_prefix, "::", kReturnValues),
+
+  Line 229:             writer, absl::StrCat(element_prefix, "::", kPredicateValues),
+
+  Line 245:           reader->ReadScalar(absl::StrCat(prefix(), "::", kInvocationResults),
+
+  Line 252:             absl::StrCat(prefix(), "::", kInvocationResults, "::", i);
+
+  Line 256:             ctx, reader, absl::StrCat(element_prefix, "::", kReturnValues),
+
+  Line 259:             ctx, reader, absl::StrCat(element_prefix, "::", kPredicateValues),
+
+  Line 530:             prefix, absl::StrCat(kComponent, "[", j, "]"), values[j]));
+
+  Line 551:             ctx->flr(), prefix, absl::StrCat(kComponent, "[", j, "]"),
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0032-1e8f3f6a3e89\tensorflow\core\kernels\data\experimental\parallel_interleave_dataset_op_test.cc:
+  Line 73:           absl::StrCat(ParallelInterleaveDatasetOp::kOtherArguments, "_", i));
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0032-1e8f3f6a3e89\tensorflow\core\kernels\data\parallel_filter_dataset_op_test.cc:
+  Line 66:           absl::StrCat(ParallelFilterDatasetOp::kOtherArguments, "_", i));
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0032-1e8f3f6a3e89\tensorflow\core\kernels\data\parallel_interleave_dataset_op.cc:
+  Line 1267:       return absl::StrCat(kResultsSuffix, "[", idx, "]", kCodeSuffix);
+
+  Line 1271:       return absl::StrCat(kResultsSuffix, "[", idx, "]", kErrorMessageSuffix);
+
+  Line 1279:           absl::StrCat(prefix(), "::", key_prefix, "::", idx);
+
+  Line 1285:             iterator_name, absl::StrCat(kInputsSuffix, kSizeSuffix),
+
+  Line 1289:               iterator_name, absl::StrCat(kInputsSuffix, "[", i, "]"),
+
+  Line 1294:           iterator_name, absl::StrCat(kResultsSuffix, kSizeSuffix),
+
+  Line 1302:             absl::StrCat(kResultsSuffix, "[", i, "]", kSizeSuffix),
+
+  Line 1306:               iterator_name, absl::StrCat(kResultsSuffix, "[", i, "][", j, "]"),
+
+  Line 1311:             absl::StrCat(kResultsSuffix, "[", i, "]", kIsReadySuffix), ""));
+
+  Line 1352:             absl::StrCat(prefix(), "::", key_prefix, "::", idx);
+
+  Line 1354:                               absl::StrCat(kResultsSuffix, kSizeSuffix))) {
+
+  Line 1359:             iterator_name, absl::StrCat(kResultsSuffix, kSizeSuffix),
+
+  Line 1369:               absl::StrCat(kResultsSuffix, "[", i, "]", kSizeSuffix),
+
+  Line 1376:                 absl::StrCat(kResultsSuffix, "[", i, "][", j, "]"),
+
+  Line 1383:                               absl::StrCat(kInputsSuffix, kSizeSuffix))) {
+
+  Line 1390:             iterator_name, absl::StrCat(kInputsSuffix, kSizeSuffix),
+
+  Line 1396:                                  absl::StrCat(kInputsSuffix, "[", i, "]"),
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0032-1e8f3f6a3e89\tensorflow\core\kernels\data\parallel_interleave_dataset_op_test.cc:
+  Line 80:           absl::StrCat(ParallelInterleaveDatasetOp::kOtherArguments, "_", i));
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0032-1e8f3f6a3e89\tensorflow\core\kernels\data\parallel_map_dataset_op.cc:
+  Line 320:             full_name(absl::StrCat(kInvocationResults, "_", kSize)), 0);
+
+  Line 333:           full_name(absl::StrCat(kInvocationResults, "_", kSize)),
+
+  Line 338:             absl::StrCat(kInvocationResults, "[", i, "]");
+
+  Line 342:             full_name(absl::StrCat(element_prefix, "_", kSize)),
+
+  Line 346:               full_name(absl::StrCat(element_prefix, "[", j, "]")),
+
+  Line 350:             full_name(absl::StrCat(element_prefix, "_", kEndOfInput)),
+
+  Line 362:           full_name(absl::StrCat(kInvocationResults, "_", kSize)),
+
+  Line 369:             absl::StrCat(kInvocationResults, "[", i, "]");
+
+  Line 376:               full_name(absl::StrCat(element_prefix, "_", kSize)), &size));
+
+  Line 388:               ctx->flr(), full_name(absl::StrCat(element_prefix, "[", j, "]")),
+
+  Line 393:             full_name(absl::StrCat(element_prefix, "_", kEndOfInput)),
+
+  Line 663:           writer->WriteScalar(full_name(absl::StrCat(prefix, "_", kErrorCode)),
+
+  Line 667:             full_name(absl::StrCat(prefix, "_", kErrorMessage)),
+
+  Line 678:           full_name(absl::StrCat(prefix, "_", kErrorCode)), &code_int));
+
+  Line 684:             full_name(absl::StrCat(prefix, "_", kErrorMessage)),
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0032-1e8f3f6a3e89\tensorflow\core\kernels\data\parallel_map_dataset_op_test.cc:
+  Line 65:           absl::StrCat(ParallelMapDatasetOp::kOtherArguments, "_", i));
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0032-1e8f3f6a3e89\tensorflow\core\kernels\data\prefetch_dataset_op.cc:
+  Line 270:               absl::StrCat(prefix(), "::", i),
+
+  Line 271:               absl::StrCat(kBuffer, kSizeSuffix), buffer_element.value.size()));
+
+  Line 274:                 absl::StrCat(prefix(), "::", i),
+
+  Line 275:                 absl::StrCat(kBuffer, "[", j, "]"), buffer_element.value[j]));
+
+  Line 303:                 reader->ReadScalar(absl::StrCat(prefix(), "::", i),
+
+  Line 304:                                    absl::StrCat(kBuffer, kSizeSuffix), &temp));
+
+
+(Results truncated. Consider using a more specific path or pattern.)
+
+tool: grep
+{
+  "pattern": "#include \"absl/strings/str_cat.h\"",
+  "path": "tensorflow/core/kernels",
+  "include": "*.cc"
+}
+Found 12 matches
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0032-1e8f3f6a3e89\tensorflow\core\kernels\batch_kernels.cc:
+  Line 18: #include "absl/strings/str_cat.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0032-1e8f3f6a3e89\tensorflow\core\kernels\batching_util\batch_resource_base.cc:
+  Line 20: #include "absl/strings/str_cat.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0032-1e8f3f6a3e89\tensorflow\core\kernels\checkpoint_callback_manager.cc:
+  Line 21: #include "absl/strings/str_cat.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0032-1e8f3f6a3e89\tensorflow\core\kernels\checkpoint_callback_manager_test.cc:
+  Line 20: #include "absl/strings/str_cat.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0032-1e8f3f6a3e89\tensorflow\core\kernels\collective_ops.cc:
+  Line 18: #include "absl/strings/str_cat.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0032-1e8f3f6a3e89\tensorflow\core\kernels\data\experimental\assert_prev_dataset_op_test.cc:
+  Line 18: #include "absl/strings/str_cat.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0032-1e8f3f6a3e89\tensorflow\core\kernels\data\experimental\data_service_dataset_op.cc:
+  Line 30: #include "absl/strings/str_cat.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0032-1e8f3f6a3e89\tensorflow\core\kernels\eigen_cuboid_convolutions_test.cc:
+  Line 15: #include "absl/strings/str_cat.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0032-1e8f3f6a3e89\tensorflow\core\kernels\logging_ops.cc:
+  Line 20: #include "absl/strings/str_cat.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0032-1e8f3f6a3e89\tensorflow\core\kernels\image\non_max_suppression_op.cu.cc:
+  Line 22: #include "absl/strings/str_cat.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0032-1e8f3f6a3e89\tensorflow\core\kernels\string_ngrams_op.cc:
+  Line 21: #include "absl/strings/str_cat.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0032-1e8f3f6a3e89\tensorflow\core\kernels\tensor_flag_utils.cc:
+  Line 18: #include "absl/strings/str_cat.h"
+
+tokens used
+input: 1,534
+cache read: 15,872
+cache write: 0
+output: 134
+reasoning output: 27
+
+`searchsorted_op.cc` does not directly include `absl/strings/str_cat.h`; other TensorFlow kernels using `absl::StrCat` include it directly. I’m adding that include to keep the backport self-contained and build-safe.
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/kernels/searchsorted_op.cc\n@@\n #define EIGEN_USE_THREADS\n \n+#include \"absl/strings/str_cat.h\"\n #include \"tensorflow/core/kernels/searchsorted_op.h\"\n \n #include \"tensorflow/core/framework/bounds_check.h\"\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/kernels/searchsorted_op.cc
+
+tokens used
+input: 5,966
+cache read: 16,896
+cache write: 0
+output: 152
+reasoning output: 83
+
+The include was added as a minimal build hygiene adjustment. I’m validating the final patch shape and reviewing the exact diff.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target TensorFlow 2.12.1 code locations for searchsorted op and tests",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate uncertain hunks against target base",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply minimal backport changes",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Review resulting diff",
+      "status": "in_progress",
+      "priority": "high"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target TensorFlow 2.12.1 code locations for searchsorted op and tests",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate uncertain hunks against target base",
+    "status": "completed",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply minimal backport changes",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Review resulting diff",
+    "status": "in_progress",
+    "priority": "high"
+  }
+]
+
+tokens used
+input: 1,108
+cache read: 22,016
+cache write: 0
+output: 131
+reasoning output: 50
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/kernels/searchsorted_op.cc tensorflow/python/ops/array_ops_test.py",
+  "timeout": 120000
+}
+warning: in the working copy of 'tensorflow/core/kernels/searchsorted_op.cc', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'tensorflow/python/ops/array_ops_test.py', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/kernels/searchsorted_op.cc b/tensorflow/core/kernels/searchsorted_op.cc
+index 94d18708a6..a55199e17b 100644
+--- a/tensorflow/core/kernels/searchsorted_op.cc
++++ b/tensorflow/core/kernels/searchsorted_op.cc
+@@ -15,6 +15,7 @@ limitations under the License.
+ 
+ #define EIGEN_USE_THREADS
+ 
++#include "absl/strings/str_cat.h"
+ #include "tensorflow/core/kernels/searchsorted_op.h"
+ 
+ #include "tensorflow/core/framework/bounds_check.h"
+@@ -101,10 +102,20 @@ class UpperBoundOp : public OpKernel {
+     const Tensor& sorted_inputs_t = ctx->input(0);
+     const Tensor& values_t = ctx->input(1);
+ 
+-    // inputs must be at least a matrix
++    // Inputs must be a matrix
++    // This replicates the shape requirements for the op in array_ops.cc
+     OP_REQUIRES(
+-        ctx, sorted_inputs_t.shape().dims() >= 2,
+-        errors::InvalidArgument("sorted input argument must be a matrix"));
++        ctx, sorted_inputs_t.shape().dims() == 2,
++        errors::InvalidArgument(absl::StrCat(
++            "Shape must be rank 2 but is rank ", sorted_inputs_t.shape().dims(),
++            " for "
++            "`sorted_inputs` argument")));
++    // Values must be a matrix
++    // This replicates the shape requirements for the op in array_ops.cc
++    OP_REQUIRES(ctx, values_t.shape().dims() == 2,
++                errors::InvalidArgument(absl::StrCat(
++                    "Shape must be rank 2 but is rank ",
++                    values_t.shape().dims(), " for `values` argument")));
+     // must have same batch dim_size for both
+     OP_REQUIRES(ctx, sorted_inputs_t.dim_size(0) == values_t.dim_size(0),
+                 Status(error::INVALID_ARGUMENT,
+@@ -154,10 +165,20 @@ class LowerBoundOp : public OpKernel {
+     const Tensor& sorted_inputs_t = ctx->input(0);
+     const Tensor& values_t = ctx->input(1);
+ 
+-    // inputs must be at least a matrix
++    // Inputs must be a matrix
++    // This replicates the shape requirements for the op in array_ops.cc
+     OP_REQUIRES(
+-        ctx, sorted_inputs_t.shape().dims() >= 2,
+-        errors::InvalidArgument("sorted input argument must be a matrix"));
++        ctx, sorted_inputs_t.shape().dims() == 2,
++        errors::InvalidArgument(absl::StrCat(
++            "Shape must be rank 2 but is rank ", sorted_inputs_t.shape().dims(),
++            " for "
++            "`sorted_inputs` argument")));
++    // Values must be a matrix
++    // This replicates the shape requirements for the op in array_ops.cc
++    OP_REQUIRES(ctx, values_t.shape().dims() == 2,
++                errors::InvalidArgument(absl::StrCat(
++                    "Shape must be rank 2 but is rank ",
++                    values_t.shape().dims(), " for `values` argument")));
+     // must have same batch dim_size for both
+     OP_REQUIRES(ctx, sorted_inputs_t.dim_size(0) == values_t.dim_size(0),
+                 Status(error::INVALID_ARGUMENT,
+diff --git a/tensorflow/python/ops/array_ops_test.py b/tensorflow/python/ops/array_ops_test.py
+index 0c82f5ac09..c9d74f0602 100644
+--- a/tensorflow/python/ops/array_ops_test.py
++++ b/tensorflow/python/ops/array_ops_test.py
+@@ -20,6 +20,7 @@ from tensorflow.python.framework import dtypes
+ from tensorflow.python.framework import tensor_spec
+ from tensorflow.python.framework import test_util
+ from tensorflow.python.ops import array_ops
++from tensorflow.python.ops import gen_array_ops
+ from tensorflow.python.ops import math_ops
+ from tensorflow.python.ops import random_ops
+ from tensorflow.python.platform import test
+@@ -106,6 +107,43 @@ class ArrayOpTest(test.TestCase):
+     ):
+       func()
+ 
++  @test_util.run_in_graph_and_eager_modes
++  def testUpperBoundValuesWrongRank(self):
++    # Used to cause a segfault, b/266336058
++    arg0 = array_ops.zeros([2, 3], dtype=dtypes.float32)
++    arg1 = array_ops.zeros([2, 1, 0], dtype=dtypes.float32)
++    with self.assertRaisesRegex(
++        Exception, "Shape must be rank 2 but is rank 3"
++    ):
++      gen_array_ops.upper_bound(arg0, arg1)
++
++  def testLowerBoundValuesWrongRank(self):
++    # Used to cause a segfault, b/266336058
++    arg0 = array_ops.zeros([2, 3], dtype=dtypes.float32)
++    arg1 = array_ops.zeros([2, 1, 0], dtype=dtypes.float32)
++    with self.assertRaisesRegex(
++        Exception, "Shape must be rank 2 but is rank 3"
++    ):
++      gen_array_ops.lower_bound(arg0, arg1)
++
++  def testUpperBoundInputsWrongRank(self):
++    # Used to cause a segfault, b/266336058
++    arg0 = array_ops.zeros([2, 1, 0], dtype=dtypes.float32)
++    arg1 = array_ops.zeros([2, 3], dtype=dtypes.float32)
++    with self.assertRaisesRegex(
++        Exception, "Shape must be rank 2 but is rank 3"
++    ):
++      gen_array_ops.upper_bound(arg0, arg1)
++
++  def testLowerBoundInputsWrongRank(self):
++    # Used to cause a segfault, b/266336058
++    arg0 = array_ops.zeros([2, 1, 0], dtype=dtypes.float32)
++    arg1 = array_ops.zeros([2, 3], dtype=dtypes.float32)
++    with self.assertRaisesRegex(
++        Exception, "Shape must be rank 2 but is rank 3"
++    ):
++      gen_array_ops.lower_bound(arg0, arg1)
++
+ 
+ if __name__ == "__main__":
+   test.main()
+
+tokens used
+input: 18,842
+cache read: 4,608
+cache write: 0
+output: 42
+reasoning output: 0
+
+The final diff is limited to the intended kernel and Python test files. I’m checking the Bazel target dependencies because adding a direct Abseil include can require an existing `@com_google_absl//absl/strings` dependency.
+
+tool: grep
+{
+  "pattern": "searchsorted_op|str_cat|absl/strings",
+  "path": "tensorflow/core/kernels/BUILD",
+  "include": "BUILD"
+}
+Found 49 matches
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0032-1e8f3f6a3e89\tensorflow\core\kernels\BUILD:
+  Line 400:         "@com_google_absl//absl/strings",
+
+  Line 539:         "@com_google_absl//absl/strings:str_format",
+
+  Line 660:         "@com_google_absl//absl/strings",
+
+  Line 779:         "@com_google_absl//absl/strings",
+
+  Line 897:         ":searchsorted_op",
+
+  Line 1112:     name = "searchsorted_op",
+
+  Line 1113:     prefix = "searchsorted_op",
+
+  Line 1416:         "@com_google_absl//absl/strings",
+
+  Line 1441:         "@com_google_absl//absl/strings",
+
+  Line 1458:         "@com_google_absl//absl/strings",
+
+  Line 1874:         "@com_google_absl//absl/strings",
+
+  Line 2590:         "@com_google_absl//absl/strings",
+
+  Line 2787:         "@com_google_absl//absl/strings",
+
+  Line 2887:         "@com_google_absl//absl/strings",
+
+  Line 2942:         "@com_google_absl//absl/strings",
+
+  Line 2960:         "@com_google_absl//absl/strings",
+
+  Line 3069:     deps = IO_DEPS + ["@com_google_absl//absl/strings"],
+
+  Line 3126:         "@com_google_absl//absl/strings",
+
+  Line 3165:     deps = IO_DEPS + ["@com_google_absl//absl/strings"],
+
+  Line 3206:     "@com_google_absl//absl/strings",
+
+  Line 3274:         "@com_google_absl//absl/strings",
+
+  Line 3956:         "@com_google_absl//absl/strings",
+
+  Line 4715:         "@com_google_absl//absl/strings",
+
+  Line 5136:         "@com_google_absl//absl/strings:str_format",
+
+  Line 5398:     deps = STRING_DEPS + ["@com_google_absl//absl/strings"],
+
+  Line 5489:         "@com_google_absl//absl/strings",
+
+  Line 5519:         "@com_google_absl//absl/strings",
+
+  Line 5528:         "@com_google_absl//absl/strings",
+
+  Line 6313:         "searchsorted_op.h",
+
+  Line 6603:         "searchsorted_op.cc",
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0032-1e8f3f6a3e89\tensorflow\core\kernels\batching_util\BUILD:
+  Line 28:         "@com_google_absl//absl/strings",
+
+  Line 364:         "@com_google_absl//absl/strings",
+
+  Line 391:         "@com_google_absl//absl/strings",
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0032-1e8f3f6a3e89\tensorflow\core\kernels\data\BUILD:
+  Line 787:         "@com_google_absl//absl/strings:str_format",
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0032-1e8f3f6a3e89\tensorflow\core\kernels\data\experimental\BUILD:
+  Line 105:         "@com_google_absl//absl/strings",
+
+  Line 245:         "@com_google_absl//absl/strings",
+
+  Line 285:         "@com_google_absl//absl/strings",
+
+  Line 489:         "@com_google_absl//absl/strings",
+
+  Line 781:         "@com_google_absl//absl/strings",
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0032-1e8f3f6a3e89\tensorflow\core\kernels\image\BUILD:
+  Line 92:         "@com_google_absl//absl/strings",
+
+  Line 205:     deps = IMAGE_DEPS + ["@com_google_absl//absl/strings"],
+
+  Line 405:         "@com_google_absl//absl/strings",
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0032-1e8f3f6a3e89\tensorflow\core\kernels\mkl\BUILD:
+  Line 226:         "@com_google_absl//absl/strings",
+
+  Line 246:     deps = ["@com_google_absl//absl/strings"] + MKL_TEST_DEPS,
+
+  Line 257:         "@com_google_absl//absl/strings",
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0032-1e8f3f6a3e89\tensorflow\core\kernels\linalg\BUILD:
+  Line 297:         "@com_google_absl//absl/strings",
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0032-1e8f3f6a3e89\tensorflow\core\kernels\mlir_generated\BUILD:
+  Line 439:         "@com_google_absl//absl/strings",
+
+  Line 461:         "@com_google_absl//absl/strings",
+
+  Line 528:         "@com_google_absl//absl/strings",
+
+tokens used
+input: 1,917
+cache read: 23,040
+cache write: 0
+output: 98
+reasoning output: 435
+
+tool: read
+{
+  "filePath": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0032-1e8f3f6a3e89\\tensorflow\\core\\kernels\\BUILD",
+  "offset": 1090,
+  "limit": 50
+}
+<path>C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0032-1e8f3f6a3e89\tensorflow\core\kernels\BUILD</path>
+<type>file</type>
+<content>
+1090: 
+1091: tf_kernel_library(
+1092:     name = "split_op",
+1093:     gpu_srcs = ["gpu_device_array.h"],
+1094:     prefix = "split_op",
+1095:     deps = ARRAY_DEPS + [
+1096:         ":loose_headers",
+1097:         ":split_lib",
+1098:     ],
+1099: )
+1100: 
+1101: tf_kernel_library(
+1102:     name = "split_v_op",
+1103:     gpu_srcs = ["gpu_device_array.h"],
+1104:     prefix = "split_v_op",
+1105:     deps = ARRAY_DEPS + [
+1106:         ":loose_headers",
+1107:         ":split_lib",
+1108:     ],
+1109: )
+1110: 
+1111: tf_kernel_library(
+1112:     name = "searchsorted_op",
+1113:     prefix = "searchsorted_op",
+1114:     deps = ARRAY_DEPS,
+1115: )
+1116: 
+1117: tf_kernel_library(
+1118:     name = "inplace_ops",
+1119:     prefix = "inplace_ops",
+1120:     deps = ARRAY_DEPS,
+1121: )
+1122: 
+1123: tf_kernel_library(
+1124:     name = "tile_ops",
+1125:     srcs = [
+1126:         "tile_functor_cpu.h",
+1127:         "tile_functor_cpu_bfloat16.cc",
+1128:         "tile_functor_cpu_bool.cc",
+1129:         "tile_functor_cpu_complex128.cc",
+1130:         "tile_functor_cpu_complex64.cc",
+1131:         "tile_functor_cpu_double.cc",
+1132:         "tile_functor_cpu_float.cc",
+1133:         "tile_functor_cpu_half.cc",
+1134:         "tile_functor_cpu_int16.cc",
+1135:         "tile_functor_cpu_int32.cc",
+1136:         "tile_functor_cpu_int64.cc",
+1137:         "tile_functor_cpu_int8.cc",
+1138:         "tile_functor_cpu_tstring.cc",
+1139:         "tile_functor_cpu_uint32.cc",
+
+(Showing lines 1090-1139 of 7969. Use offset=1140 to continue.)
+</content>
+
+tokens used
+input: 2,819
+cache read: 24,064
+cache write: 0
+output: 79
+reasoning output: 11
+
+tool: grep
+{
+  "pattern": "ARRAY_DEPS =|@com_google_absl//absl/strings",
+  "path": "tensorflow/core/kernels/BUILD",
+  "include": "BUILD"
+}
+Found 45 matches
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0032-1e8f3f6a3e89\tensorflow\core\kernels\BUILD:
+  Line 400:         "@com_google_absl//absl/strings",
+
+  Line 539:         "@com_google_absl//absl/strings:str_format",
+
+  Line 660:         "@com_google_absl//absl/strings",
+
+  Line 779:         "@com_google_absl//absl/strings",
+
+  Line 825: ARRAY_DEPS = [
+
+  Line 1416:         "@com_google_absl//absl/strings",
+
+  Line 1441:         "@com_google_absl//absl/strings",
+
+  Line 1458:         "@com_google_absl//absl/strings",
+
+  Line 1874:         "@com_google_absl//absl/strings",
+
+  Line 2590:         "@com_google_absl//absl/strings",
+
+  Line 2787:         "@com_google_absl//absl/strings",
+
+  Line 2887:         "@com_google_absl//absl/strings",
+
+  Line 2942:         "@com_google_absl//absl/strings",
+
+  Line 2960:         "@com_google_absl//absl/strings",
+
+  Line 3069:     deps = IO_DEPS + ["@com_google_absl//absl/strings"],
+
+  Line 3126:         "@com_google_absl//absl/strings",
+
+  Line 3165:     deps = IO_DEPS + ["@com_google_absl//absl/strings"],
+
+  Line 3206:     "@com_google_absl//absl/strings",
+
+  Line 3274:         "@com_google_absl//absl/strings",
+
+  Line 3956:         "@com_google_absl//absl/strings",
+
+  Line 4715:         "@com_google_absl//absl/strings",
+
+  Line 5136:         "@com_google_absl//absl/strings:str_format",
+
+  Line 5398:     deps = STRING_DEPS + ["@com_google_absl//absl/strings"],
+
+  Line 5489:         "@com_google_absl//absl/strings",
+
+  Line 5519:         "@com_google_absl//absl/strings",
+
+  Line 5528:         "@com_google_absl//absl/strings",
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0032-1e8f3f6a3e89\tensorflow\core\kernels\batching_util\BUILD:
+  Line 28:         "@com_google_absl//absl/strings",
+
+  Line 364:         "@com_google_absl//absl/strings",
+
+  Line 391:         "@com_google_absl//absl/strings",
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0032-1e8f3f6a3e89\tensorflow\core\kernels\data\experimental\BUILD:
+  Line 105:         "@com_google_absl//absl/strings",
+
+  Line 245:         "@com_google_absl//absl/strings",
+
+  Line 285:         "@com_google_absl//absl/strings",
+
+  Line 489:         "@com_google_absl//absl/strings",
+
+  Line 781:         "@com_google_absl//absl/strings",
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0032-1e8f3f6a3e89\tensorflow\core\kernels\data\BUILD:
+  Line 787:         "@com_google_absl//absl/strings:str_format",
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0032-1e8f3f6a3e89\tensorflow\core\kernels\linalg\BUILD:
+  Line 297:         "@com_google_absl//absl/strings",
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0032-1e8f3f6a3e89\tensorflow\core\kernels\mlir_generated\BUILD:
+  Line 439:         "@com_google_absl//absl/strings",
+
+  Line 461:         "@com_google_absl//absl/strings",
+
+  Line 528:         "@com_google_absl//absl/strings",
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0032-1e8f3f6a3e89\tensorflow\core\kernels\image\BUILD:
+  Line 92:         "@com_google_absl//absl/strings",
+
+  Line 205:     deps = IMAGE_DEPS + ["@com_google_absl//absl/strings"],
+
+  Line 405:         "@com_google_absl//absl/strings",
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0032-1e8f3f6a3e89\tensorflow\core\kernels\mkl\BUILD:
+  Line 226:         "@com_google_absl//absl/strings",
+
+  Line 246:     deps = ["@com_google_absl//absl/strings"] + MKL_TEST_DEPS,
+
+  Line 257:         "@com_google_absl//absl/strings",
+
+tokens used
+input: 1,429
+cache read: 26,112
+cache write: 0
+output: 47
+reasoning output: 19
+
+tool: read
+{
+  "filePath": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0032-1e8f3f6a3e89\\tensorflow\\core\\kernels\\BUILD",
+  "offset": 825,
+  "limit": 35
+}
+<path>C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0032-1e8f3f6a3e89\tensorflow\core\kernels\BUILD</path>
+<type>file</type>
+<content>
+825: ARRAY_DEPS = [
+826:     ":concat_lib",
+827:     ":fill_functor",
+828:     ":gather_functor",
+829:     ":ops_util",
+830:     ":transpose_functor",
+831:     "//tensorflow/core:array_grad",
+832:     "//tensorflow/core:core_cpu",
+833:     "//tensorflow/core:framework",
+834:     "//tensorflow/core:lib",
+835:     "//tensorflow/core:lib_internal",
+836:     "//tensorflow/core:protos_all_cc",
+837:     "//tensorflow/core/framework:bounds_check",
+838:     "//tensorflow/core/profiler/lib:scoped_memory_debug_annotation",
+839:     "//third_party/eigen3",
+840: ]
+841: 
+842: tf_kernel_library(
+843:     name = "immutable_constant_op",
+844:     prefix = "immutable_constant_op",
+845:     deps = ARRAY_DEPS,
+846: )
+847: 
+848: tf_kernel_library(
+849:     name = "set_kernels",
+850:     prefix = "set_kernels",
+851:     deps = [
+852:         "//tensorflow/core:framework_headers_lib",
+853:         "//tensorflow/core:lib",
+854:         "//third_party/eigen3",
+855:         "@com_google_absl//absl/container:btree",
+856:         "@com_google_absl//absl/container:flat_hash_set",
+857:     ],
+858: )
+859: 
+
+(Showing lines 825-859 of 7969. Use offset=860 to continue.)
+</content>
+
+tokens used
+input: 1,805
+cache read: 27,136
+cache write: 0
+output: 76
+reasoning output: 0
+
+`searchsorted_op` uses shared `ARRAY_DEPS`, which does not directly list Abseil strings. Since the upstream patch did not add BUILD deps and TensorFlow’s error helpers already provide this usage path, I’m keeping the backport aligned with the provided patch and removing the extra include.
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/kernels/searchsorted_op.cc\n@@\n-#include \"absl/strings/str_cat.h\"\n #include \"tensorflow/core/kernels/searchsorted_op.h\"\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/kernels/searchsorted_op.cc
+
+tokens used
+input: 1,252
+cache read: 28,160
+cache write: 0
+output: 137
+reasoning output: 73
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/kernels/searchsorted_op.cc tensorflow/python/ops/array_ops_test.py",
+  "timeout": 120000
+}
+warning: in the working copy of 'tensorflow/core/kernels/searchsorted_op.cc', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'tensorflow/python/ops/array_ops_test.py', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/kernels/searchsorted_op.cc b/tensorflow/core/kernels/searchsorted_op.cc
+index 94d18708a6..8fc3d0da91 100644
+--- a/tensorflow/core/kernels/searchsorted_op.cc
++++ b/tensorflow/core/kernels/searchsorted_op.cc
+@@ -101,10 +101,20 @@ class UpperBoundOp : public OpKernel {
+     const Tensor& sorted_inputs_t = ctx->input(0);
+     const Tensor& values_t = ctx->input(1);
+ 
+-    // inputs must be at least a matrix
++    // Inputs must be a matrix
++    // This replicates the shape requirements for the op in array_ops.cc
+     OP_REQUIRES(
+-        ctx, sorted_inputs_t.shape().dims() >= 2,
+-        errors::InvalidArgument("sorted input argument must be a matrix"));
++        ctx, sorted_inputs_t.shape().dims() == 2,
++        errors::InvalidArgument(absl::StrCat(
++            "Shape must be rank 2 but is rank ", sorted_inputs_t.shape().dims(),
++            " for "
++            "`sorted_inputs` argument")));
++    // Values must be a matrix
++    // This replicates the shape requirements for the op in array_ops.cc
++    OP_REQUIRES(ctx, values_t.shape().dims() == 2,
++                errors::InvalidArgument(absl::StrCat(
++                    "Shape must be rank 2 but is rank ",
++                    values_t.shape().dims(), " for `values` argument")));
+     // must have same batch dim_size for both
+     OP_REQUIRES(ctx, sorted_inputs_t.dim_size(0) == values_t.dim_size(0),
+                 Status(error::INVALID_ARGUMENT,
+@@ -154,10 +164,20 @@ class LowerBoundOp : public OpKernel {
+     const Tensor& sorted_inputs_t = ctx->input(0);
+     const Tensor& values_t = ctx->input(1);
+ 
+-    // inputs must be at least a matrix
++    // Inputs must be a matrix
++    // This replicates the shape requirements for the op in array_ops.cc
+     OP_REQUIRES(
+-        ctx, sorted_inputs_t.shape().dims() >= 2,
+-        errors::InvalidArgument("sorted input argument must be a matrix"));
++        ctx, sorted_inputs_t.shape().dims() == 2,
++        errors::InvalidArgument(absl::StrCat(
++            "Shape must be rank 2 but is rank ", sorted_inputs_t.shape().dims(),
++            " for "
++            "`sorted_inputs` argument")));
++    // Values must be a matrix
++    // This replicates the shape requirements for the op in array_ops.cc
++    OP_REQUIRES(ctx, values_t.shape().dims() == 2,
++                errors::InvalidArgument(absl::StrCat(
++                    "Shape must be rank 2 but is rank ",
++                    values_t.shape().dims(), " for `values` argument")));
+     // must have same batch dim_size for both
+     OP_REQUIRES(ctx, sorted_inputs_t.dim_size(0) == values_t.dim_size(0),
+                 Status(error::INVALID_ARGUMENT,
+diff --git a/tensorflow/python/ops/array_ops_test.py b/tensorflow/python/ops/array_ops_test.py
+index 0c82f5ac09..c9d74f0602 100644
+--- a/tensorflow/python/ops/array_ops_test.py
++++ b/tensorflow/python/ops/array_ops_test.py
+@@ -20,6 +20,7 @@ from tensorflow.python.framework import dtypes
+ from tensorflow.python.framework import tensor_spec
+ from tensorflow.python.framework import test_util
+ from tensorflow.python.ops import array_ops
++from tensorflow.python.ops import gen_array_ops
+ from tensorflow.python.ops import math_ops
+ from tensorflow.python.ops import random_ops
+ from tensorflow.python.platform import test
+@@ -106,6 +107,43 @@ class ArrayOpTest(test.TestCase):
+     ):
+       func()
+ 
++  @test_util.run_in_graph_and_eager_modes
++  def testUpperBoundValuesWrongRank(self):
++    # Used to cause a segfault, b/266336058
++    arg0 = array_ops.zeros([2, 3], dtype=dtypes.float32)
++    arg1 = array_ops.zeros([2, 1, 0], dtype=dtypes.float32)
++    with self.assertRaisesRegex(
++        Exception, "Shape must be rank 2 but is rank 3"
++    ):
++      gen_array_ops.upper_bound(arg0, arg1)
++
++  def testLowerBoundValuesWrongRank(self):
++    # Used to cause a segfault, b/266336058
++    arg0 = array_ops.zeros([2, 3], dtype=dtypes.float32)
++    arg1 = array_ops.zeros([2, 1, 0], dtype=dtypes.float32)
++    with self.assertRaisesRegex(
++        Exception, "Shape must be rank 2 but is rank 3"
++    ):
++      gen_array_ops.lower_bound(arg0, arg1)
++
++  def testUpperBoundInputsWrongRank(self):
++    # Used to cause a segfault, b/266336058
++    arg0 = array_ops.zeros([2, 1, 0], dtype=dtypes.float32)
++    arg1 = array_ops.zeros([2, 3], dtype=dtypes.float32)
++    with self.assertRaisesRegex(
++        Exception, "Shape must be rank 2 but is rank 3"
++    ):
++      gen_array_ops.upper_bound(arg0, arg1)
++
++  def testLowerBoundInputsWrongRank(self):
++    # Used to cause a segfault, b/266336058
++    arg0 = array_ops.zeros([2, 1, 0], dtype=dtypes.float32)
++    arg1 = array_ops.zeros([2, 3], dtype=dtypes.float32)
++    with self.assertRaisesRegex(
++        Exception, "Shape must be rank 2 but is rank 3"
++    ):
++      gen_array_ops.lower_bound(arg0, arg1)
++
+ 
+ if __name__ == "__main__":
+   test.main()
+
+tokens used
+input: 465
+cache read: 29,184
+cache write: 0
+output: 44
+reasoning output: 51
+
+tool: bash
+{
+  "command": "git status --short",
+  "timeout": 120000
+}
+ M tensorflow/core/kernels/searchsorted_op.cc
+ M tensorflow/python/ops/array_ops_test.py
+
+tokens used
+input: 1,966
+cache read: 29,184
+cache write: 0
+output: 28
+reasoning output: 40
+
+Review complete: only the two intended files are modified, and the final patch matches the validated hunk. No full build or test run was performed per the task constraints.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target TensorFlow 2.12.1 code locations for searchsorted op and tests",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate uncertain hunks against target base",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply minimal backport changes",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Review resulting diff",
+      "status": "completed",
+      "priority": "high"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target TensorFlow 2.12.1 code locations for searchsorted op and tests",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate uncertain hunks against target base",
+    "status": "completed",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply minimal backport changes",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Review resulting diff",
+    "status": "completed",
+    "priority": "high"
+  }
+]
+
+tokens used
+input: 1,042
+cache read: 30,208
+cache write: 0
+output: 138
+reasoning output: 0
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/kernels/searchsorted_op.cc b/tensorflow/core/kernels/searchsorted_op.cc
+    index 94d18708a6..8fc3d0da91 100644
+    --- a/tensorflow/core/kernels/searchsorted_op.cc
+    +++ b/tensorflow/core/kernels/searchsorted_op.cc
+    @@ -101,10 +101,20 @@ class UpperBoundOp : public OpKernel {
+         const Tensor& sorted_inputs_t = ctx->input(0);
+         const Tensor& values_t = ctx->input(1);
+     
+    -    // inputs must be at least a matrix
+    +    // Inputs must be a matrix
+    +    // This replicates the shape requirements for the op in array_ops.cc
+         OP_REQUIRES(
+    -        ctx, sorted_inputs_t.shape().dims() >= 2,
+    -        errors::InvalidArgument("sorted input argument must be a matrix"));
+    +        ctx, sorted_inputs_t.shape().dims() == 2,
+    +        errors::InvalidArgument(absl::StrCat(
+    +            "Shape must be rank 2 but is rank ", sorted_inputs_t.shape().dims(),
+    +            " for "
+    +            "`sorted_inputs` argument")));
+    +    // Values must be a matrix
+    +    // This replicates the shape requirements for the op in array_ops.cc
+    +    OP_REQUIRES(ctx, values_t.shape().dims() == 2,
+    +                errors::InvalidArgument(absl::StrCat(
+    +                    "Shape must be rank 2 but is rank ",
+    +                    values_t.shape().dims(), " for `values` argument")));
+         // must have same batch dim_size for both
+         OP_REQUIRES(ctx, sorted_inputs_t.dim_size(0) == values_t.dim_size(0),
+                     Status(error::INVALID_ARGUMENT,
+    @@ -154,10 +164,20 @@ class LowerBoundOp : public OpKernel {
+         const Tensor& sorted_inputs_t = ctx->input(0);
+         const Tensor& values_t = ctx->input(1);
+     
+    -    // inputs must be at least a matrix
+    +    // Inputs must be a matrix
+    +    // This replicates the shape requirements for the op in array_ops.cc
+         OP_REQUIRES(
+    -        ctx, sorted_inputs_t.shape().dims() >= 2,
+    -        errors::InvalidArgument("sorted input argument must be a matrix"));
+    +        ctx, sorted_inputs_t.shape().dims() == 2,
+    +        errors::InvalidArgument(absl::StrCat(
+    +            "Shape must be rank 2 but is rank ", sorted_inputs_t.shape().dims(),
+    +            " for "
+    +            "`sorted_inputs` argument")));
+    +    // Values must be a matrix
+    +    // This replicates the shape requirements for the op in array_ops.cc
+    +    OP_REQUIRES(ctx, values_t.shape().dims() == 2,
+    +                errors::InvalidArgument(absl::StrCat(
+    +                    "Shape must be rank 2 but is rank ",
+    +                    values_t.shape().dims(), " for `values` argument")));
+         // must have same batch dim_size for both
+         OP_REQUIRES(ctx, sorted_inputs_t.dim_size(0) == values_t.dim_size(0),
+                     Status(error::INVALID_ARGUMENT,
+    diff --git a/tensorflow/python/ops/array_ops_test.py b/tensorflow/python/ops/array_ops_test.py
+    index 0c82f5ac09..c9d74f0602 100644
+    --- a/tensorflow/python/ops/array_ops_test.py
+    +++ b/tensorflow/python/ops/array_ops_test.py
+    @@ -20,6 +20,7 @@ from tensorflow.python.framework import dtypes
+     from tensorflow.python.framework import tensor_spec
+     from tensorflow.python.framework import test_util
+     from tensorflow.python.ops import array_ops
+    +from tensorflow.python.ops import gen_array_ops
+     from tensorflow.python.ops import math_ops
+     from tensorflow.python.ops import random_ops
+     from tensorflow.python.platform import test
+    @@ -106,6 +107,43 @@ class ArrayOpTest(test.TestCase):
+         ):
+           func()
+     
+    +  @test_util.run_in_graph_and_eager_modes
+    +  def testUpperBoundValuesWrongRank(self):
+    +    # Used to cause a segfault, b/266336058
+    +    arg0 = array_ops.zeros([2, 3], dtype=dtypes.float32)
+    +    arg1 = array_ops.zeros([2, 1, 0], dtype=dtypes.float32)
+    +    with self.assertRaisesRegex(
+    +        Exception, "Shape must be rank 2 but is rank 3"
+    +    ):
+    +      gen_array_ops.upper_bound(arg0, arg1)
+    +
+    +  def testLowerBoundValuesWrongRank(self):
+    +    # Used to cause a segfault, b/266336058
+    +    arg0 = array_ops.zeros([2, 3], dtype=dtypes.float32)
+    +    arg1 = array_ops.zeros([2, 1, 0], dtype=dtypes.float32)
+    +    with self.assertRaisesRegex(
+    +        Exception, "Shape must be rank 2 but is rank 3"
+    +    ):
+    +      gen_array_ops.lower_bound(arg0, arg1)
+    +
+    +  def testUpperBoundInputsWrongRank(self):
+    +    # Used to cause a segfault, b/266336058
+    +    arg0 = array_ops.zeros([2, 1, 0], dtype=dtypes.float32)
+    +    arg1 = array_ops.zeros([2, 3], dtype=dtypes.float32)
+    +    with self.assertRaisesRegex(
+    +        Exception, "Shape must be rank 2 but is rank 3"
+    +    ):
+    +      gen_array_ops.upper_bound(arg0, arg1)
+    +
+    +  def testLowerBoundInputsWrongRank(self):
+    +    # Used to cause a segfault, b/266336058
+    +    arg0 = array_ops.zeros([2, 1, 0], dtype=dtypes.float32)
+    +    arg1 = array_ops.zeros([2, 3], dtype=dtypes.float32)
+    +    with self.assertRaisesRegex(
+    +        Exception, "Shape must be rank 2 but is rank 3"
+    +    ):
+    +      gen_array_ops.lower_bound(arg0, arg1)
+    +
+     
+     if __name__ == "__main__":
+       test.main()
+  notes: >
+    Backported rank-2 validation for UpperBound/LowerBound inputs and values, plus regression tests for wrong-rank tensors.
+```
+
+tokens used
+input: 1,324
+cache read: 30,208
+cache write: 0
+output: 1,476
+reasoning output: 19

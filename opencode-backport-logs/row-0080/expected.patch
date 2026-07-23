@@ -1,0 +1,15 @@
+diff --git a/tensorflow/core/common_runtime/immutable_executor_state.cc b/tensorflow/core/common_runtime/immutable_executor_state.cc
+index 03d12a0e98abd5..3cde56bc85ab81 100644
+--- a/tensorflow/core/common_runtime/immutable_executor_state.cc
++++ b/tensorflow/core/common_runtime/immutable_executor_state.cc
+@@ -315,6 +315,10 @@ Status ImmutableExecutorState::BuildControlFlowInfo(const Graph* g,
+     } else if (IsExit(curr_node)) {
+       // Exit to the parent frame.
+       parent = parent_nodes[curr_id];
++      if (!parent) {
++        return errors::InvalidArgument(
++            "Invalid Exit op: Cannot find a corresponding Enter op.");
++      }
+       frame_name = cf_info->frame_names[parent->id()];
+       parent = parent_nodes[parent->id()];
+     } else {

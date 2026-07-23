@@ -1,0 +1,205 @@
+I’ll locate the target `ExpandTensorDim` implementation, compare the surrounding context against the provided hunk, then apply only the missing bounds check if it is not already present.
+
+tool: viewcode
+{
+  "ref": "0a3a3a33f5fe8630e85234f33276e3dbe4d7da46",
+  "path": "tensorflow/lite/kernels/expand_dims.cc",
+  "startline": 1,
+  "endline": 90
+}
+Here are lines 1 through 90.
+
+
+#include <stdint.h>
+/* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+==============================================================================*/
+#include <string.h>
+
+#include "tensorflow/lite/c/common.h"
+#include "tensorflow/lite/kernels/internal/reference/reference_ops.h"
+#include "tensorflow/lite/kernels/internal/tensor.h"
+#include "tensorflow/lite/kernels/internal/tensor_ctypes.h"
+#include "tensorflow/lite/kernels/kernel_util.h"
+
+namespace tflite {
+namespace ops {
+namespace builtin {
+namespace expand_dims {
+
+// Input indices
+enum { kInput = 0, kAxis };
+
+namespace {
+TfLiteStatus ExpandTensorDim(TfLiteContext* context, const TfLiteTensor& input,
+                             int axis, TfLiteTensor* output) {
+  const TfLiteIntArray& input_dims = *input.dims;
+  if (axis < 0) {
+    axis = input_dims.size + 1 + axis;
+  }
+  TF_LITE_ENSURE(context, axis <= input_dims.size);
+
+  TfLiteIntArray* output_dims = TfLiteIntArrayCreate(input_dims.size + 1);
+  for (int i = 0; i < output_dims->size; ++i) {
+    if (i < axis) {
+      output_dims->data[i] = input_dims.data[i];
+    } else if (i == axis) {
+      output_dims->data[i] = 1;
+    } else {
+      output_dims->data[i] = input_dims.data[i - 1];
+    }
+  }
+
+  return context->ResizeTensor(context, output, output_dims);
+}
+
+TfLiteStatus GetAxisValueFromTensor(TfLiteContext* context,
+                                    const TfLiteTensor& axis, int* axis_value) {
+  TF_LITE_ENSURE_EQ(context, NumElements(&axis), 1);
+  switch (axis.type) {
+    case kTfLiteInt32:
+      *axis_value = *GetTensorData<int32_t>(&axis);
+      return kTfLiteOk;
+    case kTfLiteInt64:
+      *axis_value = *GetTensorData<int64_t>(&axis);
+      return kTfLiteOk;
+    default:
+      return kTfLiteError;
+  }
+}
+
+}  // namespace
+
+TfLiteStatus Prepare(TfLiteContext* context, TfLiteNode* node) {
+  TF_LITE_ENSURE_EQ(context, NumInputs(node), 2);
+  TF_LITE_ENSURE_EQ(context, NumOutputs(node), 1);
+  const TfLiteTensor* input = GetInput(context, node, kInput);
+  const TfLiteTensor* axis = GetInput(context, node, kAxis);
+  TfLiteTensor* output = GetOutput(context, node, 0);
+  output->type = input->type;
+  if (IsConstantTensor(axis)) {
+    int axis_value;
+    TF_LITE_ENSURE_OK(context,
+                      GetAxisValueFromTensor(context, *axis, &axis_value));
+    return ExpandTensorDim(context, *input, axis_value, output);
+  }
+  SetTensorToDynamic(output);
+  return kTfLiteOk;
+}
+
+TfLiteStatus Eval(TfLiteContext* context, TfLiteNode* node) {
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: locate_symbol
+{
+  "ref": "0a3a3a33f5fe8630e85234f33276e3dbe4d7da46",
+  "symbol": "ExpandTensorDim"
+}
+tensorflow/lite/kernels/expand_dims.cc:34
+tensorflow/lite/kernels/expand_dims.cc:84
+tensorflow/lite/kernels/expand_dims.cc:100
+
+tokens used
+input: 3,719
+cache read: 4,608
+cache write: 0
+output: 172
+reasoning output: 0
+
+The target code matches the provided hunk and is missing the non-negative axis check after negative-axis normalization. I’m applying that single guard.
+
+tool: validate
+{
+  "ref": "0a3a3a33f5fe8630e85234f33276e3dbe4d7da46",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/lite/kernels/expand_dims.cc b/tensorflow/lite/kernels/expand_dims.cc\n--- a/tensorflow/lite/kernels/expand_dims.cc\n+++ b/tensorflow/lite/kernels/expand_dims.cc\n@@ -37,6 +37,7 @@ TfLiteStatus ExpandTensorDim(TfLiteContext* context, const TfLiteTensor& input,\n     axis = input_dims.size + 1 + axis;\n   }\n   TF_LITE_ENSURE(context, axis <= input_dims.size);\n+  TF_LITE_ENSURE(context, axis >= 0);\n \n   TfLiteIntArray* output_dims = TfLiteIntArrayCreate(input_dims.size + 1);\n   for (int i = 0; i < output_dims->size; ++i) {\n"
+}
+Patch applied successfully
+
+tokens used
+input: 1,673
+cache read: 7,680
+cache write: 0
+output: 268
+reasoning output: 39
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/lite/kernels/expand_dims.cc\n@@\n   if (axis < 0) {\n     axis = input_dims.size + 1 + axis;\n   }\n   TF_LITE_ENSURE(context, axis <= input_dims.size);\n+  TF_LITE_ENSURE(context, axis >= 0);\n \n   TfLiteIntArray* output_dims = TfLiteIntArrayCreate(input_dims.size + 1);\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/lite/kernels/expand_dims.cc
+
+tokens used
+input: 969
+cache read: 8,704
+cache write: 0
+output: 124
+reasoning output: 0
+
+The hunk validated cleanly against the target base and has been applied in the working tree. I’ll inspect the resulting diff to ensure only the intended change is present.
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/lite/kernels/expand_dims.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0098-0a3a3a33f5fe",
+  "timeout": 120000
+}
+warning: in the working copy of 'tensorflow/lite/kernels/expand_dims.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/lite/kernels/expand_dims.cc b/tensorflow/lite/kernels/expand_dims.cc
+index 721ab3d510..6db2830ea1 100644
+--- a/tensorflow/lite/kernels/expand_dims.cc
++++ b/tensorflow/lite/kernels/expand_dims.cc
+@@ -38,6 +38,7 @@ TfLiteStatus ExpandTensorDim(TfLiteContext* context, const TfLiteTensor& input,
+     axis = input_dims.size + 1 + axis;
+   }
+   TF_LITE_ENSURE(context, axis <= input_dims.size);
++  TF_LITE_ENSURE(context, axis >= 0);
+ 
+   TfLiteIntArray* output_dims = TfLiteIntArrayCreate(input_dims.size + 1);
+   for (int i = 0; i < output_dims->size; ++i) {
+
+tokens used
+input: 1,121
+cache read: 8,704
+cache write: 0
+output: 120
+reasoning output: 0
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/lite/kernels/expand_dims.cc b/tensorflow/lite/kernels/expand_dims.cc
+    index 721ab3d510..6db2830ea1 100644
+    --- a/tensorflow/lite/kernels/expand_dims.cc
+    +++ b/tensorflow/lite/kernels/expand_dims.cc
+    @@ -38,6 +38,7 @@ TfLiteStatus ExpandTensorDim(TfLiteContext* context, const TfLiteTensor& input,
+         axis = input_dims.size + 1 + axis;
+       }
+       TF_LITE_ENSURE(context, axis <= input_dims.size);
+    +  TF_LITE_ENSURE(context, axis >= 0);
+     
+       TfLiteIntArray* output_dims = TfLiteIntArrayCreate(input_dims.size + 1);
+       for (int i = 0; i < output_dims->size; ++i) {
+  notes: >
+    Added the missing lower-bound validation for normalized expand_dims axis; hunk validation succeeded against the target base.
+```
+
+tokens used
+input: 450
+cache read: 9,728
+cache write: 0
+output: 246
+reasoning output: 25

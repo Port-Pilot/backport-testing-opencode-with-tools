@@ -1,0 +1,182 @@
+I’ll locate the target implementation of `RepeatedAttrDefEqual`, verify the hunk context against the 2.5.2 base, then apply the minimal equivalent change only in that file.
+
+tool: viewcode
+{
+  "ref": "b2b3444b71ea99685edafa7731fb7ba57939f437",
+  "path": "tensorflow/core/framework/op_def_util.cc",
+  "startline": 800,
+  "endline": 850
+}
+Here are lines 800 through 850.
+
+  if (!AreAttrValuesEqual(a1.allowed_values(), a2.allowed_values()))
+    return false;
+  return true;
+}
+
+uint64 AttrDefHash(const OpDef::AttrDef& a) {
+  uint64 h = Hash64(a.name());
+  h = Hash64(a.type().data(), a.type().size(), h);
+  h = Hash64Combine(AttrValueHash(a.default_value()), h);
+  h = Hash64(a.description().data(), a.description().size(), h);
+  h = Hash64Combine(static_cast<uint64>(a.has_minimum()), h);
+  h = Hash64Combine(static_cast<uint64>(a.minimum()), h);
+  h = Hash64Combine(AttrValueHash(a.allowed_values()), h);
+  return h;
+}
+
+bool RepeatedAttrDefEqual(
+    const protobuf::RepeatedPtrField<OpDef::AttrDef>& a1,
+    const protobuf::RepeatedPtrField<OpDef::AttrDef>& a2) {
+  std::unordered_map<string, const OpDef::AttrDef*> a1_set;
+  for (const OpDef::AttrDef& def : a1) {
+    DCHECK(a1_set.find(def.name()) == a1_set.end())
+        << "AttrDef names must be unique, but '" << def.name()
+        << "' appears more than once";
+    a1_set[def.name()] = &def;
+  }
+  for (const OpDef::AttrDef& def : a2) {
+    auto iter = a1_set.find(def.name());
+    if (iter == a1_set.end()) return false;
+    if (!AttrDefEqual(*iter->second, def)) return false;
+    a1_set.erase(iter);
+  }
+  if (!a1_set.empty()) return false;
+  return true;
+}
+
+uint64 RepeatedAttrDefHash(
+    const protobuf::RepeatedPtrField<OpDef::AttrDef>& a) {
+  // Insert AttrDefs into map to deterministically sort by name
+  std::map<string, const OpDef::AttrDef*> a_set;
+  for (const OpDef::AttrDef& def : a) {
+    a_set[def.name()] = &def;
+  }
+  // Iterate and combines hashes of keys and values
+  uint64 h = 0xDECAFCAFFE;
+  for (const auto& pair : a_set) {
+    h = Hash64(pair.first.data(), pair.first.size(), h);
+    h = Hash64Combine(AttrDefHash(*pair.second), h);
+  }
+  return h;
+}
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: locate_symbol
+{
+  "ref": "b2b3444b71ea99685edafa7731fb7ba57939f437",
+  "symbol": "RepeatedAttrDefEqual"
+}
+tensorflow/core/framework/op_def_util.cc:816
+tensorflow/core/framework/op_def_util.h:92
+tensorflow/core/framework/op_def_util.cc:855
+tensorflow/core/framework/op_def_util_test.cc:456
+tensorflow/core/framework/op_def_util_test.cc:457
+tensorflow/core/framework/op_def_util_test.cc:463
+tensorflow/core/framework/op_def_util_test.cc:464
+
+tokens used
+input: 8,390
+cache read: 0
+cache write: 0
+output: 162
+reasoning output: 0
+
+The target release has the same `RepeatedAttrDefEqual` implementation and context, so the newer security hunk maps directly with no adaptation.
+
+tool: validate
+{
+  "ref": "b2b3444b71ea99685edafa7731fb7ba57939f437",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/framework/op_def_util.cc b/tensorflow/core/framework/op_def_util.cc\n--- a/tensorflow/core/framework/op_def_util.cc\n+++ b/tensorflow/core/framework/op_def_util.cc\n@@ -821,9 +821,10 @@ bool RepeatedAttrDefEqual(\n     const protobuf::RepeatedPtrField<OpDef::AttrDef>& a2) {\n   std::unordered_map<string, const OpDef::AttrDef*> a1_set;\n   for (const OpDef::AttrDef& def : a1) {\n-    DCHECK(a1_set.find(def.name()) == a1_set.end())\n-        << \"AttrDef names must be unique, but '\" << def.name()\n-        << \"' appears more than once\";\n+    if (a1_set.find(def.name()) != a1_set.end()) {\n+      LOG(ERROR) << \"AttrDef names must be unique, but '\" << def.name()\n+                 << \"' appears more than once\";\n+    }\n     a1_set[def.name()] = &def;\n   }\n   for (const OpDef::AttrDef& def : a2) {\n"
+}
+Patch applied successfully
+
+tokens used
+input: 1,523
+cache read: 7,680
+cache write: 0
+output: 342
+reasoning output: 37
+
+I’m applying the validated one-hunk change to replace the debug-only duplicate-name check with a runtime error log.
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/framework/op_def_util.cc\n@@\n   std::unordered_map<string, const OpDef::AttrDef*> a1_set;\n   for (const OpDef::AttrDef& def : a1) {\n-    DCHECK(a1_set.find(def.name()) == a1_set.end())\n-        << \"AttrDef names must be unique, but '\" << def.name()\n-        << \"' appears more than once\";\n+    if (a1_set.find(def.name()) != a1_set.end()) {\n+      LOG(ERROR) << \"AttrDef names must be unique, but '\" << def.name()\n+                 << \"' appears more than once\";\n+    }\n     a1_set[def.name()] = &def;\n   }\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/framework/op_def_util.cc
+
+tokens used
+input: 891
+cache read: 8,704
+cache write: 0
+output: 228
+reasoning output: 0
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/framework/op_def_util.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0052-b2b3444b71ea",
+  "timeout": 120000
+}
+warning: in the working copy of 'tensorflow/core/framework/op_def_util.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/framework/op_def_util.cc b/tensorflow/core/framework/op_def_util.cc
+index 486f92b3b2..8500f247bf 100644
+--- a/tensorflow/core/framework/op_def_util.cc
++++ b/tensorflow/core/framework/op_def_util.cc
+@@ -818,9 +818,10 @@ bool RepeatedAttrDefEqual(
+     const protobuf::RepeatedPtrField<OpDef::AttrDef>& a2) {
+   std::unordered_map<string, const OpDef::AttrDef*> a1_set;
+   for (const OpDef::AttrDef& def : a1) {
+-    DCHECK(a1_set.find(def.name()) == a1_set.end())
+-        << "AttrDef names must be unique, but '" << def.name()
+-        << "' appears more than once";
++    if (a1_set.find(def.name()) != a1_set.end()) {
++      LOG(ERROR) << "AttrDef names must be unique, but '" << def.name()
++                 << "' appears more than once";
++    }
+     a1_set[def.name()] = &def;
+   }
+   for (const OpDef::AttrDef& def : a2) {
+
+tokens used
+input: 1,145
+cache read: 8,704
+cache write: 0
+output: 76
+reasoning output: 14
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/framework/op_def_util.cc b/tensorflow/core/framework/op_def_util.cc
+    index 486f92b3b2..8500f247bf 100644
+    --- a/tensorflow/core/framework/op_def_util.cc
+    +++ b/tensorflow/core/framework/op_def_util.cc
+    @@ -818,9 +818,10 @@ bool RepeatedAttrDefEqual(
+         const protobuf::RepeatedPtrField<OpDef::AttrDef>& a2) {
+       std::unordered_map<string, const OpDef::AttrDef*> a1_set;
+       for (const OpDef::AttrDef& def : a1) {
+    -    DCHECK(a1_set.find(def.name()) == a1_set.end())
+    -        << "AttrDef names must be unique, but '" << def.name()
+    -        << "' appears more than once";
+    +    if (a1_set.find(def.name()) != a1_set.end()) {
+    +      LOG(ERROR) << "AttrDef names must be unique, but '" << def.name()
+    +                 << "' appears more than once";
+    +    }
+         a1_set[def.name()] = &def;
+       }
+       for (const OpDef::AttrDef& def : a2) {
+  notes: >
+    Backported the runtime duplicate AttrDef name logging fix in RepeatedAttrDefEqual; hunk validation succeeded against the target base.
+```
+
+tokens used
+input: 510
+cache read: 9,728
+cache write: 0
+output: 323
+reasoning output: 0

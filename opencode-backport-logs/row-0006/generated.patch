@@ -1,0 +1,82 @@
+diff --git a/tensorflow/core/kernels/sparse_cross_op.cc b/tensorflow/core/kernels/sparse_cross_op.cc
+index a16e34c7cb..865ce4e8a8 100644
+--- a/tensorflow/core/kernels/sparse_cross_op.cc
++++ b/tensorflow/core/kernels/sparse_cross_op.cc
+@@ -26,6 +26,7 @@ limitations under the License.
+ #include "tensorflow/core/framework/tensor.h"
+ #include "tensorflow/core/framework/tensor_shape.h"
+ #include "tensorflow/core/framework/types.h"
++#include "tensorflow/core/framework/types.pb.h"
+ #include "tensorflow/core/lib/core/stringpiece.h"
+ #include "tensorflow/core/lib/strings/str_util.h"
+ #include "tensorflow/core/platform/fingerprint.h"
+@@ -295,6 +296,7 @@ class SparseCrossOp : public OpKernel {
+     int64 signed_hash_key_;
+     OP_REQUIRES_OK(context, context->GetAttr("hash_key", &signed_hash_key_));
+     hash_key_ = static_cast<uint64>(signed_hash_key_);
++    OP_REQUIRES_OK(context, context->GetAttr("internal_type", &internal_type_));
+   }
+ 
+   void Compute(OpKernelContext* context) override {
+@@ -356,6 +358,10 @@ class SparseCrossOp : public OpKernel {
+     const auto size = indices_list_in.size();
+     // Validates indices_list_in OpInputList.
+     for (int i = 0; i < size; i++) {
++      OP_REQUIRES(context, indices_list_in[i].dtype() == DT_INT64,
++                  errors::InvalidArgument("Input indices should be of type ",
++                                          DT_INT64, " but received ",
++                                          indices_list_in[i].dtype()));
+       OP_REQUIRES(
+           context, TensorShapeUtils::IsMatrix(indices_list_in[i].shape()),
+           errors::InvalidArgument(
+@@ -374,6 +380,15 @@ class SparseCrossOp : public OpKernel {
+         errors::InvalidArgument("Expected ", size, " input values, got ",
+                                 values_list_in.size()));
+     for (int i = 0; i < size; i++) {
++      // Make sure to avoid the expected type to be string, but input values to
++      // be int64.
++      OP_REQUIRES(context,
++                  internal_type_ != DT_STRING ||
++                      values_list_in[i].dtype() != DT_INT64,
++                  errors::InvalidArgument(
++                      "Input values should be of internal type ",
++                      internal_type_, " but received ",
++                      values_list_in[i].dtype()));
+       OP_REQUIRES(
+           context, TensorShapeUtils::IsVector(values_list_in[i].shape()),
+           errors::InvalidArgument(
+@@ -396,6 +411,10 @@ class SparseCrossOp : public OpKernel {
+                                 shapes_list_in.size()));
+     const auto batch_size = CalculateBatchSize(shapes_list_in, dense_list_in);
+     for (int i = 0; i < size; i++) {
++      OP_REQUIRES(context, shapes_list_in[i].dtype() == DT_INT64,
++                  errors::InvalidArgument("Input shape should be of type ",
++                                          DT_INT64, " but received ",
++                                          shapes_list_in[i].dtype()));
+       OP_REQUIRES(
+           context, TensorShapeUtils::IsVector(shapes_list_in[i].shape()),
+           errors::InvalidArgument(
+@@ -415,6 +434,15 @@ class SparseCrossOp : public OpKernel {
+ 
+     // Validates dense_list_in OpInputList
+     for (int i = 0; i < dense_list_in.size(); ++i) {
++      // Make sure to avoid the expected type to be string, but input values to
++      // be int64.
++      OP_REQUIRES(context,
++                  internal_type_ != DT_STRING ||
++                      dense_list_in[i].dtype() != DT_INT64,
++                  errors::InvalidArgument(
++                      "Dense inputs should be of internal type ",
++                      internal_type_, " but received ",
++                      dense_list_in[i].dtype()));
+       OP_REQUIRES(
+           context, TensorShapeUtils::IsMatrix(dense_list_in[i].shape()),
+           errors::InvalidArgument(
+@@ -551,6 +579,7 @@ class SparseCrossOp : public OpKernel {
+   }
+   int64 num_buckets_;
+   uint64 hash_key_;
++  DataType internal_type_;
+ };
+ 
+ REGISTER_KERNEL_BUILDER(Name("SparseCross")

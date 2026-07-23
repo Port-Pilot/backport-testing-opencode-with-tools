@@ -1,0 +1,590 @@
+I’ll inspect the target-side `fully_connected.cc` around the float sparse path, then apply the minimal equivalent security check without looking at the held-out backport commit.
+
+tool: viewcode
+{
+  "ref": "b2b3444b71ea99685edafa7731fb7ba57939f437",
+  "path": "tensorflow/lite/kernels/fully_connected.cc",
+  "startline": 880,
+  "endline": 1035
+}
+Here are lines 880 through 1035.
+
+}
+
+template <KernelType kernel_type>
+TfLiteStatus EvalFloat(TfLiteContext* context, TfLiteNode* node,
+                       TfLiteFullyConnectedParams* params, OpData* data,
+                       const TfLiteTensor* input, const TfLiteTensor* filter,
+                       const TfLiteTensor* bias, TfLiteTensor* output) {
+  float output_activation_min, output_activation_max;
+  CalculateActivationRange(params->activation, &output_activation_min,
+                           &output_activation_max);
+  if (kernel_type == kReference) {
+    FullyConnectedParams op_params;
+    op_params.float_activation_min = output_activation_min;
+    op_params.float_activation_max = output_activation_max;
+    if (filter->sparsity != nullptr) {
+      const auto& sparsity = *filter->sparsity;
+      reference_ops::FullyConnectedSparseWeight(
+          sparsity, op_params, GetTensorShape(input),
+          GetTensorData<float>(input), GetTensorShape(filter),
+          GetTensorData<float>(filter), GetTensorShape(bias),
+          GetTensorData<float>(bias), GetTensorShape(output),
+          GetTensorData<float>(output));
+    } else {
+      reference_ops::FullyConnected(
+          op_params, GetTensorShape(input), GetTensorData<float>(input),
+          GetTensorShape(filter), GetTensorData<float>(filter),
+          GetTensorShape(bias), GetTensorData<float>(bias),
+          GetTensorShape(output), GetTensorData<float>(output));
+    }
+  } else if (kernel_type == kLegacyPie) {
+    return EvalPie(context, node, params, data, input, filter, bias, output);
+  } else {
+    FullyConnectedParams op_params;
+    op_params.float_activation_min = output_activation_min;
+    op_params.float_activation_max = output_activation_max;
+    if (filter->sparsity != nullptr) {
+      const auto& sparsity = *filter->sparsity;
+      if (!SupportedSparsityFormat(sparsity)) {
+        TF_LITE_KERNEL_LOG(context,
+                           "Unsupported sparse fully-connected weight format.");
+        return kTfLiteError;
+      }
+
+      if (sparsity.dim_metadata_size == kDimMetadataSizeRandomSparse) {
+        // Random sparse.
+        optimized_ops::FullyConnectedSparseWeight(
+            sparsity, op_params, GetTensorShape(input),
+            GetTensorData<float>(input), GetTensorShape(filter),
+            GetTensorData<float>(filter), GetTensorShape(bias),
+            GetTensorData<float>(bias), GetTensorShape(output),
+            GetTensorData<float>(output));
+      } else if (sparsity.dim_metadata_size == kDimMetadataSizeBlockSparse &&
+                 sparsity.dim_metadata[2].dense_size == 4) {
+        // Block sparse with block size of 1x4.
+        optimized_ops::FullyConnectedSparseWeight1x4(
+            sparsity, op_params, GetTensorShape(input),
+            GetTensorData<float>(input), GetTensorShape(filter),
+            GetTensorData<float>(filter), GetTensorShape(bias),
+            GetTensorData<float>(bias), GetTensorShape(output),
+            GetTensorData<float>(output),
+            CpuBackendContext::GetFromContext(context));
+      } else {
+        TF_LITE_KERNEL_LOG(context,
+                           "Unsupported sparse fully-connected weight format.");
+        return kTfLiteError;
+      }
+
+    } else {
+      op_params.lhs_cacheable = IsConstantTensor(filter);
+      op_params.rhs_cacheable = IsConstantTensor(input);
+      optimized_ops::FullyConnected(
+          op_params, GetTensorShape(input), GetTensorData<float>(input),
+          GetTensorShape(filter), GetTensorData<float>(filter),
+          GetTensorShape(bias), GetTensorData<float>(bias),
+          GetTensorShape(output), GetTensorData<float>(output),
+          CpuBackendContext::GetFromContext(context));
+    }
+  }
+
+  return kTfLiteOk;
+}
+
+template <KernelType kernel_type>
+TfLiteStatus Eval(TfLiteContext* context, TfLiteNode* node) {
+  auto* params =
+      reinterpret_cast<TfLiteFullyConnectedParams*>(node->builtin_data);
+  OpData* data = reinterpret_cast<OpData*>(node->user_data);
+
+  const TfLiteTensor* input;
+  TF_LITE_ENSURE_OK(context, GetInputSafe(context, node, kInputTensor, &input));
+  const TfLiteTensor* filter;
+  TF_LITE_ENSURE_OK(context,
+                    GetInputSafe(context, node, kWeightsTensor, &filter));
+  const TfLiteTensor* bias =
+      (node->inputs->size == 3)
+          ? GetOptionalInputTensor(context, node, kBiasTensor)
+          : nullptr;
+  TfLiteTensor* output;
+  TF_LITE_ENSURE_OK(context,
+                    GetOutputSafe(context, node, kOutputTensor, &output));
+
+  switch (filter->type) {
+    case kTfLiteFloat32:
+      return EvalFloat<kernel_type>(context, node, params, data, input, filter,
+                                    bias, output);
+    case kTfLiteUInt8:
+      if (params->weights_format ==
+          kTfLiteFullyConnectedWeightsFormatShuffled4x16Int8) {
+        TfLiteTensor* shuffled_input_workspace;
+        TF_LITE_ENSURE_OK(
+            context, GetOutputSafe(context, node, kShuffledInputWorkspaceTensor,
+                                   &shuffled_input_workspace));
+        return EvalShuffledQuantized<kernel_type>(context, node, params, data,
+                                                  input, filter, bias, output,
+                                                  shuffled_input_workspace);
+      } else if (params->weights_format ==
+                 kTfLiteFullyConnectedWeightsFormatDefault) {
+        return EvalQuantized<kernel_type>(context, node, params, data, input,
+                                          filter, bias, output);
+      } else {
+        context->ReportError(context,
+                             "Unhandled fully-connected weights format");
+        return kTfLiteError;
+      }
+    case kTfLiteInt8:
+      if (params->weights_format == kTfLiteFullyConnectedWeightsFormatDefault) {
+        return EvalQuantized<kernel_type>(context, node, params, data, input,
+                                          filter, bias, output);
+      } else {
+        context->ReportError(context,
+                             "Unhandled fully-connected weights format");
+        return kTfLiteError;
+      }
+    default:
+      context->ReportError(context,
+                           "Filter data type %s currently not supported.",
+                           TfLiteTypeGetName(filter->type));
+      return kTfLiteError;
+  }
+  return kTfLiteOk;
+}
+
+}  // namespace fully_connected
+
+TfLiteRegistration* Register_FULLY_CONNECTED_REF() {
+  static TfLiteRegistration r = {
+      fully_connected::Init, fully_connected::Free,
+      fully_connected::Prepare<fully_connected::kReference>,
+      fully_connected::Eval<fully_connected::kReference>};
+  return &r;
+}
+
+TfLiteRegistration* Register_FULLY_CONNECTED_GENERIC_OPT() {
+  static TfLiteRegistration r = {
+      fully_connected::Init, fully_connected::Free,
+      fully_connected::Prepare<fully_connected::kGenericOptimized>,
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: locate_symbol
+{
+  "ref": "b2b3444b71ea99685edafa7731fb7ba57939f437",
+  "symbol": "EvalFloat"
+}
+tensorflow/lite/kernels/basic_rnn.cc:200
+tensorflow/lite/kernels/basic_rnn.cc:304
+tensorflow/lite/kernels/bidirectional_sequence_lstm.cc:1175
+tensorflow/lite/kernels/bidirectional_sequence_lstm.cc:1195
+tensorflow/lite/kernels/bidirectional_sequence_rnn.cc:372
+tensorflow/lite/kernels/bidirectional_sequence_rnn.cc:783
+tensorflow/lite/kernels/conv.cc:789
+tensorflow/lite/kernels/conv3d.cc:239
+tensorflow/lite/kernels/conv3d.cc:309
+tensorflow/lite/kernels/depthwise_conv.cc:299
+tensorflow/lite/kernels/fully_connected.cc:883
+tensorflow/lite/kernels/lstm.cc:1911
+tensorflow/lite/kernels/lstm_eval.cc:1687
+tensorflow/lite/kernels/lstm_eval.h:98
+tensorflow/lite/kernels/random_uniform.cc:81
+tensorflow/lite/kernels/transpose_conv.cc:395
+tensorflow/lite/kernels/unidirectional_sequence_lstm.cc:1329
+tensorflow/lite/kernels/unidirectional_sequence_rnn.cc:207
+tensorflow/lite/kernels/unidirectional_sequence_rnn.cc:379
+tensorflow/lite/micro/kernels/arc_mli/conv.cc:474
+
+tool: locate_symbol
+{
+  "ref": "b2b3444b71ea99685edafa7731fb7ba57939f437",
+  "symbol": "EvalShuffledQuantized"
+}
+tensorflow/lite/kernels/fully_connected.cc:830
+tensorflow/lite/kernels/fully_connected.cc:992
+
+tokens used
+input: 4,560
+cache read: 4,608
+cache write: 0
+output: 201
+reasoning output: 0
+
+The target code has the same optimized sparse float path as the source patch, but shifted earlier. I’m adding the validation helper above `EvalFloat` and reusing cached shapes in the optimized sparse calls to match the patched behavior.
+
+tool: read
+{
+  "filePath": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0055-b2b3444b71ea\\tensorflow\\lite\\kernels\\fully_connected.cc",
+  "offset": 820,
+  "limit": 140
+}
+<path>C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0055-b2b3444b71ea\tensorflow\lite\kernels\fully_connected.cc</path>
+<type>file</type>
+<content>
+820:                              "Quantized FullyConnected expects output data "
+821:                              "type uint8, int8 or int16");
+822:         return kTfLiteError;
+823:     }
+824:   }
+825: 
+826:   return kTfLiteOk;
+827: }
+828: 
+829: template <KernelType kernel_type>
+830: TfLiteStatus EvalShuffledQuantized(TfLiteContext* context, TfLiteNode* node,
+831:                                    TfLiteFullyConnectedParams* params,
+832:                                    OpData* data, const TfLiteTensor* input,
+833:                                    const TfLiteTensor* filter,
+834:                                    const TfLiteTensor* bias,
+835:                                    TfLiteTensor* output,
+836:                                    TfLiteTensor* shuffled_input_workspace) {
+837:   // TODO(b/110697972) decide more consistently if / how / where we want
+838:   // to perform this kind of runtime data type checks.
+839:   if (shuffled_input_workspace->type != kTfLiteUInt8) {
+840:     context->ReportError(context, "Unexpected data type");
+841:     return kTfLiteError;
+842:   }
+843: 
+844: #define TF_LITE_SHUFFLED_FULLY_CONNECTED(type)                           \
+845:   {                                                                      \
+846:     type::ShuffledFullyConnected(                                        \
+847:         op_params, GetTensorShape(input), GetTensorData<uint8_t>(input), \
+848:         GetTensorShape(filter), GetTensorData<uint8_t>(filter),          \
+849:         GetTensorShape(bias), GetTensorData<int32_t>(bias),              \
+850:         GetTensorShape(output), GetTensorData<int16_t>(output),          \
+851:         GetTensorData<uint8_t>(shuffled_input_workspace),                \
+852:         CpuBackendContext::GetFromContext(context));                     \
+853:   }
+854:   FullyConnectedParams op_params;
+855:   op_params.output_multiplier = data->output_multiplier;
+856:   op_params.output_shift = data->output_shift;
+857:   op_params.quantized_activation_min = data->output_activation_min;
+858:   op_params.quantized_activation_max = data->output_activation_max;
+859:   op_params.lhs_cacheable = IsConstantTensor(filter);
+860:   op_params.rhs_cacheable = IsConstantTensor(input);
+861:   if (kernel_type == kReference) {
+862:     reference_ops::ShuffledFullyConnected(
+863:         op_params, GetTensorShape(input), GetTensorData<uint8_t>(input),
+864:         GetTensorShape(filter), GetTensorData<uint8_t>(filter),
+865:         GetTensorShape(bias), GetTensorData<int32_t>(bias),
+866:         GetTensorShape(output), GetTensorData<int16_t>(output),
+867:         GetTensorData<uint8_t>(shuffled_input_workspace));
+868:   } else {
+869:     optimized_ops::ShuffledFullyConnected(
+870:         op_params, GetTensorShape(input), GetTensorData<uint8_t>(input),
+871:         GetTensorShape(filter), GetTensorData<uint8_t>(filter),
+872:         GetTensorShape(bias), GetTensorData<int32_t>(bias),
+873:         GetTensorShape(output), GetTensorData<int16_t>(output),
+874:         GetTensorData<uint8_t>(shuffled_input_workspace),
+875:         CpuBackendContext::GetFromContext(context));
+876:   }
+877: #undef TF_LITE_SHUFFLED_FULLY_CONNECTED
+878: 
+879:   return kTfLiteOk;
+880: }
+881: 
+882: template <KernelType kernel_type>
+883: TfLiteStatus EvalFloat(TfLiteContext* context, TfLiteNode* node,
+884:                        TfLiteFullyConnectedParams* params, OpData* data,
+885:                        const TfLiteTensor* input, const TfLiteTensor* filter,
+886:                        const TfLiteTensor* bias, TfLiteTensor* output) {
+887:   float output_activation_min, output_activation_max;
+888:   CalculateActivationRange(params->activation, &output_activation_min,
+889:                            &output_activation_max);
+890:   if (kernel_type == kReference) {
+891:     FullyConnectedParams op_params;
+892:     op_params.float_activation_min = output_activation_min;
+893:     op_params.float_activation_max = output_activation_max;
+894:     if (filter->sparsity != nullptr) {
+895:       const auto& sparsity = *filter->sparsity;
+896:       reference_ops::FullyConnectedSparseWeight(
+897:           sparsity, op_params, GetTensorShape(input),
+898:           GetTensorData<float>(input), GetTensorShape(filter),
+899:           GetTensorData<float>(filter), GetTensorShape(bias),
+900:           GetTensorData<float>(bias), GetTensorShape(output),
+901:           GetTensorData<float>(output));
+902:     } else {
+903:       reference_ops::FullyConnected(
+904:           op_params, GetTensorShape(input), GetTensorData<float>(input),
+905:           GetTensorShape(filter), GetTensorData<float>(filter),
+906:           GetTensorShape(bias), GetTensorData<float>(bias),
+907:           GetTensorShape(output), GetTensorData<float>(output));
+908:     }
+909:   } else if (kernel_type == kLegacyPie) {
+910:     return EvalPie(context, node, params, data, input, filter, bias, output);
+911:   } else {
+912:     FullyConnectedParams op_params;
+913:     op_params.float_activation_min = output_activation_min;
+914:     op_params.float_activation_max = output_activation_max;
+915:     if (filter->sparsity != nullptr) {
+916:       const auto& sparsity = *filter->sparsity;
+917:       if (!SupportedSparsityFormat(sparsity)) {
+918:         TF_LITE_KERNEL_LOG(context,
+919:                            "Unsupported sparse fully-connected weight format.");
+920:         return kTfLiteError;
+921:       }
+922: 
+923:       if (sparsity.dim_metadata_size == kDimMetadataSizeRandomSparse) {
+924:         // Random sparse.
+925:         optimized_ops::FullyConnectedSparseWeight(
+926:             sparsity, op_params, GetTensorShape(input),
+927:             GetTensorData<float>(input), GetTensorShape(filter),
+928:             GetTensorData<float>(filter), GetTensorShape(bias),
+929:             GetTensorData<float>(bias), GetTensorShape(output),
+930:             GetTensorData<float>(output));
+931:       } else if (sparsity.dim_metadata_size == kDimMetadataSizeBlockSparse &&
+932:                  sparsity.dim_metadata[2].dense_size == 4) {
+933:         // Block sparse with block size of 1x4.
+934:         optimized_ops::FullyConnectedSparseWeight1x4(
+935:             sparsity, op_params, GetTensorShape(input),
+936:             GetTensorData<float>(input), GetTensorShape(filter),
+937:             GetTensorData<float>(filter), GetTensorShape(bias),
+938:             GetTensorData<float>(bias), GetTensorShape(output),
+939:             GetTensorData<float>(output),
+940:             CpuBackendContext::GetFromContext(context));
+941:       } else {
+942:         TF_LITE_KERNEL_LOG(context,
+943:                            "Unsupported sparse fully-connected weight format.");
+944:         return kTfLiteError;
+945:       }
+946: 
+947:     } else {
+948:       op_params.lhs_cacheable = IsConstantTensor(filter);
+949:       op_params.rhs_cacheable = IsConstantTensor(input);
+950:       optimized_ops::FullyConnected(
+951:           op_params, GetTensorShape(input), GetTensorData<float>(input),
+952:           GetTensorShape(filter), GetTensorData<float>(filter),
+953:           GetTensorShape(bias), GetTensorData<float>(bias),
+954:           GetTensorShape(output), GetTensorData<float>(output),
+955:           CpuBackendContext::GetFromContext(context));
+956:     }
+957:   }
+958: 
+959:   return kTfLiteOk;
+
+(Showing lines 820-959 of 1055. Use offset=960 to continue.)
+</content>
+
+tokens used
+input: 2,488
+cache read: 8,704
+cache write: 0
+output: 129
+reasoning output: 13
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/lite/kernels/fully_connected.cc\n@@\n   return kTfLiteOk;\n }\n \n+// Verifies that sparsity values are valid given input/weight/output.\n+bool VerifySparsity(const RuntimeShape& weights_shape,\n+                    const RuntimeShape& input_shape,\n+                    const RuntimeShape& output_shape,\n+                    const TfLiteSparsity* sparsity) {\n+  const int weights_dims_count = weights_shape.DimensionsCount();\n+  const int output_dims_count = output_shape.DimensionsCount();\n+  const int w0_size = sparsity->dim_metadata[0].dense_size;\n+  const int accum_depth = weights_shape.Dims(weights_dims_count - 1);\n+  const int output_elements = output_shape.FlatSize();\n+  const int input_elements = input_shape.FlatSize();\n+  const int batches = FlatSizeSkipDim(output_shape, output_dims_count - 1);\n+  const int output_depth = MatchingDim(weights_shape, weights_dims_count - 2,\n+                                       output_shape, output_dims_count - 1);\n+  const int max_batch_index = batches - 1;\n+  const int max_output = max_batch_index * output_depth + w0_size;\n+  const int max_batch_depth = accum_depth * max_batch_index;\n+\n+  // Verify output size is enough.\n+  if (output_elements < max_output) return false;\n+\n+  // Verify index from sparse in input is valid.\n+  for (int i = 0; i < sparsity->dim_metadata[1].array_indices->size; ++i) {\n+    if (input_elements <=\n+        max_batch_depth + sparsity->dim_metadata[1].array_indices->data[i])\n+      return false;\n+  }\n+  return true;\n+}\n+\n template <KernelType kernel_type>\n TfLiteStatus EvalFloat(TfLiteContext* context, TfLiteNode* node,\n                        TfLiteFullyConnectedParams* params, OpData* data,\n@@\n                            \"Unsupported sparse fully-connected weight format.\");\n         return kTfLiteError;\n       }\n+      const auto& input_shape = GetTensorShape(input);\n+      const auto& filter_shape = GetTensorShape(filter);\n+      const auto& output_shape = GetTensorShape(output);\n+      const auto& bias_shape = GetTensorShape(bias);\n+      if (!VerifySparsity(filter_shape, input_shape, output_shape, &sparsity)) {\n+        TF_LITE_KERNEL_LOG(context, \"Invalid sparse fully-connected format.\");\n+        return kTfLiteError;\n+      }\n \n       if (sparsity.dim_metadata_size == kDimMetadataSizeRandomSparse) {\n         // Random sparse.\n         optimized_ops::FullyConnectedSparseWeight(\n-            sparsity, op_params, GetTensorShape(input),\n-            GetTensorData<float>(input), GetTensorShape(filter),\n-            GetTensorData<float>(filter), GetTensorShape(bias),\n-            GetTensorData<float>(bias), GetTensorShape(output),\n-            GetTensorData<float>(output));\n+            sparsity, op_params, input_shape, GetTensorData<float>(input),\n+            filter_shape, GetTensorData<float>(filter), bias_shape,\n+            GetTensorData<float>(bias), output_shape,\n+            GetTensorData<float>(output));\n       } else if (sparsity.dim_metadata_size == kDimMetadataSizeBlockSparse &&\n                  sparsity.dim_metadata[2].dense_size == 4) {\n         // Block sparse with block size of 1x4.\n         optimized_ops::FullyConnectedSparseWeight1x4(\n-            sparsity, op_params, GetTensorShape(input),\n-            GetTensorData<float>(input), GetTensorShape(filter),\n-            GetTensorData<float>(filter), GetTensorShape(bias),\n-            GetTensorData<float>(bias), GetTensorShape(output),\n-            GetTensorData<float>(output),\n+            sparsity, op_params, input_shape, GetTensorData<float>(input),\n+            filter_shape, GetTensorData<float>(filter), bias_shape,\n+            GetTensorData<float>(bias), output_shape,\n+            GetTensorData<float>(output),\n             CpuBackendContext::GetFromContext(context));\n       } else {\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/lite/kernels/fully_connected.cc
+
+tokens used
+input: 2,388
+cache read: 10,752
+cache write: 0
+output: 1,017
+reasoning output: 37
+
+The source edit is in place. I’m checking the resulting diff and validating that the hunk applies cleanly to the specified target base.
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/lite/kernels/fully_connected.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0055-b2b3444b71ea",
+  "timeout": 120000
+}
+warning: in the working copy of 'tensorflow/lite/kernels/fully_connected.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/lite/kernels/fully_connected.cc b/tensorflow/lite/kernels/fully_connected.cc
+index e9d5d3dc6a..830bd26767 100644
+--- a/tensorflow/lite/kernels/fully_connected.cc
++++ b/tensorflow/lite/kernels/fully_connected.cc
+@@ -879,6 +879,36 @@ TfLiteStatus EvalShuffledQuantized(TfLiteContext* context, TfLiteNode* node,
+   return kTfLiteOk;
+ }
+ 
++// Verifies that sparsity values are valid given input/weight/output.
++bool VerifySparsity(const RuntimeShape& weights_shape,
++                    const RuntimeShape& input_shape,
++                    const RuntimeShape& output_shape,
++                    const TfLiteSparsity* sparsity) {
++  const int weights_dims_count = weights_shape.DimensionsCount();
++  const int output_dims_count = output_shape.DimensionsCount();
++  const int w0_size = sparsity->dim_metadata[0].dense_size;
++  const int accum_depth = weights_shape.Dims(weights_dims_count - 1);
++  const int output_elements = output_shape.FlatSize();
++  const int input_elements = input_shape.FlatSize();
++  const int batches = FlatSizeSkipDim(output_shape, output_dims_count - 1);
++  const int output_depth = MatchingDim(weights_shape, weights_dims_count - 2,
++                                       output_shape, output_dims_count - 1);
++  const int max_batch_index = batches - 1;
++  const int max_output = max_batch_index * output_depth + w0_size;
++  const int max_batch_depth = accum_depth * max_batch_index;
++
++  // Verify output size is enough.
++  if (output_elements < max_output) return false;
++
++  // Verify index from sparse in input is valid.
++  for (int i = 0; i < sparsity->dim_metadata[1].array_indices->size; ++i) {
++    if (input_elements <=
++        max_batch_depth + sparsity->dim_metadata[1].array_indices->data[i])
++      return false;
++  }
++  return true;
++}
++
+ template <KernelType kernel_type>
+ TfLiteStatus EvalFloat(TfLiteContext* context, TfLiteNode* node,
+                        TfLiteFullyConnectedParams* params, OpData* data,
+@@ -919,23 +949,29 @@ TfLiteStatus EvalFloat(TfLiteContext* context, TfLiteNode* node,
+                            "Unsupported sparse fully-connected weight format.");
+         return kTfLiteError;
+       }
++      const auto& input_shape = GetTensorShape(input);
++      const auto& filter_shape = GetTensorShape(filter);
++      const auto& output_shape = GetTensorShape(output);
++      const auto& bias_shape = GetTensorShape(bias);
++      if (!VerifySparsity(filter_shape, input_shape, output_shape, &sparsity)) {
++        TF_LITE_KERNEL_LOG(context, "Invalid sparse fully-connected format.");
++        return kTfLiteError;
++      }
+ 
+       if (sparsity.dim_metadata_size == kDimMetadataSizeRandomSparse) {
+         // Random sparse.
+         optimized_ops::FullyConnectedSparseWeight(
+-            sparsity, op_params, GetTensorShape(input),
+-            GetTensorData<float>(input), GetTensorShape(filter),
+-            GetTensorData<float>(filter), GetTensorShape(bias),
+-            GetTensorData<float>(bias), GetTensorShape(output),
++            sparsity, op_params, input_shape, GetTensorData<float>(input),
++            filter_shape, GetTensorData<float>(filter), bias_shape,
++            GetTensorData<float>(bias), output_shape,
+             GetTensorData<float>(output));
+       } else if (sparsity.dim_metadata_size == kDimMetadataSizeBlockSparse &&
+                  sparsity.dim_metadata[2].dense_size == 4) {
+         // Block sparse with block size of 1x4.
+         optimized_ops::FullyConnectedSparseWeight1x4(
+-            sparsity, op_params, GetTensorShape(input),
+-            GetTensorData<float>(input), GetTensorShape(filter),
+-            GetTensorData<float>(filter), GetTensorShape(bias),
+-            GetTensorData<float>(bias), GetTensorShape(output),
++            sparsity, op_params, input_shape, GetTensorData<float>(input),
++            filter_shape, GetTensorData<float>(filter), bias_shape,
++            GetTensorData<float>(bias), output_shape,
+             GetTensorData<float>(output),
+             CpuBackendContext::GetFromContext(context));
+       } else {
+
+tokens used
+input: 1,422
+cache read: 12,800
+cache write: 0
+output: 113
+reasoning output: 43
+
+tool: validate
+{
+  "ref": "b2b3444b71ea99685edafa7731fb7ba57939f437",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/lite/kernels/fully_connected.cc b/tensorflow/lite/kernels/fully_connected.cc\nindex e9d5d3dc6a..830bd26767 100644\n--- a/tensorflow/lite/kernels/fully_connected.cc\n+++ b/tensorflow/lite/kernels/fully_connected.cc\n@@ -879,6 +879,36 @@ TfLiteStatus EvalShuffledQuantized(TfLiteContext* context, TfLiteNode* node,\n   return kTfLiteOk;\n }\n \n+// Verifies that sparsity values are valid given input/weight/output.\n+bool VerifySparsity(const RuntimeShape& weights_shape,\n+                    const RuntimeShape& input_shape,\n+                    const RuntimeShape& output_shape,\n+                    const TfLiteSparsity* sparsity) {\n+  const int weights_dims_count = weights_shape.DimensionsCount();\n+  const int output_dims_count = output_shape.DimensionsCount();\n+  const int w0_size = sparsity->dim_metadata[0].dense_size;\n+  const int accum_depth = weights_shape.Dims(weights_dims_count - 1);\n+  const int output_elements = output_shape.FlatSize();\n+  const int input_elements = input_shape.FlatSize();\n+  const int batches = FlatSizeSkipDim(output_shape, output_dims_count - 1);\n+  const int output_depth = MatchingDim(weights_shape, weights_dims_count - 2,\n+                                       output_shape, output_dims_count - 1);\n+  const int max_batch_index = batches - 1;\n+  const int max_output = max_batch_index * output_depth + w0_size;\n+  const int max_batch_depth = accum_depth * max_batch_index;\n+\n+  // Verify output size is enough.\n+  if (output_elements < max_output) return false;\n+\n+  // Verify index from sparse in input is valid.\n+  for (int i = 0; i < sparsity->dim_metadata[1].array_indices->size; ++i) {\n+    if (input_elements <=\n+        max_batch_depth + sparsity->dim_metadata[1].array_indices->data[i])\n+      return false;\n+  }\n+  return true;\n+}\n+\n template <KernelType kernel_type>\n TfLiteStatus EvalFloat(TfLiteContext* context, TfLiteNode* node,\n                        TfLiteFullyConnectedParams* params, OpData* data,\n@@ -919,23 +949,29 @@ TfLiteStatus EvalFloat(TfLiteContext* context, TfLiteNode* node,\n                            \"Unsupported sparse fully-connected weight format.\");\n         return kTfLiteError;\n       }\n+      const auto& input_shape = GetTensorShape(input);\n+      const auto& filter_shape = GetTensorShape(filter);\n+      const auto& output_shape = GetTensorShape(output);\n+      const auto& bias_shape = GetTensorShape(bias);\n+      if (!VerifySparsity(filter_shape, input_shape, output_shape, &sparsity)) {\n+        TF_LITE_KERNEL_LOG(context, \"Invalid sparse fully-connected format.\");\n+        return kTfLiteError;\n+      }\n \n       if (sparsity.dim_metadata_size == kDimMetadataSizeRandomSparse) {\n         // Random sparse.\n         optimized_ops::FullyConnectedSparseWeight(\n-            sparsity, op_params, GetTensorShape(input),\n-            GetTensorData<float>(input), GetTensorShape(filter),\n-            GetTensorData<float>(filter), GetTensorShape(bias),\n-            GetTensorData<float>(bias), GetTensorShape(output),\n+            sparsity, op_params, input_shape, GetTensorData<float>(input),\n+            filter_shape, GetTensorData<float>(filter), bias_shape,\n+            GetTensorData<float>(bias), output_shape,\n             GetTensorData<float>(output));\n       } else if (sparsity.dim_metadata_size == kDimMetadataSizeBlockSparse &&\n                  sparsity.dim_metadata[2].dense_size == 4) {\n         // Block sparse with block size of 1x4.\n         optimized_ops::FullyConnectedSparseWeight1x4(\n-            sparsity, op_params, GetTensorShape(input),\n-            GetTensorData<float>(input), GetTensorShape(filter),\n-            GetTensorData<float>(filter), GetTensorShape(bias),\n-            GetTensorData<float>(bias), GetTensorShape(output),\n+            sparsity, op_params, input_shape, GetTensorData<float>(input),\n+            filter_shape, GetTensorData<float>(filter), bias_shape,\n+            GetTensorData<float>(bias), output_shape,\n             GetTensorData<float>(output),\n             CpuBackendContext::GetFromContext(context));\n       } else {\n"
+}
+Patch applied successfully
+
+tokens used
+input: 1,581
+cache read: 13,824
+cache write: 0
+output: 1,129
+reasoning output: 10
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/lite/kernels/fully_connected.cc b/tensorflow/lite/kernels/fully_connected.cc
+    index e9d5d3dc6a..830bd26767 100644
+    --- a/tensorflow/lite/kernels/fully_connected.cc
+    +++ b/tensorflow/lite/kernels/fully_connected.cc
+    @@ -879,6 +879,36 @@ TfLiteStatus EvalShuffledQuantized(TfLiteContext* context, TfLiteNode* node,
+       return kTfLiteOk;
+     }
+     
+    +// Verifies that sparsity values are valid given input/weight/output.
+    +bool VerifySparsity(const RuntimeShape& weights_shape,
+    +                    const RuntimeShape& input_shape,
+    +                    const RuntimeShape& output_shape,
+    +                    const TfLiteSparsity* sparsity) {
+    +  const int weights_dims_count = weights_shape.DimensionsCount();
+    +  const int output_dims_count = output_shape.DimensionsCount();
+    +  const int w0_size = sparsity->dim_metadata[0].dense_size;
+    +  const int accum_depth = weights_shape.Dims(weights_dims_count - 1);
+    +  const int output_elements = output_shape.FlatSize();
+    +  const int input_elements = input_shape.FlatSize();
+    +  const int batches = FlatSizeSkipDim(output_shape, output_dims_count - 1);
+    +  const int output_depth = MatchingDim(weights_shape, weights_dims_count - 2,
+    +                                       output_shape, output_dims_count - 1);
+    +  const int max_batch_index = batches - 1;
+    +  const int max_output = max_batch_index * output_depth + w0_size;
+    +  const int max_batch_depth = accum_depth * max_batch_index;
+    +
+    +  // Verify output size is enough.
+    +  if (output_elements < max_output) return false;
+    +
+    +  // Verify index from sparse in input is valid.
+    +  for (int i = 0; i < sparsity->dim_metadata[1].array_indices->size; ++i) {
+    +    if (input_elements <=
+    +        max_batch_depth + sparsity->dim_metadata[1].array_indices->data[i])
+    +      return false;
+    +  }
+    +  return true;
+    +}
+    +
+     template <KernelType kernel_type>
+     TfLiteStatus EvalFloat(TfLiteContext* context, TfLiteNode* node,
+                            TfLiteFullyConnectedParams* params, OpData* data,
+    @@ -919,23 +949,29 @@ TfLiteStatus EvalFloat(TfLiteContext* context, TfLiteNode* node,
+                                "Unsupported sparse fully-connected weight format.");
+             return kTfLiteError;
+           }
+    +      const auto& input_shape = GetTensorShape(input);
+    +      const auto& filter_shape = GetTensorShape(filter);
+    +      const auto& output_shape = GetTensorShape(output);
+    +      const auto& bias_shape = GetTensorShape(bias);
+    +      if (!VerifySparsity(filter_shape, input_shape, output_shape, &sparsity)) {
+    +        TF_LITE_KERNEL_LOG(context, "Invalid sparse fully-connected format.");
+    +        return kTfLiteError;
+    +      }
+     
+           if (sparsity.dim_metadata_size == kDimMetadataSizeRandomSparse) {
+             // Random sparse.
+             optimized_ops::FullyConnectedSparseWeight(
+    -            sparsity, op_params, GetTensorShape(input),
+    -            GetTensorData<float>(input), GetTensorShape(filter),
+    -            GetTensorData<float>(filter), GetTensorShape(bias),
+    -            GetTensorData<float>(bias), GetTensorShape(output),
+    +            sparsity, op_params, input_shape, GetTensorData<float>(input),
+    +            filter_shape, GetTensorData<float>(filter), bias_shape,
+    +            GetTensorData<float>(bias), output_shape,
+                 GetTensorData<float>(output));
+           } else if (sparsity.dim_metadata_size == kDimMetadataSizeBlockSparse &&
+                      sparsity.dim_metadata[2].dense_size == 4) {
+             // Block sparse with block size of 1x4.
+             optimized_ops::FullyConnectedSparseWeight1x4(
+    -            sparsity, op_params, GetTensorShape(input),
+    -            GetTensorData<float>(input), GetTensorShape(filter),
+    -            GetTensorData<float>(filter), GetTensorShape(bias),
+    -            GetTensorData<float>(bias), GetTensorShape(output),
+    +            sparsity, op_params, input_shape, GetTensorData<float>(input),
+    +            filter_shape, GetTensorData<float>(filter), bias_shape,
+    +            GetTensorData<float>(bias), output_shape,
+                 GetTensorData<float>(output),
+                 CpuBackendContext::GetFromContext(context));
+           } else {
+  notes: >
+    Backported the sparse fully-connected validation check to TensorFlow 2.5.2 and validated the hunk against the target base.
+```
+
+tokens used
+input: 1,709
+cache read: 14,848
+cache write: 0
+output: 1,101
+reasoning output: 66

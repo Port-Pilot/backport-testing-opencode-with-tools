@@ -1,0 +1,741 @@
+I’ll inspect the target-side substr kernel and test layout, then apply the minimal equivalent shape check and regression test without consulting the held-out backport commit.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Locate equivalent substr kernel and test in target TensorFlow 2.1.4 checkout",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Backport pos/len shape validation and regression test",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "content": "Validate or inspect resulting diff",
+      "status": "pending",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Locate equivalent substr kernel and test in target TensorFlow 2.1.4 checkout",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Backport pos/len shape validation and regression test",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "content": "Validate or inspect resulting diff",
+    "status": "pending",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 3,941
+cache read: 4,608
+cache write: 0
+output: 124
+reasoning output: 0
+
+tool: viewcode
+{
+  "ref": "064ac42505c303fc5de10dd9d47a0f0680157442",
+  "path": "tensorflow/python/kernel_tests/substr_op_test.py",
+  "startline": 450,
+  "endline": 520
+}
+This file only has 498 lines. Here are lines 450 through 498.
+
+      (np.int32, "UTF8_CHAR"),
+      (np.int64, "UTF8_CHAR"),
+  )
+  @test_util.run_deprecated_v1
+  def testMismatchPosLenShapes(self, dtype, unit):
+    test_string = {
+        "BYTE": [[b"ten", b"eleven", b"twelve"],
+                 [b"thirteen", b"fourteen", b"fifteen"],
+                 [b"sixteen", b"seventeen", b"eighteen"]],
+        "UTF8_CHAR": [[x.encode("utf-8") for x in [u"\U0001d229\U0001d227n",
+                                                   u"\xc6\u053c\u025bv\u025bn",
+                                                   u"tw\u0c1dlv\u025b"]],
+                      [x.encode("utf-8") for x in [u"th\xcdrt\xea\xean",
+                                                   u"f\U0001f604urt\xea\xean",
+                                                   u"f\xcd\ua09ctee\ua0e4"]],
+                      [x.encode("utf-8") for x in [u"s\xcdxt\xea\xean",
+                                                   u"se\U00010299enteen",
+                                                   u"ei\U0001e920h\x86een"]]],
+    }[unit]
+    position = np.array([[1, 2, 3]], dtype)
+    length = np.array([2, 3, 4], dtype)
+    # Should fail: position/length have different rank
+    with self.assertRaises(ValueError):
+      string_ops.substr(test_string, position, length)
+
+    position = np.array([[1, 2, 3], [1, 2, 3], [1, 2, 3]], dtype)
+    length = np.array([[2, 3, 4]], dtype)
+    # Should fail: position/length have different dimensionality
+    with self.assertRaises(ValueError):
+      string_ops.substr(test_string, position, length)
+
+  @test_util.run_deprecated_v1
+  def testWrongDtype(self):
+    with self.cached_session():
+      with self.assertRaises(TypeError):
+        string_ops.substr(b"test", 3.0, 1)
+      with self.assertRaises(TypeError):
+        string_ops.substr(b"test", 3, 1.0)
+
+  @test_util.run_deprecated_v1
+  def testInvalidUnit(self):
+    with self.cached_session():
+      with self.assertRaises(ValueError):
+        string_ops.substr(b"test", 3, 1, unit="UTF8")
+
+
+if __name__ == "__main__":
+  test.main()
+
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: viewcode
+{
+  "ref": "064ac42505c303fc5de10dd9d47a0f0680157442",
+  "path": "tensorflow/core/kernels/substr_op.cc",
+  "startline": 1,
+  "endline": 130
+}
+Here are lines 1 through 130.
+
+/* Copyright 2016 The TensorFlow Authors. All Rights Reserved.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+==============================================================================*/
+
+#include <cstddef>
+#include <cstdlib>
+#include <string>
+
+#include "third_party/eigen3/unsupported/Eigen/CXX11/Tensor"
+#include "tensorflow/core/framework/bounds_check.h"
+#include "tensorflow/core/framework/kernel_def_builder.h"
+#include "tensorflow/core/framework/op.h"
+#include "tensorflow/core/framework/op_kernel.h"
+#include "tensorflow/core/framework/tensor.h"
+#include "tensorflow/core/framework/tensor_shape.h"
+#include "tensorflow/core/framework/tensor_types.h"
+#include "tensorflow/core/framework/types.h"
+#include "tensorflow/core/kernels/string_util.h"
+#include "tensorflow/core/lib/core/errors.h"
+#include "tensorflow/core/lib/core/stringpiece.h"
+#include "tensorflow/core/platform/types.h"
+#include "tensorflow/core/util/bcast.h"
+
+namespace tensorflow {
+
+// Position/length can be 32 or 64-bit integers
+template <typename T>
+class SubstrOp : public OpKernel {
+ public:
+  explicit SubstrOp(OpKernelConstruction* ctx) : OpKernel(ctx) {
+    string unit;
+    OP_REQUIRES_OK(ctx, ctx->GetAttr("unit", &unit));
+    OP_REQUIRES_OK(ctx, ParseCharUnit(unit, &unit_));
+  }
+
+  void Compute(OpKernelContext* context) override {
+    // Get inputs
+    const Tensor& input_tensor = context->input(0);
+    const Tensor& pos_tensor = context->input(1);
+    const Tensor& len_tensor = context->input(2);
+    const TensorShape& input_shape = input_tensor.shape();
+    const TensorShape& pos_shape = pos_tensor.shape();
+
+    bool is_scalar = TensorShapeUtils::IsScalar(pos_shape);
+
+    if (is_scalar || input_shape == pos_shape) {
+      // pos/len are either scalar or match the shape of input_tensor
+      // Do not need to do broadcasting
+
+      // Reshape input
+      auto input = input_tensor.flat<tstring>();
+      // Allocate output
+      Tensor* output_tensor = nullptr;
+      OP_REQUIRES_OK(context,
+                     context->allocate_output("output", input_tensor.shape(),
+                                              &output_tensor));
+      auto output = output_tensor->flat<tstring>();
+      if (is_scalar) {
+        // Perform Op with scalar pos/len
+        const T pos =
+            tensorflow::internal::SubtleMustCopy(pos_tensor.scalar<T>()());
+        const T len =
+            tensorflow::internal::SubtleMustCopy(len_tensor.scalar<T>()());
+        for (size_t i = 0; i < input_tensor.NumElements(); ++i) {
+          StringPiece in(input(i));
+          T byte_pos = pos;
+          T byte_len = len;
+          switch (unit_) {
+            case CharUnit::UTF8_CHAR:
+              OP_REQUIRES(
+                  context, UpdatePosAndLenForUtf8(in, &byte_pos, &byte_len),
+                  errors::InvalidArgument("pos ", pos, " out of range for ",
+                                          "string at index ", i));
+              break;
+            case CharUnit::BYTE:
+              byte_pos = AdjustedPosIndex(byte_pos, in);
+              OP_REQUIRES(
+                  context, FastBoundsCheck(byte_pos, in.size() + 1),
+                  errors::InvalidArgument("pos ", pos, " out of range for ",
+                                          "string b'", in, "' at index ", i));
+          }
+          StringPiece sub_in = in.substr(byte_pos, byte_len);
+          output(i).assign(sub_in.data(), sub_in.size());
+        }
+      } else {
+        // Perform Op element-wise with tensor pos/len
+        auto pos_flat = pos_tensor.flat<T>();
+        auto len_flat = len_tensor.flat<T>();
+        for (size_t i = 0; i < input_tensor.NumElements(); ++i) {
+          StringPiece in(input(i));
+          const T pos = tensorflow::internal::SubtleMustCopy(pos_flat(i));
+          const T len = tensorflow::internal::SubtleMustCopy(len_flat(i));
+          T byte_pos = pos;
+          T byte_len = len;
+          switch (unit_) {
+            case CharUnit::UTF8_CHAR:
+              OP_REQUIRES(
+                  context, UpdatePosAndLenForUtf8(in, &byte_pos, &byte_len),
+                  errors::InvalidArgument("pos ", pos, " out of range for ",
+                                          "string at index ", i));
+              break;
+            case CharUnit::BYTE:
+              byte_pos = AdjustedPosIndex(byte_pos, in);
+              OP_REQUIRES(
+                  context, FastBoundsCheck(byte_pos, in.size() + 1),
+                  errors::InvalidArgument("pos ", pos, " out of range for ",
+                                          "string b'", in, "' at index ", i));
+          }
+          StringPiece sub_in = in.substr(byte_pos, byte_len);
+          output(i).assign(sub_in.data(), sub_in.size());
+        }
+      }
+    } else {
+      // Perform op with broadcasting
+      // TODO: Use ternary broadcasting for once available in Eigen. Current
+      //       implementation iterates through broadcasted ops element-wise;
+      //       this should be parallelized.
+
+      // Create BCast helper with shape of input and pos/len
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: locate_symbol
+{
+  "ref": "064ac42505c303fc5de10dd9d47a0f0680157442",
+  "symbol": "SubstrOp"
+}
+tensorflow/core/kernels/substr_op.cc:39
+tensorflow/core/kernels/substr_op.cc:41
+tensorflow/core/kernels/substr_op.cc:355
+
+tokens used
+input: 1,113
+cache read: 7,680
+cache write: 0
+output: 172
+reasoning output: 0
+
+tool: viewcode
+{
+  "ref": "064ac42505c303fc5de10dd9d47a0f0680157442",
+  "path": "tensorflow/core/kernels/substr_op.cc",
+  "startline": 120,
+  "endline": 250
+}
+Here are lines 120 through 250.
+
+          StringPiece sub_in = in.substr(byte_pos, byte_len);
+          output(i).assign(sub_in.data(), sub_in.size());
+        }
+      }
+    } else {
+      // Perform op with broadcasting
+      // TODO: Use ternary broadcasting for once available in Eigen. Current
+      //       implementation iterates through broadcasted ops element-wise;
+      //       this should be parallelized.
+
+      // Create BCast helper with shape of input and pos/len
+      BCast bcast(BCast::FromShape(input_shape), BCast::FromShape(pos_shape));
+      OP_REQUIRES(context, bcast.IsValid(),
+                  errors::InvalidArgument(
+                      "Incompatible shapes: ", input_shape.DebugString(),
+                      " vs. ", pos_shape.DebugString()));
+      TensorShape output_shape = BCast::ToShape(bcast.result_shape());
+      int ndims = output_shape.dims();
+      Tensor* output_tensor = nullptr;
+      OP_REQUIRES_OK(context, context->allocate_output("output", output_shape,
+                                                       &output_tensor));
+      switch (ndims) {
+        case 1: {
+          // Reshape tensors according to BCast results
+          auto input = input_tensor.shaped<tstring, 1>(bcast.x_reshape());
+          auto output = output_tensor->shaped<tstring, 1>(bcast.result_shape());
+          auto pos_shaped = pos_tensor.shaped<T, 1>(bcast.y_reshape());
+          auto len_shaped = len_tensor.shaped<T, 1>(bcast.y_reshape());
+
+          // Allocate temporary buffer for broadcasted input tensor
+          Tensor input_buffer;
+          OP_REQUIRES_OK(context, context->allocate_temp(
+                                      DT_STRING, output_shape, &input_buffer));
+          TTypes<tstring, 1>::Tensor input_bcast =
+              input_buffer.shaped<tstring, 1>(bcast.result_shape());
+          input_bcast =
+              input.broadcast(BCast::ToIndexArray<1>(bcast.x_bcast()));
+
+          // Allocate temporary buffer for broadcasted position tensor
+          Tensor pos_buffer;
+          OP_REQUIRES_OK(context,
+                         context->allocate_temp(DataTypeToEnum<T>::v(),
+                                                output_shape, &pos_buffer));
+          typename TTypes<T, 1>::Tensor pos_bcast(
+              pos_buffer.shaped<T, 1>(bcast.result_shape()));
+          pos_bcast =
+              pos_shaped.broadcast(BCast::ToIndexArray<1>(bcast.y_bcast()));
+
+          // Allocate temporary buffer for broadcasted length tensor
+          Tensor len_buffer;
+          OP_REQUIRES_OK(context,
+                         context->allocate_temp(DataTypeToEnum<T>::v(),
+                                                output_shape, &len_buffer));
+          typename TTypes<T, 1>::Tensor len_bcast(
+              len_buffer.shaped<T, 1>(bcast.result_shape()));
+          len_bcast =
+              len_shaped.broadcast(BCast::ToIndexArray<1>(bcast.y_bcast()));
+
+          // Iterate through broadcasted tensors and perform substr
+          for (int i = 0; i < output_shape.dim_size(0); ++i) {
+            StringPiece in(input_bcast(i));
+            const T pos = tensorflow::internal::SubtleMustCopy(pos_bcast(i));
+            const T len = tensorflow::internal::SubtleMustCopy(len_bcast(i));
+            T byte_pos = pos;
+            T byte_len = len;
+            switch (unit_) {
+              case CharUnit::UTF8_CHAR:
+                OP_REQUIRES(
+                    context, UpdatePosAndLenForUtf8(in, &byte_pos, &byte_len),
+                    errors::InvalidArgument("pos ", pos, " out of range for ",
+                                            "string at index ", i));
+                break;
+              case CharUnit::BYTE:
+                byte_pos = AdjustedPosIndex(byte_pos, in);
+                OP_REQUIRES(
+                    context,
+                    FastBoundsCheck(byte_pos, input_bcast(i).size() + 1),
+                    errors::InvalidArgument("pos ", pos, " out of range for ",
+                                            "string b'", in, "' at index ", i));
+            }
+            StringPiece sub_in = in.substr(byte_pos, byte_len);
+            output(i).assign(sub_in.data(), sub_in.size());
+          }
+          break;
+        }
+        case 2: {
+          // Reshape tensors according to BCast results
+          auto input = input_tensor.shaped<tstring, 2>(bcast.x_reshape());
+          auto output = output_tensor->shaped<tstring, 2>(bcast.result_shape());
+          auto pos_shaped = pos_tensor.shaped<T, 2>(bcast.y_reshape());
+          auto len_shaped = len_tensor.shaped<T, 2>(bcast.y_reshape());
+
+          // Allocate temporary buffer for broadcasted input tensor
+          Tensor input_buffer;
+          OP_REQUIRES_OK(context, context->allocate_temp(
+                                      DT_STRING, output_shape, &input_buffer));
+          TTypes<tstring, 2>::Tensor input_bcast =
+              input_buffer.shaped<tstring, 2>(bcast.result_shape());
+          input_bcast =
+              input.broadcast(BCast::ToIndexArray<2>(bcast.x_bcast()));
+
+          // Allocate temporary buffer for broadcasted position tensor
+          Tensor pos_buffer;
+          OP_REQUIRES_OK(context,
+                         context->allocate_temp(DataTypeToEnum<T>::v(),
+                                                output_shape, &pos_buffer));
+          typename TTypes<T, 2>::Tensor pos_bcast(
+              pos_buffer.shaped<T, 2>(bcast.result_shape()));
+          pos_bcast =
+              pos_shaped.broadcast(BCast::ToIndexArray<2>(bcast.y_bcast()));
+
+          // Allocate temporary buffer for broadcasted length tensor
+          Tensor len_buffer;
+          OP_REQUIRES_OK(context,
+                         context->allocate_temp(DataTypeToEnum<T>::v(),
+                                                output_shape, &len_buffer));
+          typename TTypes<T, 2>::Tensor len_bcast(
+              len_buffer.shaped<T, 2>(bcast.result_shape()));
+          len_bcast =
+              len_shaped.broadcast(BCast::ToIndexArray<2>(bcast.y_bcast()));
+
+          // Iterate through broadcasted tensors and perform substr
+          for (int i = 0; i < output_shape.dim_size(0); ++i) {
+            for (int j = 0; j < output_shape.dim_size(1); ++j) {
+              StringPiece in(input_bcast(i, j));
+              const T pos =
+                  tensorflow::internal::SubtleMustCopy(pos_bcast(i, j));
+              const T len =
+                  tensorflow::internal::SubtleMustCopy(len_bcast(i, j));
+              T byte_pos = pos;
+              T byte_len = len;
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tokens used
+input: 2,145
+cache read: 8,704
+cache write: 0
+output: 61
+reasoning output: 13
+
+tool: viewcode
+{
+  "ref": "064ac42505c303fc5de10dd9d47a0f0680157442",
+  "path": "tensorflow/python/kernel_tests/substr_op_test.py",
+  "startline": 1,
+  "endline": 80
+}
+Here are lines 1 through 80.
+
+# Copyright 2016 The TensorFlow Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+"""Tests for Substr op from string_ops."""
+
+from __future__ import absolute_import
+from __future__ import division
+from __future__ import print_function
+
+from absl.testing import parameterized
+import numpy as np
+
+from tensorflow.python.framework import errors_impl
+from tensorflow.python.framework import test_util
+from tensorflow.python.ops import string_ops
+from tensorflow.python.platform import test
+
+
+class SubstrOpTest(test.TestCase, parameterized.TestCase):
+
+  @parameterized.parameters(
+      (np.int32, 1, "BYTE"),
+      (np.int64, 1, "BYTE"),
+      (np.int32, -4, "BYTE"),
+      (np.int64, -4, "BYTE"),
+      (np.int32, 1, "UTF8_CHAR"),
+      (np.int64, 1, "UTF8_CHAR"),
+      (np.int32, -4, "UTF8_CHAR"),
+      (np.int64, -4, "UTF8_CHAR"),
+  )
+  def testScalarString(self, dtype, pos, unit):
+    test_string = {
+        "BYTE": b"Hello",
+        "UTF8_CHAR": u"He\xc3\xc3\U0001f604".encode("utf-8"),
+    }[unit]
+    expected_value = {
+        "BYTE": b"ell",
+        "UTF8_CHAR": u"e\xc3\xc3".encode("utf-8"),
+    }[unit]
+    position = np.array(pos, dtype)
+    length = np.array(3, dtype)
+    substr_op = string_ops.substr(test_string, position, length, unit=unit)
+    with self.cached_session():
+      substr = self.evaluate(substr_op)
+      self.assertAllEqual(substr, expected_value)
+
+  @parameterized.parameters(
+      (np.int32, "BYTE"),
+      (np.int64, "BYTE"),
+      (np.int32, "UTF8_CHAR"),
+      (np.int64, "UTF8_CHAR"),
+  )
+  def testScalarString_EdgeCases(self, dtype, unit):
+    # Empty string
+    test_string = {
+        "BYTE": b"",
+        "UTF8_CHAR": u"".encode("utf-8"),
+    }[unit]
+    expected_value = b""
+    position = np.array(0, dtype)
+    length = np.array(3, dtype)
+    substr_op = string_ops.substr(test_string, position, length, unit=unit)
+    with self.cached_session():
+      substr = self.evaluate(substr_op)
+      self.assertAllEqual(substr, expected_value)
+
+    # Full string
+    test_string = {
+        "BYTE": b"Hello",
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tokens used
+input: 1,623
+cache read: 10,752
+cache write: 0
+output: 62
+reasoning output: 43
+
+The target kernel has the same vulnerable structure: it records `pos_shape` but never requires `len_tensor.shape()` to match before scalar/non-scalar branching and broadcasting. The test file already imports `errors_impl`, so the new regression test can be added directly near the existing invalid argument tests.
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/kernels/substr_op.cc\n@@\n     const Tensor& len_tensor = context->input(2);\n     const TensorShape& input_shape = input_tensor.shape();\n     const TensorShape& pos_shape = pos_tensor.shape();\n+    const TensorShape& len_shape = len_tensor.shape();\n+    OP_REQUIRES(context, (pos_shape == len_shape),\n+                errors::InvalidArgument(\n+                    \"pos and len should have the same shape, got: \",\n+                    pos_shape.DebugString(), \" vs. \", len_shape.DebugString()));\n \n     bool is_scalar = TensorShapeUtils::IsScalar(pos_shape);\n*** Update File: tensorflow/python/kernel_tests/substr_op_test.py\n@@\n   def testInvalidUnit(self):\n     with self.cached_session():\n       with self.assertRaises(ValueError):\n         string_ops.substr(b\"test\", 3, 1, unit=\"UTF8\")\n \n+  def testInvalidPos(self):\n+    # Test case for GitHub issue 46900.\n+    with self.assertRaises((ValueError, errors_impl.InvalidArgumentError)):\n+      x = string_ops.substr(b\"abc\", len=1, pos=[1, -1])\n+      self.evaluate(x)\n+\n+    with self.assertRaises((ValueError, errors_impl.InvalidArgumentError)):\n+      x = string_ops.substr(b\"abc\", len=1, pos=[1, 2])\n+      self.evaluate(x)\n+\n \n if __name__ == \"__main__\":\n   test.main()\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/kernels/substr_op.cc
+M tensorflow/python/kernel_tests/substr_op_test.py
+
+tokens used
+input: 1,432
+cache read: 11,776
+cache write: 0
+output: 457
+reasoning output: 28
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Locate equivalent substr kernel and test in target TensorFlow 2.1.4 checkout",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Backport pos/len shape validation and regression test",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate or inspect resulting diff",
+      "status": "in_progress",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Locate equivalent substr kernel and test in target TensorFlow 2.1.4 checkout",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Backport pos/len shape validation and regression test",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate or inspect resulting diff",
+    "status": "in_progress",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 931
+cache read: 12,800
+cache write: 0
+output: 86
+reasoning output: 0
+
+I applied the minimal source and test changes. I’ll now inspect the resulting diff and run hunk-level validation against the specified base ref.
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/kernels/substr_op.cc tensorflow/python/kernel_tests/substr_op_test.py",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0027-064ac42505c3",
+  "timeout": 120000
+}
+warning: in the working copy of 'tensorflow/core/kernels/substr_op.cc', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'tensorflow/python/kernel_tests/substr_op_test.py', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/kernels/substr_op.cc b/tensorflow/core/kernels/substr_op.cc
+index e382381e12..ab83efda2a 100644
+--- a/tensorflow/core/kernels/substr_op.cc
++++ b/tensorflow/core/kernels/substr_op.cc
+@@ -51,6 +51,11 @@ class SubstrOp : public OpKernel {
+     const Tensor& len_tensor = context->input(2);
+     const TensorShape& input_shape = input_tensor.shape();
+     const TensorShape& pos_shape = pos_tensor.shape();
++    const TensorShape& len_shape = len_tensor.shape();
++    OP_REQUIRES(context, (pos_shape == len_shape),
++                errors::InvalidArgument(
++                    "pos and len should have the same shape, got: ",
++                    pos_shape.DebugString(), " vs. ", len_shape.DebugString()));
+ 
+     bool is_scalar = TensorShapeUtils::IsScalar(pos_shape);
+ 
+diff --git a/tensorflow/python/kernel_tests/substr_op_test.py b/tensorflow/python/kernel_tests/substr_op_test.py
+index 9302152e82..ad7b6050c2 100644
+--- a/tensorflow/python/kernel_tests/substr_op_test.py
++++ b/tensorflow/python/kernel_tests/substr_op_test.py
+@@ -492,6 +492,16 @@ class SubstrOpTest(test.TestCase, parameterized.TestCase):
+       with self.assertRaises(ValueError):
+         string_ops.substr(b"test", 3, 1, unit="UTF8")
+ 
++  def testInvalidPos(self):
++    # Test case for GitHub issue 46900.
++    with self.assertRaises((ValueError, errors_impl.InvalidArgumentError)):
++      x = string_ops.substr(b"abc", len=1, pos=[1, -1])
++      self.evaluate(x)
++
++    with self.assertRaises((ValueError, errors_impl.InvalidArgumentError)):
++      x = string_ops.substr(b"abc", len=1, pos=[1, 2])
++      self.evaluate(x)
++
+ 
+ if __name__ == "__main__":
+   test.main()
+
+tokens used
+input: 1,137
+cache read: 12,800
+cache write: 0
+output: 120
+reasoning output: 61
+
+tool: validate
+{
+  "ref": "064ac42505c303fc5de10dd9d47a0f0680157442",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/substr_op.cc b/tensorflow/core/kernels/substr_op.cc\nindex e382381e12..ab83efda2a 100644\n--- a/tensorflow/core/kernels/substr_op.cc\n+++ b/tensorflow/core/kernels/substr_op.cc\n@@ -51,6 +51,11 @@ class SubstrOp : public OpKernel {\n     const Tensor& len_tensor = context->input(2);\n     const TensorShape& input_shape = input_tensor.shape();\n     const TensorShape& pos_shape = pos_tensor.shape();\n+    const TensorShape& len_shape = len_tensor.shape();\n+    OP_REQUIRES(context, (pos_shape == len_shape),\n+                errors::InvalidArgument(\n+                    \"pos and len should have the same shape, got: \",\n+                    pos_shape.DebugString(), \" vs. \", len_shape.DebugString()));\n \n     bool is_scalar = TensorShapeUtils::IsScalar(pos_shape);\n \ndiff --git a/tensorflow/python/kernel_tests/substr_op_test.py b/tensorflow/python/kernel_tests/substr_op_test.py\nindex 9302152e82..ad7b6050c2 100644\n--- a/tensorflow/python/kernel_tests/substr_op_test.py\n+++ b/tensorflow/python/kernel_tests/substr_op_test.py\n@@ -492,6 +492,16 @@ class SubstrOpTest(test.TestCase, parameterized.TestCase):\n       with self.assertRaises(ValueError):\n         string_ops.substr(b\"test\", 3, 1, unit=\"UTF8\")\n \n+  def testInvalidPos(self):\n+    # Test case for GitHub issue 46900.\n+    with self.assertRaises((ValueError, errors_impl.InvalidArgumentError)):\n+      x = string_ops.substr(b\"abc\", len=1, pos=[1, -1])\n+      self.evaluate(x)\n+\n+    with self.assertRaises((ValueError, errors_impl.InvalidArgumentError)):\n+      x = string_ops.substr(b\"abc\", len=1, pos=[1, 2])\n+      self.evaluate(x)\n+\n \n if __name__ == \"__main__\":\n   test.main()\n"
+}
+Patch applied successfully
+
+tokens used
+input: 826
+cache read: 13,824
+cache write: 0
+output: 553
+reasoning output: 21
+
+Hunk-level validation against `064ac42505c303fc5de10dd9d47a0f0680157442` succeeded.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Locate equivalent substr kernel and test in target TensorFlow 2.1.4 checkout",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Backport pos/len shape validation and regression test",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate or inspect resulting diff",
+      "status": "completed",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Locate equivalent substr kernel and test in target TensorFlow 2.1.4 checkout",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Backport pos/len shape validation and regression test",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate or inspect resulting diff",
+    "status": "completed",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 1,413
+cache read: 13,824
+cache write: 0
+output: 122
+reasoning output: 0
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/kernels/substr_op.cc b/tensorflow/core/kernels/substr_op.cc
+    index e382381e12..ab83efda2a 100644
+    --- a/tensorflow/core/kernels/substr_op.cc
+    +++ b/tensorflow/core/kernels/substr_op.cc
+    @@ -51,6 +51,11 @@ class SubstrOp : public OpKernel {
+         const Tensor& len_tensor = context->input(2);
+         const TensorShape& input_shape = input_tensor.shape();
+         const TensorShape& pos_shape = pos_tensor.shape();
+    +    const TensorShape& len_shape = len_tensor.shape();
+    +    OP_REQUIRES(context, (pos_shape == len_shape),
+    +                errors::InvalidArgument(
+    +                    "pos and len should have the same shape, got: ",
+    +                    pos_shape.DebugString(), " vs. ", len_shape.DebugString()));
+     
+         bool is_scalar = TensorShapeUtils::IsScalar(pos_shape);
+     
+    diff --git a/tensorflow/python/kernel_tests/substr_op_test.py b/tensorflow/python/kernel_tests/substr_op_test.py
+    index 9302152e82..ad7b6050c2 100644
+    --- a/tensorflow/python/kernel_tests/substr_op_test.py
+    +++ b/tensorflow/python/kernel_tests/substr_op_test.py
+    @@ -492,6 +492,16 @@ class SubstrOpTest(test.TestCase, parameterized.TestCase):
+           with self.assertRaises(ValueError):
+             string_ops.substr(b"test", 3, 1, unit="UTF8")
+     
+    +  def testInvalidPos(self):
+    +    # Test case for GitHub issue 46900.
+    +    with self.assertRaises((ValueError, errors_impl.InvalidArgumentError)):
+    +      x = string_ops.substr(b"abc", len=1, pos=[1, -1])
+    +      self.evaluate(x)
+    +
+    +    with self.assertRaises((ValueError, errors_impl.InvalidArgumentError)):
+    +      x = string_ops.substr(b"abc", len=1, pos=[1, 2])
+    +      self.evaluate(x)
+    +
+     
+     if __name__ == "__main__":
+       test.main()
+  notes: >
+    Added the missing pos/len shape equality validation in SubstrOp and the regression test; hunk validation against the target base commit succeeded.
+```
+
+tokens used
+input: 630
+cache read: 14,848
+cache write: 0
+output: 542
+reasoning output: 25

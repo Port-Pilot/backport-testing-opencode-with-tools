@@ -1,0 +1,708 @@
+I’ll inspect the target-side files around the affected op registrations and tests, then apply the minimal rank-validation changes where the same shape functions exist.
+
+tool: viewcode
+{
+  "ref": "9ce6ba46ac6f29413afdd0dfb6faa803acb2b747",
+  "path": "tensorflow/core/ops/cudnn_rnn_ops_test.cc",
+  "startline": 1,
+  "endline": 220
+}
+This file only has 143 lines. Here are lines 1 through 143.
+
+/* Copyright 2016 The TensorFlow Authors. All Rights Reserved.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+==============================================================================*/
+
+#include "tensorflow/core/framework/node_def_builder.h"
+#include "tensorflow/core/framework/op.h"
+#include "tensorflow/core/framework/shape_inference_testutil.h"
+#include "tensorflow/core/framework/tensor.h"
+#include "tensorflow/core/framework/tensor_testutil.h"
+#include "tensorflow/core/lib/core/status_test_util.h"
+#include "tensorflow/core/lib/strings/str_util.h"
+#include "tensorflow/core/platform/test.h"
+
+namespace tensorflow {
+
+TEST(CudnnRNNOpsTest, ParamsSize_ShapeFn) {
+  ShapeInferenceTestOp op("CudnnRNNParamsSize");
+  INFER_OK(op, "[];[];[]", "[1]");
+  INFER_OK(op, "?;[];[]", "[1]");
+  INFER_OK(op, "[];?;[]", "[1]");
+  INFER_OK(op, "[];[];?", "[1]");
+  INFER_OK(op, "[];?;?", "[1]");
+  INFER_OK(op, "?;?;?", "[1]");
+
+  INFER_ERROR("Shape must be rank 0 ", op, "[1,2];?;[]");
+  INFER_ERROR("Shape must be rank 0 ", op, "?;[2];[]");
+  INFER_ERROR("Shape must be rank 0 ", op, "?;?;[1]");
+}
+
+TEST(CudnnRNNOpsTest, ForwardLstm_ShapeFn) {
+  int seq_length = 2;
+  int batch_size = 3;
+  int num_units = 4;
+  int num_layers = 5;
+  int dir_count = 1;
+  std::vector<int> input_shape = {seq_length, batch_size, num_units};
+  std::vector<int> input_h_shape = {num_layers * dir_count, batch_size,
+                                    num_units};
+  std::vector<int> output_shape = {seq_length, batch_size,
+                                   num_units * dir_count};
+  auto shape_to_str = [](const std::vector<int>& v) {
+    return strings::StrCat("[", absl::StrJoin(v, ","), "]");
+  };
+  string input_shapes_desc = strings::StrCat(
+      shape_to_str(input_shape), ";", shape_to_str(input_h_shape), ";",
+      shape_to_str(input_h_shape), ";", "[?]");
+  string output_shapes_desc = "[d0_0,d0_1,d1_2];in1;in1;?";
+
+  ShapeInferenceTestOp op("CudnnRNN");
+  TF_ASSERT_OK(NodeDefBuilder("test", "CudnnRNN")
+                   .Input({"input", 0, DT_FLOAT})
+                   .Input({"input_h", 0, DT_FLOAT})
+                   .Input({"input_c", 0, DT_FLOAT})
+                   .Input({"params", 0, DT_FLOAT})
+                   .Attr("rnn_mode", "lstm")
+                   .Attr("input_mode", "auto_select")
+                   .Attr("direction", "unidirectional")
+                   .Finalize(&op.node_def));
+  INFER_OK(op, input_shapes_desc, output_shapes_desc);
+}
+
+TEST(CudnnRNNOpsTest, ForwardV2Lstm_ShapeFn) {
+  int seq_length = 2;
+  int batch_size = 3;
+  int num_units = 4;
+  int num_layers = 5;
+  int dir_count = 1;
+  std::vector<int> input_shape = {seq_length, batch_size, num_units};
+  std::vector<int> input_h_shape = {num_layers * dir_count, batch_size,
+                                    num_units};
+  std::vector<int> output_shape = {seq_length, batch_size,
+                                   num_units * dir_count};
+  auto shape_to_str = [](const std::vector<int>& v) {
+    return strings::StrCat("[", absl::StrJoin(v, ","), "]");
+  };
+  string input_shapes_desc = strings::StrCat(
+      shape_to_str(input_shape), ";", shape_to_str(input_h_shape), ";",
+      shape_to_str(input_h_shape), ";", "[?]");
+  string output_shapes_desc = "[d0_0,d0_1,d1_2];in1;in1;?;?";
+
+  ShapeInferenceTestOp op("CudnnRNNV2");
+  TF_ASSERT_OK(NodeDefBuilder("test", "CudnnRNNV2")
+                   .Input({"input", 0, DT_FLOAT})
+                   .Input({"input_h", 0, DT_FLOAT})
+                   .Input({"input_c", 0, DT_FLOAT})
+                   .Input({"params", 0, DT_FLOAT})
+                   .Attr("rnn_mode", "lstm")
+                   .Attr("input_mode", "auto_select")
+                   .Attr("direction", "unidirectional")
+                   .Finalize(&op.node_def));
+  INFER_OK(op, input_shapes_desc, output_shapes_desc);
+}
+
+TEST(CudnnRNNOpsTest, ForwardV3Lstm_ShapeFn) {
+  int max_seq_length = 2;
+  int batch_size = 3;
+  int num_units = 4;
+  int num_layers = 5;
+  int dir_count = 1;
+  std::vector<int> input_shape = {max_seq_length, batch_size, num_units};
+  std::vector<int> input_h_shape = {num_layers * dir_count, batch_size,
+                                    num_units};
+  std::vector<int> input_c_shape = {num_layers * dir_count, batch_size,
+                                    num_units};
+  std::vector<int> output_shape = {max_seq_length, batch_size,
+                                   num_units * dir_count};
+  std::vector<int> seq_lengths_shape = {batch_size};
+  auto shape_to_str = [](const std::vector<int>& v) {
+    return strings::StrCat("[", absl::StrJoin(v, ","), "]");
+  };
+  string input_shapes_desc = strings::StrCat(
+      shape_to_str(input_shape), ";", shape_to_str(input_h_shape), ";",
+      shape_to_str(input_c_shape), ";", "[?]", ";",
+      shape_to_str(seq_lengths_shape));
+  string output_shapes_desc = "[d0_0,d0_1,d1_2];in1;in2;?;?";
+
+  ShapeInferenceTestOp op("CudnnRNNV3");
+  TF_ASSERT_OK(NodeDefBuilder("test", "CudnnRNNV3")
+                   .Input({"input", 0, DT_FLOAT})
+                   .Input({"input_h", 0, DT_FLOAT})
+                   .Input({"input_c", 0, DT_FLOAT})
+                   .Input({"params", 0, DT_FLOAT})
+                   .Input({"sequence_lengths", 0, DT_INT32})
+                   .Attr("rnn_mode", "lstm")
+                   .Attr("input_mode", "auto_select")
+                   .Attr("direction", "unidirectional")
+                   .Finalize(&op.node_def));
+  INFER_OK(op, input_shapes_desc, output_shapes_desc);
+}
+
+}  // end namespace tensorflow
+
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: viewcode
+{
+  "ref": "9ce6ba46ac6f29413afdd0dfb6faa803acb2b747",
+  "path": "tensorflow/core/ops/cudnn_rnn_ops.cc",
+  "startline": 60,
+  "endline": 230
+}
+Here are lines 60 through 230.
+
+
+      c->set_output(0, c->Vector(1));
+      return Status::OK();
+    });
+
+REGISTER_OP("CudnnRNN")
+    .Input("input: T")
+    .Input("input_h: T")
+    .Input("input_c: T")
+    .Input("params: T")
+    .SetIsStateful()
+    .Output("output: T")
+    .Output("output_h: T")
+    .Output("output_c: T")
+    .Output("reserve_space: T")
+    .Attr("T: {float16, float32, float64}")
+    .Attr(kRNNModeAttrs)
+    .Attr(kRNNInputModeAttrs)
+    .Attr(kRNNDirectionAttrs)
+    .Attr("dropout: float = 0.0")
+    .Attr("seed: int = 0")
+    .Attr("seed2: int = 0")
+    .Attr("is_training: bool = true")
+    .SetShapeFn([](InferenceContext* c) {
+      auto input_shape = c->input(0);
+      auto input_h_shape = c->input(1);
+      auto seq_length = c->Dim(input_shape, 0);
+      auto batch_size = c->Dim(input_shape, 1);
+      auto num_units = c->Dim(input_h_shape, 2);
+      string direction;
+      TF_RETURN_IF_ERROR(c->GetAttr("direction", &direction));
+      string rnn_mode;
+      TF_RETURN_IF_ERROR(c->GetAttr("rnn_mode", &rnn_mode));
+      int dir_count = (direction == "bidirectional") ? 2 : 1;
+      DimensionHandle output_size;
+      TF_RETURN_IF_ERROR(c->Multiply(num_units, dir_count, &output_size));
+      auto output_shape = c->MakeShape({seq_length, batch_size, output_size});
+      auto output_h_shape = input_h_shape;
+      auto output_c_shape TF_ATTRIBUTE_UNUSED =
+          (rnn_mode == "lstm") ? output_h_shape : c->MakeShape({});
+      c->set_output(0, output_shape);
+      c->set_output(1, output_h_shape);
+      c->set_output(2, output_c_shape);
+      c->set_output(3, c->UnknownShape());
+      return Status::OK();
+    });
+
+REGISTER_OP("CudnnRNNV2")
+    .Input("input: T")
+    .Input("input_h: T")
+    .Input("input_c: T")
+    .Input("params: T")
+    .SetIsStateful()
+    .Output("output: T")
+    .Output("output_h: T")
+    .Output("output_c: T")
+    .Output("reserve_space: T")
+    .Output("host_reserved: int8")
+    .Attr("T: {float16, float32, float64}")
+    .Attr(kRNNModeAttrs)
+    .Attr(kRNNInputModeAttrs)
+    .Attr(kRNNDirectionAttrs)
+    .Attr("dropout: float = 0.0")
+    .Attr("seed: int = 0")
+    .Attr("seed2: int = 0")
+    .Attr("is_training: bool = true")
+    .SetShapeFn([](InferenceContext* c) {
+      auto input_shape = c->input(0);
+      auto input_h_shape = c->input(1);
+      auto seq_length = c->Dim(input_shape, 0);
+      auto batch_size = c->Dim(input_shape, 1);
+      auto num_units = c->Dim(input_h_shape, 2);
+      string direction;
+      TF_RETURN_IF_ERROR(c->GetAttr("direction", &direction));
+      string rnn_mode;
+      TF_RETURN_IF_ERROR(c->GetAttr("rnn_mode", &rnn_mode));
+      int dir_count = (direction == "bidirectional") ? 2 : 1;
+      DimensionHandle output_size;
+      TF_RETURN_IF_ERROR(c->Multiply(num_units, dir_count, &output_size));
+      auto output_shape = c->MakeShape({seq_length, batch_size, output_size});
+      auto output_h_shape = input_h_shape;
+      auto output_c_shape TF_ATTRIBUTE_UNUSED =
+          (rnn_mode == "lstm") ? output_h_shape : c->MakeShape({});
+      c->set_output(0, output_shape);
+      c->set_output(1, output_h_shape);
+      c->set_output(2, output_c_shape);
+      c->set_output(3, c->UnknownShape());
+      c->set_output(4, c->UnknownShape());
+      return Status::OK();
+    });
+
+REGISTER_OP("CudnnRNNV3")
+    .Input("input: T")
+    .Input("input_h: T")
+    .Input("input_c: T")
+    .Input("params: T")
+    .Input("sequence_lengths: int32")
+    .SetIsStateful()
+    .Output("output: T")
+    .Output("output_h: T")
+    .Output("output_c: T")
+    .Output("reserve_space: T")
+    .Output("host_reserved: int8")
+    .Attr("T: {float16, float32, float64}")
+    .Attr(kRNNModeAttrs)
+    .Attr(kRNNInputModeAttrs)
+    .Attr(kRNNDirectionAttrs)
+    .Attr("dropout: float = 0.0")
+    .Attr("seed: int = 0")
+    .Attr("seed2: int = 0")
+    .Attr("num_proj: int = 0")
+    .Attr("is_training: bool = true")
+    .Attr("time_major: bool = true")
+    .SetShapeFn([](InferenceContext* c) {
+      auto input_shape = c->input(0);
+      auto input_h_shape = c->input(1);
+      auto input_c_shape = c->input(2);
+      auto max_seq_length = c->Dim(input_shape, 0);
+      auto batch_size = c->Dim(input_shape, 1);
+      auto num_units = c->Dim(input_h_shape, 2);
+      string direction;
+      TF_RETURN_IF_ERROR(c->GetAttr("direction", &direction));
+      string rnn_mode;
+      TF_RETURN_IF_ERROR(c->GetAttr("rnn_mode", &rnn_mode));
+      int dir_count = (direction == "bidirectional") ? 2 : 1;
+      DimensionHandle output_size;
+      TF_RETURN_IF_ERROR(c->Multiply(num_units, dir_count, &output_size));
+      auto output_shape =
+          c->MakeShape({max_seq_length, batch_size, output_size});
+      auto output_h_shape = input_h_shape;
+      auto output_c_shape TF_ATTRIBUTE_UNUSED =
+          (rnn_mode == "lstm") ? input_c_shape : c->MakeShape({});
+      c->set_output(0, output_shape);
+      c->set_output(1, output_h_shape);
+      c->set_output(2, output_c_shape);
+      c->set_output(3, c->UnknownShape());
+      c->set_output(4, c->UnknownShape());
+      return Status::OK();
+    });
+
+REGISTER_OP("CudnnRNNBackprop")
+    .Input("input: T")
+    .Input("input_h: T")
+    .Input("input_c: T")
+    .Input("params: T")
+    .Input("output: T")
+    .Input("output_h: T")
+    .Input("output_c: T")
+    .Input("output_backprop: T")
+    .Input("output_h_backprop: T")
+    .Input("output_c_backprop: T")
+    .Input("reserve_space: T")
+    .SetIsStateful()
+    .Output("input_backprop: T")
+    .Output("input_h_backprop: T")
+    .Output("input_c_backprop: T")
+    .Output("params_backprop: T")
+    .Attr("T: {float16, float32, float64}")
+    .Attr(kRNNModeAttrs)
+    .Attr(kRNNInputModeAttrs)
+    .Attr(kRNNDirectionAttrs)
+    .Attr("dropout: float = 0.0")
+    .Attr("seed: int = 0")
+    .Attr("seed2: int = 0")
+    .SetShapeFn([](InferenceContext* c) {
+      auto input_shape = c->input(0);
+      auto input_h_shape = c->input(1);
+      auto input_c_shape = c->input(2);
+      auto params_shape = c->input(3);
+      c->set_output(0, input_shape);
+      c->set_output(1, input_h_shape);
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tokens used
+input: 5,723
+cache read: 4,608
+cache write: 0
+output: 177
+reasoning output: 0
+
+The target release has the same `CudnnRNN`, `CudnnRNNV2`, and `CudnnRNNV3` shape functions and matching tests, so I’m applying the patch directly with target-compatible context.
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/ops/cudnn_rnn_ops.cc\n@@\n     .Attr(\"seed2: int = 0\")\n     .Attr(\"is_training: bool = true\")\n     .SetShapeFn([](InferenceContext* c) {\n+      ShapeHandle unused;\n       auto input_shape = c->input(0);\n       auto input_h_shape = c->input(1);\n+      TF_RETURN_IF_ERROR(c->WithRank(input_shape, 3, &unused));\n+      TF_RETURN_IF_ERROR(c->WithRank(input_h_shape, 3, &unused));\n+      TF_RETURN_IF_ERROR(c->WithRank(c->input(3), 1, &unused));\n+\n       auto seq_length = c->Dim(input_shape, 0);\n       auto batch_size = c->Dim(input_shape, 1);\n       auto num_units = c->Dim(input_h_shape, 2);\n+\n       string direction;\n       TF_RETURN_IF_ERROR(c->GetAttr(\"direction\", &direction));\n       string rnn_mode;\n@@\n     .Attr(\"seed2: int = 0\")\n     .Attr(\"is_training: bool = true\")\n     .SetShapeFn([](InferenceContext* c) {\n+      ShapeHandle unused;\n       auto input_shape = c->input(0);\n       auto input_h_shape = c->input(1);\n+      TF_RETURN_IF_ERROR(c->WithRank(input_shape, 3, &unused));\n+      TF_RETURN_IF_ERROR(c->WithRank(input_h_shape, 3, &unused));\n+      TF_RETURN_IF_ERROR(c->WithRank(c->input(3), 1, &unused));\n+\n       auto seq_length = c->Dim(input_shape, 0);\n       auto batch_size = c->Dim(input_shape, 1);\n       auto num_units = c->Dim(input_h_shape, 2);\n+\n       string direction;\n       TF_RETURN_IF_ERROR(c->GetAttr(\"direction\", &direction));\n       string rnn_mode;\n@@\n     .Attr(\"is_training: bool = true\")\n     .Attr(\"time_major: bool = true\")\n     .SetShapeFn([](InferenceContext* c) {\n+      ShapeHandle unused;\n       auto input_shape = c->input(0);\n       auto input_h_shape = c->input(1);\n       auto input_c_shape = c->input(2);\n+      TF_RETURN_IF_ERROR(c->WithRank(input_shape, 3, &unused));\n+      TF_RETURN_IF_ERROR(c->WithRank(input_h_shape, 3, &unused));\n+      TF_RETURN_IF_ERROR(c->WithRank(c->input(3), 1, &unused));\n+      TF_RETURN_IF_ERROR(c->WithRank(c->input(4), 1, &unused));\n+\n       auto max_seq_length = c->Dim(input_shape, 0);\n       auto batch_size = c->Dim(input_shape, 1);\n       auto num_units = c->Dim(input_h_shape, 2);\n+\n       string direction;\n       TF_RETURN_IF_ERROR(c->GetAttr(\"direction\", &direction));\n       string rnn_mode;\n       TF_RETURN_IF_ERROR(c->GetAttr(\"rnn_mode\", &rnn_mode));\n+      if (rnn_mode == \"lstm\") {\n+        TF_RETURN_IF_ERROR(c->WithRank(input_c_shape, 3, &unused));\n+      }\n       int dir_count = (direction == \"bidirectional\") ? 2 : 1;\n       DimensionHandle output_size;\n*** Update File: tensorflow/core/ops/cudnn_rnn_ops_test.cc\n@@\n                    .Attr(\"direction\", \"unidirectional\")\n                    .Finalize(&op.node_def));\n   INFER_OK(op, input_shapes_desc, output_shapes_desc);\n+  INFER_ERROR(\"Shape must be rank 3 \", op, \"[];[?,?,?];[?,?,?];[?]\");\n+  INFER_ERROR(\"Shape must be rank 3 \", op, \"[?,?,?];[];[?,?,?];[?]\");\n+  // Disabled because the kernel does not check shape of input_c.\n+  // INFER_ERROR(\"Shape must be rank 3 \", op, \"[?,?,?];[?,?,?];[?];[?]\");\n+  INFER_ERROR(\"Shape must be rank 1 \", op, \"[?,?,?];[?,?,?];[?,?,?];[]\");\n }\n@@\n                    .Attr(\"direction\", \"unidirectional\")\n                    .Finalize(&op.node_def));\n   INFER_OK(op, input_shapes_desc, output_shapes_desc);\n+  INFER_ERROR(\"Shape must be rank 3 \", op, \"[];[?,?,?];[?,?,?];[?]\");\n+  INFER_ERROR(\"Shape must be rank 3 \", op, \"[?,?,?];[];[?,?,?];[?]\");\n+  // Disabled because the kernel does not check shape of input_c.\n+  // INFER_ERROR(\"Shape must be rank 3 \", op, \"[?,?,?];[?,?,?];[?];[?]\");\n+  INFER_ERROR(\"Shape must be rank 1 \", op, \"[?,?,?];[?,?,?];[?,?,?];[]\");\n }\n@@\n                    .Attr(\"direction\", \"unidirectional\")\n                    .Finalize(&op.node_def));\n   INFER_OK(op, input_shapes_desc, output_shapes_desc);\n+  INFER_ERROR(\"Shape must be rank 3 \", op, \"[];[?,?,?];[?,?,?];[?];[?]\");\n+  INFER_ERROR(\"Shape must be rank 3 \", op, \"[?,?,?];[];[?,?,?];[?];[?]\");\n+  INFER_ERROR(\"Shape must be rank 3 \", op, \"[?,?,?];[?,?,?];[];[?];[?]\");\n+  INFER_ERROR(\"Shape must be rank 1 \", op, \"[?,?,?];[?,?,?];[?,?,?];[];[?]\");\n+  INFER_ERROR(\"Shape must be rank 1 \", op, \"[?,?,?];[?,?,?];[?,?,?];[?];[]\");\n+}\n+\n+TEST(CudnnRNNOpsTest, ForwardV3Gru) {\n+  int max_seq_length = 2;\n+  int batch_size = 3;\n+  int num_units = 4;\n+  int num_layers = 5;\n+  int dir_count = 1;\n+  std::vector<int> input_shape = {max_seq_length, batch_size, num_units};\n+  std::vector<int> input_h_shape = {num_layers * dir_count, batch_size,\n+                                    num_units};\n+  std::vector<int> input_c_shape = {num_layers * dir_count, batch_size,\n+                                    num_units};\n+  std::vector<int> output_shape = {max_seq_length, batch_size,\n+                                   num_units * dir_count};\n+  std::vector<int> seq_lengths_shape = {batch_size};\n+  auto shape_to_str = [](const std::vector<int>& v) {\n+    return strings::StrCat(\"[\", absl::StrJoin(v, \",\"), \"]\");\n+  };\n+  string input_shapes_desc = strings::StrCat(\n+      shape_to_str(input_shape), \";\", shape_to_str(input_h_shape), \";\",\n+      shape_to_str(input_c_shape), \";\", \"[?]\", \";\",\n+      shape_to_str(seq_lengths_shape));\n+  string output_shapes_desc = \"[d0_0,d0_1,d1_2];in1;[];?;?\";\n+\n+  ShapeInferenceTestOp op(\"CudnnRNNV3\");\n+  TF_ASSERT_OK(NodeDefBuilder(\"test\", \"CudnnRNNV3\")\n+                   .Input({\"input\", 0, DT_FLOAT})\n+                   .Input({\"input_h\", 0, DT_FLOAT})\n+                   .Input({\"input_c\", 0, DT_FLOAT})\n+                   .Input({\"params\", 0, DT_FLOAT})\n+                   .Input({\"sequence_lengths\", 0, DT_INT32})\n+                   .Attr(\"rnn_mode\", \"gru\")\n+                   .Attr(\"input_mode\", \"auto_select\")\n+                   .Attr(\"direction\", \"unidirectional\")\n+                   .Finalize(&op.node_def));\n+  INFER_OK(op, input_shapes_desc, output_shapes_desc);\n+  INFER_ERROR(\"Shape must be rank 3 \", op, \"[];[?,?,?];[];[?];[?]\");\n+  INFER_ERROR(\"Shape must be rank 3 \", op, \"[?,?,?];[];[];[?];[?]\");\n+  INFER_ERROR(\"Shape must be rank 1 \", op, \"[?,?,?];[?,?,?];[];[];[?]\");\n+  INFER_ERROR(\"Shape must be rank 1 \", op, \"[?,?,?];[?,?,?];[];[?];[]\");\n }\n \n }  // end namespace tensorflow\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/ops/cudnn_rnn_ops.cc
+M tensorflow/core/ops/cudnn_rnn_ops_test.cc
+
+tokens used
+input: 4,278
+cache read: 9,728
+cache write: 0
+output: 2,214
+reasoning output: 16
+
+The source and shape-inference tests are updated. I’m checking the resulting diff for unintended changes and consistency with the supplied security patch.
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/ops/cudnn_rnn_ops.cc tensorflow/core/ops/cudnn_rnn_ops_test.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0077-9ce6ba46ac6f",
+  "timeout": 120000
+}
+warning: in the working copy of 'tensorflow/core/ops/cudnn_rnn_ops.cc', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'tensorflow/core/ops/cudnn_rnn_ops_test.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/ops/cudnn_rnn_ops.cc b/tensorflow/core/ops/cudnn_rnn_ops.cc
+index 1dd7659e13..b6e27a44d5 100644
+--- a/tensorflow/core/ops/cudnn_rnn_ops.cc
++++ b/tensorflow/core/ops/cudnn_rnn_ops.cc
+@@ -81,11 +81,17 @@ REGISTER_OP("CudnnRNN")
+     .Attr("seed2: int = 0")
+     .Attr("is_training: bool = true")
+     .SetShapeFn([](InferenceContext* c) {
++      ShapeHandle unused;
+       auto input_shape = c->input(0);
+       auto input_h_shape = c->input(1);
++      TF_RETURN_IF_ERROR(c->WithRank(input_shape, 3, &unused));
++      TF_RETURN_IF_ERROR(c->WithRank(input_h_shape, 3, &unused));
++      TF_RETURN_IF_ERROR(c->WithRank(c->input(3), 1, &unused));
++
+       auto seq_length = c->Dim(input_shape, 0);
+       auto batch_size = c->Dim(input_shape, 1);
+       auto num_units = c->Dim(input_h_shape, 2);
++
+       string direction;
+       TF_RETURN_IF_ERROR(c->GetAttr("direction", &direction));
+       string rnn_mode;
+@@ -124,11 +130,17 @@ REGISTER_OP("CudnnRNNV2")
+     .Attr("seed2: int = 0")
+     .Attr("is_training: bool = true")
+     .SetShapeFn([](InferenceContext* c) {
++      ShapeHandle unused;
+       auto input_shape = c->input(0);
+       auto input_h_shape = c->input(1);
++      TF_RETURN_IF_ERROR(c->WithRank(input_shape, 3, &unused));
++      TF_RETURN_IF_ERROR(c->WithRank(input_h_shape, 3, &unused));
++      TF_RETURN_IF_ERROR(c->WithRank(c->input(3), 1, &unused));
++
+       auto seq_length = c->Dim(input_shape, 0);
+       auto batch_size = c->Dim(input_shape, 1);
+       auto num_units = c->Dim(input_h_shape, 2);
++
+       string direction;
+       TF_RETURN_IF_ERROR(c->GetAttr("direction", &direction));
+       string rnn_mode;
+@@ -171,16 +183,26 @@ REGISTER_OP("CudnnRNNV3")
+     .Attr("is_training: bool = true")
+     .Attr("time_major: bool = true")
+     .SetShapeFn([](InferenceContext* c) {
++      ShapeHandle unused;
+       auto input_shape = c->input(0);
+       auto input_h_shape = c->input(1);
+       auto input_c_shape = c->input(2);
++      TF_RETURN_IF_ERROR(c->WithRank(input_shape, 3, &unused));
++      TF_RETURN_IF_ERROR(c->WithRank(input_h_shape, 3, &unused));
++      TF_RETURN_IF_ERROR(c->WithRank(c->input(3), 1, &unused));
++      TF_RETURN_IF_ERROR(c->WithRank(c->input(4), 1, &unused));
++
+       auto max_seq_length = c->Dim(input_shape, 0);
+       auto batch_size = c->Dim(input_shape, 1);
+       auto num_units = c->Dim(input_h_shape, 2);
++
+       string direction;
+       TF_RETURN_IF_ERROR(c->GetAttr("direction", &direction));
+       string rnn_mode;
+       TF_RETURN_IF_ERROR(c->GetAttr("rnn_mode", &rnn_mode));
++      if (rnn_mode == "lstm") {
++        TF_RETURN_IF_ERROR(c->WithRank(input_c_shape, 3, &unused));
++      }
+       int dir_count = (direction == "bidirectional") ? 2 : 1;
+       DimensionHandle output_size;
+       TF_RETURN_IF_ERROR(c->Multiply(num_units, dir_count, &output_size));
+diff --git a/tensorflow/core/ops/cudnn_rnn_ops_test.cc b/tensorflow/core/ops/cudnn_rnn_ops_test.cc
+index 8e8c8193a1..91043efa42 100644
+--- a/tensorflow/core/ops/cudnn_rnn_ops_test.cc
++++ b/tensorflow/core/ops/cudnn_rnn_ops_test.cc
+@@ -68,6 +68,11 @@ TEST(CudnnRNNOpsTest, ForwardLstm_ShapeFn) {
+                    .Attr("direction", "unidirectional")
+                    .Finalize(&op.node_def));
+   INFER_OK(op, input_shapes_desc, output_shapes_desc);
++  INFER_ERROR("Shape must be rank 3 ", op, "[];[?,?,?];[?,?,?];[?]");
++  INFER_ERROR("Shape must be rank 3 ", op, "[?,?,?];[];[?,?,?];[?]");
++  // Disabled because the kernel does not check shape of input_c.
++  // INFER_ERROR("Shape must be rank 3 ", op, "[?,?,?];[?,?,?];[?];[?]");
++  INFER_ERROR("Shape must be rank 1 ", op, "[?,?,?];[?,?,?];[?,?,?];[]");
+ }
+ 
+ TEST(CudnnRNNOpsTest, ForwardV2Lstm_ShapeFn) {
+@@ -100,6 +105,11 @@ TEST(CudnnRNNOpsTest, ForwardV2Lstm_ShapeFn) {
+                    .Attr("direction", "unidirectional")
+                    .Finalize(&op.node_def));
+   INFER_OK(op, input_shapes_desc, output_shapes_desc);
++  INFER_ERROR("Shape must be rank 3 ", op, "[];[?,?,?];[?,?,?];[?]");
++  INFER_ERROR("Shape must be rank 3 ", op, "[?,?,?];[];[?,?,?];[?]");
++  // Disabled because the kernel does not check shape of input_c.
++  // INFER_ERROR("Shape must be rank 3 ", op, "[?,?,?];[?,?,?];[?];[?]");
++  INFER_ERROR("Shape must be rank 1 ", op, "[?,?,?];[?,?,?];[?,?,?];[]");
+ }
+ 
+ TEST(CudnnRNNOpsTest, ForwardV3Lstm_ShapeFn) {
+@@ -137,6 +147,52 @@ TEST(CudnnRNNOpsTest, ForwardV3Lstm_ShapeFn) {
+                    .Attr("direction", "unidirectional")
+                    .Finalize(&op.node_def));
+   INFER_OK(op, input_shapes_desc, output_shapes_desc);
++  INFER_ERROR("Shape must be rank 3 ", op, "[];[?,?,?];[?,?,?];[?];[?]");
++  INFER_ERROR("Shape must be rank 3 ", op, "[?,?,?];[];[?,?,?];[?];[?]");
++  INFER_ERROR("Shape must be rank 3 ", op, "[?,?,?];[?,?,?];[];[?];[?]");
++  INFER_ERROR("Shape must be rank 1 ", op, "[?,?,?];[?,?,?];[?,?,?];[];[?]");
++  INFER_ERROR("Shape must be rank 1 ", op, "[?,?,?];[?,?,?];[?,?,?];[?];[]");
++}
++
++TEST(CudnnRNNOpsTest, ForwardV3Gru) {
++  int max_seq_length = 2;
++  int batch_size = 3;
++  int num_units = 4;
++  int num_layers = 5;
++  int dir_count = 1;
++  std::vector<int> input_shape = {max_seq_length, batch_size, num_units};
++  std::vector<int> input_h_shape = {num_layers * dir_count, batch_size,
++                                    num_units};
++  std::vector<int> input_c_shape = {num_layers * dir_count, batch_size,
++                                    num_units};
++  std::vector<int> output_shape = {max_seq_length, batch_size,
++                                   num_units * dir_count};
++  std::vector<int> seq_lengths_shape = {batch_size};
++  auto shape_to_str = [](const std::vector<int>& v) {
++    return strings::StrCat("[", absl::StrJoin(v, ","), "]");
++  };
++  string input_shapes_desc = strings::StrCat(
++      shape_to_str(input_shape), ";", shape_to_str(input_h_shape), ";",
++      shape_to_str(input_c_shape), ";", "[?]", ";",
++      shape_to_str(seq_lengths_shape));
++  string output_shapes_desc = "[d0_0,d0_1,d1_2];in1;[];?;?";
++
++  ShapeInferenceTestOp op("CudnnRNNV3");
++  TF_ASSERT_OK(NodeDefBuilder("test", "CudnnRNNV3")
++                   .Input({"input", 0, DT_FLOAT})
++                   .Input({"input_h", 0, DT_FLOAT})
++                   .Input({"input_c", 0, DT_FLOAT})
++                   .Input({"params", 0, DT_FLOAT})
++                   .Input({"sequence_lengths", 0, DT_INT32})
++                   .Attr("rnn_mode", "gru")
++                   .Attr("input_mode", "auto_select")
++                   .Attr("direction", "unidirectional")
++                   .Finalize(&op.node_def));
++  INFER_OK(op, input_shapes_desc, output_shapes_desc);
++  INFER_ERROR("Shape must be rank 3 ", op, "[];[?,?,?];[];[?];[?]");
++  INFER_ERROR("Shape must be rank 3 ", op, "[?,?,?];[];[];[?];[?]");
++  INFER_ERROR("Shape must be rank 1 ", op, "[?,?,?];[?,?,?];[];[];[?]");
++  INFER_ERROR("Shape must be rank 1 ", op, "[?,?,?];[?,?,?];[];[?];[]");
+ }
+ 
+ }  // end namespace tensorflow
+
+tokens used
+input: 2,456
+cache read: 13,824
+cache write: 0
+output: 127
+reasoning output: 66
+
+The diff matches the provided newer-version patch semantically and only touches the two requested files. I’m skipping full Bazel testing because the instructions prohibit expensive validation.
+
+tool: bash
+{
+  "command": "git status --short",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0077-9ce6ba46ac6f",
+  "timeout": 120000
+}
+ M tensorflow/core/ops/cudnn_rnn_ops.cc
+ M tensorflow/core/ops/cudnn_rnn_ops_test.cc
+
+tokens used
+input: 2,877
+cache read: 15,872
+cache write: 0
+output: 110
+reasoning output: 114
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/ops/cudnn_rnn_ops.cc b/tensorflow/core/ops/cudnn_rnn_ops.cc
+    index 1dd7659e13..b6e27a44d5 100644
+    --- a/tensorflow/core/ops/cudnn_rnn_ops.cc
+    +++ b/tensorflow/core/ops/cudnn_rnn_ops.cc
+    @@ -81,11 +81,17 @@ REGISTER_OP("CudnnRNN")
+         .Attr("seed2: int = 0")
+         .Attr("is_training: bool = true")
+         .SetShapeFn([](InferenceContext* c) {
+    +      ShapeHandle unused;
+           auto input_shape = c->input(0);
+           auto input_h_shape = c->input(1);
+    +      TF_RETURN_IF_ERROR(c->WithRank(input_shape, 3, &unused));
+    +      TF_RETURN_IF_ERROR(c->WithRank(input_h_shape, 3, &unused));
+    +      TF_RETURN_IF_ERROR(c->WithRank(c->input(3), 1, &unused));
+    +
+           auto seq_length = c->Dim(input_shape, 0);
+           auto batch_size = c->Dim(input_shape, 1);
+           auto num_units = c->Dim(input_h_shape, 2);
+    +
+           string direction;
+           TF_RETURN_IF_ERROR(c->GetAttr("direction", &direction));
+           string rnn_mode;
+    @@ -124,11 +130,17 @@ REGISTER_OP("CudnnRNNV2")
+         .Attr("seed2: int = 0")
+         .Attr("is_training: bool = true")
+         .SetShapeFn([](InferenceContext* c) {
+    +      ShapeHandle unused;
+           auto input_shape = c->input(0);
+           auto input_h_shape = c->input(1);
+    +      TF_RETURN_IF_ERROR(c->WithRank(input_shape, 3, &unused));
+    +      TF_RETURN_IF_ERROR(c->WithRank(input_h_shape, 3, &unused));
+    +      TF_RETURN_IF_ERROR(c->WithRank(c->input(3), 1, &unused));
+    +
+           auto seq_length = c->Dim(input_shape, 0);
+           auto batch_size = c->Dim(input_shape, 1);
+           auto num_units = c->Dim(input_h_shape, 2);
+    +
+           string direction;
+           TF_RETURN_IF_ERROR(c->GetAttr("direction", &direction));
+           string rnn_mode;
+    @@ -171,16 +183,26 @@ REGISTER_OP("CudnnRNNV3")
+         .Attr("is_training: bool = true")
+         .Attr("time_major: bool = true")
+         .SetShapeFn([](InferenceContext* c) {
+    +      ShapeHandle unused;
+           auto input_shape = c->input(0);
+           auto input_h_shape = c->input(1);
+           auto input_c_shape = c->input(2);
+    +      TF_RETURN_IF_ERROR(c->WithRank(input_shape, 3, &unused));
+    +      TF_RETURN_IF_ERROR(c->WithRank(input_h_shape, 3, &unused));
+    +      TF_RETURN_IF_ERROR(c->WithRank(c->input(3), 1, &unused));
+    +      TF_RETURN_IF_ERROR(c->WithRank(c->input(4), 1, &unused));
+    +
+           auto max_seq_length = c->Dim(input_shape, 0);
+           auto batch_size = c->Dim(input_shape, 1);
+           auto num_units = c->Dim(input_h_shape, 2);
+    +
+           string direction;
+           TF_RETURN_IF_ERROR(c->GetAttr("direction", &direction));
+           string rnn_mode;
+           TF_RETURN_IF_ERROR(c->GetAttr("rnn_mode", &rnn_mode));
+    +      if (rnn_mode == "lstm") {
+    +        TF_RETURN_IF_ERROR(c->WithRank(input_c_shape, 3, &unused));
+    +      }
+           int dir_count = (direction == "bidirectional") ? 2 : 1;
+           DimensionHandle output_size;
+           TF_RETURN_IF_ERROR(c->Multiply(num_units, dir_count, &output_size));
+    diff --git a/tensorflow/core/ops/cudnn_rnn_ops_test.cc b/tensorflow/core/ops/cudnn_rnn_ops_test.cc
+    index 8e8c8193a1..91043efa42 100644
+    --- a/tensorflow/core/ops/cudnn_rnn_ops_test.cc
+    +++ b/tensorflow/core/ops/cudnn_rnn_ops_test.cc
+    @@ -68,6 +68,11 @@ TEST(CudnnRNNOpsTest, ForwardLstm_ShapeFn) {
+                        .Attr("direction", "unidirectional")
+                        .Finalize(&op.node_def));
+       INFER_OK(op, input_shapes_desc, output_shapes_desc);
+    +  INFER_ERROR("Shape must be rank 3 ", op, "[];[?,?,?];[?,?,?];[?]");
+    +  INFER_ERROR("Shape must be rank 3 ", op, "[?,?,?];[];[?,?,?];[?]");
+    +  // Disabled because the kernel does not check shape of input_c.
+    +  // INFER_ERROR("Shape must be rank 3 ", op, "[?,?,?];[?,?,?];[?];[?]");
+    +  INFER_ERROR("Shape must be rank 1 ", op, "[?,?,?];[?,?,?];[?,?,?];[]");
+     }
+     
+     TEST(CudnnRNNOpsTest, ForwardV2Lstm_ShapeFn) {
+    @@ -100,6 +105,11 @@ TEST(CudnnRNNOpsTest, ForwardV2Lstm_ShapeFn) {
+                        .Attr("direction", "unidirectional")
+                        .Finalize(&op.node_def));
+       INFER_OK(op, input_shapes_desc, output_shapes_desc);
+    +  INFER_ERROR("Shape must be rank 3 ", op, "[];[?,?,?];[?,?,?];[?]");
+    +  INFER_ERROR("Shape must be rank 3 ", op, "[?,?,?];[];[?,?,?];[?]");
+    +  // Disabled because the kernel does not check shape of input_c.
+    +  // INFER_ERROR("Shape must be rank 3 ", op, "[?,?,?];[?,?,?];[?];[?]");
+    +  INFER_ERROR("Shape must be rank 1 ", op, "[?,?,?];[?,?,?];[?,?,?];[]");
+     }
+     
+     TEST(CudnnRNNOpsTest, ForwardV3Lstm_ShapeFn) {
+    @@ -137,6 +147,52 @@ TEST(CudnnRNNOpsTest, ForwardV3Lstm_ShapeFn) {
+                        .Attr("direction", "unidirectional")
+                        .Finalize(&op.node_def));
+       INFER_OK(op, input_shapes_desc, output_shapes_desc);
+    +  INFER_ERROR("Shape must be rank 3 ", op, "[];[?,?,?];[?,?,?];[?];[?]");
+    +  INFER_ERROR("Shape must be rank 3 ", op, "[?,?,?];[];[?,?,?];[?];[?]");
+    +  INFER_ERROR("Shape must be rank 3 ", op, "[?,?,?];[?,?,?];[];[?];[?]");
+    +  INFER_ERROR("Shape must be rank 1 ", op, "[?,?,?];[?,?,?];[?,?,?];[];[?]");
+    +  INFER_ERROR("Shape must be rank 1 ", op, "[?,?,?];[?,?,?];[?,?,?];[?];[]");
+    +}
+    +
+    +TEST(CudnnRNNOpsTest, ForwardV3Gru) {
+    +  int max_seq_length = 2;
+    +  int batch_size = 3;
+    +  int num_units = 4;
+    +  int num_layers = 5;
+    +  int dir_count = 1;
+    +  std::vector<int> input_shape = {max_seq_length, batch_size, num_units};
+    +  std::vector<int> input_h_shape = {num_layers * dir_count, batch_size,
+    +                                    num_units};
+    +  std::vector<int> input_c_shape = {num_layers * dir_count, batch_size,
+    +                                    num_units};
+    +  std::vector<int> output_shape = {max_seq_length, batch_size,
+    +                                   num_units * dir_count};
+    +  std::vector<int> seq_lengths_shape = {batch_size};
+    +  auto shape_to_str = [](const std::vector<int>& v) {
+    +    return strings::StrCat("[", absl::StrJoin(v, ","), "]");
+    +  };
+    +  string input_shapes_desc = strings::StrCat(
+    +      shape_to_str(input_shape), ";", shape_to_str(input_h_shape), ";",
+    +      shape_to_str(input_c_shape), ";", "[?]", ";",
+    +      shape_to_str(seq_lengths_shape));
+    +  string output_shapes_desc = "[d0_0,d0_1,d1_2];in1;[];?;?";
+    +
+    +  ShapeInferenceTestOp op("CudnnRNNV3");
+    +  TF_ASSERT_OK(NodeDefBuilder("test", "CudnnRNNV3")
+    +                   .Input({"input", 0, DT_FLOAT})
+    +                   .Input({"input_h", 0, DT_FLOAT})
+    +                   .Input({"input_c", 0, DT_FLOAT})
+    +                   .Input({"params", 0, DT_FLOAT})
+    +                   .Input({"sequence_lengths", 0, DT_INT32})
+    +                   .Attr("rnn_mode", "gru")
+    +                   .Attr("input_mode", "auto_select")
+    +                   .Attr("direction", "unidirectional")
+    +                   .Finalize(&op.node_def));
+    +  INFER_OK(op, input_shapes_desc, output_shapes_desc);
+    +  INFER_ERROR("Shape must be rank 3 ", op, "[];[?,?,?];[];[?];[?]");
+    +  INFER_ERROR("Shape must be rank 3 ", op, "[?,?,?];[];[];[?];[?]");
+    +  INFER_ERROR("Shape must be rank 1 ", op, "[?,?,?];[?,?,?];[];[];[?]");
+    +  INFER_ERROR("Shape must be rank 1 ", op, "[?,?,?];[?,?,?];[];[?];[]");
+     }
+     
+     }  // end namespace tensorflow
+  notes: >
+    Added CudnnRNN shape-function rank validation and corresponding inference tests for the vulnerable input shapes.
+```
+
+tokens used
+input: 1,091
+cache read: 17,920
+cache write: 0
+output: 2,344
+reasoning output: 35

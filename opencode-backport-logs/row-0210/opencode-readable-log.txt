@@ -1,0 +1,423 @@
+I’ll inspect the target-side QuantizeV2 implementation, compare it to the provided new-release hunk, then apply the minimal equivalent validation checks in place.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect QuantizeV2 target implementation and surrounding context",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Validate and apply minimal backport hunk",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "content": "Review final diff for scope and correctness",
+      "status": "pending",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect QuantizeV2 target implementation and surrounding context",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Validate and apply minimal backport hunk",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "content": "Review final diff for scope and correctness",
+    "status": "pending",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 4,220
+cache read: 4,608
+cache write: 0
+output: 118
+reasoning output: 0
+
+tool: viewcode
+{
+  "ref": "52ca09cb2cb8ab288b9635d74a339b4663a68068",
+  "path": "tensorflow/core/kernels/quantize_op.cc",
+  "startline": 80,
+  "endline": 160
+}
+Here are lines 80 through 160.
+
+    } else if (mode_string == "SCALED") {
+      mode_ = QUANTIZE_MODE_SCALED;
+    }
+
+    string round_mode_string;
+    OP_REQUIRES_OK(ctx, ctx->GetAttr("round_mode", &round_mode_string));
+    OP_REQUIRES(ctx,
+                (round_mode_string == "HALF_AWAY_FROM_ZERO" ||
+                 round_mode_string == "HALF_TO_EVEN"),
+                errors::InvalidArgument("Round mode string must be "
+                                        "'HALF_AWAY_FROM_ZERO' or "
+                                        "'HALF_TO_EVEN', is '" +
+                                        round_mode_string + "'"));
+    if (round_mode_string == "HALF_AWAY_FROM_ZERO") {
+      round_mode_ = ROUND_HALF_AWAY_FROM_ZERO;
+    } else if (round_mode_string == "HALF_TO_EVEN") {
+      OP_REQUIRES(ctx, mode_string == "SCALED",
+                  errors::InvalidArgument("Round mode 'HALF_TO_EVEN' "
+                                          "only supported for mode 'SCALED', "
+                                          "b  ut mode is '" +
+                                          mode_string + "'."));
+      round_mode_ = ROUND_HALF_TO_EVEN;
+    }
+    OP_REQUIRES_OK(ctx, ctx->GetAttr("narrow_range", &narrow_range_));
+    OP_REQUIRES_OK(ctx, ctx->GetAttr("axis", &axis_));
+    OP_REQUIRES_OK(
+        ctx, ctx->GetAttr("ensure_minimum_range", &ensure_minimum_range_));
+  }
+
+  void Compute(OpKernelContext* ctx) override {
+    const Tensor& input = ctx->input(0);
+    const Tensor& input_min_range = ctx->input(1);
+    const Tensor& input_max_range = ctx->input(2);
+
+    int num_slices = 1;
+    if (axis_ > -1) {
+      num_slices = input.dim_size(axis_);
+    }
+
+    const TensorShape& minmax_shape = ctx->input(1).shape();
+    Tensor* output = nullptr;
+    OP_REQUIRES_OK(ctx, ctx->allocate_output(0, input.shape(), &output));
+
+    Tensor* output_min_tensor = nullptr;
+    Tensor* output_max_tensor = nullptr;
+
+    if (num_slices == 1) {
+      OP_REQUIRES_OK(ctx, ctx->allocate_output(1, {}, &output_min_tensor));
+      OP_REQUIRES_OK(ctx, ctx->allocate_output(2, {}, &output_max_tensor));
+      const float min_range = input_min_range.template flat<float>()(0);
+      const float max_range = input_max_range.template flat<float>()(0);
+      QuantizeTensor(ctx, input, min_range, max_range, output,
+                     output_min_tensor, output_max_tensor);
+      return;
+    }
+
+    OP_REQUIRES(ctx, mode_ != QUANTIZE_MODE_MIN_FIRST,
+                errors::Unimplemented("MIN_FIRST mode is not implemented for "
+                                      "Quantize with axis != -1."));
+    OP_REQUIRES_OK(ctx,
+                   ctx->allocate_output(1, minmax_shape, &output_min_tensor));
+    OP_REQUIRES_OK(ctx,
+                   ctx->allocate_output(2, minmax_shape, &output_max_tensor));
+
+    auto input_tensor =
+        input.template flat_inner_outer_dims<float, 3>(axis_ - 1);
+    int64 pre_dim = 1, post_dim = 1;
+    for (int i = 0; i < axis_; ++i) {
+      pre_dim *= output->dim_size(i);
+    }
+    for (int i = axis_ + 1; i < output->dims(); ++i) {
+      post_dim *= output->dim_size(i);
+    }
+    auto output_tensor = output->template bit_casted_shaped<T, 3>(
+        {pre_dim, num_slices, post_dim});
+    auto min_ranges = input_min_range.template vec<float>();
+    auto max_ranges = input_max_range.template vec<float>();
+    for (int i = 0; i < num_slices; ++i) {
+      QuantizeSlice(ctx->eigen_device<Device>(), ctx,
+                    input_tensor.template chip<1>(i), min_ranges(i),
+                    max_ranges(i), output_tensor.template chip<1>(i),
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: locate_symbol
+{
+  "ref": "52ca09cb2cb8ab288b9635d74a339b4663a68068",
+  "symbol": "QuantizeV2Op"
+}
+tensorflow/core/kernels/quantize_op.cc:59
+tensorflow/core/kernels/quantize_op.cc:61
+tensorflow/core/kernels/quantize_op.cc:307
+tensorflow/core/kernels/quantize_op.cc:310
+tensorflow/core/kernels/quantize_op.cc:313
+tensorflow/core/kernels/quantize_op.cc:316
+tensorflow/core/kernels/quantize_op.cc:319
+
+tokens used
+input: 355
+cache read: 8,704
+cache write: 0
+output: 121
+reasoning output: 0
+
+The target implementation has the same vulnerable shape: it reads `input.dim_size(axis_)` and min/max flat/vector values without validating axis bounds or min/max tensor sizes. I’m going to add the new checks at the same point before those reads.
+
+tool: validate
+{
+  "ref": "52ca09cb2cb8ab288b9635d74a339b4663a68068",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/quantize_op.cc b/tensorflow/core/kernels/quantize_op.cc\n--- a/tensorflow/core/kernels/quantize_op.cc\n+++ b/tensorflow/core/kernels/quantize_op.cc\n@@ -113,7 +113,50 @@ class QuantizeV2Op : public OpKernel {\n \n     int num_slices = 1;\n     if (axis_ > -1) {\n+      OP_REQUIRES(\n+          ctx, input.dims() > axis_,\n+          errors::InvalidArgument(\n+              \"Axis is on a zero-based index, so its value must always be less \"\n+              \"than number of input's dims, but given axis value was \",\n+              axis_, \" and input's dims was \", input.dims()));\n       num_slices = input.dim_size(axis_);\n+      OP_REQUIRES(ctx, input_min_range.dims() == 1,\n+                  errors::InvalidArgument(\n+                      \"If axis is specified, min_range must be a 1-D tensor \"\n+                      \"whose size matches the axis dimension of the input and \"\n+                      \"output tensors, but min_range dims are \",\n+                      input_min_range.dims()));\n+      OP_REQUIRES(ctx, input_min_range.dim_size(0) == num_slices,\n+                  errors::InvalidArgument(\n+                      \"If axis is specified, min_range must be a 1-D tensor \"\n+                      \"whose size matches the axis dimension of the input and \"\n+                      \"output tensors, but min_range is a 1-D tensor of size \",\n+                      input_min_range.dim_size(0),\n+                      \" and input's axis dimension is of size \", num_slices));\n+      OP_REQUIRES(ctx, input_max_range.dims() == 1,\n+                  errors::InvalidArgument(\n+                      \"If axis is specified, max_range must be a 1-D tensor \"\n+                      \"whose size matches the axis dimension of the input and \"\n+                      \"output tensors, but max_range dims are \",\n+                      input_max_range.dims()));\n+      OP_REQUIRES(ctx, input_max_range.dim_size(0) == num_slices,\n+                  errors::InvalidArgument(\n+                      \"If axis is specified, max_range must be a 1-D tensor \"\n+                      \"whose size matches the axis dimension of the input and \"\n+                      \"output tensors, but max_range is a 1-D tensor of size \",\n+                      input_max_range.dim_size(0),\n+                      \" and input's axis dimension is of size \", num_slices));\n+    } else {\n+      OP_REQUIRES(ctx, input_min_range.NumElements() == 1,\n+                  errors::InvalidArgument(\n+                      \"If axis is not specified, min_range must contain a \"\n+                      \"single float element, but it contains \",\n+                      input_min_range.NumElements(), \" elements\"));\n+      OP_REQUIRES(ctx, input_max_range.NumElements() == 1,\n+                  errors::InvalidArgument(\n+                      \"If axis is not specified, max_range must contain a \"\n+                      \"single float element, but it contains \",\n+                      input_max_range.NumElements(), \" elements\"));\n     }\n \n     const TensorShape& minmax_shape = ctx->input(1).shape();\n"
+}
+Patch applied successfully
+
+tokens used
+input: 1,500
+cache read: 8,704
+cache write: 0
+output: 891
+reasoning output: 40
+
+The hunk validates cleanly against the target base. I’m applying the same minimal source change now.
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/kernels/quantize_op.cc\n@@\n     int num_slices = 1;\n     if (axis_ > -1) {\n+      OP_REQUIRES(\n+          ctx, input.dims() > axis_,\n+          errors::InvalidArgument(\n+              \"Axis is on a zero-based index, so its value must always be less \"\n+              \"than number of input's dims, but given axis value was \",\n+              axis_, \" and input's dims was \", input.dims()));\n       num_slices = input.dim_size(axis_);\n+      OP_REQUIRES(ctx, input_min_range.dims() == 1,\n+                  errors::InvalidArgument(\n+                      \"If axis is specified, min_range must be a 1-D tensor \"\n+                      \"whose size matches the axis dimension of the input and \"\n+                      \"output tensors, but min_range dims are \",\n+                      input_min_range.dims()));\n+      OP_REQUIRES(ctx, input_min_range.dim_size(0) == num_slices,\n+                  errors::InvalidArgument(\n+                      \"If axis is specified, min_range must be a 1-D tensor \"\n+                      \"whose size matches the axis dimension of the input and \"\n+                      \"output tensors, but min_range is a 1-D tensor of size \",\n+                      input_min_range.dim_size(0),\n+                      \" and input's axis dimension is of size \", num_slices));\n+      OP_REQUIRES(ctx, input_max_range.dims() == 1,\n+                  errors::InvalidArgument(\n+                      \"If axis is specified, max_range must be a 1-D tensor \"\n+                      \"whose size matches the axis dimension of the input and \"\n+                      \"output tensors, but max_range dims are \",\n+                      input_max_range.dims()));\n+      OP_REQUIRES(ctx, input_max_range.dim_size(0) == num_slices,\n+                  errors::InvalidArgument(\n+                      \"If axis is specified, max_range must be a 1-D tensor \"\n+                      \"whose size matches the axis dimension of the input and \"\n+                      \"output tensors, but max_range is a 1-D tensor of size \",\n+                      input_max_range.dim_size(0),\n+                      \" and input's axis dimension is of size \", num_slices));\n+    } else {\n+      OP_REQUIRES(ctx, input_min_range.NumElements() == 1,\n+                  errors::InvalidArgument(\n+                      \"If axis is not specified, min_range must contain a \"\n+                      \"single float element, but it contains \",\n+                      input_min_range.NumElements(), \" elements\"));\n+      OP_REQUIRES(ctx, input_max_range.NumElements() == 1,\n+                  errors::InvalidArgument(\n+                      \"If axis is not specified, max_range must contain a \"\n+                      \"single float element, but it contains \",\n+                      input_max_range.NumElements(), \" elements\"));\n     }\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/kernels/quantize_op.cc
+
+tokens used
+input: 1,420
+cache read: 9,728
+cache write: 0
+output: 755
+reasoning output: 0
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect QuantizeV2 target implementation and surrounding context",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate and apply minimal backport hunk",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Review final diff for scope and correctness",
+      "status": "in_progress",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect QuantizeV2 target implementation and surrounding context",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate and apply minimal backport hunk",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Review final diff for scope and correctness",
+    "status": "in_progress",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 1,179
+cache read: 10,752
+cache write: 0
+output: 79
+reasoning output: 0
+
+The source edit is applied. I’m checking the resulting diff to ensure only the intended QuantizeV2 validation changes are present.
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/kernels/quantize_op.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0210-52ca09cb2cb8",
+  "timeout": 120000
+}
+warning: in the working copy of 'tensorflow/core/kernels/quantize_op.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/kernels/quantize_op.cc b/tensorflow/core/kernels/quantize_op.cc
+index a523c4b9cd..098991e4f4 100644
+--- a/tensorflow/core/kernels/quantize_op.cc
++++ b/tensorflow/core/kernels/quantize_op.cc
+@@ -113,7 +113,50 @@ class QuantizeV2Op : public OpKernel {
+ 
+     int num_slices = 1;
+     if (axis_ > -1) {
++      OP_REQUIRES(
++          ctx, input.dims() > axis_,
++          errors::InvalidArgument(
++              "Axis is on a zero-based index, so its value must always be less "
++              "than number of input's dims, but given axis value was ",
++              axis_, " and input's dims was ", input.dims()));
+       num_slices = input.dim_size(axis_);
++      OP_REQUIRES(ctx, input_min_range.dims() == 1,
++                  errors::InvalidArgument(
++                      "If axis is specified, min_range must be a 1-D tensor "
++                      "whose size matches the axis dimension of the input and "
++                      "output tensors, but min_range dims are ",
++                      input_min_range.dims()));
++      OP_REQUIRES(ctx, input_min_range.dim_size(0) == num_slices,
++                  errors::InvalidArgument(
++                      "If axis is specified, min_range must be a 1-D tensor "
++                      "whose size matches the axis dimension of the input and "
++                      "output tensors, but min_range is a 1-D tensor of size ",
++                      input_min_range.dim_size(0),
++                      " and input's axis dimension is of size ", num_slices));
++      OP_REQUIRES(ctx, input_max_range.dims() == 1,
++                  errors::InvalidArgument(
++                      "If axis is specified, max_range must be a 1-D tensor "
++                      "whose size matches the axis dimension of the input and "
++                      "output tensors, but max_range dims are ",
++                      input_max_range.dims()));
++      OP_REQUIRES(ctx, input_max_range.dim_size(0) == num_slices,
++                  errors::InvalidArgument(
++                      "If axis is specified, max_range must be a 1-D tensor "
++                      "whose size matches the axis dimension of the input and "
++                      "output tensors, but max_range is a 1-D tensor of size ",
++                      input_max_range.dim_size(0),
++                      " and input's axis dimension is of size ", num_slices));
++    } else {
++      OP_REQUIRES(ctx, input_min_range.NumElements() == 1,
++                  errors::InvalidArgument(
++                      "If axis is not specified, min_range must contain a "
++                      "single float element, but it contains ",
++                      input_min_range.NumElements(), " elements"));
++      OP_REQUIRES(ctx, input_max_range.NumElements() == 1,
++                  errors::InvalidArgument(
++                      "If axis is not specified, max_range must contain a "
++                      "single float element, but it contains ",
++                      input_max_range.NumElements(), " elements"));
+     }
+ 
+     const TensorShape& minmax_shape = ctx->input(1).shape();
+
+tokens used
+input: 347
+cache read: 11,776
+cache write: 0
+output: 109
+reasoning output: 0
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect QuantizeV2 target implementation and surrounding context",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate and apply minimal backport hunk",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Review final diff for scope and correctness",
+      "status": "completed",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect QuantizeV2 target implementation and surrounding context",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate and apply minimal backport hunk",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Review final diff for scope and correctness",
+    "status": "completed",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 1,211
+cache read: 11,776
+cache write: 0
+output: 78
+reasoning output: 0
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/kernels/quantize_op.cc b/tensorflow/core/kernels/quantize_op.cc
+    index a523c4b9cd..098991e4f4 100644
+    --- a/tensorflow/core/kernels/quantize_op.cc
+    +++ b/tensorflow/core/kernels/quantize_op.cc
+    @@ -113,7 +113,50 @@ class QuantizeV2Op : public OpKernel {
+     
+         int num_slices = 1;
+         if (axis_ > -1) {
+    +      OP_REQUIRES(
+    +          ctx, input.dims() > axis_,
+    +          errors::InvalidArgument(
+    +              "Axis is on a zero-based index, so its value must always be less "
+    +              "than number of input's dims, but given axis value was ",
+    +              axis_, " and input's dims was ", input.dims()));
+           num_slices = input.dim_size(axis_);
+    +      OP_REQUIRES(ctx, input_min_range.dims() == 1,
+    +                  errors::InvalidArgument(
+    +                      "If axis is specified, min_range must be a 1-D tensor "
+    +                      "whose size matches the axis dimension of the input and "
+    +                      "output tensors, but min_range dims are ",
+    +                      input_min_range.dims()));
+    +      OP_REQUIRES(ctx, input_min_range.dim_size(0) == num_slices,
+    +                  errors::InvalidArgument(
+    +                      "If axis is specified, min_range must be a 1-D tensor "
+    +                      "whose size matches the axis dimension of the input and "
+    +                      "output tensors, but min_range is a 1-D tensor of size ",
+    +                      input_min_range.dim_size(0),
+    +                      " and input's axis dimension is of size ", num_slices));
+    +      OP_REQUIRES(ctx, input_max_range.dims() == 1,
+    +                  errors::InvalidArgument(
+    +                      "If axis is specified, max_range must be a 1-D tensor "
+    +                      "whose size matches the axis dimension of the input and "
+    +                      "output tensors, but max_range dims are ",
+    +                      input_max_range.dims()));
+    +      OP_REQUIRES(ctx, input_max_range.dim_size(0) == num_slices,
+    +                  errors::InvalidArgument(
+    +                      "If axis is specified, max_range must be a 1-D tensor "
+    +                      "whose size matches the axis dimension of the input and "
+    +                      "output tensors, but max_range is a 1-D tensor of size ",
+    +                      input_max_range.dim_size(0),
+    +                      " and input's axis dimension is of size ", num_slices));
+    +    } else {
+    +      OP_REQUIRES(ctx, input_min_range.NumElements() == 1,
+    +                  errors::InvalidArgument(
+    +                      "If axis is not specified, min_range must contain a "
+    +                      "single float element, but it contains ",
+    +                      input_min_range.NumElements(), " elements"));
+    +      OP_REQUIRES(ctx, input_max_range.NumElements() == 1,
+    +                  errors::InvalidArgument(
+    +                      "If axis is not specified, max_range must contain a "
+    +                      "single float element, but it contains ",
+    +                      input_max_range.NumElements(), " elements"));
+         }
+     
+         const TensorShape& minmax_shape = ctx->input(1).shape();
+  notes: >
+    Added QuantizeV2 axis and min/max range tensor validation matching the security fix.
+```
+
+tokens used
+input: 377
+cache read: 12,800
+cache write: 0
+output: 804
+reasoning output: 0

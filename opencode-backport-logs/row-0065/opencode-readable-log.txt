@@ -1,0 +1,1647 @@
+I’ll inspect the target-side file contexts for both hunks, then apply the minimal equivalent fix and validate any uncertain hunk context against the target base.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target TensorFlow 2.5.2 contexts for source and test hunks",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Apply minimal backport changes to matching files",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "content": "Review resulting diff and provide final YAML",
+      "status": "pending",
+      "priority": "high"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target TensorFlow 2.5.2 contexts for source and test hunks",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Apply minimal backport changes to matching files",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "content": "Review resulting diff and provide final YAML",
+    "status": "pending",
+    "priority": "high"
+  }
+]
+
+tokens used
+input: 9,053
+cache read: 0
+cache write: 0
+output: 124
+reasoning output: 0
+
+tool: viewcode
+{
+  "ref": "e2ec678f3ca9a2602a8550d694b8c6455f763fb3",
+  "path": "tensorflow/python/kernel_tests/array_ops/array_ops_test.py",
+  "startline": 1550,
+  "endline": 1610
+}
+This file doesn't exist in this commit.
+
+tool: viewcode
+{
+  "ref": "e2ec678f3ca9a2602a8550d694b8c6455f763fb3",
+  "path": "tensorflow/core/kernels/unravel_index_op.cc",
+  "startline": 1,
+  "endline": 180
+}
+This file only has 145 lines. Here are lines 1 through 145.
+
+/* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+==============================================================================*/
+
+#define EIGEN_USE_THREADS
+
+#include "tensorflow/core/framework/op_kernel.h"
+#include "tensorflow/core/framework/register_types.h"
+#include "tensorflow/core/framework/tensor.h"
+#include "tensorflow/core/framework/types.h"
+#include "third_party/eigen3/unsupported/Eigen/CXX11/Tensor"
+
+namespace tensorflow {
+
+namespace {
+template <typename T>
+struct mod_op {
+  const T operator()(const T& a, const T& b) const { return a % b; }
+};
+}  // namespace
+
+typedef Eigen::ThreadPoolDevice CPUDevice;
+
+template <typename Tidx>
+class UnravelIndexOp : public OpKernel {
+ public:
+  explicit UnravelIndexOp(OpKernelConstruction* ctx) : OpKernel(ctx) {}
+
+  void Compute(OpKernelContext* ctx) override {
+    const Tensor& indices_tensor = ctx->input(0);
+    OP_REQUIRES(ctx,
+                TensorShapeUtils::IsVector(indices_tensor.shape()) ||
+                    TensorShapeUtils::IsScalar(indices_tensor.shape()),
+                errors::InvalidArgument(
+                    "The indices can only be scalar or vector, got \"",
+                    indices_tensor.shape().DebugString(), "\""));
+
+    const Tensor& dims_tensor = ctx->input(1);
+    OP_REQUIRES(
+        ctx, TensorShapeUtils::IsVector(dims_tensor.shape()),
+        errors::InvalidArgument("The indices can only be 1-D, got \"",
+                                dims_tensor.shape().DebugString(), "\""));
+
+    auto dims = dims_tensor.vec<Tidx>();
+    // Make sure dims does not contain a zero
+    for (int i = 0; i < dims.size(); i++) {
+      OP_REQUIRES(
+          ctx, dims(i) != 0,
+          errors::InvalidArgument("Input dims cannot contain a dim of zero, "
+                                  "but dims contains zero at index ",
+                                  i));
+    }
+
+    // Chek to make sure indices is not out of boundary
+    Eigen::Tensor<Tidx, 0, Eigen::RowMajor> dims_prod_eigen = dims.prod();
+    Tidx dims_prod = dims_prod_eigen();
+    const Tidx* indices = indices_tensor.flat<Tidx>().data();
+    int64 size = indices_tensor.NumElements();
+    bool check = std::all_of(indices, indices + size,
+                             [&](Tidx index) { return index < dims_prod; });
+    OP_REQUIRES(ctx, check,
+                errors::InvalidArgument("index is out of bound as with dims"));
+
+    Eigen::array<bool, 1> reverse({true});
+
+    Tensor strides_tensor;
+    OP_REQUIRES_OK(ctx,
+                   ctx->allocate_temp(DataTypeToEnum<Tidx>::value,
+                                      TensorShape({dims_tensor.NumElements()}),
+                                      &strides_tensor));
+
+    auto strides = strides_tensor.vec<Tidx>();
+    strides = dims.reverse(reverse)
+                  .scan(0, Eigen::internal::ProdReducer<Tidx>(), false)
+                  .reverse(reverse);
+
+    Tensor strides_shifted_tensor;
+    OP_REQUIRES_OK(ctx,
+                   ctx->allocate_temp(DataTypeToEnum<Tidx>::value,
+                                      TensorShape({dims_tensor.NumElements()}),
+                                      &strides_shifted_tensor));
+
+    auto strides_shifted = strides_shifted_tensor.vec<Tidx>();
+    strides_shifted = dims.reverse(reverse)
+                          .scan(0, Eigen::internal::ProdReducer<Tidx>(), true)
+                          .reverse(reverse);
+
+    Tensor* output_tensor = nullptr;
+    if (TensorShapeUtils::IsScalar(indices_tensor.shape())) {
+      OP_REQUIRES_OK(
+          ctx, ctx->allocate_output(0, TensorShape({dims_tensor.NumElements()}),
+                                    &output_tensor));
+
+      auto output = output_tensor->vec<Tidx>();
+
+      output = output.constant(indices_tensor.scalar<Tidx>()());
+      output = output.binaryExpr(strides, mod_op<Tidx>()) / strides_shifted;
+    } else {
+      OP_REQUIRES_OK(
+          ctx, ctx->allocate_output(0,
+                                    TensorShape({dims_tensor.NumElements(),
+                                                 indices_tensor.NumElements()}),
+                                    &output_tensor));
+
+      auto output = output_tensor->matrix<Tidx>();
+
+      Eigen::array<Eigen::Index, 2> reshape{
+          {static_cast<Eigen::Index>(dims_tensor.NumElements()), 1}};
+      Eigen::array<Eigen::Index, 2> bcast(
+          {1, static_cast<Eigen::Index>(indices_tensor.NumElements())});
+      Eigen::array<Eigen::Index, 2> indices_reshape{
+          {1, static_cast<Eigen::Index>(indices_tensor.NumElements())}};
+      Eigen::array<Eigen::Index, 2> indices_bcast(
+          {static_cast<Eigen::Index>(dims_tensor.NumElements()), 1});
+
+      output = indices_tensor.vec<Tidx>()
+                   .reshape(indices_reshape)
+                   .broadcast(indices_bcast);
+      output = output.binaryExpr(strides.reshape(reshape).broadcast(bcast),
+                                 mod_op<Tidx>()) /
+               strides_shifted.reshape(reshape).broadcast(bcast);
+    }
+  }
+};
+
+#define REGISTER_KERNEL(type)                                               \
+  REGISTER_KERNEL_BUILDER(                                                  \
+      Name("UnravelIndex").Device(DEVICE_CPU).TypeConstraint<type>("Tidx"), \
+      UnravelIndexOp<type>);
+TF_CALL_int32(REGISTER_KERNEL) TF_CALL_int64(REGISTER_KERNEL)
+#undef REGISTER_KERNEL
+
+}  // namespace tensorflow
+
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tokens used
+input: 593
+cache read: 8,704
+cache write: 0
+output: 146
+reasoning output: 0
+
+The kernel file exists with matching vulnerable logic. The test file path from the newer patch does not exist in this target checkout, so I’m locating the equivalent `UnravelIndex` tests before editing.
+
+tool: glob
+{
+  "pattern": "tensorflow/python/kernel_tests/**/array_ops_test.py"
+}
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\python\kernel_tests\array_ops_test.py
+
+tool: grep
+{
+  "pattern": "testUnravelIndexZeroDim|UnravelIndex",
+  "path": "tensorflow/python/kernel_tests",
+  "include": "*.py"
+}
+Found 3 matches
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\python\kernel_tests\array_ops_test.py:
+  Line 1545: class UnravelIndexTest(test_util.TensorFlowTestCase):
+
+  Line 1549:   def testUnravelIndex(self):
+
+  Line 1569:   def testUnravelIndexZeroDim(self):
+
+tokens used
+input: 2,046
+cache read: 8,704
+cache write: 0
+output: 129
+reasoning output: 19
+
+tool: read
+{
+  "filePath": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0065-e2ec678f3ca9\\tensorflow\\python\\kernel_tests\\array_ops_test.py",
+  "offset": 1535,
+  "limit": 60
+}
+<path>C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\python\kernel_tests\array_ops_test.py</path>
+<type>file</type>
+<content>
+1535:   def testInvertPermutation(self):
+1536:     for dtype in [dtypes.int32, dtypes.int64]:
+1537:       with self.subTest(dtype=dtype):
+1538:         with self.cached_session():
+1539:           x = constant_op.constant([3, 4, 0, 2, 1], dtype=dtype)
+1540:           y = array_ops.invert_permutation(x)
+1541:           self.assertAllEqual(y.get_shape(), [5])
+1542:           self.assertAllEqual(y, [2, 4, 3, 0, 1])
+1543: 
+1544: 
+1545: class UnravelIndexTest(test_util.TensorFlowTestCase):
+1546: 
+1547:   # TODO(b/73086570): Reenable test.
+1548:   @unittest.skip("Test does not pass internally.")
+1549:   def testUnravelIndex(self):
+1550:     with self.cached_session():
+1551:       for dtype in [dtypes.int32, dtypes.int64]:
+1552:         with self.subTest(dtype=dtype):
+1553:           indices_1 = constant_op.constant(1621, dtype=dtype)
+1554:           dims_1 = constant_op.constant([6, 7, 8, 9], dtype=dtype)
+1555:           out_1 = array_ops.unravel_index(indices_1, dims_1)
+1556:           self.assertAllEqual(out_1, [3, 1, 4, 1])
+1557: 
+1558:           indices_2 = constant_op.constant([1621], dtype=dtype)
+1559:           dims_2 = constant_op.constant([6, 7, 8, 9], dtype=dtype)
+1560:           out_2 = array_ops.unravel_index(indices_2, dims_2)
+1561:           self.assertAllEqual(out_2, [[3], [1], [4], [1]])
+1562: 
+1563:           indices_3 = constant_op.constant([22, 41, 37], dtype=dtype)
+1564:           dims_3 = constant_op.constant([7, 6], dtype=dtype)
+1565:           out_3 = array_ops.unravel_index(indices_3, dims_3)
+1566:           self.assertAllEqual(out_3, [[3, 6, 6], [4, 5, 1]])
+1567: 
+1568:   # Test case for GitHub issue 40204.
+1569:   def testUnravelIndexZeroDim(self):
+1570:     with self.cached_session():
+1571:       for dtype in [dtypes.int32, dtypes.int64]:
+1572:         with self.assertRaisesRegex(errors.InvalidArgumentError,
+1573:                                     "dims cannot contain a dim of zero"):
+1574:           indices = constant_op.constant([2, 5, 7], dtype=dtype)
+1575:           dims = constant_op.constant([3, 0], dtype=dtype)
+1576:           self.evaluate(array_ops.unravel_index(indices=indices, dims=dims))
+1577: 
+1578: 
+1579: class GuaranteeConstOpTest(test_util.TensorFlowTestCase):
+1580: 
+1581:   @test_util.run_deprecated_v1
+1582:   def testSimple(self):
+1583:     with self.cached_session():
+1584:       a = array_ops.constant(10)
+1585:       guarantee_a = array_ops.guarantee_const(a)
+1586:       self.assertEqual(10, self.evaluate(guarantee_a))
+1587: 
+1588:   @test_util.run_deprecated_v1
+1589:   def testVariables(self):
+1590:     with self.cached_session() as sess:
+1591:       for use_resource in [False, True]:
+1592:         with self.subTest(use_resource=use_resource):
+1593:           a = variable_scope.get_variable(
+1594:               "var_{}".format(use_resource), [],
+
+(Showing lines 1535-1594 of 2213. Use offset=1595 to continue.)
+</content>
+
+tokens used
+input: 1,350
+cache read: 9,728
+cache write: 0
+output: 78
+reasoning output: 27
+
+I found the equivalent test in `tensorflow/python/kernel_tests/array_ops_test.py` in the older layout. I’m applying the same overflow and negative-dim checks to the kernel, plus the regression test at the target test location.
+
+tool: grep
+{
+  "pattern": "DataTypeToEnum<.*>::v\\(\\)",
+  "path": "tensorflow",
+  "include": "*.cc"
+}
+Found 100 matches (more matches available)
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\cc\framework\gradient_checker.cc:
+  Line 302:   const DataType jacobian_type = DataTypeToEnum<JAC_T>::v();
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\cc\gradients\math_grad_test.cc:
+  Line 100:     DataType x_type = DataTypeToEnum<X_T>::v();
+
+  Line 606:         Placeholder(root_, DataTypeToEnum<T>::v(), Placeholder::Shape(x_shape));
+
+  Line 608:         Placeholder(root_, DataTypeToEnum<T>::v(), Placeholder::Shape(y_shape));
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\cc\gradients\image_grad_test.cc:
+  Line 44:     DataType data_type = DataTypeToEnum<T>::v();
+
+  Line 189:     DataType data_type = DataTypeToEnum<T>::v();
+
+  Line 306:     DataType data_type = DataTypeToEnum<T>::v();
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\c\kernels\histogram_summary_op.cc:
+  Line 137:         static_cast<TF_DataType>(tensorflow::DataTypeToEnum<T>::v()), status);
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\c\kernels\summary_op.cc:
+  Line 144:         static_cast<TF_DataType>(tensorflow::DataTypeToEnum<T>::v()), status);
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\util\tensor_slice_reader_test.cc:
+  Line 257:     EXPECT_EQ(DataTypeToEnum<T>::v(), type);
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\compiler\tf2tensorrt\kernels\trt_engine_op_test.cc:
+  Line 290:   TRTEngineOpTestBase::AddSimpleTrtOp(DataTypeToEnum<TypeParam>::v());
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\util\example_proto_fast_parsing.cc:
+  Line 1059:     tensor_ = Tensor(DataTypeToEnum<T>::v(), TensorShape({new_size}));
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\compiler\tf2tensorrt\convert\convert_nodes_test.cc:
+  Line 1055:   TF_ASSERT_OK(TfTypeToTrtType(DataTypeToEnum<T>::v(), &trt_type));
+
+  Line 1603:     TF_ASSERT_OK(TfTypeToTrtType(DataTypeToEnum<T>::v(), &dtype));
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\compiler\tests\unary_ops_composition_test.cc:
+  Line 64:                      .Input(FakeInput(DataTypeToEnum<T>::v()))
+
+  Line 65:                      .Attr("T", DataTypeToEnum<T>::v())
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\kernels\concat_op_test.cc:
+  Line 65:   DataType dt = DataTypeToEnum<T>::v();
+
+  Line 162:   DataType dt = DataTypeToEnum<T>::v();
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\kernels\concat_lib_cpu.cc:
+  Line 29:     if (DataTypeCanUseMemcpy(DataTypeToEnum<T>::v())) {
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\kernels\cast_op_test.cc:
+  Line 65:     DataType in_type = DataTypeToEnum<INPUT>::v();
+
+  Line 66:     DataType out_type = DataTypeToEnum<OUTPUT>::v();
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\kernels\conv_ops_test.cc:
+  Line 748:     DataType dtype = DataTypeToEnum<T>::v();
+
+  Line 785:     DataType dtype = DataTypeToEnum<T>::v();
+
+  Line 825:     DataType dtype = DataTypeToEnum<T>::v();
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\kernels\ctc_decoder_ops.cc:
+  Line 330:     Tensor input_chip(DataTypeToEnum<T>::v(), TensorShape({num_classes}));
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\graph\graph_partition.cc:
+  Line 473:   const DataType dt = DataTypeToEnum<float>::v();
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\ops\array_ops_test.cc:
+  Line 1748:                        .Attr("T", DataTypeToEnum<qint8>::v())
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\kernels\data\dataset_utils.cc:
+  Line 410:   Tensor val_t = Tensor(DataTypeToEnum<T>::v(), TensorShape({}));
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\kernels\dynamic_stitch_op.cc:
+  Line 42:     const DataType dt = DataTypeToEnum<T>::v();
+
+  Line 262:         if (DataTypeCanUseMemcpy(DataTypeToEnum<T>::v())) {
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\kernels\dequantize_op_test.cc:
+  Line 68:                      .Input(FakeInput(DataTypeToEnum<T>::v()))
+
+  Line 71:                      .Attr("T", DataTypeToEnum<T>::v())
+
+  Line 97:                      .Input(FakeInput(DataTypeToEnum<T>::v()))
+
+  Line 100:                      .Attr("T", DataTypeToEnum<T>::v())
+
+  Line 158:                      .Input(FakeInput(DataTypeToEnum<T>::v()))
+
+  Line 161:                      .Attr("T", DataTypeToEnum<T>::v())
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\kernels\dense_update_ops.cc:
+  Line 51:     const DataType dt = DataTypeToEnum<T>::v();
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\kernels\fused_batch_norm_op.cc:
+  Line 680:     const DataType tf_data_type = DataTypeToEnum<T>::v();
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\kernels\fused_batch_norm_ex_op_test.cc:
+  Line 236:     DataType t_dtype = DataTypeToEnum<T>::v();
+
+  Line 237:     DataType u_dtype = DataTypeToEnum<U>::v();
+
+  Line 340:     DataType t_dtype = DataTypeToEnum<T>::v();
+
+  Line 341:     DataType u_dtype = DataTypeToEnum<U>::v();
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\kernels\fractional_max_pool_op.cc:
+  Line 266:                                 {1}, DataTypeToEnum<T>::v(), tensor_out.shape(),
+
+  Line 269:     OP_REQUIRES_OK(context, context->allocate_temp(DataTypeToEnum<int64>::v(),
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\kernels\fractional_avg_pool_op.cc:
+  Line 297:                                 {0}, DataTypeToEnum<double>::v(), in_shape,
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\kernels\fft_ops.cc:
+  Line 234:     OP_REQUIRES_OK(ctx, ctx->allocate_temp(DataTypeToEnum<ComplexT>::v(),
+
+  Line 273:     OP_REQUIRES_OK(ctx, ctx->allocate_temp(DataTypeToEnum<ComplexT>::v(),
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\kernels\gather_op.cc:
+  Line 130:                                 DataTypeString(DataTypeToEnum<Index>::v()),
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\kernels\gather_nd_op.cc:
+  Line 36:     const DataType dt = DataTypeToEnum<T>::v();
+
+  Line 37:     const DataType index_t = DataTypeToEnum<Index>::v();
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\kernels\maxpooling_op.cc:
+  Line 283:                                 {1}, DataTypeToEnum<T>::v(), tensor_out.shape(),
+
+  Line 286:     OP_REQUIRES_OK(context, context->allocate_temp(DataTypeToEnum<int64>::v(),
+
+  Line 1254:                    << DataTypeString(DataTypeToEnum<T>::v())
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\kernels\matmul_op_test.cc:
+  Line 157:     DataType dtype = DataTypeToEnum<T>::v();
+
+  Line 191:     DataType dtype = DataTypeToEnum<T>::v();
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\kernels\lookup_table_op.cc:
+  Line 145:   DataType key_dtype() const override { return DataTypeToEnum<K>::v(); }
+
+  Line 147:   DataType value_dtype() const override { return DataTypeToEnum<V>::v(); }
+
+  Line 294:   DataType key_dtype() const override { return DataTypeToEnum<K>::v(); }
+
+  Line 296:   DataType value_dtype() const override { return DataTypeToEnum<V>::v(); }
+
+  Line 580:   DataType key_dtype() const override { return DataTypeToEnum<K>::v(); }
+
+  Line 582:   DataType value_dtype() const override { return DataTypeToEnum<V>::v(); }
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\kernels\listdiff_op.cc:
+  Line 31:     const DataType dt = DataTypeToEnum<T>::v();
+
+  Line 32:     const DataType dtidx = DataTypeToEnum<Tidx>::v();
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\kernels\quantized_conv_ops_test.cc:
+  Line 51:                    .Attr("out_type", DataTypeToEnum<qint32>::v())
+
+  Line 143:                    .Attr("out_type", DataTypeToEnum<qint32>::v())
+
+  Line 186:                    .Attr("out_type", DataTypeToEnum<qint32>::v())
+
+  Line 227:                    .Attr("out_type", DataTypeToEnum<qint32>::v())
+
+  Line 272:                    .Attr("out_type", DataTypeToEnum<qint32>::v())
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\kernels\quantized_concat_op_test.cc:
+  Line 73:                    .Attr("T", DataTypeToEnum<quint8>::v())
+
+  Line 138:                    .Attr("T", DataTypeToEnum<qint32>::v())
+
+  Line 201:                    .Attr("T", DataTypeToEnum<quint8>::v())
+
+  Line 255:   DataType dt = DataTypeToEnum<T>::v();
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\kernels\quantized_concat_op.cc:
+  Line 44:       DCHECK(DataTypeCanUseMemcpy(DataTypeToEnum<T>::v()));
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\kernels\quantized_bias_add_op_test.cc:
+  Line 48:                    .Attr("out_type", DataTypeToEnum<qint32>::v())
+
+  Line 98:                    .Attr("out_type", DataTypeToEnum<qint32>::v())
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\kernels\quantized_batch_norm_op.cc:
+  Line 118:   Tensor scale_tensor(DataTypeToEnum<T2>::v(), {depth});
+
+  Line 120:   Tensor offset_tensor(DataTypeToEnum<T2>::v(), {depth});
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\kernels\quantization_utils_test.cc:
+  Line 247:     Tensor o_tensor_eigen(DataTypeToEnum<OutputType>::v(),
+
+  Line 250:     Tensor o_tensor_ref(DataTypeToEnum<OutputType>::v(),
+
+  Line 273:           << " input_type=" << DataTypeString(DataTypeToEnum<InputType>::v())
+
+  Line 274:           << " output_type=" << DataTypeString(DataTypeToEnum<OutputType>::v());
+
+  Line 303:   Tensor o_tensor_eigen(DataTypeToEnum<OutputType>::v(),
+
+  Line 305:   Tensor o_tensor_ref(DataTypeToEnum<OutputType>::v(),
+
+  Line 359:     Tensor output(DataTypeToEnum<T>::v(), TensorShape{values_count});
+
+  Line 377:           << " type=" << DataTypeString(DataTypeToEnum<T>::v());
+
+  Line 399:     Tensor input(DataTypeToEnum<T>::v(), TensorShape{values_count});
+
+  Line 426:           << " type=" << DataTypeString(DataTypeToEnum<T>::v());
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\kernels\quantize_op_test.cc:
+  Line 42:                    .Attr("T", DataTypeToEnum<quint8>::v())
+
+  Line 91:                    .Attr("T", DataTypeToEnum<quint8>::v())
+
+  Line 140:                    .Attr("T", DataTypeToEnum<quint8>::v())
+
+  Line 171:                    .Attr("T", DataTypeToEnum<qint8>::v())
+
+  Line 221:                    .Attr("T", DataTypeToEnum<qint8>::v())
+
+  Line 274:                    .Attr("T", DataTypeToEnum<qint8>::v())
+
+  Line 302:                    .Attr("T", DataTypeToEnum<qint8>::v())
+
+  Line 332:                    .Attr("T", DataTypeToEnum<qint8>::v())
+
+  Line 362:                    .Attr("T", DataTypeToEnum<qint32>::v())
+
+  Line 403:                    .Attr("T", DataTypeToEnum<quint8>::v())
+
+  Line 426:                    .Attr("T", DataTypeToEnum<quint8>::v())
+
+  Line 448:                    .Attr("T", DataTypeToEnum<quint8>::v())
+
+  Line 470:                    .Attr("T", DataTypeToEnum<quint8>::v())
+
+
+(Results truncated. Consider using a more specific path or pattern.)
+
+tokens used
+input: 1,403
+cache read: 10,752
+cache write: 0
+output: 94
+reasoning output: 145
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/kernels/unravel_index_op.cc\n@@\n limitations under the License.\n ==============================================================================*/\n \n+#include <cstdint>\n+\n #define EIGEN_USE_THREADS\n \n #include \"tensorflow/core/framework/op_kernel.h\"\n #include \"tensorflow/core/framework/register_types.h\"\n #include \"tensorflow/core/framework/tensor.h\"\n #include \"tensorflow/core/framework/types.h\"\n+#include \"tensorflow/core/framework/types.pb.h\"\n+#include \"tensorflow/core/platform/types.h\"\n #include \"third_party/eigen3/unsupported/Eigen/CXX11/Tensor\"\n@@\n template <typename Tidx>\n class UnravelIndexOp : public OpKernel {\n  public:\n-  explicit UnravelIndexOp(OpKernelConstruction* ctx) : OpKernel(ctx) {}\n+  explicit UnravelIndexOp(OpKernelConstruction* ctx)\n+      : OpKernel(ctx), dtidx_(DataTypeToEnum<Tidx>::v()) {}\n@@\n \n     auto dims = dims_tensor.vec<Tidx>();\n     // Make sure dims does not contain a zero\n+    double prod = 1;\n+    uint64_t limit;\n+    if (dtidx_ == DataType::DT_INT64) {\n+      limit = kint64max;\n+    } else {\n+      limit = kint32max;\n+    }\n+\n     for (int i = 0; i < dims.size(); i++) {\n       OP_REQUIRES(\n           ctx, dims(i) != 0,\n           errors::InvalidArgument(\"Input dims cannot contain a dim of zero, \"\n                                   \"but dims contains zero at index \",\n                                   i));\n+      OP_REQUIRES(ctx, dims(i) > 0,\n+                  errors::InvalidArgument(\n+                      \"Input dims cannot be negative. Got dim = \", dims(i),\n+                      \" at index \", i));\n+      // Check interger overflow\n+      OP_REQUIRES(\n+          ctx, prod <= limit / dims(i),\n+          errors::InvalidArgument(\"Input dims product is causing integer \"\n+                                  \"overflow: (\",\n+                                  dims, \")\"));\n+      prod = (prod * dims(i));\n     }\n@@\n     }\n   }\n+  const DataType dtidx_;\n };\n*** Update File: tensorflow/python/kernel_tests/array_ops_test.py\n@@\n   def testUnravelIndexZeroDim(self):\n     with self.cached_session():\n       for dtype in [dtypes.int32, dtypes.int64]:\n         with self.assertRaisesRegex(errors.InvalidArgumentError,\n                                     \"dims cannot contain a dim of zero\"):\n           indices = constant_op.constant([2, 5, 7], dtype=dtype)\n           dims = constant_op.constant([3, 0], dtype=dtype)\n           self.evaluate(array_ops.unravel_index(indices=indices, dims=dims))\n \n+  def testUnravelIndexIntegerOverflow(self):\n+    with self.cached_session():\n+      for dtype in [dtypes.int32, dtypes.int64]:\n+        with self.assertRaisesRegex(\n+            errors.InvalidArgumentError,\n+            r\"Input dims product is causing integer overflow\"):\n+          indices = constant_op.constant(-0x100000, dtype=dtype)\n+          if dtype == dtypes.int32:\n+            value = 0x10000000\n+          else:\n+            value = 0x7FFFFFFFFFFFFFFF\n+          dims = constant_op.constant([value, value], dtype=dtype)\n+          self.evaluate(array_ops.unravel_index(indices=indices, dims=dims))\n+\n \n class GuaranteeConstOpTest(test_util.TensorFlowTestCase):\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/kernels/unravel_index_op.cc
+M tensorflow/python/kernel_tests/array_ops_test.py
+
+tokens used
+input: 12,178
+cache read: 4,608
+cache write: 0
+output: 883
+reasoning output: 27
+
+tool: grep
+{
+  "pattern": "enum DataType|DT_INT64",
+  "path": "tensorflow/core/framework/types.pb.h",
+  "include": "types.pb.h"
+}
+No files found
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/kernels/unravel_index_op.cc tensorflow/python/kernel_tests/array_ops_test.py",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0065-e2ec678f3ca9"
+}
+warning: in the working copy of 'tensorflow/core/kernels/unravel_index_op.cc', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'tensorflow/python/kernel_tests/array_ops_test.py', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/kernels/unravel_index_op.cc b/tensorflow/core/kernels/unravel_index_op.cc
+index d5adef3bac..578ed894cb 100644
+--- a/tensorflow/core/kernels/unravel_index_op.cc
++++ b/tensorflow/core/kernels/unravel_index_op.cc
+@@ -13,12 +13,16 @@ See the License for the specific language governing permissions and
+ limitations under the License.
+ ==============================================================================*/
+ 
++#include <cstdint>
++
+ #define EIGEN_USE_THREADS
+ 
+ #include "tensorflow/core/framework/op_kernel.h"
+ #include "tensorflow/core/framework/register_types.h"
+ #include "tensorflow/core/framework/tensor.h"
+ #include "tensorflow/core/framework/types.h"
++#include "tensorflow/core/framework/types.pb.h"
++#include "tensorflow/core/platform/types.h"
+ #include "third_party/eigen3/unsupported/Eigen/CXX11/Tensor"
+ 
+ namespace tensorflow {
+@@ -35,7 +39,8 @@ typedef Eigen::ThreadPoolDevice CPUDevice;
+ template <typename Tidx>
+ class UnravelIndexOp : public OpKernel {
+  public:
+-  explicit UnravelIndexOp(OpKernelConstruction* ctx) : OpKernel(ctx) {}
++  explicit UnravelIndexOp(OpKernelConstruction* ctx)
++      : OpKernel(ctx), dtidx_(DataTypeToEnum<Tidx>::v()) {}
+ 
+   void Compute(OpKernelContext* ctx) override {
+     const Tensor& indices_tensor = ctx->input(0);
+@@ -54,12 +59,31 @@ class UnravelIndexOp : public OpKernel {
+ 
+     auto dims = dims_tensor.vec<Tidx>();
+     // Make sure dims does not contain a zero
++    double prod = 1;
++    uint64_t limit;
++    if (dtidx_ == DataType::DT_INT64) {
++      limit = kint64max;
++    } else {
++      limit = kint32max;
++    }
++
+     for (int i = 0; i < dims.size(); i++) {
+       OP_REQUIRES(
+           ctx, dims(i) != 0,
+           errors::InvalidArgument("Input dims cannot contain a dim of zero, "
+                                   "but dims contains zero at index ",
+                                   i));
++      OP_REQUIRES(ctx, dims(i) > 0,
++                  errors::InvalidArgument(
++                      "Input dims cannot be negative. Got dim = ", dims(i),
++                      " at index ", i));
++      // Check interger overflow
++      OP_REQUIRES(
++          ctx, prod <= limit / dims(i),
++          errors::InvalidArgument("Input dims product is causing integer "
++                                  "overflow: (",
++                                  dims, ")"));
++      prod = (prod * dims(i));
+     }
+ 
+     // Chek to make sure indices is not out of boundary
+@@ -132,6 +156,7 @@ class UnravelIndexOp : public OpKernel {
+                strides_shifted.reshape(reshape).broadcast(bcast);
+     }
+   }
++  const DataType dtidx_;
+ };
+ 
+ #define REGISTER_KERNEL(type)                                               \
+diff --git a/tensorflow/python/kernel_tests/array_ops_test.py b/tensorflow/python/kernel_tests/array_ops_test.py
+index 4ed08c5329..97ff2f539b 100644
+--- a/tensorflow/python/kernel_tests/array_ops_test.py
++++ b/tensorflow/python/kernel_tests/array_ops_test.py
+@@ -1575,6 +1575,20 @@ class UnravelIndexTest(test_util.TensorFlowTestCase):
+           dims = constant_op.constant([3, 0], dtype=dtype)
+           self.evaluate(array_ops.unravel_index(indices=indices, dims=dims))
+ 
++  def testUnravelIndexIntegerOverflow(self):
++    with self.cached_session():
++      for dtype in [dtypes.int32, dtypes.int64]:
++        with self.assertRaisesRegex(
++            errors.InvalidArgumentError,
++            r"Input dims product is causing integer overflow"):
++          indices = constant_op.constant(-0x100000, dtype=dtype)
++          if dtype == dtypes.int32:
++            value = 0x10000000
++          else:
++            value = 0x7FFFFFFFFFFFFFFF
++          dims = constant_op.constant([value, value], dtype=dtype)
++          self.evaluate(array_ops.unravel_index(indices=indices, dims=dims))
++
+ 
+ class GuaranteeConstOpTest(test_util.TensorFlowTestCase):
+
+tokens used
+input: 1,864
+cache read: 15,872
+cache write: 0
+output: 134
+reasoning output: 188
+
+tool: glob
+{
+  "pattern": "tensorflow/core/framework/types.pb.h"
+}
+No files found
+
+tokens used
+input: 2,211
+cache read: 16,896
+cache write: 0
+output: 24
+reasoning output: 22
+
+tool: grep
+{
+  "pattern": "#include \"tensorflow/core/framework/types.pb.h\"",
+  "path": "tensorflow/core",
+  "include": "*.cc"
+}
+Found 100 matches (more matches available)
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\summary\summary_converter.cc:
+  Line 20: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\tpu\tpu_node_device_util.cc:
+  Line 19: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\graph\testlib.cc:
+  Line 25: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\kernels\batch_norm_op_test.cc:
+  Line 24: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\common_runtime\constant_folding.cc:
+  Line 33: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\common_runtime\colocation_graph.cc:
+  Line 43: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\common_runtime\buf_rendezvous_test.cc:
+  Line 20: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\profiler\utils\cost_utils.cc:
+  Line 30: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\common_runtime\base_collective_executor.cc:
+  Line 31: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\util\tensor_slice_reader.cc:
+  Line 21: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\grappler\utils\graph_view_test.cc:
+  Line 25: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\grappler\utils\functions.cc:
+  Line 30: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\util\tensor_bundle\tensor_bundle_test.cc:
+  Line 23: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\util\tensor_bundle\tensor_bundle.cc:
+  Line 28: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\kernels\cast_op_test.cc:
+  Line 20: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\tpu\graph_rewrite\distributed_tpu_rewrite_pass.cc:
+  Line 49: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\grappler\optimizers\remapper_test.cc:
+  Line 22: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\kernels\concat_op_test.cc:
+  Line 25: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\kernels\collective_ops.cc:
+  Line 21: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\kernels\clustering_ops_test.cc:
+  Line 18: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\kernels\constant_op_test.cc:
+  Line 24: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\kernels\conv_ops_benchmark_test.cc:
+  Line 24: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\distributed_runtime\eager\remote_mgr_test.cc:
+  Line 21: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\kernels\cross_op_test.cc:
+  Line 23: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\framework\shape_inference_test.cc:
+  Line 22: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\grappler\optimizers\generic_layout_optimizer_transposer_test.cc:
+  Line 27: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\kernels\conv_ops_test.cc:
+  Line 29: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\grappler\optimizers\generic_layout_optimizer_transposer.cc:
+  Line 34: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\util\example_proto_fast_parsing.cc:
+  Line 27: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\grappler\optimizers\generic_layout_optimizer.cc:
+  Line 25: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\framework\rendezvous_test.cc:
+  Line 23: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\framework\op_kernel_test.cc:
+  Line 30: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\framework\node_def_util.cc:
+  Line 34: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\profiler\internal\gpu\device_tracer_test.cc:
+  Line 31: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\common_runtime\direct_session_with_tracking_alloc_test.cc:
+  Line 29: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\common_runtime\direct_session_test.cc:
+  Line 36: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\common_runtime\executor.cc:
+  Line 46: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\grappler\optimizers\data\vectorization_utils_test.cc:
+  Line 32: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\kernels\data\dataset_test_base.cc:
+  Line 55: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\profiler\convert\xplane_to_memory_profile.cc:
+  Line 32: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\grappler\optimizers\data\map_and_filter_fusion.cc:
+  Line 26: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\grappler\optimizers\constant_folding_test.cc:
+  Line 24: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\grappler\optimizers\constant_folding.cc:
+  Line 34: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\grappler\optimizers\data\hoist_random_uniform.cc:
+  Line 22: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\grappler\optimizers\arithmetic_optimizer.cc:
+  Line 36: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\grappler\mutable_graph_view_test.cc:
+  Line 21: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\kernels\data\experimental\data_service_dataset_op.cc:
+  Line 35: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\kernels\data\dataset_utils_test.cc:
+  Line 22: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\grappler\grappler_item_builder.cc:
+  Line 36: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\kernels\data\hash_utils_test.cc:
+  Line 22: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\kernels\decode_wav_op_test.cc:
+  Line 29: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\kernels\dequantize_op_test.cc:
+  Line 31: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\kernels\fingerprint_op.cc:
+  Line 22: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\kernels\debug_ops_test.cc:
+  Line 29: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\kernels\example_parsing_ops_test.cc:
+  Line 26: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\kernels\dynamic_partition_op_test.cc:
+  Line 26: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\kernels\encode_wav_op_test.cc:
+  Line 28: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\kernels\dynamic_stitch_op_test.cc:
+  Line 25: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\kernels\gpu_prim_helpers_test.cu.cc:
+  Line 25: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\kernels\gather_op_test.cc:
+  Line 27: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\kernels\gather_nd_op_test.cc:
+  Line 27: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\kernels\fingerprint_op_test.cc:
+  Line 25: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\kernels\fused_batch_norm_ex_op_test.cc:
+  Line 25: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\common_runtime\lower_while_op_test.cc:
+  Line 29: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\common_runtime\lower_while_op.cc:
+  Line 20: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\ops\sparse_ops.cc:
+  Line 19: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\kernels\linalg\banded_triangular_solve_op_test.cc:
+  Line 20: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\kernels\immutable_constant_op.cc:
+  Line 20: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\ops\math_grad.cc:
+  Line 19: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\ops\list_ops.cc:
+  Line 19: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\ops\image_ops_test.cc:
+  Line 20: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\kernels\image\adjust_contrast_op_test.cc:
+  Line 24: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\kernels\image\crop_and_resize_op_test.cc:
+  Line 25: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\kernels\image\colorspace_op_test.cc:
+  Line 23: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\ops\array_ops.cc:
+  Line 25: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\kernels\image\scale_and_translate_op_test.cc:
+  Line 23: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\kernels\image\scale_and_translate_op.cc:
+  Line 30: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\kernels\image\resize_nearest_neighbor_op_test.cc:
+  Line 27: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\kernels\image\resize_bilinear_op_test.cc:
+  Line 24: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\kernels\image\non_max_suppression_op_test.cc:
+  Line 23: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\kernels\image\non_max_suppression_op_gpu_test.cc:
+  Line 29: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\grappler\costs\graph_properties.cc:
+  Line 27: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\kernels\image\mirror_pad_op_test.cc:
+  Line 25: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\grappler\costs\graph_properties_test.cc:
+  Line 26: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\grappler\costs\utils.cc:
+  Line 35: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\kernels\linalg\matrix_triangular_solve_op_test.cc:
+  Line 20: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\grappler\costs\utils_test.cc:
+  Line 23: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\kernels\quantize_down_and_shrink_range_op_test.cc:
+  Line 23: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\kernels\ops_testutil_test.cc:
+  Line 20: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\kernels\quantize_and_dequantize_op_test.cc:
+  Line 29: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\kernels\ops_testutil.cc:
+  Line 44: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\kernels\partitioned_function_ops.cc:
+  Line 26: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\kernels\quantized_reshape_op_test.cc:
+  Line 28: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\kernels\nn_ops_test.cc:
+  Line 45: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\kernels\quantized_pooling_ops_test.cc:
+  Line 25: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\kernels\quantized_concat_op_test.cc:
+  Line 30: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\kernels\quantized_mul_op_test.cc:
+  Line 28: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\kernels\quantized_add_op_test.cc:
+  Line 28: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\kernels\quantized_bias_add_op_test.cc:
+  Line 27: #include "tensorflow/core/framework/types.pb.h"
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0065-e2ec678f3ca9\tensorflow\core\kernels\quantized_matmul_op_test.cc:
+  Line 29: #include "tensorflow/core/framework/types.pb.h"
+
+
+(Results truncated. Consider using a more specific path or pattern.)
+
+tokens used
+input: 222
+cache read: 18,944
+cache write: 0
+output: 39
+reasoning output: 52
+
+The target uses the older flat test-file layout, so the regression test was placed there. I’m doing a lightweight patch-apply validation against the specified base and reviewing the final diff; no full build/test will be run.
+
+tool: validate
+{
+  "ref": "e2ec678f3ca9a2602a8550d694b8c6455f763fb3",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/unravel_index_op.cc b/tensorflow/core/kernels/unravel_index_op.cc\nindex d5adef3bac..578ed894cb 100644\n--- a/tensorflow/core/kernels/unravel_index_op.cc\n+++ b/tensorflow/core/kernels/unravel_index_op.cc\n@@ -13,12 +13,16 @@ See the License for the specific language governing permissions and\n limitations under the License.\n ==============================================================================*/\n \n+#include <cstdint>\n+\n #define EIGEN_USE_THREADS\n \n #include \"tensorflow/core/framework/op_kernel.h\"\n #include \"tensorflow/core/framework/register_types.h\"\n #include \"tensorflow/core/framework/tensor.h\"\n #include \"tensorflow/core/framework/types.h\"\n+#include \"tensorflow/core/framework/types.pb.h\"\n+#include \"tensorflow/core/platform/types.h\"\n #include \"third_party/eigen3/unsupported/Eigen/CXX11/Tensor\"\n \n namespace tensorflow {\n@@ -35,7 +39,8 @@ typedef Eigen::ThreadPoolDevice CPUDevice;\n template <typename Tidx>\n class UnravelIndexOp : public OpKernel {\n  public:\n-  explicit UnravelIndexOp(OpKernelConstruction* ctx) : OpKernel(ctx) {}\n+  explicit UnravelIndexOp(OpKernelConstruction* ctx)\n+      : OpKernel(ctx), dtidx_(DataTypeToEnum<Tidx>::v()) {}\n \n   void Compute(OpKernelContext* ctx) override {\n     const Tensor& indices_tensor = ctx->input(0);\n@@ -54,12 +59,31 @@ class UnravelIndexOp : public OpKernel {\n \n     auto dims = dims_tensor.vec<Tidx>();\n     // Make sure dims does not contain a zero\n+    double prod = 1;\n+    uint64_t limit;\n+    if (dtidx_ == DataType::DT_INT64) {\n+      limit = kint64max;\n+    } else {\n+      limit = kint32max;\n+    }\n+\n     for (int i = 0; i < dims.size(); i++) {\n       OP_REQUIRES(\n           ctx, dims(i) != 0,\n           errors::InvalidArgument(\"Input dims cannot contain a dim of zero, \"\n                                   \"but dims contains zero at index \",\n                                   i));\n+      OP_REQUIRES(ctx, dims(i) > 0,\n+                  errors::InvalidArgument(\n+                      \"Input dims cannot be negative. Got dim = \", dims(i),\n+                      \" at index \", i));\n+      // Check interger overflow\n+      OP_REQUIRES(\n+          ctx, prod <= limit / dims(i),\n+          errors::InvalidArgument(\"Input dims product is causing integer \"\n+                                  \"overflow: (\",\n+                                  dims, \")\"));\n+      prod = (prod * dims(i));\n     }\n \n     // Chek to make sure indices is not out of boundary\n@@ -132,6 +156,7 @@ class UnravelIndexOp : public OpKernel {\n                strides_shifted.reshape(reshape).broadcast(bcast);\n     }\n   }\n+  const DataType dtidx_;\n };\ndiff --git a/tensorflow/python/kernel_tests/array_ops_test.py b/tensorflow/python/kernel_tests/array_ops_test.py\nindex 4ed08c5329..97ff2f539b 100644\n--- a/tensorflow/python/kernel_tests/array_ops_test.py\n+++ b/tensorflow/python/kernel_tests/array_ops_test.py\n@@ -1575,6 +1575,20 @@ class UnravelIndexTest(test_util.TensorFlowTestCase):\n           dims = constant_op.constant([3, 0], dtype=dtype)\n           self.evaluate(array_ops.unravel_index(indices=indices, dims=dims))\n \n+  def testUnravelIndexIntegerOverflow(self):\n+    with self.cached_session():\n+      for dtype in [dtypes.int32, dtypes.int64]:\n+        with self.assertRaisesRegex(\n+            errors.InvalidArgumentError,\n+            r\"Input dims product is causing integer overflow\"):\n+          indices = constant_op.constant(-0x100000, dtype=dtype)\n+          if dtype == dtypes.int32:\n+            value = 0x10000000\n+          else:\n+            value = 0x7FFFFFFFFFFFFFFF\n+          dims = constant_op.constant([value, value], dtype=dtype)\n+          self.evaluate(array_ops.unravel_index(indices=indices, dims=dims))\n+\n \n class GuaranteeConstOpTest(test_util.TensorFlowTestCase):\n"
+}
+This patch does not apply to the target TensorFlow ref.
+Git apply output:
+error: corrupt patch at line 70
+Touched files:
+- tensorflow/core/kernels/unravel_index_op.cc
+- tensorflow/python/kernel_tests/array_ops_test.py
+Fix the patch context against the older TensorFlow version, then run validate again in hunk mode.
+
+tokens used
+input: 7,453
+cache read: 18,944
+cache write: 0
+output: 1,159
+reasoning output: 120
+
+tool: bash
+{
+  "command": "git diff --no-ext-diff --no-color -- tensorflow/core/kernels/unravel_index_op.cc tensorflow/python/kernel_tests/array_ops_test.py",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0065-e2ec678f3ca9"
+}
+warning: in the working copy of 'tensorflow/core/kernels/unravel_index_op.cc', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'tensorflow/python/kernel_tests/array_ops_test.py', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/kernels/unravel_index_op.cc b/tensorflow/core/kernels/unravel_index_op.cc
+index d5adef3bac..578ed894cb 100644
+--- a/tensorflow/core/kernels/unravel_index_op.cc
++++ b/tensorflow/core/kernels/unravel_index_op.cc
+@@ -13,12 +13,16 @@ See the License for the specific language governing permissions and
+ limitations under the License.
+ ==============================================================================*/
+ 
++#include <cstdint>
++
+ #define EIGEN_USE_THREADS
+ 
+ #include "tensorflow/core/framework/op_kernel.h"
+ #include "tensorflow/core/framework/register_types.h"
+ #include "tensorflow/core/framework/tensor.h"
+ #include "tensorflow/core/framework/types.h"
++#include "tensorflow/core/framework/types.pb.h"
++#include "tensorflow/core/platform/types.h"
+ #include "third_party/eigen3/unsupported/Eigen/CXX11/Tensor"
+ 
+ namespace tensorflow {
+@@ -35,7 +39,8 @@ typedef Eigen::ThreadPoolDevice CPUDevice;
+ template <typename Tidx>
+ class UnravelIndexOp : public OpKernel {
+  public:
+-  explicit UnravelIndexOp(OpKernelConstruction* ctx) : OpKernel(ctx) {}
++  explicit UnravelIndexOp(OpKernelConstruction* ctx)
++      : OpKernel(ctx), dtidx_(DataTypeToEnum<Tidx>::v()) {}
+ 
+   void Compute(OpKernelContext* ctx) override {
+     const Tensor& indices_tensor = ctx->input(0);
+@@ -54,12 +59,31 @@ class UnravelIndexOp : public OpKernel {
+ 
+     auto dims = dims_tensor.vec<Tidx>();
+     // Make sure dims does not contain a zero
++    double prod = 1;
++    uint64_t limit;
++    if (dtidx_ == DataType::DT_INT64) {
++      limit = kint64max;
++    } else {
++      limit = kint32max;
++    }
++
+     for (int i = 0; i < dims.size(); i++) {
+       OP_REQUIRES(
+           ctx, dims(i) != 0,
+           errors::InvalidArgument("Input dims cannot contain a dim of zero, "
+                                   "but dims contains zero at index ",
+                                   i));
++      OP_REQUIRES(ctx, dims(i) > 0,
++                  errors::InvalidArgument(
++                      "Input dims cannot be negative. Got dim = ", dims(i),
++                      " at index ", i));
++      // Check interger overflow
++      OP_REQUIRES(
++          ctx, prod <= limit / dims(i),
++          errors::InvalidArgument("Input dims product is causing integer "
++                                  "overflow: (",
++                                  dims, ")"));
++      prod = (prod * dims(i));
+     }
+ 
+     // Chek to make sure indices is not out of boundary
+@@ -132,6 +156,7 @@ class UnravelIndexOp : public OpKernel {
+                strides_shifted.reshape(reshape).broadcast(bcast);
+     }
+   }
++  const DataType dtidx_;
+ };
+ 
+ #define REGISTER_KERNEL(type)                                               \
+diff --git a/tensorflow/python/kernel_tests/array_ops_test.py b/tensorflow/python/kernel_tests/array_ops_test.py
+index 4ed08c5329..97ff2f539b 100644
+--- a/tensorflow/python/kernel_tests/array_ops_test.py
++++ b/tensorflow/python/kernel_tests/array_ops_test.py
+@@ -1575,6 +1575,20 @@ class UnravelIndexTest(test_util.TensorFlowTestCase):
+           dims = constant_op.constant([3, 0], dtype=dtype)
+           self.evaluate(array_ops.unravel_index(indices=indices, dims=dims))
+ 
++  def testUnravelIndexIntegerOverflow(self):
++    with self.cached_session():
++      for dtype in [dtypes.int32, dtypes.int64]:
++        with self.assertRaisesRegex(
++            errors.InvalidArgumentError,
++            r"Input dims product is causing integer overflow"):
++          indices = constant_op.constant(-0x100000, dtype=dtype)
++          if dtype == dtypes.int32:
++            value = 0x10000000
++          else:
++            value = 0x7FFFFFFFFFFFFFFF
++          dims = constant_op.constant([value, value], dtype=dtype)
++          self.evaluate(array_ops.unravel_index(indices=indices, dims=dims))
++
+ 
+ class GuaranteeConstOpTest(test_util.TensorFlowTestCase):
+
+tokens used
+input: 1,645
+cache read: 26,112
+cache write: 0
+output: 91
+reasoning output: 173
+
+tool: validate
+{
+  "ref": "e2ec678f3ca9a2602a8550d694b8c6455f763fb3",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/unravel_index_op.cc b/tensorflow/core/kernels/unravel_index_op.cc\nindex d5adef3bac..578ed894cb 100644\n--- a/tensorflow/core/kernels/unravel_index_op.cc\n+++ b/tensorflow/core/kernels/unravel_index_op.cc\n@@ -13,12 +13,16 @@ See the License for the specific language governing permissions and\n limitations under the License.\n ==============================================================================*/\n \n+#include <cstdint>\n+\n #define EIGEN_USE_THREADS\n \n #include \"tensorflow/core/framework/op_kernel.h\"\n #include \"tensorflow/core/framework/register_types.h\"\n #include \"tensorflow/core/framework/tensor.h\"\n #include \"tensorflow/core/framework/types.h\"\n+#include \"tensorflow/core/framework/types.pb.h\"\n+#include \"tensorflow/core/platform/types.h\"\n #include \"third_party/eigen3/unsupported/Eigen/CXX11/Tensor\"\n \n namespace tensorflow {\n@@ -35,7 +39,8 @@ typedef Eigen::ThreadPoolDevice CPUDevice;\n template <typename Tidx>\n class UnravelIndexOp : public OpKernel {\n  public:\n-  explicit UnravelIndexOp(OpKernelConstruction* ctx) : OpKernel(ctx) {}\n+  explicit UnravelIndexOp(OpKernelConstruction* ctx)\n+      : OpKernel(ctx), dtidx_(DataTypeToEnum<Tidx>::v()) {}\n \n   void Compute(OpKernelContext* ctx) override {\n     const Tensor& indices_tensor = ctx->input(0);\n@@ -54,12 +59,31 @@ class UnravelIndexOp : public OpKernel {\n \n     auto dims = dims_tensor.vec<Tidx>();\n     // Make sure dims does not contain a zero\n+    double prod = 1;\n+    uint64_t limit;\n+    if (dtidx_ == DataType::DT_INT64) {\n+      limit = kint64max;\n+    } else {\n+      limit = kint32max;\n+    }\n+\n     for (int i = 0; i < dims.size(); i++) {\n       OP_REQUIRES(\n           ctx, dims(i) != 0,\n           errors::InvalidArgument(\"Input dims cannot contain a dim of zero, \"\n                                   \"but dims contains zero at index \",\n                                   i));\n+      OP_REQUIRES(ctx, dims(i) > 0,\n+                  errors::InvalidArgument(\n+                      \"Input dims cannot be negative. Got dim = \", dims(i),\n+                      \" at index \", i));\n+      // Check interger overflow\n+      OP_REQUIRES(\n+          ctx, prod <= limit / dims(i),\n+          errors::InvalidArgument(\"Input dims product is causing integer \"\n+                                  \"overflow: (\",\n+                                  dims, \")\"));\n+      prod = (prod * dims(i));\n     }\n \n     // Chek to make sure indices is not out of boundary\n@@ -132,6 +156,7 @@ class UnravelIndexOp : public OpKernel {\n                strides_shifted.reshape(reshape).broadcast(bcast);\n     }\n   }\n+  const DataType dtidx_;\n };\n \n #define REGISTER_KERNEL(type)                                               \\\ndiff --git a/tensorflow/python/kernel_tests/array_ops_test.py b/tensorflow/python/kernel_tests/array_ops_test.py\nindex 4ed08c5329..97ff2f539b 100644\n--- a/tensorflow/python/kernel_tests/array_ops_test.py\n+++ b/tensorflow/python/kernel_tests/array_ops_test.py\n@@ -1575,6 +1575,20 @@ class UnravelIndexTest(test_util.TensorFlowTestCase):\n           dims = constant_op.constant([3, 0], dtype=dtype)\n           self.evaluate(array_ops.unravel_index(indices=indices, dims=dims))\n \n+  def testUnravelIndexIntegerOverflow(self):\n+    with self.cached_session():\n+      for dtype in [dtypes.int32, dtypes.int64]:\n+        with self.assertRaisesRegex(\n+            errors.InvalidArgumentError,\n+            r\"Input dims product is causing integer overflow\"):\n+          indices = constant_op.constant(-0x100000, dtype=dtype)\n+          if dtype == dtypes.int32:\n+            value = 0x10000000\n+          else:\n+            value = 0x7FFFFFFFFFFFFFFF\n+          dims = constant_op.constant([value, value], dtype=dtype)\n+          self.evaluate(array_ops.unravel_index(indices=indices, dims=dims))\n+\n \n class GuaranteeConstOpTest(test_util.TensorFlowTestCase):\n"
+}
+This patch does not apply to the target TensorFlow ref.
+Git apply output:
+error: corrupt patch at line 96
+Touched files:
+- tensorflow/core/kernels/unravel_index_op.cc
+- tensorflow/python/kernel_tests/array_ops_test.py
+Fix the patch context against the older TensorFlow version, then run validate again in hunk mode.
+
+tokens used
+input: 1,922
+cache read: 27,136
+cache write: 0
+output: 1,119
+reasoning output: 139
+
+tool: validate
+{
+  "ref": "e2ec678f3ca9a2602a8550d694b8c6455f763fb3",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/unravel_index_op.cc b/tensorflow/core/kernels/unravel_index_op.cc\nindex d5adef3bac..578ed894cb 100644\n--- a/tensorflow/core/kernels/unravel_index_op.cc\n+++ b/tensorflow/core/kernels/unravel_index_op.cc\n@@ -13,12 +13,16 @@ See the License for the specific language governing permissions and\n limitations under the License.\n ==============================================================================*/\n \n+#include <cstdint>\n+\n #define EIGEN_USE_THREADS\n \n #include \"tensorflow/core/framework/op_kernel.h\"\n #include \"tensorflow/core/framework/register_types.h\"\n #include \"tensorflow/core/framework/tensor.h\"\n #include \"tensorflow/core/framework/types.h\"\n+#include \"tensorflow/core/framework/types.pb.h\"\n+#include \"tensorflow/core/platform/types.h\"\n #include \"third_party/eigen3/unsupported/Eigen/CXX11/Tensor\"\n \n namespace tensorflow {\n@@ -35,7 +39,8 @@ typedef Eigen::ThreadPoolDevice CPUDevice;\n template <typename Tidx>\n class UnravelIndexOp : public OpKernel {\n  public:\n-  explicit UnravelIndexOp(OpKernelConstruction* ctx) : OpKernel(ctx) {}\n+  explicit UnravelIndexOp(OpKernelConstruction* ctx)\n+      : OpKernel(ctx), dtidx_(DataTypeToEnum<Tidx>::v()) {}\n \n   void Compute(OpKernelContext* ctx) override {\n     const Tensor& indices_tensor = ctx->input(0);\n@@ -54,12 +59,31 @@ class UnravelIndexOp : public OpKernel {\n \n     auto dims = dims_tensor.vec<Tidx>();\n     // Make sure dims does not contain a zero\n+    double prod = 1;\n+    uint64_t limit;\n+    if (dtidx_ == DataType::DT_INT64) {\n+      limit = kint64max;\n+    } else {\n+      limit = kint32max;\n+    }\n+\n     for (int i = 0; i < dims.size(); i++) {\n       OP_REQUIRES(\n           ctx, dims(i) != 0,\n           errors::InvalidArgument(\"Input dims cannot contain a dim of zero, \"\n                                   \"but dims contains zero at index \",\n                                   i));\n+      OP_REQUIRES(ctx, dims(i) > 0,\n+                  errors::InvalidArgument(\n+                      \"Input dims cannot be negative. Got dim = \", dims(i),\n+                      \" at index \", i));\n+      // Check interger overflow\n+      OP_REQUIRES(\n+          ctx, prod <= limit / dims(i),\n+          errors::InvalidArgument(\"Input dims product is causing integer \"\n+                                  \"overflow: (\",\n+                                  dims, \")\"));\n+      prod = (prod * dims(i));\n     }\n \n     // Chek to make sure indices is not out of boundary\n@@ -132,6 +156,7 @@ class UnravelIndexOp : public OpKernel {\n                strides_shifted.reshape(reshape).broadcast(bcast);\n     }\n   }\n+  const DataType dtidx_;\n };\n \n #define REGISTER_KERNEL(type)                                               \\\n"
+}
+Patch applied successfully
+
+tokens used
+input: 2,237
+cache read: 28,160
+cache write: 0
+output: 795
+reasoning output: 100
+
+The kernel hunk validates cleanly against the target base. The test hunk is straightforward but in a target-only path layout difference from the newer patch.
+
+tool: validate
+{
+  "ref": "e2ec678f3ca9a2602a8550d694b8c6455f763fb3",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/python/kernel_tests/array_ops_test.py b/tensorflow/python/kernel_tests/array_ops_test.py\nindex 4ed08c5329..97ff2f539b 100644\n--- a/tensorflow/python/kernel_tests/array_ops_test.py\n+++ b/tensorflow/python/kernel_tests/array_ops_test.py\n@@ -1575,6 +1575,20 @@ class UnravelIndexTest(test_util.TensorFlowTestCase):\n           dims = constant_op.constant([3, 0], dtype=dtype)\n           self.evaluate(array_ops.unravel_index(indices=indices, dims=dims))\n \n+  def testUnravelIndexIntegerOverflow(self):\n+    with self.cached_session():\n+      for dtype in [dtypes.int32, dtypes.int64]:\n+        with self.assertRaisesRegex(\n+            errors.InvalidArgumentError,\n+            r\"Input dims product is causing integer overflow\"):\n+          indices = constant_op.constant(-0x100000, dtype=dtype)\n+          if dtype == dtypes.int32:\n+            value = 0x10000000\n+          else:\n+            value = 0x7FFFFFFFFFFFFFFF\n+          dims = constant_op.constant([value, value], dtype=dtype)\n+          self.evaluate(array_ops.unravel_index(indices=indices, dims=dims))\n+\n \n class GuaranteeConstOpTest(test_util.TensorFlowTestCase):\n \n"
+}
+Patch applied successfully
+
+tokens used
+input: 1,097
+cache read: 30,208
+cache write: 0
+output: 413
+reasoning output: 17
+
+tool: bash
+{
+  "command": "git diff --no-ext-diff --no-color -- tensorflow/core/kernels/unravel_index_op.cc tensorflow/python/kernel_tests/array_ops_test.py",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0065-e2ec678f3ca9"
+}
+warning: in the working copy of 'tensorflow/core/kernels/unravel_index_op.cc', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'tensorflow/python/kernel_tests/array_ops_test.py', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/kernels/unravel_index_op.cc b/tensorflow/core/kernels/unravel_index_op.cc
+index d5adef3bac..578ed894cb 100644
+--- a/tensorflow/core/kernels/unravel_index_op.cc
++++ b/tensorflow/core/kernels/unravel_index_op.cc
+@@ -13,12 +13,16 @@ See the License for the specific language governing permissions and
+ limitations under the License.
+ ==============================================================================*/
+ 
++#include <cstdint>
++
+ #define EIGEN_USE_THREADS
+ 
+ #include "tensorflow/core/framework/op_kernel.h"
+ #include "tensorflow/core/framework/register_types.h"
+ #include "tensorflow/core/framework/tensor.h"
+ #include "tensorflow/core/framework/types.h"
++#include "tensorflow/core/framework/types.pb.h"
++#include "tensorflow/core/platform/types.h"
+ #include "third_party/eigen3/unsupported/Eigen/CXX11/Tensor"
+ 
+ namespace tensorflow {
+@@ -35,7 +39,8 @@ typedef Eigen::ThreadPoolDevice CPUDevice;
+ template <typename Tidx>
+ class UnravelIndexOp : public OpKernel {
+  public:
+-  explicit UnravelIndexOp(OpKernelConstruction* ctx) : OpKernel(ctx) {}
++  explicit UnravelIndexOp(OpKernelConstruction* ctx)
++      : OpKernel(ctx), dtidx_(DataTypeToEnum<Tidx>::v()) {}
+ 
+   void Compute(OpKernelContext* ctx) override {
+     const Tensor& indices_tensor = ctx->input(0);
+@@ -54,12 +59,31 @@ class UnravelIndexOp : public OpKernel {
+ 
+     auto dims = dims_tensor.vec<Tidx>();
+     // Make sure dims does not contain a zero
++    double prod = 1;
++    uint64_t limit;
++    if (dtidx_ == DataType::DT_INT64) {
++      limit = kint64max;
++    } else {
++      limit = kint32max;
++    }
++
+     for (int i = 0; i < dims.size(); i++) {
+       OP_REQUIRES(
+           ctx, dims(i) != 0,
+           errors::InvalidArgument("Input dims cannot contain a dim of zero, "
+                                   "but dims contains zero at index ",
+                                   i));
++      OP_REQUIRES(ctx, dims(i) > 0,
++                  errors::InvalidArgument(
++                      "Input dims cannot be negative. Got dim = ", dims(i),
++                      " at index ", i));
++      // Check interger overflow
++      OP_REQUIRES(
++          ctx, prod <= limit / dims(i),
++          errors::InvalidArgument("Input dims product is causing integer "
++                                  "overflow: (",
++                                  dims, ")"));
++      prod = (prod * dims(i));
+     }
+ 
+     // Chek to make sure indices is not out of boundary
+@@ -132,6 +156,7 @@ class UnravelIndexOp : public OpKernel {
+                strides_shifted.reshape(reshape).broadcast(bcast);
+     }
+   }
++  const DataType dtidx_;
+ };
+ 
+ #define REGISTER_KERNEL(type)                                               \
+diff --git a/tensorflow/python/kernel_tests/array_ops_test.py b/tensorflow/python/kernel_tests/array_ops_test.py
+index 4ed08c5329..97ff2f539b 100644
+--- a/tensorflow/python/kernel_tests/array_ops_test.py
++++ b/tensorflow/python/kernel_tests/array_ops_test.py
+@@ -1575,6 +1575,20 @@ class UnravelIndexTest(test_util.TensorFlowTestCase):
+           dims = constant_op.constant([3, 0], dtype=dtype)
+           self.evaluate(array_ops.unravel_index(indices=indices, dims=dims))
+ 
++  def testUnravelIndexIntegerOverflow(self):
++    with self.cached_session():
++      for dtype in [dtypes.int32, dtypes.int64]:
++        with self.assertRaisesRegex(
++            errors.InvalidArgumentError,
++            r"Input dims product is causing integer overflow"):
++          indices = constant_op.constant(-0x100000, dtype=dtype)
++          if dtype == dtypes.int32:
++            value = 0x10000000
++          else:
++            value = 0x7FFFFFFFFFFFFFFF
++          dims = constant_op.constant([value, value], dtype=dtype)
++          self.evaluate(array_ops.unravel_index(indices=indices, dims=dims))
++
+ 
+ class GuaranteeConstOpTest(test_util.TensorFlowTestCase):
+
+tool: bash
+{
+  "command": "git status --short",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0065-e2ec678f3ca9"
+}
+ M tensorflow/core/kernels/unravel_index_op.cc
+ M tensorflow/python/kernel_tests/array_ops_test.py
+
+tokens used
+input: 516
+cache read: 31,232
+cache write: 0
+output: 166
+reasoning output: 19
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target TensorFlow 2.5.2 contexts for source and test hunks",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Apply minimal backport changes to matching files",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Review resulting diff and provide final YAML",
+      "status": "completed",
+      "priority": "high"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target TensorFlow 2.5.2 contexts for source and test hunks",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Apply minimal backport changes to matching files",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Review resulting diff and provide final YAML",
+    "status": "completed",
+    "priority": "high"
+  }
+]
+
+tokens used
+input: 1,770
+cache read: 31,232
+cache write: 0
+output: 85
+reasoning output: 0
+
+Applied the TensorFlow `UnravelIndex` security backport to the 2.5.2 target layout. Both kernel and test hunks were validated in hunk mode against the target base.
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/kernels/unravel_index_op.cc b/tensorflow/core/kernels/unravel_index_op.cc
+    index d5adef3bac..578ed894cb 100644
+    --- a/tensorflow/core/kernels/unravel_index_op.cc
+    +++ b/tensorflow/core/kernels/unravel_index_op.cc
+    @@ -13,12 +13,16 @@ See the License for the specific language governing permissions and
+     limitations under the License.
+     ==============================================================================*/
+     
+    +#include <cstdint>
+    +
+     #define EIGEN_USE_THREADS
+     
+     #include "tensorflow/core/framework/op_kernel.h"
+     #include "tensorflow/core/framework/register_types.h"
+     #include "tensorflow/core/framework/tensor.h"
+     #include "tensorflow/core/framework/types.h"
+    +#include "tensorflow/core/framework/types.pb.h"
+    +#include "tensorflow/core/platform/types.h"
+     #include "third_party/eigen3/unsupported/Eigen/CXX11/Tensor"
+     
+     namespace tensorflow {
+    @@ -35,7 +39,8 @@ typedef Eigen::ThreadPoolDevice CPUDevice;
+     template <typename Tidx>
+     class UnravelIndexOp : public OpKernel {
+      public:
+    -  explicit UnravelIndexOp(OpKernelConstruction* ctx) : OpKernel(ctx) {}
+    +  explicit UnravelIndexOp(OpKernelConstruction* ctx)
+    +      : OpKernel(ctx), dtidx_(DataTypeToEnum<Tidx>::v()) {}
+     
+       void Compute(OpKernelContext* ctx) override {
+         const Tensor& indices_tensor = ctx->input(0);
+    @@ -54,12 +59,31 @@ class UnravelIndexOp : public OpKernel {
+     
+         auto dims = dims_tensor.vec<Tidx>();
+         // Make sure dims does not contain a zero
+    +    double prod = 1;
+    +    uint64_t limit;
+    +    if (dtidx_ == DataType::DT_INT64) {
+    +      limit = kint64max;
+    +    } else {
+    +      limit = kint32max;
+    +    }
+    +
+         for (int i = 0; i < dims.size(); i++) {
+           OP_REQUIRES(
+               ctx, dims(i) != 0,
+               errors::InvalidArgument("Input dims cannot contain a dim of zero, "
+                                       "but dims contains zero at index ",
+                                       i));
+    +      OP_REQUIRES(ctx, dims(i) > 0,
+    +                  errors::InvalidArgument(
+    +                      "Input dims cannot be negative. Got dim = ", dims(i),
+    +                      " at index ", i));
+    +      // Check interger overflow
+    +      OP_REQUIRES(
+    +          ctx, prod <= limit / dims(i),
+    +          errors::InvalidArgument("Input dims product is causing integer "
+    +                                  "overflow: (",
+    +                                  dims, ")"));
+    +      prod = (prod * dims(i));
+         }
+     
+         // Chek to make sure indices is not out of boundary
+    @@ -132,6 +156,7 @@ class UnravelIndexOp : public OpKernel {
+                    strides_shifted.reshape(reshape).broadcast(bcast);
+         }
+       }
+    +  const DataType dtidx_;
+     };
+     
+     #define REGISTER_KERNEL(type)                                               \
+    diff --git a/tensorflow/python/kernel_tests/array_ops_test.py b/tensorflow/python/kernel_tests/array_ops_test.py
+    index 4ed08c5329..97ff2f539b 100644
+    --- a/tensorflow/python/kernel_tests/array_ops_test.py
+    +++ b/tensorflow/python/kernel_tests/array_ops_test.py
+    @@ -1575,6 +1575,20 @@ class UnravelIndexTest(test_util.TensorFlowTestCase):
+               dims = constant_op.constant([3, 0], dtype=dtype)
+               self.evaluate(array_ops.unravel_index(indices=indices, dims=dims))
+     
+    +  def testUnravelIndexIntegerOverflow(self):
+    +    with self.cached_session():
+    +      for dtype in [dtypes.int32, dtypes.int64]:
+    +        with self.assertRaisesRegex(
+    +            errors.InvalidArgumentError,
+    +            r"Input dims product is causing integer overflow"):
+    +          indices = constant_op.constant(-0x100000, dtype=dtype)
+    +          if dtype == dtypes.int32:
+    +            value = 0x10000000
+    +          else:
+    +            value = 0x7FFFFFFFFFFFFFFF
+    +          dims = constant_op.constant([value, value], dtype=dtype)
+    +          self.evaluate(array_ops.unravel_index(indices=indices, dims=dims))
+    +
+     
+     class GuaranteeConstOpTest(test_util.TensorFlowTestCase):
+     
+  notes: >
+    Backported the UnravelIndex dims validation and integer-overflow regression test to the TensorFlow 2.5.2 target layout.
+```
+
+tokens used
+input: 950
+cache read: 32,256
+cache write: 0
+output: 1,132
+reasoning output: 26

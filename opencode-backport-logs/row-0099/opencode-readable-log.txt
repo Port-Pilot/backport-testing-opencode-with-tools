@@ -1,0 +1,1604 @@
+I’ll inspect the target-side code around both patched locations, then validate and apply the minimal equivalent hunks without consulting the known backport commit.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target C++ ragged tensor stacking implementation and test file context",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Validate candidate hunks against target base",
+      "status": "pending",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply minimal source and test changes",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "content": "Review final diff for scope and correctness",
+      "status": "pending",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target C++ ragged tensor stacking implementation and test file context",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Validate candidate hunks against target base",
+    "status": "pending",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply minimal source and test changes",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "content": "Review final diff for scope and correctness",
+    "status": "pending",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 4,458
+cache read: 4,608
+cache write: 0
+output: 134
+reasoning output: 0
+
+tool: viewcode
+{
+  "ref": "c8f65104ec1bced6eeb476919fdc6965a0f2081f",
+  "path": "tensorflow/core/kernels/ragged_tensor_from_variant_op.cc",
+  "startline": 140,
+  "endline": 215
+}
+Here are lines 140 through 215.
+
+  for (int i = 0; i < ragged_components.size(); i++) {
+    int split_val = ragged_components[i].values.shape().dim_size(0);
+    if (input_ragged_rank != 0 && !ragged_components[i].nested_splits.empty()) {
+      split_val = ragged_components[i].nested_splits[0].NumElements() - 1;
+    }
+    dims_splits_vec(i + 1) = dims_splits_vec(i) + split_val;
+  }
+
+  // Populate last `input_ragged_rank` splits.
+  for (int i = 0; i < input_ragged_rank; i++) {
+    int split_index = dims + i;
+    int split_size = 1;
+    for (int j = 0; j < ragged_components.size(); j++) {
+      if (!ragged_components[j].nested_splits.empty()) {
+        split_size += ragged_components[j].nested_splits[i].NumElements() - 1;
+      }
+    }
+    output_ragged->nested_splits.push_back(
+        Tensor(DataTypeToEnum<SPLIT_TYPE>::value, TensorShape({split_size})));
+    auto splits_vec =
+        output_ragged->nested_splits[split_index].vec<SPLIT_TYPE>();
+    splits_vec(0) = 0;
+    SPLIT_TYPE last_split_value = 0;
+    int index = 1;
+    for (int j = 0; j < ragged_components.size(); j++) {
+      if (ragged_components[j].nested_splits.empty()) {
+        // Corner case: empty row. e.g [ [[x], [x]], [] ]
+        continue;
+      }
+      auto component_splits_vec =
+          ragged_components[j].nested_splits[i].vec<SPLIT_TYPE>();
+      for (int k = 1; k < component_splits_vec.size(); k++, index++) {
+        splits_vec(index) = component_splits_vec(k) + last_split_value;
+      }
+      last_split_value = splits_vec(index - 1);
+    }
+  }
+
+  // Populate values.
+  TensorShape component_values_shape = ragged_components[0].values.shape();
+  int values_size = component_values_shape.dim_size(0);
+  for (int i = 1; i < ragged_components.size(); i++) {
+    if (ragged_components[i].values.dims() != component_values_shape.dims()) {
+      return errors::InvalidArgument(
+          "Rank of values must match for all "
+          "components; values shape at index 0: ",
+          component_values_shape.DebugString(), ", values shape at index ", i,
+          ": ", ragged_components[i].values.shape().DebugString());
+    }
+    values_size += ragged_components[i].values.shape().dim_size(0);
+  }
+  component_values_shape.set_dim(0, values_size);
+  output_ragged->values =
+      Tensor(DataTypeToEnum<VALUE_TYPE>::value, component_values_shape);
+  auto output_values_flat =
+      output_ragged->values.flat_outer_dims<VALUE_TYPE, 2>();
+  int values_index = 0;
+  for (int i = 0; i < ragged_components.size(); i++) {
+    auto component_values_flat =
+        ragged_components[i].values.flat_outer_dims<VALUE_TYPE, 2>();
+    int num_inner_elements = ragged_components[i].values.NumElements();
+    if (ragged_components[i].values.dim_size(0) > 0) {
+      num_inner_elements /= ragged_components[i].values.dim_size(0);
+    }
+    for (int j = 0; j < ragged_components[i].values.dim_size(0);
+         j++, values_index++) {
+      for (int k = 0; k < num_inner_elements; k++) {
+        output_values_flat(values_index, k) = component_values_flat(j, k);
+      }
+    }
+  }
+  return Status::OK();
+}
+}  // namespace
+
+template <typename VALUE_TYPE, typename SPLIT_TYPE>
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: viewcode
+{
+  "ref": "c8f65104ec1bced6eeb476919fdc6965a0f2081f",
+  "path": "tensorflow/python/ops/ragged/ragged_map_fn_op_test.py",
+  "startline": 1,
+  "endline": 340
+}
+This file only has 300 lines. Here are lines 1 through 300.
+
+# Copyright 2018 The TensorFlow Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+"""Tests for ragged_map_ops.map_fn."""
+from __future__ import absolute_import
+from __future__ import division
+from __future__ import print_function
+
+from absl.testing import parameterized
+import numpy as np
+
+from tensorflow.python.framework import dtypes
+from tensorflow.python.framework import sparse_tensor
+from tensorflow.python.framework import test_util
+from tensorflow.python.ops import array_ops
+from tensorflow.python.ops import math_ops as mo
+from tensorflow.python.ops import string_ops
+from tensorflow.python.ops.ragged import ragged_factory_ops
+from tensorflow.python.ops.ragged import ragged_functional_ops
+from tensorflow.python.ops.ragged import ragged_map_ops
+from tensorflow.python.ops.ragged import ragged_math_ops
+from tensorflow.python.ops.ragged import ragged_tensor
+from tensorflow.python.platform import googletest
+
+
+@test_util.run_all_in_graph_and_eager_modes
+class RaggedMapOpTest(test_util.TensorFlowTestCase,
+                      parameterized.TestCase):
+
+  @parameterized.parameters([
+      # The following test sets map over a RaggedTensor and apply a
+      # transformation that returns with shape:
+      # [d1, (d2)] -> [d1]
+      dict(
+          fn=mo.reduce_mean,
+          elems=[[1, 2, 3], [4, 5], [6, 7]],
+          elems_dtype=dtypes.int32,
+          expected_output=[2, 4, 6],
+          result_dtype=dtypes.int32,
+      ),
+      dict(
+          fn=string_ops.reduce_join,
+          elems=[['foo', 'bar', 'baz'], ['a'], ['b', 'c']],
+          expected_output=[b'foobarbaz', b'a', b'bc'],
+          elems_dtype=dtypes.string,
+          result_dtype=dtypes.string,
+      ),
+      # [d1, (d2)] -> [d1, 2]
+      dict(
+          fn=lambda x: array_ops.stack([mo.reduce_mean(x), mo.reduce_sum(x)]),
+          # fn=self.stack_mean_and_sum,
+          elems=[[1, 2, 3], [4, 5], [6, 7]],
+          expected_output=[[2, 6], [4.5, 9], [6.5, 13]],
+          elems_dtype=dtypes.float32,
+          result_dtype=dtypes.float32,
+          expected_ragged_rank=0,
+      ),
+      # [d1, (d2)] -> [d1, (d2)]
+      dict(
+          fn=lambda x: x + np.int64(1),
+          elems=[[1, 2, 3], [4, 5], [6, 7]],
+          expected_output=[[2, 3, 4], [5, 6], [7, 8]],
+          elems_dtype=dtypes.int64,
+          result_dtype=ragged_tensor.RaggedTensorType(
+              dtype=dtypes.int64, ragged_rank=1),
+      ),
+      # [d1, (d2), d3] -> [d1, (d2), d3]
+      dict(
+          fn=lambda x: x + np.int64(1),
+          elems=[[[1, 2], [3, 4]], [], [[5, 6], [7, 8], [9, 0]]],
+          elems_ragged_rank=1,
+          expected_ragged_rank=1,
+          result_dtype=ragged_tensor.RaggedTensorType(
+              dtype=dtypes.int64, ragged_rank=1),
+          expected_output=[[[2, 3], [4, 5]], [], [[6, 7], [8, 9], [10, 1]]],
+      ),
+      # [d1, (d2)] -> [d1, (d2), (d3)]
+      dict(
+          fn=lambda x: ragged_tensor.RaggedTensor.from_row_starts(x, [0]),
+          elems=[[1, 2, 3], [4, 5], [6, 7]],
+          expected_output=[[[1, 2, 3]], [[4, 5]], [[6, 7]]],
+          result_dtype=ragged_tensor.RaggedTensorType(
+              dtype=dtypes.int64, ragged_rank=2),
+      ),
+      # [d1, (d2), (d3)] -> [d1, (d2), (d3)]
+      dict(
+          fn=lambda x: ragged_functional_ops.map_flat_values(mo.add, x, 1),
+          elems=[[[1, 2, 3]], [[4, 5], [6, 7]]],
+          expected_output=[[[2, 3, 4]], [[5, 6], [7, 8]]],
+          result_dtype=ragged_tensor.RaggedTensorType(
+              dtype=dtypes.int64, ragged_rank=2),
+      ),
+      # [d1, (d2), (d3)] -> [d1, (d2)]
+      dict(
+          fn=lambda x: ragged_math_ops.reduce_sum(x, axis=1),
+          elems=[[[1, 2, 3]], [[4, 5], [6, 7]]],
+          expected_output=[[6], [9, 13]],
+          result_dtype=ragged_tensor.RaggedTensorType(
+              dtype=dtypes.int64, ragged_rank=1),
+      ),
+      # [d1, (d2), (d3)] -> [d1, (d3)]
+      dict(
+          fn=lambda x: ragged_math_ops.reduce_sum(x, axis=0),
+          elems=[[[1, 2, 3]], [[4, 5], [6, 7]]],
+          expected_output=[[1, 2, 3], [10, 12]],
+          result_dtype=ragged_tensor.RaggedTensorType(
+              dtype=dtypes.int64, ragged_rank=1),
+      ),
+      # [d1, (d2), (d3)] -> [d1]
+      dict(
+          fn=ragged_math_ops.reduce_sum,
+          elems=[[[1, 2, 3]], [[4, 5], [6, 7]]],
+          expected_output=[6, 22],
+          result_dtype=dtypes.int64,
+      ),
+      # [d1] -> [d1, (d2)]
+      dict(
+          fn=mo.range,
+          elems=[4, 0, 2],
+          expected_output=[[0, 1, 2, 3], [], [0, 1]],
+          result_dtype=ragged_tensor.RaggedTensorType(
+              dtype=dtypes.int64, ragged_rank=1),
+      ),
+      # [d1] -> [d1, (d2), (d3)]
+      dict(
+          fn=lambda x: ragged_math_ops.range(mo.range(x)),
+          elems=[5, 0, 3],
+          expected_output=[[[], [0], [0, 1], [0, 1, 2], [0, 1, 2, 3]], [],
+                           [[], [0], [0, 1]]],
+          result_dtype=ragged_tensor.RaggedTensorType(
+              dtype=dtypes.int64, ragged_rank=2),
+      ),
+      # [d1, (d2), (d3), (d4a), (d5)] ->  [d1, (d2), (d3), (d4b), (d5)]
+      dict(
+          fn=lambda x: x + np.int64(1),
+          elems=[[[[[1, 2, 3]], [[4], [5]]]], [[[[6, 7]]], [[[8], []]]]],
+          expected_output=[[[[[2, 3, 4]], [[5], [6]]]], [[[[7, 8]]], [[[9],
+                                                                       []]]]],
+          result_dtype=ragged_tensor.RaggedTensorType(
+              dtype=dtypes.int64, ragged_rank=4),
+      ),
+  ])
+
+  def testRaggedMap(
+      self,
+      fn,
+      elems,
+      expected_output,
+      expected_ragged_rank=None,
+      result_ragged_rank=None,
+      elems_ragged_rank=None,
+      elems_dtype=dtypes.int64,
+      result_dtype=None,
+      infer_shape=True,
+  ):
+    elems = ragged_factory_ops.constant(elems, elems_dtype, elems_ragged_rank)
+    output = ragged_map_ops.map_fn(
+        fn=fn, elems=elems, dtype=result_dtype, infer_shape=infer_shape)
+
+    expected_rt = ragged_factory_ops.constant(
+        expected_output, ragged_rank=expected_ragged_rank)
+    self.assertAllEqual(expected_rt, output)
+
+  def testRaggedMapOnStructure(self):
+    batman = ragged_factory_ops.constant([[1, 2, 3], [4], [5, 6, 7]])
+    # [[10, 20, 30], [40], [50, 60, 70]]
+    robin = ragged_functional_ops.map_flat_values(mo.multiply, batman, 10)
+
+    features = {'batman': batman, 'robin': robin}
+
+    def _reduce_sum_from_all(f):
+      return mo.reduce_sum(f['batman']) + mo.reduce_sum(f['robin'])
+
+    output = ragged_map_ops.map_fn(
+        fn=_reduce_sum_from_all,
+        elems=features,
+        dtype=dtypes.int32,
+    )
+
+    self.assertAllEqual(output, [66, 44, 198])
+
+  # Test mapping over a dict of RTs can produce a dict of RTs.
+  def testRaggedMapOnStructure_RaggedOutputs(self):
+    batman = ragged_factory_ops.constant([[1, 2, 3], [4], [5, 6, 7]])
+    # [[10, 20, 30], [40], [50, 60, 70]]
+    robin = ragged_functional_ops.map_flat_values(mo.multiply, batman, 10)
+
+    features = {'batman': batman, 'robin': robin}
+
+    def _increment(f):
+      return {
+          'batman': f['batman'] + 1,
+          'robin': f['robin'] + 1,
+      }
+
+    output = ragged_map_ops.map_fn(
+        fn=_increment,
+        elems=features,
+        infer_shape=False,
+        dtype={
+            'batman':
+                ragged_tensor.RaggedTensorType(
+                    dtype=dtypes.int32, ragged_rank=1),
+            'robin':
+                ragged_tensor.RaggedTensorType(
+                    dtype=dtypes.int32, ragged_rank=1)
+        },
+    )
+
+    self.assertAllEqual(output['batman'], [[2, 3, 4], [5], [6, 7, 8]])
+    self.assertAllEqual(output['robin'], [[11, 21, 31], [41], [51, 61, 71]])
+
+  def testZip(self):
+    x = ragged_factory_ops.constant(
+        [[10, 20], [30, 40], [50, 60], [70], [80, 90, 100]], dtypes.int64)
+    y = array_ops.expand_dims(mo.range(x.nrows(out_type=dtypes.int64)), axis=1)
+
+    def _zip(foo):
+      y_val, x_val = foo
+      bar = array_ops.tile(y_val, array_ops.shape(x_val))
+      return array_ops.stack([bar, x_val], axis=1)
+
+    output = ragged_map_ops.map_fn(
+        _zip, (y, x),
+        dtype=ragged_tensor.RaggedTensorType(dtype=dtypes.int64, ragged_rank=1),
+        infer_shape=False)
+
+    self.assertAllEqual(
+        output, [[[0, 10], [0, 20]], [[1, 30], [1, 40]], [[2, 50], [2, 60]],
+                 [[3, 70]], [[4, 80], [4, 90], [4, 100]]])
+
+  def testBatchGather(self):
+    tokens = ragged_factory_ops.constant([['hello', '.', 'there'], ['merhaba'],
+                                          ['bonjour', '.', 'ca va', '?']])
+    indices = ragged_factory_ops.constant([[0, 2], [0], [0, 2]])
+
+    def gather(x):
+      tokens_val, indices_val = x
+      return array_ops.gather(tokens_val, indices_val)
+
+    data = tokens, indices
+    out = ragged_map_ops.map_fn(
+        gather,
+        data,
+        dtype=ragged_tensor.RaggedTensorType(
+            dtype=dtypes.string, ragged_rank=1),
+        infer_shape=False)
+
+    self.assertAllEqual(
+        out, [[b'hello', b'there'], [b'merhaba'], [b'bonjour', b'ca va']])
+
+  def testMismatchRaggedRank(self):
+    elems = ragged_factory_ops.constant([[[1, 2, 3]], [[4, 5], [6, 7]]])
+    fn = lambda x: ragged_math_ops.reduce_sum(x, axis=0)
+    with self.assertRaisesRegexp(
+        ValueError, r'(?s)Expected `fn` to return.*But it returned.*'):
+      _ = ragged_map_ops.map_fn(
+          fn,
+          elems,
+          dtype=ragged_tensor.RaggedTensorType(
+              dtype=dtypes.int64, ragged_rank=23))
+
+  def testMismatchRaggedRank2(self):
+    elems = ragged_factory_ops.constant([[1, 2, 3], [4, 5], [6, 7]])
+    fn = lambda x: ragged_tensor.RaggedTensor.from_row_starts(x, [0])
+    with self.assertRaisesRegexp(
+        ValueError, r'(?s)Expected `fn` to return.*But it returned.*'):
+      _ = ragged_map_ops.map_fn(
+          fn,
+          elems,
+          dtype=ragged_tensor.RaggedTensorType(
+              dtype=dtypes.int64, ragged_rank=10))
+
+  def testMapOnSparseTensor(self):
+    s = sparse_tensor.SparseTensor(
+        indices=[[0, 0], [0, 1], [1, 0], [1, 1]],
+        values=[0, 5, 0, 4],
+        dense_shape=[2, 2],
+    )
+    t2 = ragged_tensor.RaggedTensor.from_sparse(s)
+    id_t2 = ragged_map_ops.map_fn(
+        lambda x: x, t2,
+    )
+    self.assertAllEqual(id_t2, [[0, 5], [0, 4]])
+
+
+if __name__ == '__main__':
+  googletest.main()
+
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tokens used
+input: 641
+cache read: 8,704
+cache write: 0
+output: 147
+reasoning output: 0
+
+The target C++ logic is present with slightly older field access (`values` instead of `values()`), and the test file uses the older ragged map wrapper/API names. I’ll verify the available signature types before editing the tests.
+
+tool: grep
+{
+  "pattern": "RaggedTensorType",
+  "path": "tensorflow/python/ops/ragged",
+  "include": "*.py"
+}
+Found 23 matches
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0099-c8f65104ec1b\tensorflow\python\ops\ragged\ragged_map_fn_op_test.py:
+  Line 75:           result_dtype=ragged_tensor.RaggedTensorType(
+
+  Line 84:           result_dtype=ragged_tensor.RaggedTensorType(
+
+  Line 93:           result_dtype=ragged_tensor.RaggedTensorType(
+
+  Line 101:           result_dtype=ragged_tensor.RaggedTensorType(
+
+  Line 109:           result_dtype=ragged_tensor.RaggedTensorType(
+
+  Line 117:           result_dtype=ragged_tensor.RaggedTensorType(
+
+  Line 132:           result_dtype=ragged_tensor.RaggedTensorType(
+
+  Line 141:           result_dtype=ragged_tensor.RaggedTensorType(
+
+  Line 150:           result_dtype=ragged_tensor.RaggedTensorType(
+
+  Line 213:                 ragged_tensor.RaggedTensorType(
+
+  Line 216:                 ragged_tensor.RaggedTensorType(
+
+  Line 236:         dtype=ragged_tensor.RaggedTensorType(dtype=dtypes.int64, ragged_rank=1),
+
+  Line 256:         dtype=ragged_tensor.RaggedTensorType(
+
+  Line 271:           dtype=ragged_tensor.RaggedTensorType(
+
+  Line 282:           dtype=ragged_tensor.RaggedTensorType(
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0099-c8f65104ec1b\tensorflow\python\ops\ragged\ragged_map_ops.py:
+  Line 108:       `RaggedTensorType` to declare an output of type `RaggedTensor`.
+
+  Line 157:       dtype=ragged.RaggedTensorType(type=tf.int64, ragged_rank=0))
+
+  Line 175:   if isinstance(t, ragged_tensor.RaggedTensorType):
+
+  Line 177:     # type for the mapped `fn` output, but RaggedTensorType gives the type for
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0099-c8f65104ec1b\tensorflow\python\ops\ragged\ragged_tensor.py:
+  Line 2382: # RaggedTensorType
+
+  Line 2384: class RaggedTensorType(object):
+
+  Line 2392:     """Initializes a RaggedTensorType object.
+
+  Line 2410:     return "RaggedTensorType(%r, %r, %r)" % (
+
+tool: grep
+{
+  "pattern": "class RaggedTensorSpec|RaggedTensorSpec",
+  "path": "tensorflow/python/ops/ragged",
+  "include": "*.py"
+}
+Found 67 matches
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0099-c8f65104ec1b\tensorflow\python\ops\ragged\ragged_map_ops.py:
+  Line 176:     # Note: need to adjust ragged_rank by 1, since RaggedTensorSpec gives the
+
+  Line 179:     return ragged_tensor.RaggedTensorSpec(
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0099-c8f65104ec1b\tensorflow\python\ops\ragged\ragged_print_op_test.py:
+  Line 184:         input_signature=[ragged_tensor.RaggedTensorSpec(ragged_rank=1)])
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0099-c8f65104ec1b\tensorflow\python\ops\ragged\ragged_tensor.py:
+  Line 2050:     return RaggedTensorSpec.from_value(self)
+
+  Line 2053:     return RaggedTensorSpec(shape, self.dtype, self.ragged_rank,
+
+  Line 2114: # RaggedTensorSpec
+
+  Line 2116: @tf_export("RaggedTensorSpec")
+
+  Line 2117: class RaggedTensorSpec(type_spec.BatchableTypeSpec):
+
+  Line 2166:       return super(RaggedTensorSpec, self).is_compatible_with(spec_or_value)
+
+  Line 2211:   # The RaggedTensorSpec tensor_list encoding uses to/from_variant ops
+
+  Line 2217:     # `[]` (scalar), but a `RaggedTensorSpec` can also represent a batch of
+
+  Line 2269:     return RaggedTensorSpec(
+
+  Line 2277:     # RaggedTensorSpec._from_compatible_tensor_list()
+
+  Line 2278:     return RaggedTensorSpec(self._shape[1:], self._dtype, self._ragged_rank - 1,
+
+  Line 2300:     ragged_tensor_value.RaggedTensorValue, RaggedTensorSpec.from_value)
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0099-c8f65104ec1b\tensorflow\python\ops\ragged\ragged_tensor_test.py:
+  Line 40: from tensorflow.python.ops.ragged.ragged_tensor import RaggedTensorSpec
+
+  Line 1556: class RaggedTensorSpecTest(test_util.TensorFlowTestCase,
+
+  Line 1565:     spec1 = RaggedTensorSpec(ragged_rank=1)
+
+  Line 1571:     spec2 = RaggedTensorSpec(shape=[None, None, None])
+
+  Line 1578:       RaggedTensorSpec()
+
+  Line 1580:       RaggedTensorSpec(ragged_rank=constant_op.constant(1))
+
+  Line 1583:       RaggedTensorSpec(ragged_rank=2, shape=[None, None])
+
+  Line 1586:     spec1 = RaggedTensorSpec(ragged_rank=1)
+
+  Line 1588:     spec2 = RaggedTensorSpec(ragged_rank=0)
+
+  Line 1592:       (RaggedTensorSpec(ragged_rank=1),
+
+  Line 1594:       (RaggedTensorSpec(shape=[5, None, None]),
+
+  Line 1597:       (RaggedTensorSpec(shape=[5, None, None], dtype=dtypes.int32),
+
+  Line 1600:       (RaggedTensorSpec(ragged_rank=1, row_splits_dtype=dtypes.int32),
+
+  Line 1611:       (RaggedTensorSpec(ragged_rank=0, shape=[5, 3]), [
+
+  Line 1614:       (RaggedTensorSpec(ragged_rank=1), [
+
+  Line 1618:       (RaggedTensorSpec(ragged_rank=1, row_splits_dtype=dtypes.int32), [
+
+  Line 1622:       (RaggedTensorSpec(ragged_rank=2), [
+
+  Line 1627:       (RaggedTensorSpec(shape=[5, None, None], dtype=dtypes.string), [
+
+  Line 1638:           'rt_spec': RaggedTensorSpec(ragged_rank=0),
+
+  Line 1643:           'rt_spec': RaggedTensorSpec(ragged_rank=1),
+
+  Line 1648:           'rt_spec': RaggedTensorSpec(shape=[2, None, None]),
+
+  Line 1662:     spec1 = RaggedTensorSpec(ragged_rank=1, dtype=dtypes.int32)
+
+  Line 1667:     spec2 = RaggedTensorSpec(ragged_rank=2, dtype=dtypes.int32)
+
+  Line 1675:     spec3 = RaggedTensorSpec(ragged_rank=0, dtype=dtypes.int32)
+
+  Line 1681:       RaggedTensorSpec(ragged_rank=0, shape=[5, 3]),
+
+  Line 1682:       RaggedTensorSpec(ragged_rank=1),
+
+  Line 1683:       RaggedTensorSpec(ragged_rank=1, row_splits_dtype=dtypes.int32),
+
+  Line 1684:       RaggedTensorSpec(ragged_rank=2, dtype=dtypes.string),
+
+  Line 1685:       RaggedTensorSpec(shape=[5, None, None]),
+
+  Line 1694:           'rt_spec': RaggedTensorSpec(ragged_rank=0),
+
+  Line 1699:           'rt_spec': RaggedTensorSpec(ragged_rank=1),
+
+  Line 1704:           'rt_spec': RaggedTensorSpec(shape=[2, None, None]),
+
+  Line 1718:           'rt_spec': RaggedTensorSpec(ragged_rank=1),
+
+  Line 1723:           'rt_spec': RaggedTensorSpec(shape=[2, None, None]),
+
+  Line 1748:       (RaggedTensorSpec([2, None], dtypes.float32, 1), 32,
+
+  Line 1749:        RaggedTensorSpec([32, 2, None], dtypes.float32, 2)),
+
+  Line 1750:       (RaggedTensorSpec([4, None], dtypes.float32, 1), None,
+
+  Line 1751:        RaggedTensorSpec([None, 4, None], dtypes.float32, 2)),
+
+  Line 1752:       (RaggedTensorSpec([2], dtypes.float32,
+
+  Line 1753:                         -1), 32, RaggedTensorSpec([32, 2], dtypes.float32, 0)),
+
+  Line 1759:       (RaggedTensorSpec([32, None, None], dtypes.float32, 2),
+
+  Line 1760:        RaggedTensorSpec([None, None], dtypes.float32, 1)),
+
+  Line 1761:       (RaggedTensorSpec([None, None, None], dtypes.float32, 2),
+
+  Line 1762:        RaggedTensorSpec([None, None], dtypes.float32, 1)),
+
+  Line 1763:       (RaggedTensorSpec([32, 2], dtypes.float32, 0),
+
+  Line 1764:        RaggedTensorSpec([2], dtypes.float32, -1)),
+
+  Line 1765:       (RaggedTensorSpec([32, None, 4], dtypes.float32, 1, dtypes.int32),
+
+  Line 1766:        RaggedTensorSpec([None, 4], dtypes.float32, 0, dtypes.int32)),
+
+  Line 1772:     spec1 = RaggedTensorSpec([32, None, None], dtypes.float32, 2)
+
+  Line 1773:     spec2 = RaggedTensorSpec(None, dtypes.float32, 2)
+
+  Line 1774:     spec3 = RaggedTensorSpec(None, dtypes.int32, 1)
+
+  Line 1775:     spec4 = RaggedTensorSpec([None], dtypes.int32, 0)
+
+tool: grep
+{
+  "pattern": "fn_output_signature|def map_fn",
+  "path": "tensorflow/python/ops",
+  "include": "*.py"
+}
+Found 40 matches
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0099-c8f65104ec1b\tensorflow\python\ops\control_flow_ops.py:
+  Line 2191:         def map_fn(x):
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0099-c8f65104ec1b\tensorflow\python\ops\map_fn.py:
+  Line 46: @deprecation.deprecated_args(None, "Use fn_output_signature instead", "dtype")
+
+  Line 47: def map_fn(fn,
+
+  Line 55:            fn_output_signature=None):
+
+  Line 95:   signature must be specified using `fn_output_signature`.  (The input and
+
+  Line 101:   ...           fn_output_signature=tf.int32)
+
+  Line 105:   ...           fn_output_signature=tf.string)
+
+  Line 109:   `fn_output_signature` can be specified using any of the following:
+
+  Line 128:     `tf.RaggedTensorSpec` to specify `fn_output_signature`.
+
+  Line 137:   >>> tf.map_fn(tf.reduce_sum, rt, fn_output_signature=tf.int32)
+
+  Line 143:   ...           fn_output_signature=tf.RaggedTensorSpec(shape=[None],
+
+  Line 171:     `tf.SparseTensorSpec` to specify `fn_output_signature`.  The individual
+
+  Line 177:   >>> tf.map_fn(tf.sparse.reduce_sum, st, fn_output_signature=tf.int32)
+
+  Line 183:   ...               fn_output_signature=tf.SparseTensorSpec(None, tf.float32)))
+
+  Line 265:       same structure as `fn_output_signature` if one is provided; otherwise it
+
+  Line 271:     dtype: Deprecated: Equivalent to `fn_output_signature`.
+
+  Line 279:     fn_output_signature: The output signature of `fn`. Must be specified if
+
+  Line 282:       `fn_output_signature` can be specified using any of the following:
+
+  Line 297:       `fn` and `fn_output_signature` do not match.
+
+  Line 298:     ValueError: if the lengths of the output of `fn` and `fn_output_signature`
+
+  Line 308:     >>> tf.map_fn(lambda x: x[0] * x[1], elems, fn_output_signature=tf.int64)
+
+  Line 313:     ...          fn_output_signature=(tf.int64, tf.int64))
+
+  Line 356:   if fn_output_signature is None:
+
+  Line 357:     fn_output_signature = dtype
+
+  Line 382:   if fn_output_signature is None:
+
+  Line 383:     # If fn_output_signature was not specified, then assume that it matches the
+
+  Line 392:         _dtype_to_spec(d) for d in nest.flatten(fn_output_signature)
+
+  Line 394:     result_unflatten = lambda x: nest.pack_sequence_as(fn_output_signature, x)
+
+  Line 474:         TypeError: if fn_output_signature and result_value structure don't match
+
+  Line 475:         ValueType: if fn_output_signature and result_value lengths don't match
+
+  Line 484:       nest.assert_same_structure(fn_output_signature or elems, result_value)
+
+  Line 588:             "  To fix, update the `fn_output_signature` (or `dtype`) "
+
+  Line 620: @deprecation.deprecated_args(None, "Use fn_output_signature instead", "dtype")
+
+  Line 621: def map_fn_v2(fn,
+
+  Line 629:               fn_output_signature=None):
+
+  Line 631:   if fn_output_signature is None:
+
+  Line 632:     fn_output_signature = dtype
+
+  Line 636:       fn_output_signature=fn_output_signature,
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0099-c8f65104ec1b\tensorflow\python\ops\ragged\ragged_map_ops.py:
+  Line 30: def map_fn(fn,
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0099-c8f65104ec1b\tensorflow\python\ops\ragged\ragged_string_ops.py:
+  Line 913:         fn_output_signature=tensor_spec.TensorSpec(None, dtypes.string))
+
+tokens used
+input: 5,048
+cache read: 8,704
+cache write: 0
+output: 180
+reasoning output: 46
+
+tool: viewcode
+{
+  "ref": "c8f65104ec1bced6eeb476919fdc6965a0f2081f",
+  "path": "tensorflow/python/ops/map_fn.py",
+  "startline": 340,
+  "endline": 410
+}
+Here are lines 340 through 410.
+
+  #                     composite tensors.
+  #     - result_value_flat: Flattened list of tensors from result_value.
+  #                          May contain composite tensors.
+  #     - result_value_batchable: Concatenation of batchable tensor lists for
+  #                               each tensor in result_value_flat
+  #                               (using TensorSpec._to_tensor_list).
+  #
+  #   - Collecting and stacking output values from the while_loop:
+  #     - result_batchable_ta: List of TensorArrays used to stack each tensor
+  #                            ta result_value_batchable into result_batchable.
+  #     - result_batchable: Stacked tensors from result_batchable_ta.
+  #     - result_flat: Flat list of tensors for the result, constructed from
+  #                    results bactchable (using TensorSpec._from_tensor_list).
+  #     - result: Structured result value packed from results flat
+  #               (using nest.pack_sequence_as).
+
+  if fn_output_signature is None:
+    fn_output_signature = dtype
+
+  if not callable(fn):
+    raise TypeError("fn must be callable.")
+
+  in_graph_mode = not context.executing_eagerly()
+  # Set the default number of parallel_iterations depending on graph/eager mode.
+  if in_graph_mode and not parallel_iterations:
+    parallel_iterations = 10
+  elif not in_graph_mode and not parallel_iterations:
+    parallel_iterations = 1
+  elif not in_graph_mode and parallel_iterations > 1:
+    logging.log_first_n(
+        logging.WARN, "Setting parallel_iterations > 1 has no "
+        "effect when executing eagerly. Consider calling map_fn"
+        " with tf.function to execute fn in "
+        "parallel.", 1)
+    parallel_iterations = 1
+
+  # Flatten the input tensors, and get the TypeSpec for each one.
+  elems_flat = nest.flatten(elems)
+  elems_flat_signature = [type_spec.type_spec_from_value(e) for e in elems_flat]
+  elems_unflatten = lambda x: nest.pack_sequence_as(elems, x)
+
+  # Flatten fn's output signature.
+  if fn_output_signature is None:
+    # If fn_output_signature was not specified, then assume that it matches the
+    # input signature.
+    result_flat_signature = [
+        _most_general_compatible_type(s)._unbatch()  # pylint: disable=protected-access
+        for s in elems_flat_signature
+    ]
+    result_unflatten = elems_unflatten
+  else:
+    result_flat_signature = [
+        _dtype_to_spec(d) for d in nest.flatten(fn_output_signature)
+    ]
+    result_unflatten = lambda x: nest.pack_sequence_as(fn_output_signature, x)
+
+  with ops.name_scope(name, "map", elems_flat):
+    # TODO(akshayka): Remove the in_graph_mode check once caching devices are
+    # supported in Eager
+    if in_graph_mode:
+      # Any get_variable calls in fn will cache the first call locally
+      # and not issue repeated network I/O requests for each iteration.
+      varscope = vs.get_variable_scope()
+      varscope_caching_device_was_none = False
+      if varscope.caching_device is None:
+        # TODO(ebrevdo): Change to using colocate_with here and in other
+        # methods.
+        varscope.set_caching_device(lambda op: op.device)
+        varscope_caching_device_was_none = True
+
+    elems_flat = [
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: viewcode
+{
+  "ref": "c8f65104ec1bced6eeb476919fdc6965a0f2081f",
+  "path": "tensorflow/python/ops/ragged/ragged_tensor.py",
+  "startline": 2114,
+  "endline": 2145
+}
+Here are lines 2114 through 2145.
+
+# RaggedTensorSpec
+#===============================================================================
+@tf_export("RaggedTensorSpec")
+class RaggedTensorSpec(type_spec.BatchableTypeSpec):
+  """Type specification for a `tf.RaggedTensor`."""
+
+  __slots__ = ["_shape", "_dtype", "_ragged_rank", "_row_splits_dtype"]
+
+  @property
+  def value_type(self):
+    return RaggedTensor if self._ragged_rank > 0 else ops.Tensor
+
+  def __init__(self,
+               shape=None,
+               dtype=dtypes.float32,
+               ragged_rank=None,
+               row_splits_dtype=dtypes.int64):
+    """Constructs a type specification for a `tf.RaggedTensor`.
+
+    Args:
+      shape: The shape of the RaggedTensor, or `None` to allow any shape.  If a
+        shape is specified, then all ragged dimensions must have size `None`.
+      dtype: `tf.DType` of values in the RaggedTensor.
+      ragged_rank: Python integer, the ragged rank of the RaggedTensor to be
+        described.  Defaults to `shape.ndims - 1`.
+      row_splits_dtype: `dtype` for the RaggedTensor's `row_splits` tensor. One
+        of `tf.int32` or `tf.int64`.
+    """
+    self._shape = tensor_shape.as_shape(shape)
+    self._dtype = dtypes.as_dtype(dtype)
+    self._row_splits_dtype = dtypes.as_dtype(row_splits_dtype)
+
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: grep
+{
+  "pattern": "errors::InvalidArgument\\([^\\n]*TensorShape|Shape at index 0|RemoveDim\\(0\\)",
+  "path": "tensorflow/core",
+  "include": "*.cc"
+}
+Found 16 matches
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0099-c8f65104ec1b\tensorflow\core\util\batch_util.cc:
+  Line 34:     chip_shape.RemoveDim(0);
+
+  Line 327:     chip_shape.RemoveDim(0);
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0099-c8f65104ec1b\tensorflow\core\framework\tensor.cc:
+  Line 901:   ret.shape_.RemoveDim(0);
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0099-c8f65104ec1b\tensorflow\core\framework\tensor_shape_test.cc:
+  Line 59:   s.RemoveDim(0);
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0099-c8f65104ec1b\tensorflow\core\kernels\barrier_ops.cc:
+  Line 99:     if (element_shape.dims() > 0) element_shape.RemoveDim(0);
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0099-c8f65104ec1b\tensorflow\core\kernels\data\map_defun_op.cc:
+  Line 282:     arg_shapes.at(i).RemoveDim(0);
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0099-c8f65104ec1b\tensorflow\core\kernels\data\experimental\map_and_batch_dataset_op.cc:
+  Line 414:                 batch_shape.RemoveDim(0);
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0099-c8f65104ec1b\tensorflow\core\kernels\data\experimental\unbatch_dataset_op.cc:
+  Line 158:               shapes_[i].RemoveDim(0);
+
+  Line 223:             shapes_[i].RemoveDim(0);
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0099-c8f65104ec1b\tensorflow\core\kernels\fifo_queue.cc:
+  Line 93:   element_shape.RemoveDim(0);
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0099-c8f65104ec1b\tensorflow\core\kernels\padding_fifo_queue.cc:
+  Line 301:     chip_shape.RemoveDim(0);
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0099-c8f65104ec1b\tensorflow\core\kernels\priority_queue.cc:
+  Line 121:   element_shape.RemoveDim(0);
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0099-c8f65104ec1b\tensorflow\core\kernels\queue_base.cc:
+  Line 38:     chip_shape.RemoveDim(0);
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0099-c8f65104ec1b\tensorflow\core\kernels\random_shuffle_queue_op.cc:
+  Line 170:   element_shape.RemoveDim(0);
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0099-c8f65104ec1b\tensorflow\core\kernels\tensor_array_ops.cc:
+  Line 890:       value_shape_t_except0.RemoveDim(0);
+
+  Line 1111:     element_shape.RemoveDim(0);
+
+tokens used
+input: 4,689
+cache read: 12,800
+cache write: 0
+output: 191
+reasoning output: 149
+
+I’ll validate the adapted C++ hunk using the target’s `values` member access and the test hunk using the available `map_fn.fn_output_signature` API.
+
+tool: validate
+{
+  "ref": "c8f65104ec1bced6eeb476919fdc6965a0f2081f",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/kernels/ragged_tensor_from_variant_op.cc b/tensorflow/core/kernels/ragged_tensor_from_variant_op.cc\n--- a/tensorflow/core/kernels/ragged_tensor_from_variant_op.cc\n+++ b/tensorflow/core/kernels/ragged_tensor_from_variant_op.cc\n@@ -194,7 +194,23 @@ Status NestedStackRaggedTensors(\n   auto output_values_flat =\n       output_ragged->values.flat_outer_dims<VALUE_TYPE, 2>();\n   int values_index = 0;\n+\n+  TensorShape expected_value_shape = component_values_shape;\n+  expected_value_shape.RemoveDim(0);\n+\n   for (int i = 0; i < ragged_components.size(); i++) {\n+    // Check that the flat_values tensor shape is compatible.\n+    TensorShape value_shape = ragged_components[i].values.shape();\n+    value_shape.RemoveDim(0);\n+    if (value_shape != expected_value_shape) {\n+      return errors::InvalidArgument(\n+          \"All flat_values must have compatible shapes.  Shape at index 0: \",\n+          expected_value_shape, \".  Shape at index \", i, \": \", value_shape,\n+          \".  If you are using tf.map_fn, then you may need to specify an \"\n+          \"explicit fn_output_signature with appropriate ragged_rank, and/or \"\n+          \"convert output tensors to RaggedTensors.\");\n+    }\n+\n     auto component_values_flat =\n         ragged_components[i].values.flat_outer_dims<VALUE_TYPE, 2>();\n     int num_inner_elements = ragged_components[i].values.NumElements();\n"
+}
+Patch applied successfully
+
+tokens used
+input: 3,011
+cache read: 16,896
+cache write: 0
+output: 479
+reasoning output: 288
+
+tool: validate
+{
+  "ref": "c8f65104ec1bced6eeb476919fdc6965a0f2081f",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/python/ops/ragged/ragged_map_fn_op_test.py b/tensorflow/python/ops/ragged/ragged_map_fn_op_test.py\n--- a/tensorflow/python/ops/ragged/ragged_map_fn_op_test.py\n+++ b/tensorflow/python/ops/ragged/ragged_map_fn_op_test.py\n@@ -21,9 +21,11 @@ from __future__ import print_function\n import numpy as np\n \n from tensorflow.python.framework import dtypes\n+from tensorflow.python.framework import errors\n from tensorflow.python.framework import sparse_tensor\n from tensorflow.python.framework import test_util\n from tensorflow.python.ops import array_ops\n+from tensorflow.python.ops import map_fn as map_fn_lib\n from tensorflow.python.ops import math_ops as mo\n from tensorflow.python.ops import string_ops\n from tensorflow.python.ops.ragged import ragged_factory_ops\n@@ -292,6 +294,27 @@ class RaggedMapOpTest(test_util.TensorFlowTestCase,\n     )\n     self.assertAllEqual(id_t2, [[0, 5], [0, 4]])\n \n+  def testRaggedMapWithIncorrectFnOutputSignature(self):\n+    x = ragged_factory_ops.constant([[1, 2, 3, 4], [1]])\n+    with self.assertRaisesRegex(errors.InvalidArgumentError,\n+                                'All flat_values must have compatible shapes'):\n+      y = map_fn_lib.map_fn(lambda r: map_fn_lib.map_fn(lambda y: r, r), x)\n+      self.evaluate(y)\n+\n+  def testNestedRaggedMapWithFnOutputSignature(self):\n+    ragged1d = ragged_tensor.RaggedTensorSpec([None], dtypes.int32)\n+    ragged2d = ragged_tensor.RaggedTensorSpec([None, None], dtypes.int32)\n+\n+    x = ragged_factory_ops.constant([[1, 2, 3, 4], [1]])\n+    # pylint: disable=g-long-lambda\n+    y = map_fn_lib.map_fn(\n+        lambda r: map_fn_lib.map_fn(\n+            lambda y: r, r, fn_output_signature=ragged1d),\n+        x,\n+        fn_output_signature=ragged2d)\n+    expected = [[[1, 2, 3, 4], [1, 2, 3, 4], [1, 2, 3, 4], [1, 2, 3, 4]], [[1]]]\n+    self.assertAllEqual(y, expected)\n+\n \n if __name__ == '__main__':\n   googletest.main()\n"
+}
+Patch applied successfully
+
+tokens used
+input: 1,743
+cache read: 18,944
+cache write: 0
+output: 651
+reasoning output: 0
+
+Both adapted hunks apply cleanly to the target base. I’m applying those minimal changes now.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target C++ ragged tensor stacking implementation and test file context",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate candidate hunks against target base",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply minimal source and test changes",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Review final diff for scope and correctness",
+      "status": "pending",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target C++ ragged tensor stacking implementation and test file context",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate candidate hunks against target base",
+    "status": "completed",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply minimal source and test changes",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Review final diff for scope and correctness",
+    "status": "pending",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 1,383
+cache read: 19,968
+cache write: 0
+output: 125
+reasoning output: 0
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/kernels/ragged_tensor_from_variant_op.cc\n@@\n   auto output_values_flat =\n       output_ragged->values.flat_outer_dims<VALUE_TYPE, 2>();\n   int values_index = 0;\n+\n+  TensorShape expected_value_shape = component_values_shape;\n+  expected_value_shape.RemoveDim(0);\n+\n   for (int i = 0; i < ragged_components.size(); i++) {\n+    // Check that the flat_values tensor shape is compatible.\n+    TensorShape value_shape = ragged_components[i].values.shape();\n+    value_shape.RemoveDim(0);\n+    if (value_shape != expected_value_shape) {\n+      return errors::InvalidArgument(\n+          \"All flat_values must have compatible shapes.  Shape at index 0: \",\n+          expected_value_shape, \".  Shape at index \", i, \": \", value_shape,\n+          \".  If you are using tf.map_fn, then you may need to specify an \"\n+          \"explicit fn_output_signature with appropriate ragged_rank, and/or \"\n+          \"convert output tensors to RaggedTensors.\");\n+    }\n+\n     auto component_values_flat =\n         ragged_components[i].values.flat_outer_dims<VALUE_TYPE, 2>();\n     int num_inner_elements = ragged_components[i].values.NumElements();\n*** Update File: tensorflow/python/ops/ragged/ragged_map_fn_op_test.py\n@@\n from absl.testing import parameterized\n import numpy as np\n \n from tensorflow.python.framework import dtypes\n+from tensorflow.python.framework import errors\n from tensorflow.python.framework import sparse_tensor\n from tensorflow.python.framework import test_util\n from tensorflow.python.ops import array_ops\n+from tensorflow.python.ops import map_fn as map_fn_lib\n from tensorflow.python.ops import math_ops as mo\n from tensorflow.python.ops import string_ops\n from tensorflow.python.ops.ragged import ragged_factory_ops\n@@\n     )\n     self.assertAllEqual(id_t2, [[0, 5], [0, 4]])\n \n+  def testRaggedMapWithIncorrectFnOutputSignature(self):\n+    x = ragged_factory_ops.constant([[1, 2, 3, 4], [1]])\n+    with self.assertRaisesRegex(errors.InvalidArgumentError,\n+                                'All flat_values must have compatible shapes'):\n+      y = map_fn_lib.map_fn(lambda r: map_fn_lib.map_fn(lambda y: r, r), x)\n+      self.evaluate(y)\n+\n+  def testNestedRaggedMapWithFnOutputSignature(self):\n+    ragged1d = ragged_tensor.RaggedTensorSpec([None], dtypes.int32)\n+    ragged2d = ragged_tensor.RaggedTensorSpec([None, None], dtypes.int32)\n+\n+    x = ragged_factory_ops.constant([[1, 2, 3, 4], [1]])\n+    # pylint: disable=g-long-lambda\n+    y = map_fn_lib.map_fn(\n+        lambda r: map_fn_lib.map_fn(\n+            lambda y: r, r, fn_output_signature=ragged1d),\n+        x,\n+        fn_output_signature=ragged2d)\n+    expected = [[[1, 2, 3, 4], [1, 2, 3, 4], [1, 2, 3, 4], [1, 2, 3, 4]], [[1]]]\n+    self.assertAllEqual(y, expected)\n+\n \n if __name__ == '__main__':\n   googletest.main()\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/kernels/ragged_tensor_from_variant_op.cc
+M tensorflow/python/ops/ragged/ragged_map_fn_op_test.py
+
+tokens used
+input: 629
+cache read: 20,992
+cache write: 0
+output: 859
+reasoning output: 0
+
+The source and regression test changes are applied. I’ll review the resulting diff to ensure only the intended files changed.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target C++ ragged tensor stacking implementation and test file context",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate candidate hunks against target base",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply minimal source and test changes",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Review final diff for scope and correctness",
+      "status": "in_progress",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target C++ ragged tensor stacking implementation and test file context",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate candidate hunks against target base",
+    "status": "completed",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply minimal source and test changes",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Review final diff for scope and correctness",
+    "status": "in_progress",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 1,536
+cache read: 20,992
+cache write: 0
+output: 128
+reasoning output: 0
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/kernels/ragged_tensor_from_variant_op.cc tensorflow/python/ops/ragged/ragged_map_fn_op_test.py",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0099-c8f65104ec1b",
+  "timeout": 120000
+}
+warning: in the working copy of 'tensorflow/core/kernels/ragged_tensor_from_variant_op.cc', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'tensorflow/python/ops/ragged/ragged_map_fn_op_test.py', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/kernels/ragged_tensor_from_variant_op.cc b/tensorflow/core/kernels/ragged_tensor_from_variant_op.cc
+index f83bcb38c6..1d9ddfefda 100644
+--- a/tensorflow/core/kernels/ragged_tensor_from_variant_op.cc
++++ b/tensorflow/core/kernels/ragged_tensor_from_variant_op.cc
+@@ -194,7 +194,23 @@ Status NestedStackRaggedTensors(
+   auto output_values_flat =
+       output_ragged->values.flat_outer_dims<VALUE_TYPE, 2>();
+   int values_index = 0;
++
++  TensorShape expected_value_shape = component_values_shape;
++  expected_value_shape.RemoveDim(0);
++
+   for (int i = 0; i < ragged_components.size(); i++) {
++    // Check that the flat_values tensor shape is compatible.
++    TensorShape value_shape = ragged_components[i].values.shape();
++    value_shape.RemoveDim(0);
++    if (value_shape != expected_value_shape) {
++      return errors::InvalidArgument(
++          "All flat_values must have compatible shapes.  Shape at index 0: ",
++          expected_value_shape, ".  Shape at index ", i, ": ", value_shape,
++          ".  If you are using tf.map_fn, then you may need to specify an "
++          "explicit fn_output_signature with appropriate ragged_rank, and/or "
++          "convert output tensors to RaggedTensors.");
++    }
++
+     auto component_values_flat =
+         ragged_components[i].values.flat_outer_dims<VALUE_TYPE, 2>();
+     int num_inner_elements = ragged_components[i].values.NumElements();
+diff --git a/tensorflow/python/ops/ragged/ragged_map_fn_op_test.py b/tensorflow/python/ops/ragged/ragged_map_fn_op_test.py
+index 9e74de4bc3..4808a10f86 100644
+--- a/tensorflow/python/ops/ragged/ragged_map_fn_op_test.py
++++ b/tensorflow/python/ops/ragged/ragged_map_fn_op_test.py
+@@ -21,9 +21,11 @@ from absl.testing import parameterized
+ import numpy as np
+ 
+ from tensorflow.python.framework import dtypes
++from tensorflow.python.framework import errors
+ from tensorflow.python.framework import sparse_tensor
+ from tensorflow.python.framework import test_util
+ from tensorflow.python.ops import array_ops
++from tensorflow.python.ops import map_fn as map_fn_lib
+ from tensorflow.python.ops import math_ops as mo
+ from tensorflow.python.ops import string_ops
+ from tensorflow.python.ops.ragged import ragged_factory_ops
+@@ -294,6 +296,27 @@ class RaggedMapOpTest(test_util.TensorFlowTestCase,
+     )
+     self.assertAllEqual(id_t2, [[0, 5], [0, 4]])
+ 
++  def testRaggedMapWithIncorrectFnOutputSignature(self):
++    x = ragged_factory_ops.constant([[1, 2, 3, 4], [1]])
++    with self.assertRaisesRegex(errors.InvalidArgumentError,
++                                'All flat_values must have compatible shapes'):
++      y = map_fn_lib.map_fn(lambda r: map_fn_lib.map_fn(lambda y: r, r), x)
++      self.evaluate(y)
++
++  def testNestedRaggedMapWithFnOutputSignature(self):
++    ragged1d = ragged_tensor.RaggedTensorSpec([None], dtypes.int32)
++    ragged2d = ragged_tensor.RaggedTensorSpec([None, None], dtypes.int32)
++
++    x = ragged_factory_ops.constant([[1, 2, 3, 4], [1]])
++    # pylint: disable=g-long-lambda
++    y = map_fn_lib.map_fn(
++        lambda r: map_fn_lib.map_fn(
++            lambda y: r, r, fn_output_signature=ragged1d),
++        x,
++        fn_output_signature=ragged2d)
++    expected = [[[1, 2, 3, 4], [1, 2, 3, 4], [1, 2, 3, 4], [1, 2, 3, 4]], [[1]]]
++    self.assertAllEqual(y, expected)
++
+ 
+ if __name__ == '__main__':
+   googletest.main()
+
+tokens used
+input: 785
+cache read: 22,016
+cache write: 0
+output: 94
+reasoning output: 0
+
+tool: bash
+{
+  "command": "git diff --check -- tensorflow/core/kernels/ragged_tensor_from_variant_op.cc tensorflow/python/ops/ragged/ragged_map_fn_op_test.py",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0099-c8f65104ec1b",
+  "timeout": 120000
+}
+warning: in the working copy of 'tensorflow/core/kernels/ragged_tensor_from_variant_op.cc', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'tensorflow/python/ops/ragged/ragged_map_fn_op_test.py', LF will be replaced by CRLF the next time Git touches it
+
+tool: grep
+{
+  "pattern": "assertRaisesRegex",
+  "path": "tensorflow/python/framework",
+  "include": "*.py"
+}
+Found 100 matches (more matches available)
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0099-c8f65104ec1b\tensorflow\python\framework\auto_control_deps_test.py:
+  Line 764:     with self.assertRaisesRegexp(TypeError,
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0099-c8f65104ec1b\tensorflow\python\framework\config_test.py:
+  Line 86:     with self.assertRaisesRegexp(errors.InvalidArgumentError,
+
+  Line 101:     with self.assertRaisesRegexp(errors.InvalidArgumentError,
+
+  Line 412:     with self.assertRaisesRegexp(RuntimeError, 'cannot be modified'):
+
+  Line 448:     with self.assertRaisesRegexp(errors.InvalidArgumentError,
+
+  Line 454:     with self.assertRaisesRegexp(errors.InvalidArgumentError,
+
+  Line 461:     with self.assertRaisesRegexp(RuntimeError, 'cannot be modified'):
+
+  Line 480:     with self.assertRaisesRegexp(RuntimeError, 'unknown device'):
+
+  Line 518:     with self.assertRaisesRegexp(ValueError,
+
+  Line 523:     with self.assertRaisesRegexp(
+
+  Line 549:     with self.assertRaisesRegexp(errors.InvalidArgumentError,
+
+  Line 556:     with self.assertRaisesRegexp(RuntimeError, 'cannot be modified'):
+
+  Line 562:     with self.assertRaisesRegexp(RuntimeError, 'cannot be modified'):
+
+  Line 592:     with self.assertRaisesRegexp(RuntimeError, 'cannot be modified'):
+
+  Line 609:       with self.assertRaisesRegexp(ValueError, 'cannot differ'):
+
+  Line 624:       with self.assertRaisesRegexp(ValueError, 'cannot differ'):
+
+  Line 633:     with self.assertRaisesRegexp(ValueError, 'memory limit'):
+
+  Line 648:     with self.assertRaisesRegexp(ValueError, 'virtual devices'):
+
+  Line 722:     with self.assertRaisesRegexp(ValueError, 'Invalid visible device index'):
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0099-c8f65104ec1b\tensorflow\python\framework\device_spec_test.py:
+  Line 152:     with self.assertRaisesRegexp(ValueError, "Cannot specify multiple"):
+
+  Line 176:     with self.assertRaisesRegexp(ValueError, "Cannot specify multiple"):
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0099-c8f65104ec1b\tensorflow\python\framework\device_test.py:
+  Line 83:     with self.assertRaisesRegexp(ValueError, "invalid literal for int"):
+
+  Line 86:     with self.assertRaisesRegexp(ValueError, "invalid literal for int"):
+
+  Line 89:     with self.assertRaisesRegexp(ValueError, "Unknown attribute: 'bar'"):
+
+  Line 92:     with self.assertRaisesRegexp(ValueError, "Cannot specify multiple device"):
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0099-c8f65104ec1b\tensorflow\python\framework\function_test.py:
+  Line 147:       with self.assertRaisesRegexp(
+
+  Line 308:       with self.assertRaisesRegexp(
+
+  Line 441:       with self.assertRaisesRegexp(errors_impl.InvalidArgumentError,
+
+  Line 456:       with self.assertRaisesRegexp(errors_impl.InvalidArgumentError,
+
+  Line 517:       with self.assertRaisesRegexp(errors_impl.InvalidArgumentError,
+
+  Line 523:       with self.assertRaisesRegexp(errors_impl.InvalidArgumentError,
+
+  Line 569:       with self.assertRaisesRegexp(ValueError, "can not return None"):
+
+  Line 577:       with self.assertRaisesRegexp(ValueError, "are not supported"):
+
+  Line 584:       with self.assertRaisesRegexp(ValueError, "are not supported"):
+
+  Line 591:       with self.assertRaisesRegexp(ValueError, "specified input types"):
+
+  Line 598:       with self.assertRaisesRegexp(ValueError, "specified input types"):
+
+  Line 626:       with self.assertRaisesRegexp(ValueError, "arguments: 0"):
+
+  Line 628:       with self.assertRaisesRegexp(ValueError, "arguments: 0"):
+
+  Line 631:       with self.assertRaisesRegexp(ValueError, "arguments: 1"):
+
+  Line 634:       with self.assertRaisesRegexp(ValueError, "arguments: 1"):
+
+  Line 637:       with self.assertRaisesRegexp(ValueError, "arguments: 2"):
+
+  Line 639:       with self.assertRaisesRegexp(ValueError, "arguments: 2"):
+
+  Line 644:       with self.assertRaisesRegexp(ValueError, "Unknown keyword arguments"):
+
+  Line 791:       with self.assertRaisesRegexp(ValueError, "not an element of this graph."):
+
+  Line 1054:     with self.assertRaisesRegexp(ValueError, "Cannot capture a stateful node"):
+
+  Line 1316:     with self.assertRaisesRegexp(
+
+  Line 1326:     with self.assertRaisesRegexp(
+
+  Line 1356:     with self.assertRaisesRegexp(
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0099-c8f65104ec1b\tensorflow\python\framework\graph_util_test.py:
+  Line 192:     with self.assertRaisesRegexp(TypeError, "must be a list"):
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0099-c8f65104ec1b\tensorflow\python\framework\importer_test.py:
+  Line 468:       with self.assertRaisesRegexp(ValueError, error_msg):
+
+  Line 497:       with self.assertRaisesRegexp(
+
+  Line 509:       with self.assertRaisesRegexp(
+
+  Line 521:       with self.assertRaisesRegexp(ValueError,
+
+  Line 541:       with self.assertRaisesRegexp(
+
+  Line 553:       with self.assertRaisesRegexp(ValueError,
+
+  Line 562:       with self.assertRaisesRegexp(ValueError,
+
+  Line 571:       with self.assertRaisesRegexp(ValueError,
+
+  Line 580:       with self.assertRaisesRegexp(
+
+  Line 590:       with self.assertRaisesRegexp(
+
+  Line 599:       with self.assertRaisesRegexp(
+
+  Line 607:       with self.assertRaisesRegexp(ValueError,
+
+  Line 617:       with self.assertRaisesRegexp(
+
+  Line 636:       with self.assertRaisesRegexp(
+
+  Line 647:       with self.assertRaisesRegexp(
+
+  Line 873:       with self.assertRaisesRegexp(
+
+  Line 922:       with self.assertRaisesRegexp(
+
+  Line 926:       with self.assertRaisesRegexp(ValueError,
+
+  Line 932:     with self.assertRaisesRegexp(ValueError, "Node 'A' is not unique"):
+
+  Line 1080:       with self.assertRaisesRegexp(
+
+  Line 1089:       with self.assertRaisesRegexp(
+
+  Line 1140:       with self.assertRaisesRegexp(
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0099-c8f65104ec1b\tensorflow\python\framework\memory_checker_test.py:
+  Line 128:     with self.assertRaisesRegexp(AssertionError, 'New Python objects'):
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0099-c8f65104ec1b\tensorflow\python\framework\meta_graph_test.py:
+  Line 410:     with self.assertRaisesRegexp(ValueError, "Graph contains unbound inputs"):
+
+  Line 416:     with self.assertRaisesRegexp(ValueError, "Graph contains unbound inputs"):
+
+  Line 832:       with self.assertRaisesRegexp(ValueError, "Graph contains unbound inputs"):
+
+  Line 955:       with self.assertRaisesRegexp(
+
+
+C:\1 Disk D\Research\FYP\backport-testing-codex2\.opencode-backport-worktrees\row-0099-c8f65104ec1b\tensorflow\python\framework\ops_test.py:
+  Line 111:     with self.assertRaisesRegexp(TypeError, "Cannot iterate"):
+
+  Line 121:     with self.assertRaisesRegexp(TypeError, "iterating.*not allowed in Graph"):
+
+  Line 123:     with self.assertRaisesRegexp(
+
+  Line 127:     with self.assertRaisesRegexp(
+
+  Line 136:     with self.assertRaisesRegexp(
+
+  Line 139:     with self.assertRaisesRegexp(
+
+  Line 143:     with self.assertRaisesRegexp(
+
+  Line 184:       with self.assertRaisesRegexp(
+
+  Line 193:     with self.assertRaisesRegexp(NotImplementedError,
+
+  Line 197:     with self.assertRaisesRegexp(TypeError, "not well defined.+test_ones"):
+
+  Line 718:     with self.assertRaisesRegexp(TypeError,
+
+  Line 772:     with self.assertRaisesRegexp(
+
+  Line 835:       with self.assertRaisesRegexp(
+
+  Line 876:       with self.assertRaisesRegexp(ValueError, "must be from the same graph"):
+
+  Line 888:       with self.assertRaisesRegexp(
+
+  Line 901:     with self.assertRaisesRegexp(
+
+  Line 910:     with self.assertRaisesRegexp(
+
+  Line 969:       with self.assertRaisesRegexp(ValueError, "must be from the same graph"):
+
+  Line 977:     with self.assertRaisesRegexp(
+
+  Line 2098:       with self.assertRaisesRegexp(LookupError, "unknown_override"):
+
+  Line 2619:         with self.assertRaisesRegexp(ValueError,
+
+  Line 2713:         with self.assertRaisesRegexp(
+
+  Line 2717:       with self.assertRaisesRegexp(
+
+  Line 3269:       with self.assertRaisesRegexp(NotImplementedError, self._error()):
+
+
+(Results truncated. Consider using a more specific path or pattern.)
+
+tokens used
+input: 1,913
+cache read: 22,016
+cache write: 0
+output: 141
+reasoning output: 212
+
+`git diff --check` reported no whitespace errors. No full build or full validation was run, per instructions.
+
+tool: todowrite
+{
+  "todos": [
+    {
+      "content": "Inspect target C++ ragged tensor stacking implementation and test file context",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Validate candidate hunks against target base",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "content": "Apply minimal source and test changes",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "content": "Review final diff for scope and correctness",
+      "status": "completed",
+      "priority": "medium"
+    }
+  ]
+}
+[
+  {
+    "content": "Inspect target C++ ragged tensor stacking implementation and test file context",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Validate candidate hunks against target base",
+    "status": "completed",
+    "priority": "medium"
+  },
+  {
+    "content": "Apply minimal source and test changes",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Review final diff for scope and correctness",
+    "status": "completed",
+    "priority": "medium"
+  }
+]
+
+tokens used
+input: 3,606
+cache read: 23,040
+cache write: 0
+output: 129
+reasoning output: 177
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/kernels/ragged_tensor_from_variant_op.cc b/tensorflow/core/kernels/ragged_tensor_from_variant_op.cc
+    index f83bcb38c6..1d9ddfefda 100644
+    --- a/tensorflow/core/kernels/ragged_tensor_from_variant_op.cc
+    +++ b/tensorflow/core/kernels/ragged_tensor_from_variant_op.cc
+    @@ -194,7 +194,23 @@ Status NestedStackRaggedTensors(
+       auto output_values_flat =
+           output_ragged->values.flat_outer_dims<VALUE_TYPE, 2>();
+       int values_index = 0;
+    +
+    +  TensorShape expected_value_shape = component_values_shape;
+    +  expected_value_shape.RemoveDim(0);
+    +
+       for (int i = 0; i < ragged_components.size(); i++) {
+    +    // Check that the flat_values tensor shape is compatible.
+    +    TensorShape value_shape = ragged_components[i].values.shape();
+    +    value_shape.RemoveDim(0);
+    +    if (value_shape != expected_value_shape) {
+    +      return errors::InvalidArgument(
+    +          "All flat_values must have compatible shapes.  Shape at index 0: ",
+    +          expected_value_shape, ".  Shape at index ", i, ": ", value_shape,
+    +          ".  If you are using tf.map_fn, then you may need to specify an "
+    +          "explicit fn_output_signature with appropriate ragged_rank, and/or "
+    +          "convert output tensors to RaggedTensors.");
+    +    }
+    +
+         auto component_values_flat =
+             ragged_components[i].values.flat_outer_dims<VALUE_TYPE, 2>();
+         int num_inner_elements = ragged_components[i].values.NumElements();
+    diff --git a/tensorflow/python/ops/ragged/ragged_map_fn_op_test.py b/tensorflow/python/ops/ragged/ragged_map_fn_op_test.py
+    index 9e74de4bc3..4808a10f86 100644
+    --- a/tensorflow/python/ops/ragged/ragged_map_fn_op_test.py
+    +++ b/tensorflow/python/ops/ragged/ragged_map_fn_op_test.py
+    @@ -21,9 +21,11 @@ from absl.testing import parameterized
+     import numpy as np
+     
+     from tensorflow.python.framework import dtypes
+    +from tensorflow.python.framework import errors
+     from tensorflow.python.framework import sparse_tensor
+     from tensorflow.python.framework import test_util
+     from tensorflow.python.ops import array_ops
+    +from tensorflow.python.ops import map_fn as map_fn_lib
+     from tensorflow.python.ops import math_ops as mo
+     from tensorflow.python.ops import string_ops
+     from tensorflow.python.ops.ragged import ragged_factory_ops
+    @@ -294,6 +296,27 @@ class RaggedMapOpTest(test_util.TensorFlowTestCase,
+         )
+         self.assertAllEqual(id_t2, [[0, 5], [0, 4]])
+     
+    +  def testRaggedMapWithIncorrectFnOutputSignature(self):
+    +    x = ragged_factory_ops.constant([[1, 2, 3, 4], [1]])
+    +    with self.assertRaisesRegex(errors.InvalidArgumentError,
+    +                                'All flat_values must have compatible shapes'):
+    +      y = map_fn_lib.map_fn(lambda r: map_fn_lib.map_fn(lambda y: r, r), x)
+    +      self.evaluate(y)
+    +
+    +  def testNestedRaggedMapWithFnOutputSignature(self):
+    +    ragged1d = ragged_tensor.RaggedTensorSpec([None], dtypes.int32)
+    +    ragged2d = ragged_tensor.RaggedTensorSpec([None, None], dtypes.int32)
+    +
+    +    x = ragged_factory_ops.constant([[1, 2, 3, 4], [1]])
+    +    # pylint: disable=g-long-lambda
+    +    y = map_fn_lib.map_fn(
+    +        lambda r: map_fn_lib.map_fn(
+    +            lambda y: r, r, fn_output_signature=ragged1d),
+    +        x,
+    +        fn_output_signature=ragged2d)
+    +    expected = [[[1, 2, 3, 4], [1, 2, 3, 4], [1, 2, 3, 4], [1, 2, 3, 4]], [[1]]]
+    +    self.assertAllEqual(y, expected)
+    +
+     
+     if __name__ == '__main__':
+       googletest.main()
+  notes: >
+    Backported the flat_values shape compatibility check to the target ragged tensor variant stacking code and added regression coverage for nested tf.map_fn ragged outputs; hunks were validated and git diff --check passed.
+```
+
+tokens used
+input: 984
+cache read: 26,112
+cache write: 0
+output: 1,079
+reasoning output: 0

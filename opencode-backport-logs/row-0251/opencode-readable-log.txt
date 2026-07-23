@@ -1,0 +1,246 @@
+I’ll locate the target-side `IsIdentityConsumingSwitch` implementation, compare the surrounding 2.5.3 context to the provided 2.8.0 hunk, then apply only the null-check backport and validate the hunk.
+
+tool: viewcode
+{
+  "ref": "b2b3444b71ea99685edafa7731fb7ba57939f437",
+  "path": "tensorflow/core/grappler/mutable_graph_view.cc",
+  "startline": 1,
+  "endline": 110
+}
+Here are lines 1 through 110.
+
+/* Copyright 2018 The TensorFlow Authors. All Rights Reserved.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+==============================================================================*/
+
+#include "tensorflow/core/grappler/mutable_graph_view.h"
+
+#include <algorithm>
+#include <utility>
+
+#include "absl/container/flat_hash_map.h"
+#include "absl/strings/str_cat.h"
+#include "absl/strings/str_join.h"
+#include "absl/strings/string_view.h"
+#include "absl/strings/substitute.h"
+#include "tensorflow/core/framework/function.h"
+#include "tensorflow/core/framework/graph.pb.h"
+#include "tensorflow/core/framework/node_def.pb.h"
+#include "tensorflow/core/graph/graph.h"
+#include "tensorflow/core/graph/tensor_id.h"
+#include "tensorflow/core/grappler/op_types.h"
+#include "tensorflow/core/grappler/utils.h"
+#include "tensorflow/core/lib/core/errors.h"
+#include "tensorflow/core/lib/core/stringpiece.h"
+#include "tensorflow/core/lib/gtl/map_util.h"
+#include "tensorflow/core/platform/types.h"
+
+namespace tensorflow {
+namespace grappler {
+
+namespace {
+
+bool IsTensorIdPortValid(const TensorId& tensor_id) {
+  return tensor_id.index() >= Graph::kControlSlot;
+}
+
+bool IsTensorIdRegular(const TensorId& tensor_id) {
+  return tensor_id.index() > Graph::kControlSlot;
+}
+
+bool IsTensorIdControlling(const TensorId& tensor_id) {
+  return tensor_id.index() == Graph::kControlSlot;
+}
+
+bool IsOutputPortControlling(const MutableGraphView::OutputPort& port) {
+  return port.port_id == Graph::kControlSlot;
+}
+
+// Determines if node is an Identity where it's first regular input is a Switch
+// node.
+bool IsIdentityConsumingSwitch(const MutableGraphView& graph,
+                               const NodeDef& node) {
+  if ((IsIdentity(node) || IsIdentityNSingleInput(node)) &&
+      node.input_size() > 0) {
+    TensorId tensor_id = ParseTensorName(node.input(0));
+    if (IsTensorIdControlling(tensor_id)) {
+      return false;
+    }
+
+    NodeDef* input_node = graph.GetNode(tensor_id.node());
+    return IsSwitch(*input_node);
+  }
+  return false;
+}
+
+// Determines if node input can be deduped by regular inputs when used as a
+// control dependency. Specifically, if a node is an Identity that leads to a
+// Switch node, when used as a control dependency, that control dependency
+// should not be deduped even though the same node is used as a regular input.
+bool CanDedupControlWithRegularInput(const MutableGraphView& graph,
+                                     const NodeDef& control_node) {
+  return !IsIdentityConsumingSwitch(graph, control_node);
+}
+
+// Determines if node input can be deduped by regular inputs when used as a
+// control dependency. Specifically, if a node is an Identity that leads to a
+// Switch node, when used as a control dependency, that control dependency
+// should not be deduped even though the same node is used as a regular input.
+bool CanDedupControlWithRegularInput(const MutableGraphView& graph,
+                                     absl::string_view control_node_name) {
+  NodeDef* control_node = graph.GetNode(control_node_name);
+  if (control_node == nullptr) {
+    return false;
+  }
+  return CanDedupControlWithRegularInput(graph, *control_node);
+}
+
+bool HasRegularFaninNode(const MutableGraphView& graph, const NodeDef& node,
+                         absl::string_view fanin_node_name) {
+  const int num_regular_fanins =
+      graph.NumFanins(node, /*include_controlling_nodes=*/false);
+  for (int i = 0; i < num_regular_fanins; ++i) {
+    if (ParseTensorName(node.input(i)).node() == fanin_node_name) {
+      return true;
+    }
+  }
+  return false;
+}
+
+using FanoutsMap =
+Based on the previous information, think carefully do you see the target code? You may want to keep checking if you don't.
+
+tool: git_show
+{
+  "ref": "045deec1cbdebb27d817008ad5df94d96a08b1bf",
+  "context": "bool IsIdentityConsumingSwitch(const MutableGraphView& graph,\n    NodeDef* input_node = graph.GetNode(tensor_id.node());\n    return IsSwitch(*input_node);"
+}
+commit 045deec1cbdebb27d817008ad5df94d96a08b1bf
+Author: Mihai Maruseac <mihaimaruseac@google.com>
+Date:   Sat Nov 13 10:12:22 2021 -0800
+
+    Prevent null pointer dereference in `mutable_graph_view`
+    
+    PiperOrigin-RevId: 409684472
+    Change-Id: I577eb9d9ac470fcec0501423171e739a4ec0cb5c
+
+ tensorflow/core/grappler/mutable_graph_view.cc | 3 +++
+ 1 file changed, 3 insertions(+)
+This commit shows that there is a high probability that this code is new, so the corresponding code segment cannot be found in the old version.
+You can call `viewcode` and `locate_symbol` to further check the results step by step. For newly introduced code, we consider that this hunk `need not ported`.
+
+tool: locate_symbol
+{
+  "ref": "b2b3444b71ea99685edafa7731fb7ba57939f437",
+  "symbol": "IsIdentityConsumingSwitch"
+}
+tensorflow/core/grappler/mutable_graph_view.cc:61
+tensorflow/core/grappler/mutable_graph_view.cc:82
+
+tokens used
+input: 3,662
+cache read: 4,608
+cache write: 0
+output: 255
+reasoning output: 0
+
+The vulnerable code exists in the target release at the same path and shape: `graph.GetNode(...)` is dereferenced without a null check. I’m applying the minimal guard before `IsSwitch(*input_node)`.
+
+tool: validate
+{
+  "ref": "b2b3444b71ea99685edafa7731fb7ba57939f437",
+  "mode": "hunk",
+  "patch": "diff --git a/tensorflow/core/grappler/mutable_graph_view.cc b/tensorflow/core/grappler/mutable_graph_view.cc\n--- a/tensorflow/core/grappler/mutable_graph_view.cc\n+++ b/tensorflow/core/grappler/mutable_graph_view.cc\n@@ -68,6 +68,9 @@ bool IsIdentityConsumingSwitch(const MutableGraphView& graph,\n     }\n \n     NodeDef* input_node = graph.GetNode(tensor_id.node());\n+    if (input_node == nullptr) {\n+      return false;\n+    }\n     return IsSwitch(*input_node);\n   }\n   return false;\n"
+}
+Patch applied successfully
+
+tokens used
+input: 2,060
+cache read: 7,680
+cache write: 0
+output: 242
+reasoning output: 56
+
+tool: apply_patch
+{
+  "patchText": "*** Begin Patch\n*** Update File: tensorflow/core/grappler/mutable_graph_view.cc\n@@\n     }\n \n     NodeDef* input_node = graph.GetNode(tensor_id.node());\n+    if (input_node == nullptr) {\n+      return false;\n+    }\n     return IsSwitch(*input_node);\n   }\n   return false;\n }\n*** End Patch"
+}
+Success. Updated the following files:
+M tensorflow/core/grappler/mutable_graph_view.cc
+
+tokens used
+input: 1,347
+cache read: 8,704
+cache write: 0
+output: 105
+reasoning output: 0
+
+The hunk validated cleanly against the target base and has been applied locally. I’ll inspect the resulting diff for the final report.
+
+tool: bash
+{
+  "command": "git diff -- tensorflow/core/grappler/mutable_graph_view.cc",
+  "workdir": "C:\\1 Disk D\\Research\\FYP\\backport-testing-codex2\\.opencode-backport-worktrees\\row-0251-b2b3444b71ea"
+}
+warning: in the working copy of 'tensorflow/core/grappler/mutable_graph_view.cc', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tensorflow/core/grappler/mutable_graph_view.cc b/tensorflow/core/grappler/mutable_graph_view.cc
+index 5119acd614..4503c90cf4 100644
+--- a/tensorflow/core/grappler/mutable_graph_view.cc
++++ b/tensorflow/core/grappler/mutable_graph_view.cc
+@@ -68,6 +68,9 @@ bool IsIdentityConsumingSwitch(const MutableGraphView& graph,
+     }
+ 
+     NodeDef* input_node = graph.GetNode(tensor_id.node());
++    if (input_node == nullptr) {
++      return false;
++    }
+     return IsSwitch(*input_node);
+   }
+   return false;
+
+tokens used
+input: 457
+cache read: 9,728
+cache write: 0
+output: 108
+reasoning output: 13
+
+```yaml
+backport_result:
+  status: success
+  patch: |
+    diff --git a/tensorflow/core/grappler/mutable_graph_view.cc b/tensorflow/core/grappler/mutable_graph_view.cc
+    index 5119acd614..4503c90cf4 100644
+    --- a/tensorflow/core/grappler/mutable_graph_view.cc
+    +++ b/tensorflow/core/grappler/mutable_graph_view.cc
+    @@ -68,6 +68,9 @@ bool IsIdentityConsumingSwitch(const MutableGraphView& graph,
+         }
+     
+         NodeDef* input_node = graph.GetNode(tensor_id.node());
+    +    if (input_node == nullptr) {
+    +      return false;
+    +    }
+         return IsSwitch(*input_node);
+       }
+       return false;
+  notes: >
+    Added the missing null check before dereferencing graph.GetNode() in IsIdentityConsumingSwitch.
+```
+
+tokens used
+input: 772
+cache read: 9,728
+cache write: 0
+output: 204
+reasoning output: 0

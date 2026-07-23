@@ -19,6 +19,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 
@@ -65,39 +66,58 @@ def opencode_patch_judgement(
     model: str | None,
     timeout: int,
 ) -> bool:
-    prompt = """You are judging whether a generated security backport patch is acceptable.
+    row_name = expected_patch.parent.name
+    cwd = Path.cwd()
+    try:
+        expected_prompt_path = expected_patch.relative_to(cwd)
+    except ValueError:
+        expected_prompt_path = expected_patch
+    try:
+        generated_prompt_path = generated_patch.relative_to(cwd)
+    except ValueError:
+        generated_prompt_path = generated_patch
 
-Compare the attached expected.patch and generated.patch.
+    prompt = f"""You are judging {row_name}.
 
 Decision rule:
 - Answer 1 if the generated patch is technically the same fix, equivalent, partly different but still correct, or acceptable.
 - Answer 0 only if the generated patch is totally different from the expected fix or the generated patch is incorrect.
 
-Focus on the code added and removed, not commit hashes, hunk line numbers, diff metadata, formatting-only differences, or context-only differences.
+Read exactly these two files:
+- EXPECTED_REFERENCE_PATCH: {expected_prompt_path}
+- GENERATED_BACKPORT_PATCH: {generated_prompt_path}
+
+The expected.patch file is the correct target/reference backport context.
+The generated.patch file is the generated backport patch being judged.
+
+Focus on the code added and removed. Ignore commit hashes, hunk line numbers, diff metadata, formatting-only differences, or context-only differences.
 
 Return exactly one character: 1 or 0. Do not explain.
 """
     command = [
         *opencode_command_prefix(opencode_command),
         "run",
-        "--file",
-        str(expected_patch),
-        "--file",
-        str(generated_patch),
+        prompt,
     ]
     if model:
         command.extend(["--model", model])
-    command.append(prompt)
 
-    result = subprocess.run(
-        command,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        timeout=timeout,
-    )
+    attempts = 3
+    for attempt in range(1, attempts + 1):
+        result = subprocess.run(
+            command,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=timeout,
+        )
+        combined_output = f"{result.stdout}\n{result.stderr}"
+        if result.returncode == 0 or "database is locked" not in combined_output.lower():
+            break
+        if attempt < attempts:
+            time.sleep(5 * attempt)
 
     if result.returncode != 0:
         raise RuntimeError(

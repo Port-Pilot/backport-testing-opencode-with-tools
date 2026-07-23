@@ -11524,7 +11524,7 @@ index e9d5d3dc6a5507..a97415e3f908dc 100644
              CpuBackendContext::GetFromContext(context));
        } else {
          TF_LITE_KERNEL_LOG(context,
-",0,"diff --git a/tensorflow/lite/kernels/fully_connected.cc b/tensorflow/lite/kernels/fully_connected.cc
+",1,"diff --git a/tensorflow/lite/kernels/fully_connected.cc b/tensorflow/lite/kernels/fully_connected.cc
 index e9d5d3dc6a..830bd26767 100644
 --- a/tensorflow/lite/kernels/fully_connected.cc
 +++ b/tensorflow/lite/kernels/fully_connected.cc
